@@ -1,0 +1,63 @@
+name: Task
+description: 個人開発タスク（機能追加・修正・調査など）
+title: "[feat] 機能名 or [bug] 不具合内容"
+labels: []
+assignees: []
+
+body:
+  - type: input
+    id: goal
+    attributes:
+      label: 目的
+      description: なぜこれをやるのか？達成すると何が変わるのか？
+      placeholder: 例）ユーザープロフィール編集を可能にする
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: 完了条件
+      description: 終了の判断基準（チェックリスト形式推奨）
+      value: |
+        - [ ] 実装完了
+        - [ ] テスト追加
+        - [ ] ドキュメント更新
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 優先度（Priority）
+      options:
+        - P0（今日やる/緊急）
+        - P1（今週中にやる）
+        - P2（今月末までにやる）
+        - P3（今月末以降にやる）
+    validations:
+      required: true
+
+  - type: dropdown
+    id: effort
+    attributes:
+      label: 作業規模（Effort）
+      options:
+        - E1（<1時間）
+        - E2（半日以内）
+        - E3（1日以内）
+        - E5（2〜3日）
+        - E8（4日以上・要分割）
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: メモ・補足
+      description: 設計メモ・懸念点・参考リンクなど
+      placeholder: |
+        - API仕様書: https://example.com
+        - 参考Issue: #123
+    validations:
+      required: false
