@@ -1,10 +1,37 @@
 name: Task
-description: 個人開発タスク（機能追加・修正・調査など）
-title: "[feat] 機能名 or [bug] 不具合内容"
+description: 個人開発タスク（機能追加・修正・調査・Epic）
+title: "[feat][area] 簡潔な説明 or [bug][area] 簡潔な説明"
 labels: []
 assignees: []
 
 body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: 種別 (Type)
+      options:
+        - feature
+        - bug
+        - chore
+        - docs
+        - experiment
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 対象領域 (Area)
+      options:
+        - ui
+        - api
+        - auth
+        - db
+        - infra
+        - other
+    validations:
+      required: true
+
   - type: input
     id: goal
     attributes:
@@ -14,11 +41,19 @@ body:
     validations:
       required: true
 
+  - type: checkboxes
+    id: epic
+    attributes:
+      label: これはEpic（親タスク）ですか？
+      options:
+        - label: はい（子タスクに分解し、必要に応じて別Issue化します）
+          required: false
+
   - type: textarea
     id: done
     attributes:
       label: 完了条件
-      description: 終了の判断基準（チェックリスト形式推奨）
+      description: 終了の判断基準（チェックリスト）
       value: |
         - [ ] 実装完了
         - [ ] テスト追加
@@ -30,11 +65,12 @@ body:
     id: priority
     attributes:
       label: 優先度（Priority）
+      description: 相対優先度で指定（スケジュールはProject側で管理）
       options:
-        - P0（今日やる/緊急）
-        - P1（今週中にやる）
-        - P2（今月末までにやる）
-        - P3（今月末以降にやる）
+        - P0（最優先／先にやる）
+        - P1（次にやる）
+        - P2（後回し可）
+        - P3（いつかやる）
     validations:
       required: true
 
@@ -43,21 +79,27 @@ body:
     attributes:
       label: 作業規模（Effort）
       options:
-        - E1（<1時間）
-        - E2（半日以内）
-        - E3（1日以内）
-        - E5（2〜3日）
-        - E8（4日以上・要分割）
+        - 1（<1時間）
+        - 2（半日以内）
+        - 3（1日以内）
+        - 5（2〜3日）
+        - 8（4日以上・要分割）
     validations:
       required: true
+
+  - type: input
+    id: links
+    attributes:
+      label: 参照リンク
+      description: 関連Issue/PR/仕様URL（複数ある場合は半角スペース区切り）
+      placeholder: "#123 https://example.com/spec"
+    validations:
+      required: false
 
   - type: textarea
     id: notes
     attributes:
       label: メモ・補足
-      description: 設計メモ・懸念点・参考リンクなど
-      placeholder: |
-        - API仕様書: https://example.com
-        - 参考Issue: #123
+      description: 設計メモ・懸念点・試したこと・スクショ等
     validations:
       required: false
