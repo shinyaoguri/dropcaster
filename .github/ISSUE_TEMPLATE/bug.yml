@@ -1,0 +1,58 @@
+name: Bug report
+description: 不具合報告（個人開発用）
+title: "[bug][area] 症状の要約"
+labels: ["type/bug"]
+assignees: []
+
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: 対象領域 (Area)
+      options: [ui, api, auth, db, infra, other]
+    validations: { required: true }
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: 症状
+      description: 何が起きたか？期待する動作は？
+      placeholder: 実際：..., 期待：...
+    validations: { required: true }
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      value: |
+        1. 
+        2. 
+        3. 
+    validations: { required: true }
+
+  - type: input
+    id: env
+    attributes:
+      label: 実行環境
+      placeholder: OS/ブラウザ/バージョン等
+    validations: { required: false }
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 優先度
+      options: ["P0（クラッシュ・止まる）","P1（主要機能に影響）","P2（軽微）"]
+    validations: { required: true }
+
+  - type: dropdown
+    id: effort
+    attributes:
+      label: 規模（Effort）
+      options: ["1","2","3","5","8"]
+    validations: { required: true }
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: メモ・ログ・スクショ
+    validations: { required: false }
