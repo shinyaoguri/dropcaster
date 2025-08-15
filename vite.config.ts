@@ -5,7 +5,10 @@ export default defineConfig({
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']
   },
   server: {
-    open: true
+    open: true,
+    fs: {
+      allow: ['..']
+    }
   },
   build: {
     target: 'esnext',

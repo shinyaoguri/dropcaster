@@ -25,6 +25,11 @@ export class SketchPageView {
           id="sketch-iframe"
         ></iframe>
         
+        <!-- iframeと重ねる新しいdiv要素 -->
+        <div class="sketch-overlay-layer" id="sketch-overlay-layer">
+          <!-- 中身はまだ空 -->
+        </div>
+        
         <!-- ウィンドウサイズいっぱいのマウス監視用div -->
         <div 
           id="mouse-monitor-overlay" 
@@ -66,9 +71,7 @@ export class SketchPageView {
           title="フルスクリーン"
           aria-label="フルスクリーン"
         >
-          <svg class="fullscreen-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
-          </svg>
+          <i class="fas fa-expand fullscreen-icon"></i>
         </button>
 
         <!-- ウィンドウ設定ボタン -->
@@ -101,6 +104,40 @@ export class SketchPageView {
     // ウィンドウ設定ボタンのイベント
     windowSettingsBtn.addEventListener('click', () => {
       this.eventEmitter.emit('windowSettingsToggle');
+    });
+
+    // フルスクリーン状態の変更を監視
+    document.addEventListener('fullscreenchange', () => {
+      const isFullscreen = !!document.fullscreenElement;
+      fullscreenBtn.classList.toggle('fullscreen-active', isFullscreen);
+      
+      // フルスクリーン時にボタンとユーザー情報を非表示
+      const overlayInfo = document.querySelector('.sketch-overlay-info') as HTMLDivElement;
+      if (isFullscreen) {
+        fullscreenBtn.style.opacity = '0';
+        fullscreenBtn.style.pointerEvents = 'none';
+        if (overlayInfo) {
+          overlayInfo.style.opacity = '0';
+          overlayInfo.style.pointerEvents = 'none';
+        }
+      } else {
+        fullscreenBtn.style.opacity = '1';
+        fullscreenBtn.style.pointerEvents = 'auto';
+        if (overlayInfo) {
+          overlayInfo.style.opacity = '1';
+          overlayInfo.style.pointerEvents = 'auto';
+        }
+      }
+      
+      // アイコンを更新
+      const icon = fullscreenBtn.querySelector('.fullscreen-icon') as HTMLElement;
+      if (isFullscreen) {
+        // フルスクリーン終了アイコン
+        icon.className = 'fas fa-compress fullscreen-icon';
+      } else {
+        // フルスクリーン開始アイコン
+        icon.className = 'fas fa-expand fullscreen-icon';
+      }
     });
   }
 
