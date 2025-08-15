@@ -17,6 +17,11 @@ export class SketchPageView {
           id="sketch-iframe"
         ></iframe>
         
+        <!-- iframeと重ねる新しいdiv要素 -->
+        <div class="sketch-overlay-layer" id="sketch-overlay-layer">
+          <!-- 中身はまだ空 -->
+        </div>
+        
         <div class="sketch-overlay-info">
           <div class="sketch-overlay-content">
             <img 
@@ -38,9 +43,7 @@ export class SketchPageView {
           title="フルスクリーン"
           aria-label="フルスクリーン"
         >
-          <svg class="fullscreen-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
-          </svg>
+          <i class="fas fa-expand fullscreen-icon"></i>
         </button>
       </div>
     `;
@@ -128,13 +131,13 @@ export class SketchPageView {
       }
       
       // アイコンを更新
-      const icon = fullscreenBtn.querySelector('.fullscreen-icon') as SVGElement;
+      const icon = fullscreenBtn.querySelector('.fullscreen-icon') as HTMLElement;
       if (isFullscreen) {
         // フルスクリーン終了アイコン
-        icon.innerHTML = '<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>';
+        icon.className = 'fas fa-compress fullscreen-icon';
       } else {
         // フルスクリーン開始アイコン
-        icon.innerHTML = '<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>';
+        icon.className = 'fas fa-expand fullscreen-icon';
       }
     });
   }
