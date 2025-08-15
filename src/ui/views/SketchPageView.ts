@@ -3,6 +3,7 @@ import { EventEmitter } from '../../core/events/EventEmitter';
 
 export class SketchPageView {
   private eventEmitter: EventEmitter;
+  private resizeManager: any; // ResizeManagerのインスタンスを保持
 
   constructor() {
     this.eventEmitter = new EventEmitter();
@@ -184,6 +185,22 @@ export class SketchPageView {
       overlay.style.top = '0px';
       overlay.style.width = '100%';
       overlay.style.height = '100%';
+    }
+  }
+
+  /**
+   * ResizeManagerのインスタンスを設定
+   */
+  setResizeManager(resizeManager: any): void {
+    this.resizeManager = resizeManager;
+  }
+
+  /**
+   * iframe-overlayとiframe内のcanvasの位置・サイズを同期
+   */
+  syncOverlayWithCanvas(): void {
+    if (this.resizeManager && typeof this.resizeManager.syncOverlayWithCanvas === 'function') {
+      this.resizeManager.syncOverlayWithCanvas();
     }
   }
 

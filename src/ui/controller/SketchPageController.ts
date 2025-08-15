@@ -33,6 +33,15 @@ export class SketchPageController {
     this.cursorManager.initialize();
     this.resizeManager.initialize();
     
+    // ResizeManagerとSketchPageViewを連携
+    this.view.setResizeManager(this.resizeManager);
+    
+    // IframeManagerとSketchPageViewを連携（canvas読み込み完了時の自動同期）
+    this.iframeManager.onCanvasLoad(() => {
+      console.log('SketchPageController: canvas読み込み完了、自動同期を実行');
+      this.view.syncOverlayWithCanvas();
+    });
+    
     // イベントリスナーの設定
     this.setupEventListeners();
     

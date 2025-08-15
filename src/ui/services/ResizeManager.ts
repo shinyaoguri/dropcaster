@@ -166,8 +166,53 @@ export class ResizeManager {
     // マウス監視を停止
     this.stopMouseMonitoring();
     
+    // リサイズ終了時にiframe内のcanvasを更新
+    this.updateIframeCanvas();
+    
     console.log('リサイズ終了:', this.currentHandle);
     this.currentHandle = null;
+  }
+
+  /**
+   * iframe内のcanvasのサイズと位置をiframe-overlayに合わせて更新
+   */
+  private updateIframeCanvas(): void {
+    if (!this.overlay) return;
+
+    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
+    if (!iframe) return;
+
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        const canvas = iframeDoc.querySelector('canvas');
+        if (canvas) {
+          // iframe-overlayの現在の位置とサイズを取得
+          const overlayRect = this.overlay.getBoundingClientRect();
+          const iframeRect = iframe.getBoundingClientRect();
+          
+          // iframe内での相対位置を計算
+          const relativeLeft = overlayRect.left - iframeRect.left;
+          const relativeTop = overlayRect.top - iframeRect.top;
+          
+          // canvasのスタイルを更新
+          canvas.style.position = 'absolute';
+          canvas.style.left = `${relativeLeft}px`;
+          canvas.style.top = `${relativeTop}px`;
+          canvas.style.width = `${overlayRect.width}px`;
+          canvas.style.height = `${overlayRect.height}px`;
+          
+          console.log('iframe内のcanvasを更新しました:', {
+            left: relativeLeft,
+            top: relativeTop,
+            width: overlayRect.width,
+            height: overlayRect.height
+          });
+        }
+      }
+    } catch (e) {
+      console.log('iframe内のcanvas更新に失敗:', e);
+    }
   }
 
   private resizeTopLeft(deltaX: number, deltaY: number): void {
@@ -225,6 +270,48 @@ export class ResizeManager {
       case 'bottom-left': return 'sw-resize';
       case 'bottom-right': return 'se-resize';
       default: return 'auto';
+    }
+  }
+
+  /**
+   * iframe-overlayとiframe内のcanvasの位置・サイズを同期
+   */
+  syncOverlayWithCanvas(): void {
+    if (!this.overlay) return;
+
+    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
+    if (!iframe) return;
+
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        const canvas = iframeDoc.querySelector('canvas');
+        if (canvas) {
+          // canvasの位置とサイズを取得
+          const canvasRect = canvas.getBoundingClientRect();
+          const iframeRect = iframe.getBoundingClientRect();
+          
+          // iframe内のcanvasの相対位置を計算
+          const relativeLeft = canvasRect.left - iframeRect.left;
+          const relativeTop = canvasRect.top - iframeRect.top;
+          
+          // iframe-overlayをcanvasの位置とサイズに合わせる
+          this.overlay.style.position = 'absolute';
+          this.overlay.style.left = `${relativeLeft}px`;
+          this.overlay.style.top = `${relativeTop}px`;
+          this.overlay.style.width = `${canvasRect.width}px`;
+          this.overlay.style.height = `${canvasRect.height}px`;
+          
+          console.log('iframe-overlayをcanvasに同期しました:', {
+            left: relativeLeft,
+            top: relativeTop,
+            width: canvasRect.width,
+            height: canvasRect.height
+          });
+        }
+      }
+    } catch (e) {
+      console.log('canvasとの同期に失敗:', e);
     }
   }
 
