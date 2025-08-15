@@ -24,6 +24,26 @@ export class SketchPageView {
           id="sketch-iframe"
         ></iframe>
         
+        <!-- ウィンドウサイズいっぱいのマウス監視用div -->
+        <div 
+          id="mouse-monitor-overlay" 
+          class="mouse-monitor-overlay"
+          style="display: none;"
+        ></div>
+        
+        <!-- iframeの外側に配置するオーバーレイ -->
+        <div 
+          id="iframe-overlay" 
+          class="iframe-overlay"
+          style="display: none;"
+        >
+          <!-- 四隅のハンドル -->
+          <div class="resize-handle resize-handle-top-left" data-handle="top-left"></div>
+          <div class="resize-handle resize-handle-top-right" data-handle="top-right"></div>
+          <div class="resize-handle resize-handle-bottom-left" data-handle="bottom-left"></div>
+          <div class="resize-handle resize-handle-bottom-right" data-handle="bottom-right"></div>
+        </div>
+        
         <div class="sketch-overlay-info">
           <div class="sketch-overlay-content">
             <img 
@@ -101,6 +121,69 @@ export class SketchPageView {
     } else {
       // フルスクリーン開始アイコン
       icon.innerHTML = '<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>';
+    }
+  }
+
+  toggleIframeOverlay(isVisible: boolean): void {
+    const overlay = document.getElementById('iframe-overlay') as HTMLDivElement;
+    const mouseMonitor = document.getElementById('mouse-monitor-overlay') as HTMLDivElement;
+    
+    if (overlay && mouseMonitor) {
+      if (isVisible) {
+        // オーバーレイを表示し、iframe内のcanvasの位置とサイズに合わせる
+        this.positionOverlayToCanvas(overlay);
+        overlay.style.display = 'block';
+        // マウス監視用divも表示
+        mouseMonitor.style.display = 'block';
+        console.log('iframeオーバーレイとマウス監視を表示しました');
+      } else {
+        overlay.style.display = 'none';
+        mouseMonitor.style.display = 'none';
+        console.log('iframeオーバーレイとマウス監視を非表示にしました');
+      }
+    }
+  }
+
+  private positionOverlayToCanvas(overlay: HTMLDivElement): void {
+    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
+    if (!iframe) return;
+
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        const canvas = iframeDoc.querySelector('canvas');
+        if (canvas) {
+          // canvasの位置とサイズを取得
+          const canvasRect = canvas.getBoundingClientRect();
+          const iframeRect = iframe.getBoundingClientRect();
+          
+          // iframe内のcanvasの相対位置を計算
+          const relativeLeft = canvasRect.left - iframeRect.left;
+          const relativeTop = canvasRect.top - iframeRect.top;
+          
+          // オーバーレイをcanvasの位置とサイズに合わせる
+          overlay.style.position = 'absolute';
+          overlay.style.left = `${relativeLeft}px`;
+          overlay.style.top = `${relativeTop}px`;
+          overlay.style.width = `${canvasRect.width}px`;
+          overlay.style.height = `${canvasRect.height}px`;
+          
+          console.log('オーバーレイをcanvasの位置とサイズに合わせました:', {
+            left: relativeLeft,
+            top: relativeTop,
+            width: canvasRect.width,
+            height: canvasRect.height
+          });
+        }
+      }
+    } catch (e) {
+      console.log('canvasの位置取得に失敗:', e);
+      // フォールバック: iframe全体に合わせる
+      overlay.style.position = 'absolute';
+      overlay.style.left = '0px';
+      overlay.style.top = '0px';
+      overlay.style.width = '100%';
+      overlay.style.height = '100%';
     }
   }
 

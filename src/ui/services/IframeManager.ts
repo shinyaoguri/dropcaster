@@ -80,12 +80,35 @@ export class IframeManager {
     
     if (!this.iframe) return;
 
-    if (isActive) {
-      this.iframe.style.border = '3px solid #10b981';
-      this.iframe.style.borderRadius = '8px';
-    } else {
-      this.iframe.style.border = 'none';
-      this.iframe.style.borderRadius = '0';
+    try {
+      const iframeDoc = this.iframe.contentDocument || this.iframe.contentWindow?.document;
+      if (iframeDoc) {
+        // 既存の設定モード用スタイルを削除
+        const existingStyle = iframeDoc.getElementById('settings-mode-style');
+        if (existingStyle) {
+          existingStyle.remove();
+        }
+
+        if (isActive) {
+          // 設定モードON: Canvas要素に緑色の枠を追加
+          const style = iframeDoc.createElement('style');
+          style.id = 'settings-mode-style';
+          style.textContent = `
+            canvas {
+              border: 3px solid #10b981 !important;
+              border-radius: 8px !important;
+              box-shadow: 0 0 10px rgba(16, 185, 129, 0.3) !important;
+            }
+          `;
+          iframeDoc.head.appendChild(style);
+          console.log('iframe内のCanvas要素に緑色の枠を設定しました');
+        } else {
+          // 設定モードOFF: 枠を削除
+          console.log('iframe内のCanvas要素の枠を削除しました');
+        }
+      }
+    } catch (e) {
+      console.log('iframe内のスタイル設定に失敗:', e);
     }
   }
 

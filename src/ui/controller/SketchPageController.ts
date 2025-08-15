@@ -2,18 +2,22 @@ import type { Sketch } from '../../types/sketch.js';
 import { FullscreenManager } from '../services/FullscreenManager';
 import { IframeManager } from '../services/IframeManager';
 import { CursorManager } from '../services/CursorManager';
+import { ResizeManager } from '../services/ResizeManager';
 import { SketchPageView } from '../views/SketchPageView';
 
 export class SketchPageController {
   private fullscreenManager: FullscreenManager;
   private iframeManager: IframeManager;
   private cursorManager: CursorManager;
+  private resizeManager: ResizeManager;
   private view: SketchPageView;
+  private isSettingsMode = false;
 
   constructor() {
     this.fullscreenManager = new FullscreenManager();
     this.iframeManager = new IframeManager();
     this.cursorManager = new CursorManager();
+    this.resizeManager = new ResizeManager();
     this.view = new SketchPageView();
   }
 
@@ -27,6 +31,7 @@ export class SketchPageController {
     await this.iframeManager.initialize(sketch);
     this.fullscreenManager.initialize();
     this.cursorManager.initialize();
+    this.resizeManager.initialize();
     
     // イベントリスナーの設定
     this.setupEventListeners();
@@ -72,11 +77,18 @@ export class SketchPageController {
     this.view.onWindowSettingsToggle(() => {
       console.log('SketchPageController: ウィンドウ設定ボタンクリック');
       // 設定モードの状態を切り替え
+      this.isSettingsMode = !this.isSettingsMode;
       const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
-      const isActive = windowSettingsBtn.classList.contains('settings-active');
-      windowSettingsBtn.classList.toggle('settings-active', !isActive);
+      windowSettingsBtn.classList.toggle('settings-active', this.isSettingsMode);
       
-      this.iframeManager.toggleSettingsMode(!isActive);
+      // iframeオーバーレイの表示/非表示を制御
+      this.view.toggleIframeOverlay(this.isSettingsMode);
+      
+      // iframe内のCanvas要素の設定モードも更新
+      this.iframeManager.toggleSettingsMode(this.isSettingsMode);
+      
+      console.log('SketchPageController: 設定モード:', this.isSettingsMode ? 'ON' : 'OFF');
+      console.log('SketchPageController: iframe内のCanvas要素の枠を', this.isSettingsMode ? '追加' : '削除');
     });
     
     console.log('SketchPageController: イベントリスナーの設定完了');
@@ -87,6 +99,7 @@ export class SketchPageController {
     this.fullscreenManager.destroy();
     this.iframeManager.destroy();
     this.cursorManager.destroy();
+    this.resizeManager.destroy();
     this.view.destroy();
     console.log('SketchPageController: 破棄処理完了');
   }
