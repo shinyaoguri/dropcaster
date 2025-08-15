@@ -1,12 +1,15 @@
 import type { Sketch } from '../../types/sketch.js';
 import { EventEmitter } from '../../core/events/EventEmitter';
+import { CursorManager } from '../services/CursorManager';
 
 export class SketchPageView {
   private eventEmitter: EventEmitter;
   private resizeManager: any; // ResizeManagerのインスタンスを保持
+  private cursorManager: CursorManager;
 
   constructor() {
     this.eventEmitter = new EventEmitter();
+    this.cursorManager = new CursorManager();
   }
 
   render(sketch: Sketch): void {
@@ -50,7 +53,7 @@ export class SketchPageView {
           <div class="resize-handle resize-handle-bottom-right" data-handle="bottom-right"></div>
         </div>
         
-        <div class="sketch-overlay-info">
+        <div class="sketch-overlay-info ui-element">
           <div class="sketch-overlay-content">
             <img 
               src="${(sketch.userData?.avatarFile || '/public/avatars/user128718.jpg').replace('../', '/')}" 
@@ -67,7 +70,7 @@ export class SketchPageView {
         <!-- フルスクリーンボタン -->
         <button 
           id="fullscreen-btn" 
-          class="fullscreen-button"
+          class="fullscreen-button ui-element"
           title="フルスクリーン"
           aria-label="フルスクリーン"
         >
@@ -77,7 +80,7 @@ export class SketchPageView {
         <!-- ウィンドウ設定ボタン -->
         <button 
           id="window-settings-btn" 
-          class="window-settings-button"
+          class="window-settings-button ui-element"
           title="ウィンドウ設定"
           aria-label="ウィンドウ設定"
         >
@@ -89,6 +92,9 @@ export class SketchPageView {
     `;
     
     this.setupEventListeners();
+    
+    // CursorManagerを初期化
+    this.cursorManager.initialize();
   }
 
   private setupEventListeners(): void {
@@ -98,7 +104,15 @@ export class SketchPageView {
     // フルスクリーンボタンのイベント
     fullscreenBtn.addEventListener('click', () => {
       const container = document.querySelector('.fullscreen-sketch-container') as HTMLDivElement;
-      this.eventEmitter.emit('fullscreenToggle', container);
+      if (document.fullscreenElement) {
+        // フルスクリーンを終了
+        document.exitFullscreen();
+      } else {
+        // フルスクリーンを開始
+        container.requestFullscreen().catch(err => {
+          console.error('フルスクリーン化に失敗しました:', err);
+        });
+      }
     });
 
     // ウィンドウ設定ボタンのイベント
@@ -109,36 +123,53 @@ export class SketchPageView {
     // フルスクリーン状態の変更を監視
     document.addEventListener('fullscreenchange', () => {
       const isFullscreen = !!document.fullscreenElement;
-      fullscreenBtn.classList.toggle('fullscreen-active', isFullscreen);
+      this.updateFullscreenUI(isFullscreen);
       
-      // フルスクリーン時にボタンとユーザー情報を非表示
-      const overlayInfo = document.querySelector('.sketch-overlay-info') as HTMLDivElement;
-      if (isFullscreen) {
-        fullscreenBtn.style.opacity = '0';
-        fullscreenBtn.style.pointerEvents = 'none';
-        if (overlayInfo) {
-          overlayInfo.style.opacity = '0';
-          overlayInfo.style.pointerEvents = 'none';
-        }
-      } else {
-        fullscreenBtn.style.opacity = '1';
-        fullscreenBtn.style.pointerEvents = 'auto';
-        if (overlayInfo) {
-          overlayInfo.style.opacity = '1';
-          overlayInfo.style.pointerEvents = 'auto';
-        }
-      }
-      
-      // アイコンを更新
-      const icon = fullscreenBtn.querySelector('.fullscreen-icon') as HTMLElement;
-      if (isFullscreen) {
-        // フルスクリーン終了アイコン
-        icon.className = 'fas fa-compress fullscreen-icon';
-      } else {
-        // フルスクリーン開始アイコン
-        icon.className = 'fas fa-expand fullscreen-icon';
+      // CursorManagerにフルスクリーン状態を通知
+      this.cursorManager.setFullscreenMode(isFullscreen);
+    });
+  }
+
+  private updateFullscreenUI(isFullscreen: boolean): void {
+    const fullscreenBtn = document.getElementById('fullscreen-btn') as HTMLButtonElement;
+    const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
+    const overlayInfo = document.querySelector('.sketch-overlay-info') as HTMLDivElement;
+    
+    // 両方のボタンにフルスクリーン状態のクラスを適用
+    fullscreenBtn.classList.toggle('fullscreen-active', isFullscreen);
+    windowSettingsBtn.classList.toggle('fullscreen-active', isFullscreen);
+    
+    // UI要素の表示/非表示を統一的に管理
+    this.toggleUIElements(isFullscreen);
+    
+    // アイコンを更新
+    const icon = fullscreenBtn.querySelector('.fullscreen-icon') as HTMLElement;
+    if (isFullscreen) {
+      // フルスクリーン終了アイコン
+      icon.className = 'fas fa-compress fullscreen-icon';
+    } else {
+      // フルスクリーン開始アイコン
+      icon.className = 'fas fa-expand fullscreen-icon';
+    }
+  }
+
+  private toggleUIElements(isVisible: boolean): void {
+    const fullscreenBtn = document.getElementById('fullscreen-btn') as HTMLButtonElement;
+    const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
+    const overlayInfo = document.querySelector('.sketch-overlay-info') as HTMLDivElement;
+    
+    const opacity = isVisible ? '1' : '0';
+    const pointerEvents = isVisible ? 'auto' : 'none';
+    
+    // 全てのUI要素を同時に制御
+    [fullscreenBtn, windowSettingsBtn, overlayInfo].forEach(element => {
+      if (element) {
+        element.style.opacity = opacity;
+        element.style.pointerEvents = pointerEvents;
       }
     });
+    
+    console.log(`UI要素を${isVisible ? '表示' : '非表示'}にしました`);
   }
 
   updateFullscreenState(isFullscreen: boolean): void {
@@ -150,16 +181,8 @@ export class SketchPageView {
       container.classList.remove('fullscreen');
     }
     
-    // アイコンを更新
-    const fullscreenBtn = document.getElementById('fullscreen-btn') as HTMLButtonElement;
-    const icon = fullscreenBtn.querySelector('.fullscreen-icon') as SVGElement;
-    if (isFullscreen) {
-      // フルスクリーン終了アイコン
-      icon.innerHTML = '<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>';
-    } else {
-      // フルスクリーン開始アイコン
-      icon.innerHTML = '<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>';
-    }
+    // UI要素の更新も統一的に処理
+    this.updateFullscreenUI(isFullscreen);
   }
 
   toggleIframeOverlay(isVisible: boolean): void {
@@ -251,5 +274,6 @@ export class SketchPageView {
 
   destroy(): void {
     this.eventEmitter.removeAllListeners();
+    this.cursorManager.destroy();
   }
 }
