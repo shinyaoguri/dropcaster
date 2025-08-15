@@ -405,6 +405,10 @@ body {
   top: 5rem;
 }
 
+.open-windows-button {
+  top: 9rem;
+}
+
 .window-settings-button.settings-active {
   background: rgba(16, 185, 129, 0.8);
   border-color: rgba(16, 185, 129, 0.8);

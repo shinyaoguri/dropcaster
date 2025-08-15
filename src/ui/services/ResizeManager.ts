@@ -1,15 +1,12 @@
 import { OverlayManager } from './OverlayManager';
-import { CanvasSyncManager } from './CanvasSyncManager';
 import { ResizeHandleManager } from './ResizeHandleManager';
 
 export class ResizeManager {
   private overlayManager: OverlayManager;
-  private canvasSyncManager: CanvasSyncManager;
   private handleManager: ResizeHandleManager;
 
   constructor() {
     this.overlayManager = new OverlayManager();
-    this.canvasSyncManager = new CanvasSyncManager();
     this.handleManager = new ResizeHandleManager();
   }
 
@@ -30,12 +27,6 @@ export class ResizeManager {
       
       if (overlay && mouseMonitor && overlay.style.display !== 'none') {
         this.handleManager.initialize(overlay as HTMLDivElement, mouseMonitor as HTMLDivElement);
-        this.handleManager.onResizeEnd(() => {
-          const overlayElement = this.overlayManager.getOverlay();
-          if (overlayElement) {
-            this.canvasSyncManager.updateCanvasFromOverlay(overlayElement);
-          }
-        });
       } else {
         // まだ表示されていない場合は再試行
         setTimeout(checkOverlay, 100);
@@ -45,9 +36,6 @@ export class ResizeManager {
     checkOverlay();
   }
 
-  syncOverlayWithCanvas(): void {
-    this.overlayManager.syncWithCanvas();
-  }
 
   destroy(): void {
     this.handleManager.destroy();

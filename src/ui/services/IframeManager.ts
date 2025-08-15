@@ -1,6 +1,5 @@
 export class IframeManager {
   private iframe: HTMLIFrameElement | null = null;
-  private onCanvasLoadCallback: (() => void) | null = null;
 
   async initialize(): Promise<void> {
     this.iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
@@ -14,9 +13,6 @@ export class IframeManager {
     
     // スケッチ用のスタイルを適用
     this.applySketchStyles();
-    
-    // canvasの読み込み完了を待つ
-    await this.waitForCanvasLoad();
   }
 
   private setupIframeStyles(): void {
@@ -39,35 +35,6 @@ export class IframeManager {
     });
   }
 
-  private async waitForCanvasLoad(): Promise<void> {
-    if (!this.iframe) return;
-
-    return new Promise((resolve) => {
-      const checkCanvas = () => {
-        try {
-          const iframeDoc = this.iframe!.contentDocument || this.iframe!.contentWindow?.document;
-          if (iframeDoc) {
-            const canvas = iframeDoc.querySelector('canvas');
-            if (canvas) {
-              console.log('iframe内のcanvasを検出しました');
-              if (this.onCanvasLoadCallback) {
-                this.onCanvasLoadCallback();
-              }
-              resolve();
-              return;
-            }
-          }
-        } catch (e) {
-          console.log('canvasの検出に失敗:', e);
-        }
-        
-        // 100ms後に再試行
-        setTimeout(checkCanvas, 100);
-      };
-      
-      checkCanvas();
-    });
-  }
 
   private applySketchStyles(): void {
     if (!this.iframe) return;
@@ -105,14 +72,6 @@ export class IframeManager {
       console.log('Cannot access iframe content due to CORS policy');
     }
   }
-
-  /**
-   * canvas読み込み完了時のコールバックを設定
-   */
-  onCanvasLoad(callback: () => void): void {
-    this.onCanvasLoadCallback = callback;
-  }
-
 
   toggleSettingsMode(isActive: boolean): void {
     if (!this.iframe) return;
@@ -155,6 +114,5 @@ export class IframeManager {
 
   destroy(): void {
     this.iframe = null;
-    this.onCanvasLoadCallback = null;
   }
 }

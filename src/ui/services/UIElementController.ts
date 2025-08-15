@@ -2,6 +2,7 @@ export class UIElementController {
   private readonly elements = {
     fullscreenBtn: () => document.getElementById('fullscreen-btn') as HTMLButtonElement,
     windowSettingsBtn: () => document.getElementById('window-settings-btn') as HTMLButtonElement,
+    openWindowsBtn: () => document.getElementById('open-windows-btn') as HTMLButtonElement,
     overlayInfo: () => document.querySelector('.sketch-overlay-info') as HTMLDivElement
   };
 
@@ -49,8 +50,9 @@ export class UIElementController {
   setFullscreenActiveState(isFullscreen: boolean): void {
     const fullscreenBtn = this.elements.fullscreenBtn();
     const windowSettingsBtn = this.elements.windowSettingsBtn();
+    const openWindowsBtn = this.elements.openWindowsBtn();
     
-    [fullscreenBtn, windowSettingsBtn].forEach(btn => {
+    [fullscreenBtn, windowSettingsBtn, openWindowsBtn].forEach(btn => {
       if (btn) {
         btn.classList.toggle('fullscreen-active', isFullscreen);
       }

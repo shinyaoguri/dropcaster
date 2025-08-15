@@ -11,7 +11,6 @@ export class ResizeHandleManager {
   private mouseMonitor: HTMLDivElement | null = null;
   private boundHandleMouseMove: (e: MouseEvent) => void;
   private boundHandleMouseUp: () => void;
-  private onResizeEndCallback: (() => void) | null = null;
 
   constructor() {
     this.boundHandleMouseMove = this.handleMouseMove.bind(this);
@@ -24,9 +23,6 @@ export class ResizeHandleManager {
     this.setupHandles();
   }
 
-  onResizeEnd(callback: () => void): void {
-    this.onResizeEndCallback = callback;
-  }
 
   private setupHandles(): void {
     if (!this.overlay) return;
@@ -130,10 +126,6 @@ export class ResizeHandleManager {
     document.body.style.cursor = 'auto';
     this.stopMouseMonitoring();
     
-    if (this.onResizeEndCallback) {
-      this.onResizeEndCallback();
-    }
-    
     console.log('リサイズ終了:', this.currentHandle);
     this.currentHandle = null;
   }
@@ -202,6 +194,5 @@ export class ResizeHandleManager {
     this.stopMouseMonitoring();
     this.overlay = null;
     this.mouseMonitor = null;
-    this.onResizeEndCallback = null;
   }
 }

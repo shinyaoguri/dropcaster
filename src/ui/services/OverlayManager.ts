@@ -21,42 +21,6 @@ export class OverlayManager {
     }
   }
 
-  syncWithCanvas(): void {
-    if (!this.overlay) return;
-
-    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
-    if (!iframe) return;
-
-    try {
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-      if (iframeDoc) {
-        const canvas = iframeDoc.querySelector('canvas');
-        if (canvas) {
-          const canvasRect = canvas.getBoundingClientRect();
-          const iframeRect = iframe.getBoundingClientRect();
-          
-          const relativeLeft = canvasRect.left - iframeRect.left;
-          const relativeTop = canvasRect.top - iframeRect.top;
-          
-          this.overlay.style.position = 'absolute';
-          this.overlay.style.left = `${relativeLeft}px`;
-          this.overlay.style.top = `${relativeTop}px`;
-          this.overlay.style.width = `${canvasRect.width}px`;
-          this.overlay.style.height = `${canvasRect.height}px`;
-          
-          console.log('iframe-overlayをcanvasに同期しました:', {
-            left: relativeLeft,
-            top: relativeTop,
-            width: canvasRect.width,
-            height: canvasRect.height
-          });
-        }
-      }
-    } catch (e) {
-      console.log('canvasとの同期に失敗:', e);
-    }
-  }
-
   getOverlay(): HTMLDivElement | null {
     return this.overlay;
   }
