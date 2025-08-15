@@ -33,24 +33,13 @@ export class SketchPageView {
           <!-- 中身はまだ空 -->
         </div>
         
-        <!-- ウィンドウサイズいっぱいのマウス監視用div -->
-        <div 
-          id="mouse-monitor-overlay" 
-          class="mouse-monitor-overlay"
-          style="display: none;"
-        ></div>
-        
         <!-- iframeの外側に配置するオーバーレイ -->
         <div 
           id="iframe-overlay" 
           class="iframe-overlay"
           style="display: none;"
         >
-          <!-- 四隅のハンドル -->
-          <div class="resize-handle resize-handle-top-left" data-handle="top-left"></div>
-          <div class="resize-handle resize-handle-top-right" data-handle="top-right"></div>
-          <div class="resize-handle resize-handle-bottom-left" data-handle="bottom-left"></div>
-          <div class="resize-handle resize-handle-bottom-right" data-handle="bottom-right"></div>
+          <!-- 空のdiv要素 -->
         </div>
         
         <div class="sketch-overlay-info ui-element">
@@ -70,21 +59,21 @@ export class SketchPageView {
         <!-- フルスクリーンボタン -->
         <button 
           id="fullscreen-btn" 
-          class="fullscreen-button ui-element"
+          class="fullscreen-button top-right-button ui-element"
           title="フルスクリーン"
           aria-label="フルスクリーン"
         >
-          <i class="fas fa-expand fullscreen-icon"></i>
+          <i class="fas fa-expand fullscreen-icon button-icon"></i>
         </button>
 
         <!-- ウィンドウ設定ボタン -->
         <button 
           id="window-settings-btn" 
-          class="window-settings-button ui-element"
+          class="window-settings-button top-right-button ui-element"
           title="ウィンドウ設定"
           aria-label="ウィンドウ設定"
         >
-          <svg class="window-settings-icon" viewBox="0 0 24 24" fill="currentColor">
+          <svg class="window-settings-icon button-icon" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
           </svg>
         </button>
@@ -135,21 +124,28 @@ export class SketchPageView {
     const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
     const overlayInfo = document.querySelector('.sketch-overlay-info') as HTMLDivElement;
     
+    console.log(`🔄 フルスクリーン状態更新: ${isFullscreen ? '開始' : '終了'}`);
+    
     // 両方のボタンにフルスクリーン状態のクラスを適用
     fullscreenBtn.classList.toggle('fullscreen-active', isFullscreen);
     windowSettingsBtn.classList.toggle('fullscreen-active', isFullscreen);
     
     // UI要素の表示/非表示を統一的に管理
-    this.toggleUIElements(isFullscreen);
+    // フルスクリーン時は非表示、フルスクリーン終了時は表示
+    const shouldShowUI = !isFullscreen;
+    console.log(`👁️ UI要素の表示状態: ${shouldShowUI ? '表示' : '非表示'}`);
+    this.toggleUIElements(shouldShowUI);
     
     // アイコンを更新
     const icon = fullscreenBtn.querySelector('.fullscreen-icon') as HTMLElement;
     if (isFullscreen) {
       // フルスクリーン終了アイコン
-      icon.className = 'fas fa-compress fullscreen-icon';
+      icon.className = 'fas fa-compress fullscreen-icon button-icon';
+      console.log('🔴 フルスクリーン終了アイコンに変更');
     } else {
       // フルスクリーン開始アイコン
-      icon.className = 'fas fa-expand fullscreen-icon';
+      icon.className = 'fas fa-expand fullscreen-icon button-icon';
+      console.log('🟢 フルスクリーン開始アイコンに変更');
     }
   }
 
@@ -187,64 +183,15 @@ export class SketchPageView {
 
   toggleIframeOverlay(isVisible: boolean): void {
     const overlay = document.getElementById('iframe-overlay') as HTMLDivElement;
-    const mouseMonitor = document.getElementById('mouse-monitor-overlay') as HTMLDivElement;
     
-    if (overlay && mouseMonitor) {
+    if (overlay) {
       if (isVisible) {
-        // オーバーレイを表示し、iframe内のcanvasの位置とサイズに合わせる
-        this.positionOverlayToCanvas(overlay);
         overlay.style.display = 'block';
-        // マウス監視用divも表示
-        mouseMonitor.style.display = 'block';
-        console.log('iframeオーバーレイとマウス監視を表示しました');
+        console.log('iframeオーバーレイを表示しました');
       } else {
         overlay.style.display = 'none';
-        mouseMonitor.style.display = 'none';
-        console.log('iframeオーバーレイとマウス監視を非表示にしました');
+        console.log('iframeオーバーレイを非表示にしました');
       }
-    }
-  }
-
-  private positionOverlayToCanvas(overlay: HTMLDivElement): void {
-    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
-    if (!iframe) return;
-
-    try {
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-      if (iframeDoc) {
-        const canvas = iframeDoc.querySelector('canvas');
-        if (canvas) {
-          // canvasの位置とサイズを取得
-          const canvasRect = canvas.getBoundingClientRect();
-          const iframeRect = iframe.getBoundingClientRect();
-          
-          // iframe内のcanvasの相対位置を計算
-          const relativeLeft = canvasRect.left - iframeRect.left;
-          const relativeTop = canvasRect.top - iframeRect.top;
-          
-          // オーバーレイをcanvasの位置とサイズに合わせる
-          overlay.style.position = 'absolute';
-          overlay.style.left = `${relativeLeft}px`;
-          overlay.style.top = `${relativeTop}px`;
-          overlay.style.width = `${canvasRect.width}px`;
-          overlay.style.height = `${canvasRect.height}px`;
-          
-          console.log('オーバーレイをcanvasの位置とサイズに合わせました:', {
-            left: relativeLeft,
-            top: relativeTop,
-            width: canvasRect.width,
-            height: canvasRect.height
-          });
-        }
-      }
-    } catch (e) {
-      console.log('canvasの位置取得に失敗:', e);
-      // フォールバック: iframe全体に合わせる
-      overlay.style.position = 'absolute';
-      overlay.style.left = '0px';
-      overlay.style.top = '0px';
-      overlay.style.width = '100%';
-      overlay.style.height = '100%';
     }
   }
 

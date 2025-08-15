@@ -260,8 +260,6 @@ body {
   height: 100vh;
   background: #000;
   z-index: 1000;
-  /* iframeとオーバーレイの配置のため */
-  position: relative;
 }
 
 .fullscreen-iframe {
@@ -271,22 +269,8 @@ body {
   display: block;
   margin: 0;
   padding: 0;
-  /* iframeの上にオーバーレイを重ねるため */
   position: relative;
   z-index: 1000;
-}
-/* マウス監視用オーバーレイ */
-.mouse-monitor-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background-color: transparent;
-  pointer-events: auto;
-  z-index: 1000; /* iframeと同じレベル */
-  /* マウスイベントを確実に取得するため */
-  cursor: default;
 }
 
 /* iframeオーバーレイ */
@@ -294,90 +278,23 @@ body {
   position: absolute;
   top: 0;
   left: 0;
+  right: 0;
+  bottom: 0;
   width: 100%;
   height: 100%;
-  border: 3px solid #ef4444; /* 赤い枠 */
+  border: 3px solid #ef4444;
   border-radius: 8px;
   background-color: rgba(255, 0, 0, 0.2);
   pointer-events: auto;
-  z-index: 1001; /* iframeより上、ボタンより下 */
+  z-index: 1001;
   box-sizing: border-box;
   transition: opacity 0.3s ease;
-  /* iframeの外側に配置するための設定 */
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  /* 初期状態では非表示 */
   display: none;
 }
 
 .iframe-overlay:hover {
-  border-color: #dc2626; /* ホバー時に少し濃い赤 */
+  border-color: #dc2626;
   box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
-}
-
-/* リサイズハンドル */
-.resize-handle {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  background-color: #ef4444;
-  border: 2px solid #ffffff;
-  border-radius: 50%;
-  cursor: pointer;
-  z-index: 1003; /* ボタンより上に表示 */
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
-  pointer-events: auto;
-  /* 確実に表示されるように */
-  display: block;
-  visibility: visible;
-  opacity: 1;
-}
-
-.resize-handle:hover {
-  background-color: #dc2626;
-  transform: scale(1.2);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.6);
-}
-
-.resize-handle:active {
-  transform: scale(1.1);
-  background-color: #b91c1c;
-}
-
-/* 各ハンドルの位置 */
-.resize-handle-top-left {
-  top: -10px;
-  left: -10px;
-  cursor: nw-resize;
-}
-
-.resize-handle-top-right {
-  top: -10px;
-  right: -10px;
-  cursor: ne-resize;
-}
-
-.resize-handle-bottom-left {
-  bottom: -10px;
-  left: -10px;
-  cursor: sw-resize;
-}
-
-.resize-handle-bottom-right {
-  bottom: -10px;
-  right: -10px;
-  cursor: se-resize;
-}
-
-/* ドラッグ中のハンドル */
-.resize-handle.dragging {
-  background-color: #b91c1c;
-  transform: scale(1.3);
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.7);
 }
 
 /* 設定モードがONの時のiframeオーバーレイ */
@@ -405,21 +322,6 @@ body {
   cursor: none !important;
 }
 
-/* iframeと重ねるレイヤー */
-.sketch-overlay-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 1001;
-  pointer-events: none; /* 初期状態ではiframeの操作を妨げない */
-}
-
-.sketch-overlay-layer.active {
-  pointer-events: auto; /* アクティブ時は操作可能 */
-}
-
 /* UI要素の統一管理 */
 .ui-element {
   transition: opacity 0.3s ease, pointer-events 0.3s ease;
@@ -435,10 +337,9 @@ body {
   pointer-events: auto !important;
 }
 
-/* フルスクリーンボタン */
-.fullscreen-button {
+/* 右上のボタン共通スタイル */
+.top-right-button {
   position: fixed;
-  top: 1rem;
   right: 1rem;
   width: 48px;
   height: 48px;
@@ -449,35 +350,32 @@ body {
   color: white;
   cursor: pointer;
   z-index: 1002;
-  transition: all 0.3s ease, opacity 0.3s ease;
+  transition: all 0.3s ease;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.fullscreen-button:hover {
+.top-right-button:hover {
   background: rgba(0, 0, 0, 0.8);
   border-color: rgba(255, 255, 255, 0.5);
   transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
 }
 
-.fullscreen-button:active {
+.top-right-button:active {
   transform: scale(0.95);
 }
 
-.fullscreen-button.fullscreen-active {
+.top-right-button.fullscreen-active {
   background: rgba(0, 0, 0, 0.8);
   border-color: rgba(255, 255, 255, 0.8);
   transform: scale(1.1);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
 }
 
-.fullscreen-button.fullscreen-active .fullscreen-icon {
-  color: #ffffff;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
-}
-
-.fullscreen-icon {
+/* ボタン内のアイコン共通スタイル */
+.top-right-button .button-icon {
   width: 20px;
   height: 20px;
   transition: transform 0.3s ease;
@@ -487,69 +385,44 @@ body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
-.fullscreen-button:hover .fullscreen-icon {
+.top-right-button:hover .button-icon {
   transform: scale(1.1);
   color: #ffffff;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
 }
 
-/* ウィンドウ設定ボタン */
+.top-right-button.fullscreen-active .button-icon {
+  color: #ffffff;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* 個別ボタンの位置指定 */
+.fullscreen-button {
+  top: 1rem;
+}
+
 .window-settings-button {
-  position: fixed;
   top: 5rem;
-  right: 1rem;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  color: white;
-  cursor: pointer;
-  z-index: 1002;
-  transition: all 0.3s ease, opacity 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
-.window-settings-button:hover {
-  background: rgba(0, 0, 0, 0.8);
-  border-color: rgba(255, 255, 255, 0.5);
-  transform: scale(1.05);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+.window-settings-button.settings-active {
+  background: rgba(16, 185, 129, 0.8);
+  border-color: rgba(16, 185, 129, 0.8);
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
 }
 
-.window-settings-button:active {
-  transform: scale(0.95);
-}
-
-.window-settings-button.fullscreen-active {
-  background: rgba(0, 0, 0, 0.8);
-  border-color: rgba(255, 255, 255, 0.8);
-  transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+.window-settings-button.settings-active:hover {
+  background: rgba(16, 185, 129, 0.9);
+  border-color: rgba(16, 185, 129, 1);
 }
 
 .window-settings-icon {
   width: 20px;
   height: 20px;
   transition: transform 0.3s ease;
-  color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
-.window-settings-button:hover .window-settings-icon {
-  transform: scale(1.1);
-  color: #ffffff;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
-}
-
-.window-settings-button.fullscreen-active .window-settings-icon {
-  color: #ffffff;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
-}
-
+/* ユーザー情報オーバーレイ */
 .sketch-overlay-info {
   position: fixed;
   bottom: 1rem;
@@ -727,127 +600,4 @@ body {
     font-size: 0.7rem;
     max-width: 100px;
   }
-}
-
-/* 削除されたCSSセクションを復元 */
-
-/* 設定モードがONの時のiframeオーバーレイ */
-.iframe-overlay[style*="display: block"] {
-  z-index: 1001;
-  pointer-events: auto;
-}
-
-/* 設定モードがOFFの時のiframeオーバーレイ */
-.iframe-overlay[style*="display: none"] {
-  z-index: -1;
-  pointer-events: none;
-}
-
-/* フルスクリーン時のカーソル制御 */
-.fullscreen-sketch-container.fullscreen {
-  cursor: none !important;
-}
-
-.fullscreen-sketch-container.fullscreen * {
-  cursor: none !important;
-}
-
-.fullscreen-sketch-container.fullscreen iframe {
-  cursor: none !important;
-}
-
-/* フルスクリーンボタン */
-.fullscreen-button {
-  position: fixed;
-  top: 1rem;
-  right: 1rem;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  color: white;
-  cursor: pointer;
-  z-index: 1002;
-  transition: all 0.3s ease, opacity 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.fullscreen-button:hover {
-  background: rgba(0, 0, 0, 0.8);
-  border-color: rgba(255, 255, 255, 0.5);
-  transform: scale(1.05);
-}
-
-.fullscreen-button:active {
-  transform: scale(0.95);
-}
-
-.fullscreen-button.fullscreen-active {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.8);
-}
-
-.fullscreen-icon {
-  width: 20px;
-  height: 20px;
-  transition: transform 0.3s ease;
-}
-
-.fullscreen-button:hover .fullscreen-icon {
-  transform: scale(1.1);
-}
-
-/* ウィンドウ設定ボタン */
-.window-settings-button {
-  position: fixed;
-  top: 5rem;
-  right: 1rem;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  color: white;
-  cursor: pointer;
-  z-index: 1002;
-  transition: all 0.3s ease, opacity 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.window-settings-button:hover {
-  background: rgba(0, 0, 0, 0.8);
-  border-color: rgba(255, 255, 255, 0.5);
-  transform: scale(1.05);
-}
-
-.window-settings-button:active {
-  transform: scale(0.95);
-}
-
-.window-settings-icon {
-  width: 20px;
-  height: 20px;
-  transition: transform 0.3s ease;
-}
-
-.window-settings-button:hover .window-settings-icon {
-  transform: scale(1.1);
-}
-
-.window-settings-button.settings-active {
-  background: rgba(16, 185, 129, 0.8);
-  border-color: rgba(16, 185, 129, 0.8);
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
-}
-
-.window-settings-button.settings-active:hover {
-  background: rgba(16, 185, 129, 0.9);
-  border-color: rgba(16, 185, 129, 1);
 }
