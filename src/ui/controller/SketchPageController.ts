@@ -28,7 +28,7 @@ export class SketchPageController {
     this.view.render(sketch);
     
     // 各マネージャーの初期化
-    await this.iframeManager.initialize(sketch);
+    await this.iframeManager.initialize();
     this.fullscreenManager.initialize();
     this.cursorManager.initialize();
     this.resizeManager.initialize();

@@ -1,11 +1,8 @@
-import type { Sketch } from '../../types/sketch.js';
-
 export class IframeManager {
   private iframe: HTMLIFrameElement | null = null;
-  private isSettingsMode = false;
   private onCanvasLoadCallback: (() => void) | null = null;
 
-  async initialize(sketch: Sketch): Promise<void> {
+  async initialize(): Promise<void> {
     this.iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
     if (!this.iframe) return;
 
@@ -53,6 +50,9 @@ export class IframeManager {
             const canvas = iframeDoc.querySelector('canvas');
             if (canvas) {
               console.log('iframe内のcanvasを検出しました');
+              if (this.onCanvasLoadCallback) {
+                this.onCanvasLoadCallback();
+              }
               resolve();
               return;
             }
@@ -113,18 +113,8 @@ export class IframeManager {
     this.onCanvasLoadCallback = callback;
   }
 
-  /**
-   * canvas読み込み完了時にコールバックを実行
-   */
-  private notifyCanvasLoad(): void {
-    if (this.onCanvasLoadCallback) {
-      this.onCanvasLoadCallback();
-    }
-  }
 
   toggleSettingsMode(isActive: boolean): void {
-    this.isSettingsMode = isActive;
-    
     if (!this.iframe) return;
 
     try {

@@ -1,18 +1,24 @@
 import { EventEmitter } from '../../core/events/EventEmitter';
+import { MouseEventHandler } from './MouseEventHandler';
 
 export class CursorManager {
   private eventEmitter: EventEmitter;
   private cursorHideTimeout: ReturnType<typeof setTimeout> | null = null;
   private isFullscreenMode = false;
   private readonly CURSOR_HIDE_DELAY = 3000; // 3秒後にカーソルを非表示
+  private mouseHandler: MouseEventHandler;
 
   constructor() {
     this.eventEmitter = new EventEmitter();
+    this.mouseHandler = new MouseEventHandler();
   }
 
   initialize(): void {
     // 初期状態ではカーソルを表示
     this.showCursor();
+    
+    // マウスイベントハンドラーを初期化
+    this.mouseHandler.initialize(this.handleMouseActivity);
   }
 
   setFullscreenMode(isFullscreen: boolean): void {
@@ -30,7 +36,7 @@ export class CursorManager {
   private enableAutoHide(): void {
     console.log('CursorManager: カーソル自動非表示を有効化');
     // マウス操作のイベントリスナーを追加
-    this.addMouseEventListeners();
+    this.mouseHandler.startListening();
     
     // 初期タイマーを開始
     this.resetCursorTimer();
@@ -39,7 +45,7 @@ export class CursorManager {
   private disableAutoHide(): void {
     console.log('CursorManager: カーソル自動非表示を無効化');
     // マウス操作のイベントリスナーを削除
-    this.removeMouseEventListeners();
+    this.mouseHandler.stopListening();
     
     // タイマーをクリア
     if (this.cursorHideTimeout) {
@@ -48,69 +54,6 @@ export class CursorManager {
     }
   }
 
-  private addMouseEventListeners(): void {
-    console.log('CursorManager: マウス操作リスナーを追加');
-    const events = ['mousemove', 'mousedown', 'wheel', 'mouseenter', 'keydown', 'keyup'];
-    
-    events.forEach(eventType => {
-      document.addEventListener(eventType, this.handleMouseActivity.bind(this), { passive: true });
-    });
-
-    // iframe内のイベントも監視
-    this.addIframeEventListeners();
-  }
-
-  private removeMouseEventListeners(): void {
-    console.log('CursorManager: マウス操作リスナーを削除');
-    const events = ['mousemove', 'mousedown', 'wheel', 'mouseenter', 'keydown', 'keyup'];
-    
-    events.forEach(eventType => {
-      document.removeEventListener(eventType, this.handleMouseActivity.bind(this));
-    });
-
-    // iframe内のイベントリスナーも削除
-    this.removeIframeEventListeners();
-  }
-
-  private addIframeEventListeners(): void {
-    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
-    if (!iframe) return;
-
-    console.log('CursorManager: iframe内のイベントリスナーを追加');
-    const events = ['mousemove', 'mousedown', 'wheel', 'keydown', 'keyup'];
-    
-    iframe.addEventListener('load', () => {
-      try {
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (iframeDoc) {
-          events.forEach(eventType => {
-            iframeDoc.addEventListener(eventType, this.handleMouseActivity.bind(this), { passive: true });
-          });
-          console.log('CursorManager: iframe内のイベントリスナー設定完了');
-        }
-      } catch (e) {
-        console.log('CursorManager: iframe内のイベントリスナー設定に失敗:', e);
-      }
-    });
-  }
-
-  private removeIframeEventListeners(): void {
-    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
-    if (!iframe) return;
-
-    try {
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-      if (iframeDoc) {
-        const events = ['mousemove', 'mousedown', 'wheel', 'keydown', 'keyup'];
-        events.forEach(eventType => {
-          iframeDoc.removeEventListener(eventType, this.handleMouseActivity.bind(this));
-        });
-        console.log('CursorManager: iframe内のイベントリスナー削除完了');
-      }
-    } catch (e) {
-      console.log('CursorManager: iframe内のイベントリスナー解除に失敗:', e);
-    }
-  }
 
   private handleMouseActivity = (event: Event): void => {
     if (this.isFullscreenMode) {
@@ -176,6 +119,7 @@ export class CursorManager {
 
   destroy(): void {
     this.disableAutoHide();
+    this.mouseHandler.destroy();
     this.eventEmitter.removeAllListeners();
   }
 }

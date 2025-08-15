@@ -1,15 +1,21 @@
 import type { Sketch } from '../../types/sketch.js';
 import { EventEmitter } from '../../core/events/EventEmitter';
 import { CursorManager } from '../services/CursorManager';
+import { UIElementController } from '../services/UIElementController';
+import { OverlayManager } from '../services/OverlayManager';
 
 export class SketchPageView {
   private eventEmitter: EventEmitter;
   private resizeManager: any; // ResizeManagerのインスタンスを保持
   private cursorManager: CursorManager;
+  private uiController: UIElementController;
+  private overlayManager: OverlayManager;
 
   constructor() {
     this.eventEmitter = new EventEmitter();
     this.cursorManager = new CursorManager();
+    this.uiController = new UIElementController();
+    this.overlayManager = new OverlayManager();
   }
 
   render(sketch: Sketch): void {
@@ -120,52 +126,16 @@ export class SketchPageView {
   }
 
   private updateFullscreenUI(isFullscreen: boolean): void {
-    const fullscreenBtn = document.getElementById('fullscreen-btn') as HTMLButtonElement;
-    const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
-    const overlayInfo = document.querySelector('.sketch-overlay-info') as HTMLDivElement;
-    
     console.log(`🔄 フルスクリーン状態更新: ${isFullscreen ? '開始' : '終了'}`);
     
-    // 両方のボタンにフルスクリーン状態のクラスを適用
-    fullscreenBtn.classList.toggle('fullscreen-active', isFullscreen);
-    windowSettingsBtn.classList.toggle('fullscreen-active', isFullscreen);
+    // UI要素の状態を更新
+    this.uiController.setFullscreenActiveState(isFullscreen);
+    this.uiController.updateFullscreenButtonIcon(isFullscreen);
     
     // UI要素の表示/非表示を統一的に管理
-    // フルスクリーン時は非表示、フルスクリーン終了時は表示
     const shouldShowUI = !isFullscreen;
     console.log(`👁️ UI要素の表示状態: ${shouldShowUI ? '表示' : '非表示'}`);
-    this.toggleUIElements(shouldShowUI);
-    
-    // アイコンを更新
-    const icon = fullscreenBtn.querySelector('.fullscreen-icon') as HTMLElement;
-    if (isFullscreen) {
-      // フルスクリーン終了アイコン
-      icon.className = 'fas fa-compress fullscreen-icon button-icon';
-      console.log('🔴 フルスクリーン終了アイコンに変更');
-    } else {
-      // フルスクリーン開始アイコン
-      icon.className = 'fas fa-expand fullscreen-icon button-icon';
-      console.log('🟢 フルスクリーン開始アイコンに変更');
-    }
-  }
-
-  private toggleUIElements(isVisible: boolean): void {
-    const fullscreenBtn = document.getElementById('fullscreen-btn') as HTMLButtonElement;
-    const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
-    const overlayInfo = document.querySelector('.sketch-overlay-info') as HTMLDivElement;
-    
-    const opacity = isVisible ? '1' : '0';
-    const pointerEvents = isVisible ? 'auto' : 'none';
-    
-    // 全てのUI要素を同時に制御
-    [fullscreenBtn, windowSettingsBtn, overlayInfo].forEach(element => {
-      if (element) {
-        element.style.opacity = opacity;
-        element.style.pointerEvents = pointerEvents;
-      }
-    });
-    
-    console.log(`UI要素を${isVisible ? '表示' : '非表示'}にしました`);
+    this.uiController.toggleElements(shouldShowUI);
   }
 
   updateFullscreenState(isFullscreen: boolean): void {
@@ -182,17 +152,7 @@ export class SketchPageView {
   }
 
   toggleIframeOverlay(isVisible: boolean): void {
-    const overlay = document.getElementById('iframe-overlay') as HTMLDivElement;
-    
-    if (overlay) {
-      if (isVisible) {
-        overlay.style.display = 'block';
-        console.log('iframeオーバーレイを表示しました');
-      } else {
-        overlay.style.display = 'none';
-        console.log('iframeオーバーレイを非表示にしました');
-      }
-    }
+    this.overlayManager.toggleOverlay(isVisible);
   }
 
   /**
@@ -222,5 +182,6 @@ export class SketchPageView {
   destroy(): void {
     this.eventEmitter.removeAllListeners();
     this.cursorManager.destroy();
+    this.overlayManager.destroy();
   }
 }
