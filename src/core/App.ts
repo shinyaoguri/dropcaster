@@ -1,12 +1,13 @@
 import { SketchServiceImpl } from '../services/sketchService.js';
 import { Router } from './routing/router.js';
 import { SketchGalleryView } from '../ui/views/SketchGalleryView.js';
-import { SketchPageView } from '../ui/views/SketchPageView.js';
+import { SketchPageController } from '../ui/controller/SketchPageController.js';
 import { Error404View } from '../ui/views/Error404View.js';
 
 export class App {
   private sketchService: SketchServiceImpl;
   private router: Router;
+  private sketchPageController: SketchPageController | null = null;
 
   constructor() {
     this.sketchService = new SketchServiceImpl();
@@ -27,10 +28,17 @@ export class App {
     });
 
     // 個別スケッチページ（パラメータ付き）
-    this.router.registerRoute('/:sketchId', (sketchId: string) => {
+    this.router.registerRoute('/:sketchId', async (sketchId: string) => {
       const sketch = this.sketchService.getSketchById(sketchId);
       if (sketch) {
-        SketchPageView.render(sketch);
+        // 既存のコントローラーを破棄
+        if (this.sketchPageController) {
+          this.sketchPageController.destroy();
+        }
+        
+        // 新しいコントローラーを作成してスケッチを表示
+        this.sketchPageController = new SketchPageController();
+        await this.sketchPageController.renderSketch(sketch);
       } else {
         Error404View.render();
       }
