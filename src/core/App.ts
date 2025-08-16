@@ -2,12 +2,14 @@ import { SketchServiceImpl } from '../services/sketchService.js';
 import { Router } from './routing/router.js';
 import { SketchGalleryView } from '../ui/views/SketchGalleryView.js';
 import { SketchPageController } from '../ui/controllers/SketchPageController.js';
+import { SlideshowController } from '../ui/controllers/SlideshowController.js';
 import { Error404View } from '../ui/views/Error404View.js';
 
 export class App {
   private sketchService: SketchServiceImpl;
   private router: Router;
   private sketchPageController: SketchPageController | null = null;
+  private slideshowController: SlideshowController | null = null;
 
   constructor() {
     this.sketchService = new SketchServiceImpl();
@@ -42,6 +44,23 @@ export class App {
       } else {
         Error404View.render();
       }
+    });
+
+    // スライドショーページ
+    this.router.registerRoute('/slideshow', () => {
+      // 既存のコントローラーを破棄
+      if (this.sketchPageController) {
+        this.sketchPageController.destroy();
+        this.sketchPageController = null;
+      }
+      if (this.slideshowController) {
+        this.slideshowController.destroy();
+      }
+      
+      // スライドショーを開始
+      const sketches = this.sketchService.getAllSketches();
+      this.slideshowController = new SlideshowController();
+      this.slideshowController.start(sketches);
     });
 
     // 404エラーページ

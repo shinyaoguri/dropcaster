@@ -27,17 +27,25 @@ export class Router {
 
     const path = window.location.pathname;
     
+    // 完全一致のルートをまずチェック
+    const exactHandler = this.routes.get(path);
+    if (exactHandler) {
+      exactHandler();
+      return;
+    }
+    
+    // ホームページ
     if (path === '/') {
       const handler = this.routes.get('/');
       if (handler) handler();
     } else {
       // パラメータ付きルートの処理
       const pathSegments = path.split('/').filter(segment => segment);
-      if (pathSegments.length === 1) {
+      if (pathSegments.length === 1 && pathSegments[0] !== 'slideshow') {
         const sketchId = pathSegments[0];
         const handler = this.routes.get('/:sketchId');
         if (handler) handler(sketchId);
-      } else {
+      } else if (path !== '/slideshow') {
         const handler = this.routes.get('/404');
         if (handler) handler();
       }
