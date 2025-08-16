@@ -1,5 +1,6 @@
 export abstract class BaseWindow {
   protected window: Window | null = null;
+  protected parentWindow: Window | null = null;
   protected windowName: string;
   protected windowTitle: string;
 
@@ -133,5 +134,15 @@ export abstract class BaseWindow {
 
   getWindow(): Window | null {
     return this.window;
+  }
+  
+  setParentWindow(parentWindow: Window): void {
+    this.parentWindow = parentWindow;
+  }
+  
+  getParentWindow(): Window | null {
+    return (this.window?.opener && !this.window.opener.closed) 
+      ? this.window.opener 
+      : this.parentWindow;
   }
 }

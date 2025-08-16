@@ -9,6 +9,10 @@ export class SketchPageView {
   private cursorManager: CursorManager;
   private uiController: UIElementController;
   private overlayManager: OverlayManager;
+  private mappingOverlay: HTMLDivElement | null = null;
+  private mappingVideo: HTMLVideoElement | null = null;
+  private iframeMappingContainer: HTMLDivElement | null = null;
+  private iframeMappingVideo: HTMLVideoElement | null = null;
 
   constructor() {
     this.eventEmitter = new EventEmitter();
@@ -37,9 +41,11 @@ export class SketchPageView {
         <div 
           id="iframe-overlay" 
           class="iframe-overlay"
-          style="display: none;"
         >
-          <!-- 空のdiv要素 -->
+          <!-- マッピング映像を表示するコンテナ -->
+          <div id="iframe-mapping-container" class="iframe-mapping-container">
+            <video id="iframe-mapping-video" autoplay muted playsinline></video>
+          </div>
         </div>
         
         <div class="sketch-overlay-info ui-element">
@@ -87,10 +93,40 @@ export class SketchPageView {
         >
           <i class="fas fa-external-link-alt button-icon"></i>
         </button>
+        
+        <!-- iframeオーバーレイコンテナ -->
+        <div id="iframe-content-overlay" class="iframe-content-overlay">
+          <!-- マッピングオーバーレイ -->
+          <div id="mapping-overlay" class="mapping-overlay" style="display: none;">
+            <video id="mapping-overlay-video" autoplay muted playsinline></video>
+          </div>
+        </div>
       </div>
     `;
     
     this.setupEventListeners();
+    
+    // DOMが完全に描画されるのを待ってから要素を取得
+    setTimeout(() => {
+      // オーバーレイ要素を取得
+      this.mappingOverlay = document.getElementById('mapping-overlay') as HTMLDivElement;
+      this.mappingVideo = document.getElementById('mapping-overlay-video') as HTMLVideoElement;
+      this.iframeMappingContainer = document.getElementById('iframe-mapping-container') as HTMLDivElement;
+      this.iframeMappingVideo = document.getElementById('iframe-mapping-video') as HTMLVideoElement;
+      
+      console.log('SketchPageView: DOM要素取得結果', {
+        mappingOverlay: !!this.mappingOverlay,
+        mappingVideo: !!this.mappingVideo,
+        iframeMappingContainer: !!this.iframeMappingContainer,
+        iframeMappingVideo: !!this.iframeMappingVideo
+      });
+      
+      // 要素が取得できた場合のみリスナーを設定
+      if (this.iframeMappingContainer && this.iframeMappingVideo) {
+        this.setupMappingOverlayListener();
+        this.setupVideoEventListeners();
+      }
+    }, 100);
     
     // CursorManagerを初期化
     this.cursorManager.initialize();
@@ -163,6 +199,210 @@ export class SketchPageView {
 
   toggleIframeOverlay(isVisible: boolean): void {
     this.overlayManager.toggleOverlay(isVisible);
+  }
+
+  private setupVideoEventListeners(): void {
+    // ビデオストリームが設定されたらオーバーレイを更新
+    if (this.mappingVideo) {
+      this.mappingVideo.addEventListener('loadedmetadata', () => {
+        console.log('SketchPageView: mapping-overlay-videoメタデータ読み込み完了');
+        const lastData = (window as any).lastMappingData;
+        if (lastData) {
+          this.updateMappingOverlay(lastData);
+        }
+      });
+    }
+    
+    // iframe-mapping-videoのメタデータ読み込み時にも更新
+    if (this.iframeMappingVideo) {
+      this.iframeMappingVideo.addEventListener('loadedmetadata', () => {
+        console.log('SketchPageView: iframe-mapping-videoメタデータ読み込み完了');
+        const lastData = (window as any).lastMappingData;
+        if (lastData) {
+          this.updateMappingOverlay(lastData);
+        }
+      });
+    }
+  }
+
+  private setupMappingOverlayListener(): void {
+    window.addEventListener('mapping-overlay-update', (event: Event) => {
+      const customEvent = event as CustomEvent;
+      this.updateMappingOverlay(customEvent.detail);
+    });
+    
+    // ウィンドウリサイズ時の再計算
+    window.addEventListener('resize', () => {
+      const lastData = (window as any).lastMappingData;
+      if (lastData) {
+        this.updateMappingOverlay(lastData);
+      }
+    });
+  }
+
+  private updateMappingOverlay(data: any): void {
+    const { source, mapping, videoDimensions } = data;
+    
+    console.log('SketchPageView: updateMappingOverlay called with:', data);
+    
+    // データを保存
+    (window as any).lastMappingData = data;
+    
+    // iframe-content-overlayの更新
+    if (this.mappingOverlay && this.mappingVideo) {
+      // ビデオにストリームが設定されているか確認
+      if (!this.mappingVideo.srcObject) {
+        console.log('SketchPageView: mapping-overlay-videoにストリームが未設定');
+        this.mappingOverlay.style.display = 'none';
+      } else {
+        // オーバーレイを表示
+        this.mappingOverlay.style.display = 'block';
+        this.updateMappingOverlayPosition(this.mappingOverlay, this.mappingVideo, source, mapping);
+      }
+    }
+    
+    // iframe-overlay内のマッピングコンテナの更新
+    if (this.iframeMappingContainer && this.iframeMappingVideo) {
+      console.log('SketchPageView: Updating iframe-mapping-container');
+      // iframe-mapping-containerには特別な処理を適用
+      this.updateIframeMappingPosition(this.iframeMappingContainer, this.iframeMappingVideo, source, mapping);
+    } else {
+      console.warn('SketchPageView: iframe-mapping-container or video not found', {
+        container: this.iframeMappingContainer,
+        video: this.iframeMappingVideo
+      });
+    }
+  }
+  
+  private updateMappingOverlayPosition(
+    container: HTMLElement,
+    video: HTMLVideoElement,
+    source: any,
+    mapping: any
+  ): void {
+    
+    // iframeのサイズを取得してスケーリングを調整
+    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
+    if (iframe) {
+      const iframeRect = iframe.getBoundingClientRect();
+      const overlayContainer = document.getElementById('iframe-content-overlay') as HTMLDivElement;
+      
+      // iframeオーバーレイコンテナをiframeと同じサイズに設定
+      if (overlayContainer) {
+        overlayContainer.style.width = `${iframeRect.width}px`;
+        overlayContainer.style.height = `${iframeRect.height}px`;
+      }
+    }
+    
+    // コンテナの位置とサイズを更新（マッピングウィンドウと同期）
+    container.style.left = `${mapping.x}%`;
+    container.style.top = `${mapping.y}%`;
+    container.style.width = `${mapping.width}%`;
+    container.style.height = `${mapping.height}%`;
+    
+    // ビデオのクロップ位置を更新（ソース選択領域のみを表示）
+    // シンプルなスケール計算
+    const scale = 100 / source.width;
+    const translateX = -source.x * scale;
+    const translateY = -source.y * scale;
+    
+    video.style.width = `${scale * 100}%`;
+    video.style.height = `${scale * 100}%`;
+    video.style.transform = `translate(${translateX}%, ${translateY}%)`;
+    
+    console.log('SketchPageView: オーバーレイ更新', {
+      containerType: container.id,
+      source,
+      mapping,
+      scale,
+      translateX,
+      translateY,
+      hasStream: !!video.srcObject
+    });
+  }
+  
+  private updateIframeMappingPosition(
+    container: HTMLElement,
+    video: HTMLVideoElement,
+    source: any,
+    mapping: any
+  ): void {
+    // iframeのサイズを取得
+    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
+    if (!iframe) {
+      console.warn('SketchPageView: iframe要素が見つかりません');
+      return;
+    }
+    
+    const iframeRect = iframe.getBoundingClientRect();
+    
+    // iframe-overlayがiframeと同じサイズに設定されていることを確認
+    const iframeOverlay = document.getElementById('iframe-overlay');
+    if (iframeOverlay) {
+      iframeOverlay.style.position = 'absolute';
+      iframeOverlay.style.top = '0';
+      iframeOverlay.style.left = '0';
+      iframeOverlay.style.width = '100%';
+      iframeOverlay.style.height = '100%';
+    }
+    
+    // マッピングウィンドウのcropped-containerと同じ相対位置に配置
+    // パーセンテージをそのまま使用
+    container.style.position = 'absolute';
+    container.style.left = `${mapping.x}%`;
+    container.style.top = `${mapping.y}%`;
+    container.style.width = `${mapping.width}%`;
+    container.style.height = `${mapping.height}%`;
+    
+    // マッピングウィンドウと同じシンプルな変換を使用
+    const scale = 100 / source.width;
+    const translateX = -source.x * scale;
+    const translateY = -source.y * scale;
+    
+    // ビデオ要素のスタイルを設定
+    video.style.position = 'absolute';
+    video.style.top = '0';
+    video.style.left = '0';
+    video.style.width = `${scale * 100}%`;
+    video.style.height = `${scale * 100}%`;
+    video.style.transform = `translate(${translateX}%, ${translateY}%)`;
+    video.style.transformOrigin = 'top left';
+    
+    // ビデオストリームの状態を確認
+    const hasStream = !!video.srcObject;
+    if (!hasStream) {
+      console.warn('SketchPageView: ビデオストリームが設定されていません', {
+        videoId: video.id,
+        videoElement: video
+      });
+    }
+    
+    console.log('SketchPageView: iframe-mapping-container更新', {
+      position: {
+        left: `${mapping.x}%`,
+        top: `${mapping.y}%`,
+        width: `${mapping.width}%`,
+        height: `${mapping.height}%`
+      },
+      videoCrop: {
+        width: `${scale * 100}%`,
+        height: `${scale * 100}%`,
+        transform: `translate(${translateX}%, ${translateY}%)`
+      },
+      source,
+      mapping,
+      scale,
+      translateX,
+      translateY,
+      hasStream,
+      iframeRect
+    });
+  }
+
+  public setMappingVideoStream(stream: MediaStream): void {
+    if (this.mappingVideo) {
+      this.mappingVideo.srcObject = stream;
+    }
   }
 
 

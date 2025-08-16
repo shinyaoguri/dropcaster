@@ -95,6 +95,17 @@ export class SketchPageController {
       console.log('SketchPageController: 設定モード:', this.isSettingsMode ? 'ON' : 'OFF');
       console.log('SketchPageController: iframe内のCanvas要素の枠を', this.isSettingsMode ? '追加' : '削除');
     });
+    
+    // フルスクリーン制御リクエストを監視
+    window.addEventListener('message', (event) => {
+      if (event.data.type === 'toggle-fullscreen-request') {
+        console.log('SketchPageController: フルスクリーン切り替えリクエストを受信');
+        const container = document.querySelector('.fullscreen-sketch-container') as HTMLElement;
+        if (container) {
+          this.fullscreenManager.toggleFullscreen(container);
+        }
+      }
+    });
 
     // ウィンドウ開くボタンのイベント
     this.view.onOpenWindowsToggle(() => {

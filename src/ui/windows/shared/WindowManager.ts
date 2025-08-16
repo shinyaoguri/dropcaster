@@ -42,10 +42,15 @@ export class WindowManager {
     console.log(`WindowManager: window.open()を実行`);
     console.log(`  パラメータ: name="${name}", features="${featuresString}"`);
     
-    const newWindow = window.open('about:blank', name, featuresString);
+    // window.openerが保持されるように、同じオリジンのURLを使用
+    const newWindow = window.open('', name, featuresString);
     
     if (newWindow) {
+      // ウィンドウの初期設定
       newWindow.document.title = title;
+      newWindow.document.body.style.margin = '0';
+      newWindow.document.body.style.padding = '0';
+      
       this.openWindows.set(name, newWindow);
       
       // ウィンドウが閉じられた時の処理

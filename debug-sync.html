@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>同期デバッグテスト</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            margin: 20px;
+            background: #1a1a1a;
+            color: #00ff00;
+        }
+        h1 {
+            color: #00ff00;
+            border-bottom: 2px solid #00ff00;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #333;
+            background: #0a0a0a;
+            border-radius: 5px;
+        }
+        .test-item {
+            margin: 10px 0;
+            padding: 10px;
+            background: #111;
+            border-left: 3px solid #00ff00;
+        }
+        .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.success {
+            background: #00ff00;
+            color: #000;
+        }
+        .status.error {
+            background: #ff0000;
+            color: #fff;
+        }
+        .status.pending {
+            background: #ffff00;
+            color: #000;
+        }
+        button {
+            background: #00ff00;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            font-family: inherit;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 5px;
+            border-radius: 3px;
+        }
+        button:hover {
+            background: #00dd00;
+        }
+        #log {
+            background: #000;
+            padding: 15px;
+            border: 1px solid #00ff00;
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 2px solid #444;
+        }
+        .log-entry.info {
+            border-left-color: #0088ff;
+            color: #0088ff;
+        }
+        .log-entry.success {
+            border-left-color: #00ff00;
+            color: #00ff00;
+        }
+        .log-entry.error {
+            border-left-color: #ff0000;
+            color: #ff0000;
+        }
+        .log-entry.warning {
+            border-left-color: #ffff00;
+            color: #ffff00;
+        }
+        .data-display {
+            background: #0a0a0a;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #333;
+            font-size: 11px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Dropcaster 同期デバッグテスト</h1>
+
+    <div class="test-section">
+        <h2>📡 テスト手順</h2>
+        <ol>
+            <li>「アプリケーションを開く」ボタンをクリック</li>
+            <li>スケッチを選択して表示</li>
+            <li>「ウィンドウを開く」ボタンをクリック</li>
+            <li>ソースウィンドウで領域を選択</li>
+            <li>マッピングウィンドウで位置・サイズを調整</li>
+            <li>同期状態を確認</li>
+        </ol>
+    </div>
+
+    <div class="test-section">
+        <h2>🎮 コントロール</h2>
+        <button onclick="openApp()">アプリケーションを開く</button>
+        <button onclick="testSourceSelection()">ソース選択テスト</button>
+        <button onclick="testMappingTransform()">マッピング変換テスト</button>
+        <button onclick="clearLog()">ログクリア</button>
+    </div>
+
+    <div class="test-section">
+        <h2>📊 現在の状態</h2>
+        <div id="current-state" class="data-display">
+            待機中...
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>📝 デバッグログ</h2>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        let appWindow = null;
+        let sourceData = { x: 0, y: 0, width: 100, height: 100 };
+        let mappingData = { x: 25, y: 25, width: 50, height: 50 };
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const timestamp = new Date().toLocaleTimeString('ja-JP', { hour12: false, milliseconds: true });
+            entry.textContent = `[${timestamp}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateState() {
+            const stateDiv = document.getElementById('current-state');
+            stateDiv.textContent = JSON.stringify({
+                source: sourceData,
+                mapping: mappingData,
+                appWindowOpen: appWindow && !appWindow.closed
+            }, null, 2);
+        }
+
+        function openApp() {
+            if (appWindow && !appWindow.closed) {
+                appWindow.focus();
+                log('アプリケーションウィンドウにフォーカス', 'info');
+                return;
+            }
+            
+            appWindow = window.open('http://localhost:5174', 'dropcaster', 'width=1400,height=900');
+            log('アプリケーションウィンドウを開きました', 'success');
+            
+            // メッセージリスナーを設定
+            window.addEventListener('message', handleMessage);
+            updateState();
+        }
+
+        function handleMessage(event) {
+            if (event.origin !== 'http://localhost:5174' && event.origin !== 'http://localhost:5173') {
+                return;
+            }
+
+            log(`メッセージ受信: ${event.data.type}`, 'info');
+            
+            switch(event.data.type) {
+                case 'source-selection-change':
+                    sourceData = event.data.data;
+                    log(`ソース選択変更: ${JSON.stringify(sourceData)}`, 'success');
+                    updateState();
+                    checkSyncStatus();
+                    break;
+                    
+                case 'mapping-transform-change':
+                    mappingData = event.data.data;
+                    log(`マッピング変換変更: ${JSON.stringify(mappingData)}`, 'success');
+                    updateState();
+                    checkSyncStatus();
+                    break;
+                    
+                case 'mapping-overlay-update':
+                    log(`オーバーレイ更新: ${JSON.stringify(event.data.detail)}`, 'info');
+                    break;
+                    
+                default:
+                    log(`未知のメッセージ: ${event.data.type}`, 'warning');
+            }
+        }
+
+        function checkSyncStatus() {
+            // スケッチページでの同期状態を確認
+            if (appWindow && !appWindow.closed) {
+                try {
+                    // アプリケーション内の要素を確認
+                    const doc = appWindow.document;
+                    const iframeMappingContainer = doc.getElementById('iframe-mapping-container');
+                    
+                    if (iframeMappingContainer) {
+                        const style = window.getComputedStyle(iframeMappingContainer);
+                        const actualPosition = {
+                            left: style.left,
+                            top: style.top,
+                            width: style.width,
+                            height: style.height
+                        };
+                        
+                        log(`実際の位置: ${JSON.stringify(actualPosition)}`, 'info');
+                        
+                        // 期待値と比較
+                        const expectedPosition = {
+                            left: `${mappingData.x}%`,
+                            top: `${mappingData.y}%`,
+                            width: `${mappingData.width}%`,
+                            height: `${mappingData.height}%`
+                        };
+                        
+                        if (JSON.stringify(actualPosition) === JSON.stringify(expectedPosition)) {
+                            log('✅ 同期成功: 位置が一致しています', 'success');
+                        } else {
+                            log(`❌ 同期失敗: 期待値=${JSON.stringify(expectedPosition)}, 実際=${JSON.stringify(actualPosition)}`, 'error');
+                        }
+                    } else {
+                        log('⚠️ iframe-mapping-containerが見つかりません', 'warning');
+                    }
+                } catch (e) {
+                    log(`エラー: ${e.message}`, 'error');
+                }
+            }
+        }
+
+        function testSourceSelection() {
+            if (!appWindow || appWindow.closed) {
+                log('アプリケーションが開いていません', 'error');
+                return;
+            }
+            
+            // テスト用のソース選択を送信
+            const testData = {
+                x: Math.random() * 50,
+                y: Math.random() * 50,
+                width: 30 + Math.random() * 40,
+                height: 30 + Math.random() * 40
+            };
+            
+            appWindow.postMessage({
+                type: 'source-selection-change',
+                data: testData
+            }, '*');
+            
+            log(`テストソース選択送信: ${JSON.stringify(testData)}`, 'info');
+        }
+
+        function testMappingTransform() {
+            if (!appWindow || appWindow.closed) {
+                log('アプリケーションが開いていません', 'error');
+                return;
+            }
+            
+            // テスト用のマッピング変換を送信
+            const testData = {
+                x: Math.random() * 50,
+                y: Math.random() * 50,
+                width: 20 + Math.random() * 30,
+                height: 20 + Math.random() * 30,
+                sourceSelection: sourceData
+            };
+            
+            appWindow.postMessage({
+                type: 'mapping-transform-change',
+                data: testData
+            }, '*');
+            
+            log(`テストマッピング変換送信: ${JSON.stringify(testData)}`, 'info');
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            log('ログをクリアしました', 'info');
+        }
+
+        // 初期化
+        updateState();
+        log('デバッグツール初期化完了', 'success');
+        
+        // 定期的な同期チェック
+        setInterval(() => {
+            if (appWindow && !appWindow.closed) {
+                checkSyncStatus();
+            }
+        }, 5000);
+    </script>
+</body>
+</html>

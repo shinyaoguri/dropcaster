@@ -605,3 +605,82 @@ body {
     max-width: 100px;
   }
 }
+
+
+/* iframeコンテンツオーバーレイ */
+.iframe-content-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 15;
+  overflow: hidden;
+}
+
+/* iframe内のマッピングコンテナ */
+.iframe-mapping-container {
+  position: absolute;
+  border: 2px solid #ff00ff;
+  background: rgba(255, 0, 255, 0.05);
+  pointer-events: none;
+  overflow: hidden;
+  /* デフォルト位置とサイズ */
+  left: 25%;
+  top: 25%;
+  width: 50%;
+  height: 50%;
+}
+
+#iframe-mapping-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  pointer-events: none;
+  /* アスペクト比を保持せずにクロップ */
+  object-fit: none;
+  /* サイズはJavaScriptで動的に設定 */
+}
+
+/* マッピングオーバーレイ */
+.mapping-overlay {
+  position: absolute;
+  border: 2px solid #ff00ff;
+  background: rgba(255, 0, 255, 0.05);
+  pointer-events: none;
+  overflow: hidden;
+  /* デフォルト位置とサイズ */
+  left: 25%;
+  top: 25%;
+  width: 50%;
+  height: 50%;
+}
+
+#mapping-overlay-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  pointer-events: none;
+  /* アスペクト比を保持せずにクロップ */
+  object-fit: none;
+}
+
+
+/* iframe-mapping-container位置調整 */
+.iframe-mapping-container {
+  position: absolute !important;
+  border: 2px solid #ff00ff;
+  background: rgba(255, 0, 255, 0.05);
+  pointer-events: none;
+  overflow: hidden;
+  /* 位置とサイズはJavaScriptで動的に設定 */
+}
+
+/* iframe-overlayを透明に */
+.iframe-overlay {
+  background: transparent !important;
+  border: none !important;
+}
