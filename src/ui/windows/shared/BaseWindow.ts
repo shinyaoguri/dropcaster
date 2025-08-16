@@ -107,14 +107,6 @@ export abstract class BaseWindow {
     // 子クラスでオーバーライド
   }
 
-  protected addEventListenerToElement(selector: string, event: string, handler: (e: Event) => void): void {
-    if (!this.window) return;
-    
-    const element = this.window.document.querySelector(selector);
-    if (element) {
-      element.addEventListener(event, handler);
-    }
-  }
 
   isOpen(): boolean {
     return this.window ? !this.window.closed : false;

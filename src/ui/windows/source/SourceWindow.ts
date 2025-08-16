@@ -369,9 +369,9 @@ export class SourceWindow extends BaseWindow {
         isResizing = false;
       };
 
-      handle.addEventListener('mousedown', handleMouseDown);
-      this.window!.document.addEventListener('mousemove', handleMouseMove);
-      this.window!.document.addEventListener('mouseup', handleMouseUp);
+      handle.addEventListener('mousedown', handleMouseDown as EventListener);
+      this.window!.document.addEventListener('mousemove', handleMouseMove as EventListener);
+      this.window!.document.addEventListener('mouseup', handleMouseUp as EventListener);
     });
   }
 

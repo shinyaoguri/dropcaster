@@ -426,8 +426,4 @@ export class MappingWindow extends BaseWindow {
     }
   }
 
-  public setSourceVideo(video: HTMLVideoElement): void {
-    this.sourceVideo = video;
-    this.updateCroppedVideo();
-  }
 }

@@ -1024,9 +1024,9 @@ export class ControlWindow extends BaseWindow {
         isResizing = false;
       };
 
-      handle.addEventListener('mousedown', handleMouseDown);
-      this.window!.document.addEventListener('mousemove', handleMouseMove);
-      this.window!.document.addEventListener('mouseup', handleMouseUp);
+      handle.addEventListener('mousedown', handleMouseDown as EventListener);
+      this.window!.document.addEventListener('mousemove', handleMouseMove as EventListener);
+      this.window!.document.addEventListener('mouseup', handleMouseUp as EventListener);
     });
   }
 
@@ -1142,9 +1142,9 @@ export class ControlWindow extends BaseWindow {
         isResizing = false;
       };
 
-      handle.addEventListener('mousedown', handleMouseDown);
-      this.window!.document.addEventListener('mousemove', handleMouseMove);
-      this.window!.document.addEventListener('mouseup', handleMouseUp);
+      handle.addEventListener('mousedown', handleMouseDown as EventListener);
+      this.window!.document.addEventListener('mousemove', handleMouseMove as EventListener);
+      this.window!.document.addEventListener('mouseup', handleMouseUp as EventListener);
     });
   }
 
@@ -1313,11 +1313,6 @@ export class ControlWindow extends BaseWindow {
         console.error('ControlWindow: マッピング変更メッセージ送信エラー', error);
       }
     }
-  }
-
-  public setSourceVideo(video: HTMLVideoElement): void {
-    this.sourceVideo = video;
-    this.updateCroppedVideo();
   }
   
   private updateDisplayInfo(): void {

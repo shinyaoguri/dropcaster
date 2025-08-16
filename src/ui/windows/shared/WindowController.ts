@@ -244,8 +244,6 @@ export class WindowController {
     // ResizeObserverを使用してCanvasのサイズ変更を監視
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        
         // Canvasの実際の描画サイズを取得
         const actualWidth = canvas.width;
         const actualHeight = canvas.height;
@@ -354,7 +352,7 @@ export class WindowController {
   // アクティブなウィンドウがあるかチェック
   private hasActiveWindows(): boolean {
     const controlWindow = this.windowManager.getWindow('control_window');
-    return controlWindow && !controlWindow.closed;
+    return controlWindow !== null && !controlWindow.closed;
   }
 
   // Canvas配信を停止
