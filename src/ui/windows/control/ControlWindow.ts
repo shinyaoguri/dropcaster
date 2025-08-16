@@ -43,6 +43,11 @@ export class ControlWindow extends BaseWindow {
     this.render();
     this.setupControls();
     this.setupMessageListener();
+    // 初期化時にアスペクト比を設定
+    setTimeout(() => {
+      this.updateSourceVideoAspectRatio();
+      this.updateDisplayFrameAspectRatio(); // 物理ディスプレイのアスペクト比を設定
+    }, 100);
   }
 
   protected getContent(): string {
@@ -404,29 +409,32 @@ export class ControlWindow extends BaseWindow {
       
       .source-preview-wrapper {
         width: 100%;
-        height: 100%;
+        height: calc(100% - 40px); /* ヘッダー分を引く */
         display: flex;
         align-items: center;
         justify-content: center;
+        padding: 20px;
+        box-sizing: border-box;
       }
       
       .canvas-frame {
         position: relative;
-        width: calc(100% - 40px);
-        height: calc(100% - 40px);
-        max-width: 100%;
-        max-height: 100%;
         border: 2px solid #444;
         border-radius: 4px;
         background: #000;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        /* サイズはJavaScriptで動的に設定される */
       }
       
       #source-video {
+        display: block;
         width: 100%;
         height: 100%;
-        object-fit: contain;
+        object-fit: fill;  /* canvas-frameのサイズに完全にフィット */
         background: #000;
       }
 
@@ -476,7 +484,7 @@ export class ControlWindow extends BaseWindow {
         position: relative;
         width: 100%;
         max-width: 100%;
-        aspect-ratio: 16 / 9;
+        /* aspect-ratioはJavaScriptで動的に設定される */
         border: 2px solid #444;
         border-radius: 4px;
         background: #111;
@@ -593,6 +601,10 @@ export class ControlWindow extends BaseWindow {
         margin-right: 4px;
       }
 
+      #mapping-video {
+        display: none;  /* 非表示（ストリームのソースとして使用） */
+      }
+      
       #background-video {
         width: 100%;
         height: 100%;
@@ -623,6 +635,7 @@ export class ControlWindow extends BaseWindow {
         top: 0;
         left: 0;
         transform-origin: top left;
+        object-fit: fill;  /* クロップされた映像は全体を表示 */
       }
 
       /* ハンドルの共通スタイル */
@@ -734,6 +747,17 @@ export class ControlWindow extends BaseWindow {
     this.croppedVideo = doc.getElementById('cropped-video') as HTMLVideoElement;
     this.selectionBox = doc.getElementById('selection-box') as HTMLDivElement;
 
+    // sourceVideoのメタデータ読み込み時にアスペクト比を更新
+    if (this.sourceVideo) {
+      this.sourceVideo.addEventListener('loadedmetadata', () => {
+        this.videoActualDimensions = {
+          width: this.sourceVideo!.videoWidth || 1920,
+          height: this.sourceVideo!.videoHeight || 1080
+        };
+        this.updateSourceVideoAspectRatio();
+      });
+    }
+
     // ソース選択ボックスの設定
     this.setupSelectionBox();
     
@@ -753,6 +777,7 @@ export class ControlWindow extends BaseWindow {
     // ビデオが読み込まれたら初期位置を設定
     this.sourceVideo.addEventListener('loadedmetadata', () => {
       this.initializeSelectionBox();
+      this.updateSourceVideoAspectRatio();
     });
 
     // 選択ボックスのドラッグ処理
@@ -1218,6 +1243,13 @@ export class ControlWindow extends BaseWindow {
       }
     });
     
+    // ウィンドウリサイズ時にアスペクト比を再計算
+    this.window.addEventListener('resize', () => {
+      this.updateSourceVideoAspectRatio();
+      // display-frameは物理ディスプレイのアスペクト比を維持
+      this.updateWindowBounds();
+    });
+    
     // 親ウィンドウの情報を取得
     this.updateWindowBounds();
   }
@@ -1225,6 +1257,8 @@ export class ControlWindow extends BaseWindow {
   private handleVideoDimensionsUpdate(dimensions: any): void {
     this.videoActualDimensions = dimensions;
     this.updateVideoCrop();
+    this.updateSourceVideoAspectRatio();
+    // display-frameは物理ディスプレイのアスペクト比を維持するので更新しない
   }
 
   private handleSourceSelectionUpdate(selectionData: any): void {
@@ -1437,5 +1471,84 @@ export class ControlWindow extends BaseWindow {
   private handleWindowBoundsUpdate(bounds: any): void {
     this.windowBounds = bounds;
     this.updateWindowFramePosition();
+  }
+  
+  private updateDisplayFrameAspectRatio(): void {
+    if (!this.window) return;
+    
+    const doc = this.window.document;
+    const displayFrame = doc.getElementById('display-frame') as HTMLDivElement;
+    
+    if (!displayFrame) return;
+    
+    // 物理的なディスプレイのアスペクト比を取得
+    const screenWidth = window.screen.width;
+    const screenHeight = window.screen.height;
+    
+    if (screenWidth && screenHeight) {
+      const screenAspectRatio = screenWidth / screenHeight;
+      
+      // display-frameのアスペクト比を物理ディスプレイに合わせる
+      displayFrame.style.aspectRatio = `${screenAspectRatio}`;
+      
+      console.log('ControlWindow: display-frameのアスペクト比を更新', {
+        screenSize: `${screenWidth}x${screenHeight}`,
+        screenAspectRatio: screenAspectRatio.toFixed(3),
+        method: '物理ディスプレイのアスペクト比'
+      });
+    }
+  }
+  
+  private updateSourceVideoAspectRatio(): void {
+    if (!this.window) return;
+    
+    const doc = this.window.document;
+    const canvasFrame = doc.querySelector('.canvas-frame') as HTMLDivElement;
+    const sourcePreviewWrapper = doc.querySelector('.source-preview-wrapper') as HTMLDivElement;
+    
+    if (!canvasFrame || !sourcePreviewWrapper) return;
+    
+    // スケッチCanvasの実際のアスペクト比を取得（ビデオストリームから）
+    const canvasWidth = this.videoActualDimensions.width || (this.sourceVideo?.videoWidth) || 1920;
+    const canvasHeight = this.videoActualDimensions.height || (this.sourceVideo?.videoHeight) || 1080;
+    
+    if (canvasWidth && canvasHeight) {
+      const canvasAspectRatio = canvasWidth / canvasHeight;
+      
+      // wrapperのサイズを取得
+      const wrapperRect = sourcePreviewWrapper.getBoundingClientRect();
+      const wrapperWidth = wrapperRect.width - 40; // padding: 20px * 2
+      const wrapperHeight = wrapperRect.height - 40; // padding: 20px * 2
+      
+      // アスペクト比を維持しつつ、wrapper内に収まる最大サイズを計算
+      let frameWidth: number;
+      let frameHeight: number;
+      
+      const wrapperAspectRatio = wrapperWidth / wrapperHeight;
+      
+      if (canvasAspectRatio > wrapperAspectRatio) {
+        // Canvasの方が横長の場合、幅を基準に
+        frameWidth = wrapperWidth;
+        frameHeight = frameWidth / canvasAspectRatio;
+      } else {
+        // Canvasの方が縦長または同じ場合、高さを基準に
+        frameHeight = wrapperHeight;
+        frameWidth = frameHeight * canvasAspectRatio;
+      }
+      
+      // canvas-frameのサイズを設定
+      canvasFrame.style.width = `${frameWidth}px`;
+      canvasFrame.style.height = `${frameHeight}px`;
+      canvasFrame.style.maxWidth = '100%';
+      canvasFrame.style.maxHeight = '100%';
+      
+      console.log('ControlWindow: Canvas同期 - ソースビデオ更新', {
+        canvasSize: `${canvasWidth}x${canvasHeight}`,
+        canvasAspectRatio: canvasAspectRatio.toFixed(3),
+        wrapperSize: `${wrapperWidth.toFixed(0)}x${wrapperHeight.toFixed(0)}`,
+        frameSize: `${frameWidth.toFixed(0)}x${frameHeight.toFixed(0)}`,
+        fitMethod: canvasAspectRatio > wrapperAspectRatio ? '幅基準' : '高さ基準'
+      });
+    }
   }
 }

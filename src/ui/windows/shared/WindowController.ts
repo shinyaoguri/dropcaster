@@ -240,6 +240,83 @@ export class WindowController {
     }
   }
 
+  private monitorCanvasResize(canvas: HTMLCanvasElement): void {
+    // ResizeObserverを使用してCanvasのサイズ変更を監視
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        
+        // Canvasの実際の描画サイズを取得
+        const actualWidth = canvas.width;
+        const actualHeight = canvas.height;
+        
+        if (actualWidth !== this.videoActualDimensions.width || 
+            actualHeight !== this.videoActualDimensions.height) {
+          
+          this.videoActualDimensions = {
+            width: actualWidth,
+            height: actualHeight
+          };
+          
+          console.log('WindowController: Canvasサイズ変更を検出', {
+            width: actualWidth,
+            height: actualHeight
+          });
+          
+          // コントロールウィンドウにサイズ変更を通知
+          const controlWindow = this.windowManager.getWindow('control_window');
+          if (controlWindow && !controlWindow.closed) {
+            controlWindow.postMessage({
+              type: 'video-dimensions-update',
+              data: this.videoActualDimensions
+            }, '*');
+          }
+        }
+      }
+    });
+    
+    resizeObserver.observe(canvas);
+    
+    // Canvasの属性変更も監視
+    const mutationObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'attributes' && 
+            (mutation.attributeName === 'width' || mutation.attributeName === 'height')) {
+          
+          const actualWidth = canvas.width;
+          const actualHeight = canvas.height;
+          
+          if (actualWidth !== this.videoActualDimensions.width || 
+              actualHeight !== this.videoActualDimensions.height) {
+            
+            this.videoActualDimensions = {
+              width: actualWidth,
+              height: actualHeight
+            };
+            
+            console.log('WindowController: Canvas属性変更を検出', {
+              width: actualWidth,
+              height: actualHeight
+            });
+            
+            const controlWindow = this.windowManager.getWindow('control_window');
+            if (controlWindow && !controlWindow.closed) {
+              controlWindow.postMessage({
+                type: 'video-dimensions-update',
+                data: this.videoActualDimensions
+              }, '*');
+            }
+          }
+        }
+      }
+    });
+    
+    mutationObserver.observe(canvas, {
+      attributes: true,
+      attributeFilter: ['width', 'height']
+    });
+  }
+
   private getCanvasFromIframe(iframeElement: HTMLIFrameElement): HTMLCanvasElement | null {
     const iframeDoc = iframeElement.contentDocument || iframeElement.contentWindow?.document;
     if (!iframeDoc) {
@@ -252,6 +329,9 @@ export class WindowController {
       console.error('WindowController: Canvas要素が見つかりません');
       return null;
     }
+    
+    // Canvasのサイズ変更を監視
+    this.monitorCanvasResize(canvas);
     
     return canvas;
   }

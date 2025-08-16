@@ -3,11 +3,16 @@ import { BaseWindow } from '../shared/BaseWindow';
 export class SourceWindow extends BaseWindow {
   private selectionBox: HTMLDivElement | null = null;
   private videoElement: HTMLVideoElement | null = null;
+  private videoContainer: HTMLDivElement | null = null;
   private selectionData = {
     x: 0,
     y: 0,
     width: 100,
     height: 100
+  };
+  private videoActualDimensions = {
+    width: 1920,
+    height: 1080
   };
 
   constructor() {
@@ -21,12 +26,13 @@ export class SourceWindow extends BaseWindow {
 
   protected getContent(): string {
     return `
-      <div class="video-container">
-        <video id="source-video" autoplay muted playsinline>
-          <p>MediaStreamの読み込み中...</p>
-        </video>
-        <div id="selection-overlay">
-          <div id="selection-box">
+      <div class="video-container" id="video-container">
+        <div class="video-wrapper">
+          <video id="source-video" autoplay muted playsinline>
+            <p>MediaStreamの読み込み中...</p>
+          </video>
+          <div id="selection-overlay">
+            <div id="selection-box">
             <div class="handle handle-nw" data-handle="nw"></div>
             <div class="handle handle-ne" data-handle="ne"></div>
             <div class="handle handle-sw" data-handle="sw"></div>
@@ -35,6 +41,7 @@ export class SourceWindow extends BaseWindow {
             <div class="edge edge-e" data-edge="e"></div>
             <div class="edge edge-s" data-edge="s"></div>
             <div class="edge edge-w" data-edge="w"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -51,13 +58,27 @@ export class SourceWindow extends BaseWindow {
         justify-content: center;
         background: #000;
         margin: 0;
-        padding: 0;
+        padding: 20px;
         position: relative;
+        box-sizing: border-box;
+      }
+      
+      .video-wrapper {
+        position: relative;
+        width: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
       
       #source-video {
+        display: block;
         width: 100%;
-        height: 100%;
+        height: auto;
+        max-width: 100%;
+        max-height: calc(100vh - 40px);
         object-fit: contain;
         background: #000;
       }
@@ -69,6 +90,7 @@ export class SourceWindow extends BaseWindow {
         width: 100%;
         height: 100%;
         pointer-events: none;
+        z-index: 10;
       }
 
       #selection-box {
@@ -184,12 +206,24 @@ export class SourceWindow extends BaseWindow {
     const doc = this.window.document;
     this.videoElement = doc.getElementById('source-video') as HTMLVideoElement;
     this.selectionBox = doc.getElementById('selection-box') as HTMLDivElement;
+    this.videoContainer = doc.getElementById('video-container') as HTMLDivElement;
 
     if (!this.selectionBox || !this.videoElement) return;
 
     // ビデオが読み込まれたら初期位置を設定
     this.videoElement.addEventListener('loadedmetadata', () => {
+      this.videoActualDimensions = {
+        width: this.videoElement!.videoWidth || 1920,
+        height: this.videoElement!.videoHeight || 1080
+      };
+      this.updateVideoAspectRatio();
       this.initializeSelectionBox();
+      this.broadcastVideoDimensions();
+    });
+
+    // ウィンドウリサイズ時にアスペクト比を維持
+    this.window.addEventListener('resize', () => {
+      this.updateVideoAspectRatio();
     });
 
     // 選択ボックスのドラッグ処理
@@ -367,5 +401,66 @@ export class SourceWindow extends BaseWindow {
 
   public getSelectionData() {
     return this.selectionData;
+  }
+
+  private updateVideoAspectRatio(): void {
+    if (!this.videoElement || !this.window) return;
+    
+    const wrapper = this.window.document.querySelector('.video-wrapper') as HTMLDivElement;
+    if (!wrapper) return;
+    
+    const aspectRatio = this.videoActualDimensions.width / this.videoActualDimensions.height;
+    
+    // コンテナのサイズを取得
+    const containerWidth = this.videoContainer?.clientWidth || window.innerWidth;
+    const containerHeight = this.videoContainer?.clientHeight || window.innerHeight;
+    const containerPadding = 40; // padding: 20px * 2
+    
+    const maxWidth = containerWidth - containerPadding;
+    const maxHeight = containerHeight - containerPadding;
+    
+    // アスペクト比を維持しつつ、コンテナ内に収まる最大サイズを計算
+    let videoWidth: number;
+    let videoHeight: number;
+    
+    // コンテナのアスペクト比とビデオのアスペクト比を比較
+    const containerAspectRatio = maxWidth / maxHeight;
+    
+    if (aspectRatio > containerAspectRatio) {
+      // ビデオの方が横長の場合、幅を基準に
+      videoWidth = maxWidth;
+      videoHeight = videoWidth / aspectRatio;
+    } else {
+      // ビデオの方が縦長または同じ場合、高さを基準に
+      videoHeight = maxHeight;
+      videoWidth = videoHeight * aspectRatio;
+    }
+    
+    // wrapperのサイズを設定
+    wrapper.style.width = `${videoWidth}px`;
+    wrapper.style.height = `${videoHeight}px`;
+    
+    console.log('SourceWindow: ビデオアスペクト比更新', {
+      actualDimensions: `${this.videoActualDimensions.width}x${this.videoActualDimensions.height}`,
+      aspectRatio: aspectRatio.toFixed(3),
+      containerSize: `${maxWidth.toFixed(0)}x${maxHeight.toFixed(0)}`,
+      displaySize: `${videoWidth.toFixed(0)}x${videoHeight.toFixed(0)}`,
+      fitMethod: aspectRatio > containerAspectRatio ? '幅基準' : '高さ基準'
+    });
+  }
+
+  private broadcastVideoDimensions(): void {
+    const targetWindow = this.getParentWindow();
+    
+    if (targetWindow) {
+      try {
+        targetWindow.postMessage({
+          type: 'video-dimensions-update',
+          data: this.videoActualDimensions
+        }, '*');
+      } catch (error) {
+        console.error('SourceWindow: ビデオサイズ通知エラー', error);
+      }
+    }
   }
 }
