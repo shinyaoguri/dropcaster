@@ -1,8 +1,8 @@
 import type { Sketch } from '../../types/sketch.js';
 import { EventEmitter } from '../../core/events/EventEmitter';
-import { CursorManager } from '../services/CursorManager';
+import { CursorManager } from '../managers/CursorManager';
 import { UIElementController } from '../services/UIElementController';
-import { OverlayManager } from '../services/OverlayManager';
+import { OverlayManager } from '../managers/OverlayManager';
 
 export class SketchPageView {
   private eventEmitter: EventEmitter;
@@ -241,7 +241,7 @@ export class SketchPageView {
   }
 
   private updateMappingOverlay(data: any): void {
-    const { source, mapping, videoDimensions } = data;
+    const { source, mapping } = data;
     
     console.log('SketchPageView: updateMappingOverlay called with:', data);
     

@@ -234,8 +234,6 @@ export class SourceWindow extends BaseWindow {
 
   private initializeSelectionBox(): void {
     if (!this.videoElement || !this.selectionBox) return;
-
-    const videoRect = this.videoElement.getBoundingClientRect();
     
     // デフォルトで全体を選択
     this.selectionData = {

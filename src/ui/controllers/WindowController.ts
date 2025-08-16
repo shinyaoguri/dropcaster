@@ -1,5 +1,5 @@
-import { WindowManager, type WindowConfig } from './WindowManager';
-import { ControlWindow } from '../control/ControlWindow';
+import { WindowManager, type WindowConfig } from '../managers/WindowManager';
+import { ControlWindow } from '../windows/control/ControlWindow';
 
 export class WindowController {
   private windowManager: WindowManager;
@@ -242,33 +242,31 @@ export class WindowController {
 
   private monitorCanvasResize(canvas: HTMLCanvasElement): void {
     // ResizeObserverを使用してCanvasのサイズ変更を監視
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        // Canvasの実際の描画サイズを取得
-        const actualWidth = canvas.width;
-        const actualHeight = canvas.height;
+    const resizeObserver = new ResizeObserver(() => {
+      // Canvasの実際の描画サイズを取得
+      const actualWidth = canvas.width;
+      const actualHeight = canvas.height;
+      
+      if (actualWidth !== this.videoActualDimensions.width || 
+          actualHeight !== this.videoActualDimensions.height) {
         
-        if (actualWidth !== this.videoActualDimensions.width || 
-            actualHeight !== this.videoActualDimensions.height) {
-          
-          this.videoActualDimensions = {
-            width: actualWidth,
-            height: actualHeight
-          };
-          
-          console.log('WindowController: Canvasサイズ変更を検出', {
-            width: actualWidth,
-            height: actualHeight
-          });
-          
-          // コントロールウィンドウにサイズ変更を通知
-          const controlWindow = this.windowManager.getWindow('control_window');
-          if (controlWindow && !controlWindow.closed) {
-            controlWindow.postMessage({
-              type: 'video-dimensions-update',
-              data: this.videoActualDimensions
-            }, '*');
-          }
+        this.videoActualDimensions = {
+          width: actualWidth,
+          height: actualHeight
+        };
+        
+        console.log('WindowController: Canvasサイズ変更を検出', {
+          width: actualWidth,
+          height: actualHeight
+        });
+        
+        // コントロールウィンドウにサイズ変更を通知
+        const controlWindow = this.windowManager.getWindow('control_window');
+        if (controlWindow && !controlWindow.closed) {
+          controlWindow.postMessage({
+            type: 'video-dimensions-update',
+            data: this.videoActualDimensions
+          }, '*');
         }
       }
     });

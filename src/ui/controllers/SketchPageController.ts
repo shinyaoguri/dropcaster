@@ -1,10 +1,10 @@
 import type { Sketch } from '../../types/sketch.js';
-import { FullscreenManager } from '../services/FullscreenManager';
-import { IframeManager } from '../services/IframeManager';
-import { CursorManager } from '../services/CursorManager';
-import { ResizeManager } from '../services/ResizeManager';
+import { FullscreenManager } from '../managers/FullscreenManager';
+import { IframeManager } from '../managers/IframeManager';
+import { CursorManager } from '../managers/CursorManager';
+import { ResizeManager } from '../managers/ResizeManager';
 import { SketchPageView } from '../views/SketchPageView';
-import { WindowController } from '../windows/shared/WindowController';
+import { WindowController } from './WindowController';
 
 export class SketchPageController {
   private fullscreenManager: FullscreenManager;

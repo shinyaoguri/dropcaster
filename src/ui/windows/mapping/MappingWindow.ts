@@ -5,10 +5,7 @@ export class MappingWindow extends BaseWindow {
   private croppedContainer: HTMLDivElement | null = null;
   private croppedVideo: HTMLVideoElement | null = null;
   private backgroundVideo: HTMLVideoElement | null = null;
-  private videoActualDimensions = {
-    width: 1,
-    height: 1
-  };
+  // videoActualDimensionsは現在使用されていないため削除
   
   private sourceSelectionData = {
     x: 0,
@@ -195,8 +192,8 @@ export class MappingWindow extends BaseWindow {
     });
   }
 
-  private handleVideoDimensionsUpdate(dimensions: any): void {
-    this.videoActualDimensions = dimensions;
+  private handleVideoDimensionsUpdate(_dimensions: any): void {
+    // 現在は使用されていないため、何もしない
     this.updateVideoCrop();
   }
 
@@ -326,9 +323,9 @@ export class MappingWindow extends BaseWindow {
         isResizing = false;
       };
 
-      handle.addEventListener('mousedown', handleMouseDown);
-      this.window!.document.addEventListener('mousemove', handleMouseMove);
-      this.window!.document.addEventListener('mouseup', handleMouseUp);
+      handle.addEventListener('mousedown', handleMouseDown as EventListener);
+      this.window!.document.addEventListener('mousemove', handleMouseMove as EventListener);
+      this.window!.document.addEventListener('mouseup', handleMouseUp as EventListener);
     });
   }
 
@@ -366,10 +363,6 @@ export class MappingWindow extends BaseWindow {
       }
 
       this.croppedVideo.addEventListener('loadedmetadata', () => {
-        this.videoActualDimensions = {
-          width: this.croppedVideo!.videoWidth || 1920,
-          height: this.croppedVideo!.videoHeight || 1080
-        };
         this.updateVideoCrop();
       }, { once: true });
     }

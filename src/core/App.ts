@@ -1,7 +1,7 @@
 import { SketchServiceImpl } from '../services/sketchService.js';
 import { Router } from './routing/router.js';
 import { SketchGalleryView } from '../ui/views/SketchGalleryView.js';
-import { SketchPageController } from '../ui/controller/SketchPageController.js';
+import { SketchPageController } from '../ui/controllers/SketchPageController.js';
 import { Error404View } from '../ui/views/Error404View.js';
 
 export class App {

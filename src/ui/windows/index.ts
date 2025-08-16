@@ -1,7 +1,7 @@
 // 共通クラス
-export { WindowManager, type WindowConfig } from './shared/WindowManager';
+export { WindowManager, type WindowConfig } from '../managers/WindowManager';
 export { BaseWindow } from './shared/BaseWindow';
-export { WindowController } from './shared/WindowController';
+export { WindowController } from '../controllers/WindowController';
 
 // ソースウィンドウ
 export { SourceWindow } from './source/SourceWindow';

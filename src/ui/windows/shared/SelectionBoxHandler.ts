@@ -39,7 +39,7 @@ export class SelectionBoxHandler {
     // リサイズハンドラーの設定
     const handles = this.selectionBox.querySelectorAll('.handle, .edge');
     handles.forEach(handle => {
-      handle.addEventListener('mousedown', (e) => this.handleResizeStart(e));
+      handle.addEventListener('mousedown', (e) => this.handleResizeStart(e as MouseEvent));
     });
     
     // ドキュメント全体でのマウス移動・離しイベント
