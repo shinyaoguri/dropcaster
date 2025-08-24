@@ -1,4 +1,4 @@
-import type { Sketch } from '../../types/sketch.js';
+import type { Sketch } from '../types/sketch.js';
 
 export class SlideshowView {
   private currentIndex: number = 0;

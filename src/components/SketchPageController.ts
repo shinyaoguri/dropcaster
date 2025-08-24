@@ -1,9 +1,9 @@
-import type { Sketch } from '../../types/sketch.js';
+import type { Sketch } from '../types/sketch.js';
 import { FullscreenManager } from '../managers/FullscreenManager';
 import { IframeManager } from '../managers/IframeManager';
 import { CursorManager } from '../managers/CursorManager';
 import { ResizeManager } from '../managers/ResizeManager';
-import { SketchPageView } from '../views/SketchPageView';
+import { SketchPageView } from './SketchPageView';
 import { WindowController } from './WindowController';
 
 export class SketchPageController {

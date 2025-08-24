@@ -1,7 +1,7 @@
-import type { Sketch } from '../../types/sketch.js';
-import { EventEmitter } from '../../core/events/EventEmitter';
+import type { Sketch } from '../types/sketch.js';
+import { EventEmitter } from '../events/EventEmitter';
 import { CursorManager } from '../managers/CursorManager';
-import { UIElementController } from '../services/UIElementController';
+import { UIElementController } from '../ui/services/UIElementController';
 import { OverlayManager } from '../managers/OverlayManager';
 
 export class SketchPageView {

@@ -1,6 +1,6 @@
-import { EventEmitter } from '../../core/events/EventEmitter';
-import { UIElementController } from '../services/UIElementController';
-import { MouseEventHandler } from '../services/MouseEventHandler';
+import { EventEmitter } from '../events/EventEmitter';
+import { UIElementController } from '../ui/services/UIElementController';
+import { MouseEventHandler } from '../ui/services/MouseEventHandler';
 
 export class FullscreenManager {
   private eventEmitter: EventEmitter;

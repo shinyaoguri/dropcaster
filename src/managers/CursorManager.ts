@@ -1,5 +1,5 @@
-import { EventEmitter } from '../../core/events/EventEmitter';
-import { MouseEventHandler } from '../services/MouseEventHandler';
+import { EventEmitter } from '../events/EventEmitter';
+import { MouseEventHandler } from '../ui/services/MouseEventHandler';
 
 export class CursorManager {
   private eventEmitter: EventEmitter;

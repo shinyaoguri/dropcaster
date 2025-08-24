@@ -1,5 +1,5 @@
 import './style.css';
-import { App } from './core/App.js';
+import { App } from './App.js';
 
 // アプリケーションの初期化
 const app = new App();

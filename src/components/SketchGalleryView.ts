@@ -1,5 +1,5 @@
-import type { Sketch } from '../../types/sketch.js';
-import { SketchCard } from '../components/SketchCard.js';
+import type { Sketch } from '../types/sketch.js';
+import { SketchCard } from '../ui/components/SketchCard.js';
 
 export class SketchGalleryView {
   static render(sketches: Sketch[]): void {

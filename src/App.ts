@@ -1,9 +1,9 @@
-import { SketchServiceImpl } from '../services/sketchService.js';
+import { SketchServiceImpl } from './services/sketchService.js';
 import { Router } from './routing/router.js';
-import { SketchGalleryView } from '../ui/views/SketchGalleryView.js';
-import { SketchPageController } from '../ui/controllers/SketchPageController.js';
-import { SlideshowController } from '../ui/controllers/SlideshowController.js';
-import { Error404View } from '../ui/views/Error404View.js';
+import { SketchGalleryView } from './components/SketchGalleryView.js';
+import { SketchPageController } from './components/SketchPageController.js';
+import { SlideshowController } from './components/SlideshowController.js';
+import { Error404View } from './components/Error404View.js';
 
 export class App {
   private sketchService: SketchServiceImpl;

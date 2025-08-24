@@ -1,5 +1,5 @@
-import type { Sketch } from '../../types/sketch.js';
-import { SlideshowView } from '../views/SlideshowView';
+import type { Sketch } from '../types/sketch.js';
+import { SlideshowView } from './SlideshowView';
 
 export class SlideshowController {
   private view: SlideshowView;
