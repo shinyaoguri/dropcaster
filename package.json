@@ -5,17 +5,15 @@
   "description": "webベースのコンテンツマッピングシステム",
   "type": "module",
   "scripts": {
-    "dev": "npm run scan-sketches:previews && vite",
+    "postinstall": "npx playwright install chromium",
+    "dev": "npm run scan:previews && vite",
     "build": "tsc && vite build",
     "preview": "vite preview dist",
-    "scan-sketches": "node scripts/scan-sketches.js 2>/dev/null > public/sketches.json && echo '📁 スケッチリストを更新しました'",
-    "scan-sketches:previews": "node scripts/scan-sketches.js --generate-previews",
-    "scan-sketches:reset": "rm -rf public/sketches public/previews public/avatars && node scripts/scan-sketches.js --generate-previews --force-regenerate --fetch-user-data && echo '🔄 公開ファイルをリセット・再生成しました'",
-    "scan-sketches:watch": "nodemon --watch sketches --ext html,js,css --exec \"npm run scan-sketches\"",
-    "scan-sketches:dev": "npm run scan-sketches:previews && npm run scan-sketches:watch",
-    "scan-sketches:with-users": "node scripts/scan-sketches.js --fetch-user-data",
-    "scan-sketches:previews-with-users": "node scripts/scan-sketches.js --generate-previews --fetch-user-data",
-    "scan-sketches:reset-with-users": "rm -rf public/sketches public/previews public/avatars && node scripts/scan-sketches.js --generate-previews --fetch-user-data --force-regenerate && echo '🔄 公開ファイルとアバター画像をリセット・再生成しました'"
+    "scan": "node scripts/scan-sketches.js 2>/dev/null > public/sketches.json && echo '📁 スケッチリストを更新しました'",
+    "scan:previews": "node scripts/scan-sketches.js --generate-previews",
+    "scan:full": "node scripts/scan-sketches.js --generate-previews --fetch-user-data",
+    "scan:reset": "rm -rf public/sketches public/previews public/avatars && node scripts/scan-sketches.js --generate-previews --fetch-user-data --force-regenerate && echo '🔄 公開ファイルをリセット・再生成しました'",
+    "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"npm run scan\""
   },
   "devDependencies": {
     "autoprefixer": "^10.4.21",
