@@ -168,21 +168,16 @@ export class SketchPageController {
   }
 
   private setupBeforeUnloadWarning(): void {
-    // ページ離脱時に開いているウィンドウがある場合は警告を表示
+    // ページ離脱時に常に警告を表示
     window.addEventListener('beforeunload', (event) => {
-      const windowManager = this.windowController.getWindowManager();
+      const message = 'このページを離れますか？';
       
-      if (windowManager.hasOpenWindows()) {
-        const openWindowCount = windowManager.getOpenWindowCount();
-        const message = `${openWindowCount}個のウィンドウが開いています。ページを離れると、これらのウィンドウも閉じられます。`;
-        
-        // 標準的なブラウザの離脱警告を表示
-        event.preventDefault();
-        event.returnValue = message;
-        
-        console.log('SketchPageController: ページ離脱警告を表示:', message);
-        return message;
-      }
+      // 標準的なブラウザの離脱警告を表示
+      event.preventDefault();
+      event.returnValue = message;
+      
+      console.log('SketchPageController: ページ離脱警告を表示');
+      return message;
     });
     
     // ページが実際にアンロードされる時に開いているウィンドウを全て閉じる
