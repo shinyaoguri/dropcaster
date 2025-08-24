@@ -115,4 +115,24 @@ export class WindowManager {
     }
     return openWindows;
   }
+
+  hasOpenWindows(): boolean {
+    // 開いているウィンドウがあるかチェック
+    for (const [, window] of this.openWindows) {
+      if (!window.closed) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  getOpenWindowCount(): number {
+    let count = 0;
+    for (const [, window] of this.openWindows) {
+      if (!window.closed) {
+        count++;
+      }
+    }
+    return count;
+  }
 }

@@ -36,7 +36,8 @@ export class SketchPageController {
     this.cursorManager.initialize();
     this.resizeManager.initialize();
     
-    
+    // ページ離脱時の警告を設定
+    this.setupBeforeUnloadWarning();
     
     // イベントリスナーの設定
     this.setupEventListeners();
@@ -164,6 +165,39 @@ export class SketchPageController {
     } else {
       console.error('SketchPageController: Canvas要素が見つからないため、ストリーミングを開始できません');
     }
+  }
+
+  private setupBeforeUnloadWarning(): void {
+    // ページ離脱時に開いているウィンドウがある場合は警告を表示
+    window.addEventListener('beforeunload', (event) => {
+      const windowManager = this.windowController.getWindowManager();
+      
+      if (windowManager.hasOpenWindows()) {
+        const openWindowCount = windowManager.getOpenWindowCount();
+        const message = `${openWindowCount}個のウィンドウが開いています。ページを離れると、これらのウィンドウも閉じられます。`;
+        
+        // 標準的なブラウザの離脱警告を表示
+        event.preventDefault();
+        event.returnValue = message;
+        
+        console.log('SketchPageController: ページ離脱警告を表示:', message);
+        return message;
+      }
+    });
+    
+    // ページが実際にアンロードされる時に開いているウィンドウを全て閉じる
+    window.addEventListener('unload', () => {
+      console.log('SketchPageController: ページアンロード - 開いているウィンドウを全て閉じます');
+      this.windowController.closeAllWindows();
+    });
+    
+    // ページが非表示になる時にもウィンドウを閉じる（ブラウザタブが閉じられた場合）
+    window.addEventListener('pagehide', () => {
+      console.log('SketchPageController: ページ非表示 - 開いているウィンドウを全て閉じます');
+      this.windowController.closeAllWindows();
+    });
+    
+    console.log('SketchPageController: ページ離脱警告とクリーンアップを設定しました');
   }
 
   destroy(): void {
