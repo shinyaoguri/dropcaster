@@ -51,7 +51,7 @@ export class SketchPageView {
         <div class="sketch-overlay-info ui-element">
           <div class="sketch-overlay-content">
             <img 
-              src="${(sketch.userData?.avatarFile || '/public/avatars/user128718.jpg').replace('../', '/')}" 
+              src="${(sketch.userData?.avatarFile || '/assets/placeholder-avatar.jpg').replace('../', '/')}" 
               alt="${sketch.userData.userName || 'Unknown User'}" 
               class="overlay-avatar-small"
             />
