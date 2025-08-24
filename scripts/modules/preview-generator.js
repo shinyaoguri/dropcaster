@@ -42,10 +42,12 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
       args: [
         '--no-sandbox',
         '--disable-dev-shm-usage',
+        '--disable-gpu-sandbox',
         '--enable-unsafe-webgpu',
-        '--enable-features=Vulkan,WebGPU',
-        '--use-angle=vulkan',
-        '--disable-vulkan-fallback-to-gl-for-testing'
+        '--enable-features=Vulkan,WebGPU,UseSkiaRenderer',
+        '--use-angle=swiftshader',
+        '--disable-vulkan-fallback-to-gl-for-testing',
+        '--enable-webgpu-developer-features'
       ]
     });
     

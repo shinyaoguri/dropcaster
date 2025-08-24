@@ -28,9 +28,32 @@ export class AvatarManager {
       const avatarsDir = SCRAPING_CONFIG.avatarDirectory;
       try {
         await fs.mkdir(avatarsDir, { recursive: true });
-        console.error(`✅ アバターディレクトリを作成/確認: ${avatarsDir}`);
       } catch (error) {
         console.error(`⚠️ アバターディレクトリの作成に失敗:`, error.message);
+      }
+
+      // ファイル名を生成（拡張子は仮で.jpg）
+      let filenameBase;
+      if (userId) {
+        filenameBase = `user${userId}`;
+      } else {
+        filenameBase = `sketch${sketchId}`;
+      }
+
+      // 既存のアバターファイルをチェック（複数の拡張子を試す）
+      const possibleExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+      for (const ext of possibleExtensions) {
+        const filepath = `${avatarsDir}/${filenameBase}${ext}`;
+        try {
+          await fs.access(filepath);
+          // ファイルが存在する場合
+          const relativePath = `../avatars/${filenameBase}${ext}`;
+          this.downloadedAvatars.set(avatarKey, relativePath);
+          console.error(`✓ ${avatarKey} avatar already exists, skipping download`);
+          return relativePath;
+        } catch {
+          // ファイルが存在しない場合は続行
+        }
       }
 
       const response = await axios.get(avatarUrl, {
