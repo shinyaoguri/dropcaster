@@ -39,7 +39,14 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     // Playwrightでブラウザを起動
     const browser = await chromium.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-dev-shm-usage'] // GitHub Actions対応
+      args: [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--enable-unsafe-webgpu',
+        '--enable-features=Vulkan,WebGPU',
+        '--use-angle=vulkan',
+        '--disable-vulkan-fallback-to-gl-for-testing'
+      ]
     });
     
     const page = await browser.newPage();
@@ -74,7 +81,7 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     });
     
     // スケッチの初期化を待つ
-    await page.waitForTimeout(1500); // CSS適用のため少し長めに待機
+    await page.waitForTimeout(1000); // CSS適用のため少し長めに待機
     
     // Canvas要素を探してその位置とサイズを取得
     let canvasBounds = null;
