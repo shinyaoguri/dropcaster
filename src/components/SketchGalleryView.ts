@@ -24,6 +24,10 @@ export class SketchGalleryView {
         <div class="gallery-grid">
           ${sketches.map(sketch => SketchCard.render(sketch)).join('')}
         </div>
+        
+        <footer class="footer">
+          <p>&copy; ${new Date().getFullYear()} dropcaster. All rights reserved.</p>
+        </footer>
       </div>
     `;
   }

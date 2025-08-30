@@ -8,6 +8,7 @@ export interface Sketch {
   interactiveElements: string[];
   lastModified: string;
   previewGif?: string; // オプショナルに変更
+  sketchUrl?: string; // オリジナルスケッチのURL
   userData: {
     userId: string;
     userName: string;

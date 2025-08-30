@@ -34,7 +34,18 @@ export class SketchCard {
                 class="author-avatar"
               />
               <div class="sketch-info">
-                <div class="sketch-title">${sketch.title}</div>
+                <div class="sketch-title">
+                  ${sketch.sketchUrl ? 
+                    `<a href="${sketch.sketchUrl}" 
+                        class="sketch-title-link" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        title="View original on OpenProcessing">
+                      ${sketch.title}
+                    </a>` : 
+                    sketch.title
+                  }
+                </div>
                 <div class="author-name">
                   <span class="by-text">by</span>
                   <a 

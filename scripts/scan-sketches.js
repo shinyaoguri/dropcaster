@@ -136,6 +136,10 @@ async function scanSketches(options = {}) {
                 avatarFile: userData.avatarFile
               };
               
+              // オリジナルスケッチのURLを設定
+              const sketchNumId = userData.sketchId.replace('sketch', '');
+              sketches[sketchIndex].sketchUrl = `https://openprocessing.org/sketch/${sketchNumId}`;
+              
               // 更新後の状態をログ出力
               console.error(`📝 更新後:`, JSON.stringify(sketches[sketchIndex], null, 2));
               
