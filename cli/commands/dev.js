@@ -24,11 +24,22 @@ export async function dev(options) {
     // Generate manifest.json in public directory
     await generateManifest(config, publicDir);
     
-    // Create dev service worker (disabled caching for development)
+    // Create dev service worker (minimal caching for PWA testing)
     const devServiceWorker = `
-// Development Service Worker - No caching
-self.addEventListener('install', () => {
-  self.skipWaiting();
+// Development Service Worker - Minimal caching for PWA testing
+const CACHE_NAME = 'dropcaster-dev-v1';
+const urlsToCache = [
+  '/',
+  '/manifest.json'
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => {
+        return cache.addAll(urlsToCache);
+      })
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -36,7 +47,9 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          return caches.delete(cacheName);
+          if (cacheName !== CACHE_NAME) {
+            return caches.delete(cacheName);
+          }
         })
       );
     }).then(() => {
@@ -46,8 +59,18 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Always fetch from network in development
-  event.respondWith(fetch(event.request));
+  // For development, always fetch from network except for the manifest
+  if (event.request.url.includes('/manifest.json')) {
+    event.respondWith(
+      caches.match(event.request)
+        .then((response) => {
+          return response || fetch(event.request);
+        })
+    );
+  } else {
+    // Always fetch from network for other resources
+    event.respondWith(fetch(event.request));
+  }
 });`;
     
     await fs.writeFile(join(publicDir, 'sw.js'), devServiceWorker, 'utf-8');

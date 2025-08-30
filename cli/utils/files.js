@@ -24,6 +24,11 @@ async function copyRecursive(source, target) {
     
     // Copy each entry
     for (const entry of entries) {
+      // Skip sw.js as it will be generated
+      if (entry.name === 'sw.js') {
+        continue;
+      }
+      
       const sourcePath = join(source, entry.name);
       const targetPath = join(target, entry.name);
       

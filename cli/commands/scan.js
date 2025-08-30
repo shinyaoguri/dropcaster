@@ -77,14 +77,48 @@ export async function scan(options = {}) {
       });
       
       scanProcess.stderr.on('data', (data) => {
-        stderr += data.toString();
+        const dataStr = data.toString();
+        stderr += dataStr;
+        
         // プログレス情報を表示
-        const lines = data.toString().split('\n');
+        const lines = dataStr.split('\n');
         for (const line of lines) {
-          if (line.includes('✓') || line.includes('📸') || line.includes('🎬')) {
+          const trimmedLine = line.trim();
+          
+          // フレームキャプチャの進捗表示（\rで上書き）
+          if (trimmedLine.includes('Frame') && trimmedLine.includes('%')) {
             if (spinner) {
-              spinner.text = line.trim();
+              spinner.stop();
+              spinner = null;
             }
+            // \rを使って同じ行に上書き表示
+            process.stdout.write('\r' + trimmedLine);
+          }
+          // その他の進捗メッセージ
+          else if (trimmedLine.includes('✓') || trimmedLine.includes('📸') || trimmedLine.includes('🎬')) {
+            if (trimmedLine.includes('📸')) {
+              // プレビュー生成開始時はスピナーを停止
+              if (spinner) {
+                spinner.stop();
+                spinner = null;
+              }
+              console.log(trimmedLine);
+            } else if (trimmedLine.includes('🎬')) {
+              // GIF変換メッセージ（Frame進捗の後なので改行を入れる）
+              console.log(''); // 改行
+              console.log(trimmedLine);
+            } else if (spinner) {
+              spinner.text = trimmedLine;
+            }
+          }
+          // 最終的な確認メッセージ
+          else if (trimmedLine.includes('📋')) {
+            if (spinner) {
+              spinner.stop();
+              spinner = null;
+            }
+            console.error(''); // 改行
+            console.error(trimmedLine);
           }
         }
       });
@@ -114,11 +148,12 @@ export async function scan(options = {}) {
           }
         }
         
-        // stderrの重要な情報を表示
+        // stderrの最終確認メッセージを表示（すでに表示済みのものは除く）
         if (!options.verbose && stderr) {
           const lines = stderr.split('\n');
           for (const line of lines) {
-            if (line.includes('📋') || line.includes('💾')) {
+            // 💾のみ表示（📋は既に表示済み）
+            if (line.includes('💾')) {
               console.log(chalk.gray(line));
             }
           }

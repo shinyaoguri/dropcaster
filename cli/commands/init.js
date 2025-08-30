@@ -71,6 +71,15 @@ export async function init(options) {
     await fs.mkdir(join(projectPath, 'public/previews'), { recursive: true });
     await fs.mkdir(join(projectPath, 'public/avatars'), { recursive: true });
     
+    // Create default icon (simple SVG)
+    const defaultIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="64" fill="#000"/>
+  <circle cx="256" cy="256" r="180" fill="#fff"/>
+  <circle cx="256" cy="256" r="120" fill="#000"/>
+  <circle cx="256" cy="256" r="60" fill="#fff"/>
+</svg>`;
+    await fs.writeFile(join(projectPath, 'public/icon.svg'), defaultIcon, 'utf-8');
+    
     // Create config file
     const config = {
       title: response.title || 'My Sketch Gallery',

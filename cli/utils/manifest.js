@@ -15,9 +15,11 @@ export async function generateManifest(config, outputDir) {
   };
   
   // Check for custom icons
-  const iconPath = join(outputDir, 'icon.png');
+  const iconPngPath = join(outputDir, 'icon.png');
+  const iconSvgPath = join(outputDir, 'icon.svg');
+  
   try {
-    await fs.access(iconPath);
+    await fs.access(iconPngPath);
     manifest.icons = [
       {
         src: '/icon.png',
@@ -27,15 +29,35 @@ export async function generateManifest(config, outputDir) {
       }
     ];
   } catch {
-    // Use default icon
-    manifest.icons = [
-      {
-        src: '/vite.svg',
-        sizes: 'any',
-        type: 'image/svg+xml',
-        purpose: 'any maskable'
-      }
-    ];
+    // Check for SVG icon
+    try {
+      await fs.access(iconSvgPath);
+      manifest.icons = [
+        {
+          src: '/icon.svg',
+          sizes: 'any',
+          type: 'image/svg+xml',
+          purpose: 'any maskable'
+        }
+      ];
+    } catch {
+      // No icon found, create a default one
+      const defaultIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="64" fill="#000"/>
+  <circle cx="256" cy="256" r="180" fill="#fff"/>
+  <circle cx="256" cy="256" r="120" fill="#000"/>
+  <circle cx="256" cy="256" r="60" fill="#fff"/>
+</svg>`;
+      await fs.writeFile(iconSvgPath, defaultIcon, 'utf-8');
+      manifest.icons = [
+        {
+          src: '/icon.svg',
+          sizes: 'any',
+          type: 'image/svg+xml',
+          purpose: 'any maskable'
+        }
+      ];
+    }
   }
   
   const manifestPath = join(outputDir, 'manifest.json');

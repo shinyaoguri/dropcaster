@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "postinstall": "npx playwright install chromium",
-    "dev": "npm run scan:previews && vite",
+    "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview dist",
     "scan": "node scripts/scan-sketches.js 2>/dev/null > public/sketches.json && echo '📁 スケッチリストを更新しました'",
@@ -34,6 +34,7 @@
     "playwright": "^1.47.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.11",
+    "terser": "^5.43.1",
     "typescript": "~5.8.3",
     "vite": "^7.1.0"
   },

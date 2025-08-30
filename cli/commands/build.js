@@ -46,14 +46,41 @@ export async function build(options) {
       root: rootDir,
       base: options.base,
       mode: 'production',
+      publicDir: false,  // Don't copy public dir from package
       build: {
         outDir: outputDir,
         emptyOutDir: false,
+        minify: 'terser',  // より高度な圧縮
+        terserOptions: {
+          compress: {
+            drop_console: true,  // console.logを削除
+            drop_debugger: true  // debuggerを削除
+          }
+        },
+        reportCompressedSize: false,  // gzip圧縮サイズ計算をスキップ（ビルド高速化）
+        chunkSizeWarningLimit: 1000,  // チャンクサイズ警告の閾値を上げる
         rollupOptions: {
           input: {
             main: join(rootDir, 'index.html')
+          },
+          output: {
+            // コード分割の最適化
+            manualChunks: (id) => {
+              // node_modulesのコードを vendor チャンクに分離
+              if (id.includes('node_modules')) {
+                return 'vendor';
+              }
+            },
+            // アセット名を短縮
+            assetFileNames: 'assets/[name].[hash:8][extname]',
+            chunkFileNames: 'assets/[name].[hash:8].js',
+            entryFileNames: 'assets/[name].[hash:8].js'
           }
-        }
+        },
+        cssCodeSplit: true,  // CSSコード分割を有効化
+        sourcemap: false,  // ソースマップを無効化（プロダクション用）
+        target: 'es2015',  // より広いブラウザサポート
+        assetsInlineLimit: 4096  // 4KB以下のアセットをインライン化
       },
       define: {
         'import.meta.env.DROPCASTER_CONFIG': JSON.stringify(config),
