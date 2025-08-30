@@ -1,9 +1,22 @@
 {
-  "name": "dropcaster",
-  "private": true,
-  "version": "0.0.0",
-  "description": "webベースのコンテンツマッピングシステム",
+  "name": "@dropcaster/viewer",
+  "version": "1.0.0",
+  "description": "A static PWA generator for creative coding sketches",
   "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "dropcaster": "./cli/index.js"
+  },
+  "files": [
+    "dist",
+    "cli",
+    "scripts",
+    "src",
+    "public/assets",
+    "index.html",
+    "vite.config.ts",
+    "tsconfig.json"
+  ],
   "scripts": {
     "postinstall": "npx playwright install chromium",
     "dev": "npm run scan:previews && vite",
@@ -29,6 +42,10 @@
     "@tailwindcss/postcss": "^4.1.11",
     "@tailwindcss/vite": "^4.1.11",
     "axios": "^1.11.0",
+    "chalk": "^5.3.0",
+    "commander": "^11.1.0",
+    "ora": "^7.0.1",
+    "prompts": "^2.4.2",
     "puppeteer": "^24.16.2"
   }
 }

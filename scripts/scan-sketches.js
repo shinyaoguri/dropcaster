@@ -8,17 +8,35 @@ import { analyzeSketch } from './modules/sketch-analyzer.js';
 import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists } from './modules/file-manager.js';
 import { generateSketchPreview } from './modules/preview-generator.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = resolve(__filename, '..');
-const sketchesDir = resolve(__dirname, '../sketches');
-const publicSketchesDir = resolve(__dirname, '../public/sketches');
-const previewsDir = resolve(__dirname, '../public/previews');
+// __filenameと__dirnameをローカルスコープで定義
+const getDirectories = () => {
+  const currentFilename = fileURLToPath(import.meta.url);
+  const currentDirname = resolve(currentFilename, '..');
+  
+  // CLIから呼ばれた場合は環境変数からプロジェクトルートを取得
+  const projectRoot = process.env.DROPCASTER_PROJECT_ROOT || resolve(currentDirname, '..');
+  
+  return {
+    __dirname: currentDirname,
+    projectRoot,
+    sketchesDir: resolve(projectRoot, 'sketches'),
+    publicSketchesDir: resolve(projectRoot, 'public/sketches'),
+    previewsDir: resolve(projectRoot, 'public/previews')
+  };
+};
+
+const { sketchesDir, publicSketchesDir, previewsDir } = getDirectories();
 
 /**
  * スケッチディレクトリをスキャンしてメタデータを生成
  */
 async function scanSketches(options = {}) {
-  const { generatePreviews = false, forceRegenerate = false, fetchUserData = false } = options;
+  const { 
+    generatePreviews = false, 
+    forceRegenerate = false, 
+    fetchUserData = false,
+    targetSketch = null 
+  } = options;
   
   try {
     // 必要なディレクトリを作成
@@ -36,6 +54,10 @@ async function scanSketches(options = {}) {
     
     for (const entry of entries) {
       if (entry.isDirectory()) {
+        // targetSketchが指定されている場合、それ以外はスキップ
+        if (targetSketch && entry.name !== targetSketch) {
+          continue;
+        }
         currentSketchNames.add(entry.name);
         const sketchPath = resolve(sketchesDir, entry.name);
         const sketchInfo = await analyzeSketch(entry.name, sketchPath);
@@ -196,7 +218,8 @@ async function scanSketches(options = {}) {
     // スケッチデータ取得オプションが有効な場合は、sketches.jsonファイルも生成
     if (fetchUserData) {
       try {
-        const sketchesJsonPath = resolve(__dirname, '../public/sketches.json');
+        const { projectRoot } = getDirectories();
+        const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
         await writeFile(sketchesJsonPath, JSON.stringify(sketches, null, 2), 'utf-8');
         console.error(`💾 sketches.jsonファイルを生成: ${sketchesJsonPath}`);
         
@@ -228,11 +251,25 @@ async function scanSketches(options = {}) {
 // スクリプトが直接実行された場合
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
-  const generatePreviews = args.includes('--generate-previews');
-  const forceRegenerate = args.includes('--force-regenerate');
-  const fetchUserData = args.includes('--fetch-user-data');
   
-  scanSketches({ generatePreviews, forceRegenerate, fetchUserData });
+  // コマンドライン引数を解析（新旧両方のオプション名をサポート）
+  const options = {
+    // 新しいオプション名
+    generatePreviews: args.includes('--force-preview') || args.includes('--generate-previews'),
+    forceRegenerate: args.includes('--reset') || args.includes('--force-regenerate'),
+    fetchUserData: args.includes('--fetch-userdata') || args.includes('--fetch-user-data'),
+    
+    // 特定のスケッチのみ処理
+    targetSketch: null
+  };
+  
+  // --sketch オプションの処理
+  const sketchIndex = args.indexOf('--sketch');
+  if (sketchIndex !== -1 && args[sketchIndex + 1]) {
+    options.targetSketch = args[sketchIndex + 1];
+  }
+  
+  scanSketches(options);
 }
 
 export { scanSketches };

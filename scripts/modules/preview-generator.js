@@ -1,9 +1,10 @@
 import { chromium } from 'playwright';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { readFile, writeFile, mkdir, rm, stat } from 'fs/promises';
+import { readFile, writeFile, mkdir, rm, stat, copyFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { PREVIEW_OPTIONS, PREVIEW_PATH_PREFIX } from './config.js';
+import { detectGraphicsMode, getBrowserArgs } from './webgpu-detector.js';
 
 const execAsync = promisify(exec);
 
@@ -33,22 +34,19 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     
     console.error(`🎬 Generating animated preview for ${sketchName}...`);
     
+    // グラフィックスモードを検出
+    const graphicsMode = await detectGraphicsMode(sketchPath);
+    if (graphicsMode === 'standard') {
+      console.error(`   ⚡ Standard rendering mode (faster)`);
+    }
+    
     // 一時ディレクトリを作成
     await mkdir(tempDir, { recursive: true });
     
-    // Playwrightでブラウザを起動
+    // グラフィックスモードに応じてブラウザを起動
     const browser = await chromium.launch({
       headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu-sandbox',
-        '--enable-unsafe-webgpu',
-        '--enable-features=Vulkan,WebGPU,UseSkiaRenderer',
-        '--use-angle=swiftshader',
-        '--disable-vulkan-fallback-to-gl-for-testing',
-        '--enable-webgpu-developer-features'
-      ]
+      args: getBrowserArgs(graphicsMode)
     });
     
     const page = await browser.newPage();
@@ -87,20 +85,34 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     
     // Canvas要素を探してその位置とサイズを取得
     let canvasBounds = null;
+    let isLargeCanvas = false;
     try {
-      canvasBounds = await page.evaluate(() => {
+      const canvasInfo = await page.evaluate(() => {
         const canvas = document.querySelector('canvas');
         if (canvas) {
           const rect = canvas.getBoundingClientRect();
           return {
-            x: Math.round(rect.left),
-            y: Math.round(rect.top),
-            width: Math.round(rect.width),
-            height: Math.round(rect.height)
+            bounds: {
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height)
+            },
+            canvasWidth: canvas.width,
+            canvasHeight: canvas.height
           };
         }
         return null;
       });
+      
+      if (canvasInfo) {
+        canvasBounds = canvasInfo.bounds;
+        // 600px以上のキャンバスは大きいと判定
+        isLargeCanvas = canvasInfo.canvasWidth > 600 || canvasInfo.canvasHeight > 600;
+        if (isLargeCanvas) {
+          console.error(`   ⚠️ Large canvas detected (${canvasInfo.canvasWidth}x${canvasInfo.canvasHeight}px) - this may take longer`);
+        }
+      }
     } catch (error) {
       console.warn(`Warning: Could not find canvas element for ${sketchName}, using full viewport`);
     }
@@ -110,8 +122,23 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     const frameCount = Math.floor((PREVIEW_OPTIONS.duration / 1000) * PREVIEW_OPTIONS.fps);
     const interval = 1000 / PREVIEW_OPTIONS.fps; // 正確なフレーム間隔（ミリ秒）
     
+    console.error(`📸 Capturing ${frameCount} frames for ${sketchName}...`);
+    
+    // タイムアウト対策とパフォーマンス監視を追加
+    let skippedFrames = 0;
+    const captureStartTime = Date.now();
+    
     for (let i = 0; i < frameCount; i++) {
-      const screenshot = await page.screenshot({
+      const frameStartTime = Date.now();
+      
+      // 進捗状況を同じ行に表示（キャリッジリターンで上書き）
+      const progress = Math.round(((i + 1) / frameCount) * 100);
+      const progressBar = '█'.repeat(Math.floor(progress / 5)) + '░'.repeat(20 - Math.floor(progress / 5));
+      const elapsedSec = ((Date.now() - captureStartTime) / 1000).toFixed(1);
+      process.stderr.write(`\r   Frame ${(i + 1).toString().padStart(3)}/${frameCount} [${progressBar}] ${progress.toString().padStart(3)}% (${elapsedSec}s)`);
+      
+      // スクリーンショットをタイムアウト付きで取得（最大2秒）
+      const screenshotPromise = page.screenshot({
         type: 'png',
         clip: canvasBounds || {
           x: 0,
@@ -121,13 +148,58 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
         }
       });
       
-      // フレームをファイルに保存（ゼロパディングで命名）
-      const frameNumber = String(i).padStart(3, '0');
-      const framePath = join(tempDir, `frame_${frameNumber}.png`);
-      await writeFile(framePath, screenshot);
+      // 大きなキャンバスの場合はタイムアウトを延長
+      const timeoutDuration = isLargeCanvas ? 10000 : 5000;
+      const timeoutPromise = new Promise((resolve) => {
+        setTimeout(() => resolve(null), timeoutDuration);
+      });
       
-      await page.waitForTimeout(interval);
+      const screenshot = await Promise.race([screenshotPromise, timeoutPromise]);
+      
+      if (screenshot) {
+        // フレームをファイルに保存（ゼロパディングで命名）
+        const frameNumber = String(i).padStart(3, '0');
+        const framePath = join(tempDir, `frame_${frameNumber}.png`);
+        await writeFile(framePath, screenshot);
+      } else {
+        // タイムアウトした場合
+        skippedFrames++;
+        console.error(`\n⚠️ Frame ${i + 1} timed out after ${timeoutDuration/1000}s (skipped)`);
+        // 前のフレームをコピー（連続性を保つ）
+        if (i > 0) {
+          const prevFrameNumber = String(i - 1).padStart(3, '0');
+          const currFrameNumber = String(i).padStart(3, '0');
+          const prevFramePath = join(tempDir, `frame_${prevFrameNumber}.png`);
+          const currFramePath = join(tempDir, `frame_${currFrameNumber}.png`);
+          try {
+            await copyFile(prevFramePath, currFramePath);
+          } catch (e) {
+            // 最初のフレームがない場合は空のファイルを作成
+            const emptyFrame = Buffer.from('');
+            await writeFile(currFramePath, emptyFrame);
+          }
+        }
+      }
+      
+      // 次のフレームまでの待機時間を計算
+      const frameTime = Date.now() - frameStartTime;
+      if (frameTime < interval) {
+        await page.waitForTimeout(Math.max(10, interval - frameTime));
+      }
+      
+      // 全体が30秒以上かかっている場合は警告
+      if (Date.now() - captureStartTime > 30000 && i === Math.floor(frameCount / 2)) {
+        console.error(`\n⚠️ Slow capture detected - ${sketchName} is taking too long`);
+      }
     }
+    
+    // スキップされたフレームがある場合は警告
+    if (skippedFrames > 0) {
+      console.error(`\n⚠️ ${skippedFrames} frames were skipped due to timeout`);
+    }
+    
+    // 最後に改行を出力して次の出力を正しく表示
+    console.error();
     
     await browser.close();
     
@@ -166,6 +238,8 @@ async function generateAnimatedGIF(tempDir, outputPath, frameCount) {
       throw new Error('FFmpeg is not installed or not available in PATH');
     }
     
+    process.stderr.write(`🎬 Converting ${frameCount} frames to GIF...`);
+    
     const gifPlaybackFps = 60;
     
     // GIF出力サイズ
@@ -176,10 +250,10 @@ async function generateAnimatedGIF(tempDir, outputPath, frameCount) {
     const scaleFilter = PREVIEW_OPTIONS.scaleFilter || 'fast_bilinear';
     const maxColors = PREVIEW_OPTIONS.maxColors || 128;
     
-    const gifGenCmd = `ffmpeg -y -framerate ${PREVIEW_OPTIONS.fps} -i "${tempDir}/frame_%03d.png" -vf "scale=${outputWidth}:${outputHeight}:flags=${scaleFilter},fps=${gifPlaybackFps},split[s0][s1];[s0]palettegen=max_colors=${maxColors}:stats_mode=single[p];[s1][p]paletteuse=new=1" "${outputPath}"`;
-    await execAsync(gifGenCmd);
+    const gifGenCmd = `ffmpeg -y -framerate ${PREVIEW_OPTIONS.fps} -i "${tempDir}/frame_%03d.png" -vf "scale=${outputWidth}:${outputHeight}:flags=${scaleFilter},fps=${gifPlaybackFps},split[s0][s1];[s0]palettegen=max_colors=${maxColors}:stats_mode=single[p];[s1][p]paletteuse=new=1" "${outputPath}" 2>/dev/null`;
     
-    console.error(`✅ Generated animated GIF with ${frameCount} frames`);
+    await execAsync(gifGenCmd);
+    process.stderr.write(` ✅\n`);
     
   } catch (error) {
     // FFmpegが失敗した場合は最初のフレームをコピー（フォールバック）

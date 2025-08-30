@@ -17,6 +17,19 @@ export const DEFAULT_PATH_PREFIX = '../sketches/';
 export const PREVIEW_PATH_PREFIX = '../previews/';
 export const AVATAR_PATH_PREFIX = '../avatars/';
 
+// CLIから呼ばれた場合のプロジェクトルート
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+// __filenameと__dirnameを関数でラップして重複定義を避ける
+function getProjectRoot() {
+  const currentFilename = fileURLToPath(import.meta.url);
+  const currentDirname = dirname(currentFilename);
+  return process.env.DROPCASTER_PROJECT_ROOT || resolve(currentDirname, '../..');
+}
+
+const projectRoot = getProjectRoot();
+
 // スクレイピング関連の設定
 export const SCRAPING_CONFIG = {
   // OpenProcessing.orgの設定
@@ -34,7 +47,7 @@ export const SCRAPING_CONFIG = {
   
   // アバター画像設定
   avatarDownloadTimeout: 10000,
-  avatarDirectory: './public/avatars'
+  avatarDirectory: resolve(projectRoot, 'public/avatars')
 };
 
 // ファイル拡張子マッピング
