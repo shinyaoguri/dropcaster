@@ -35,15 +35,46 @@ async function scanSketches(options = {}) {
     generatePreviews = false, 
     forceRegenerate = false, 
     fetchUserData = false,
-    targetSketch = null 
+    targetSketch = null,
+    watchMode = false,
+    incremental = false
   } = options;
   
   try {
+    // watchModeまたはincrementalの場合、既存のスケッチリストを読み込む（ユーザー情報も含む）
+    let existingSketches = new Set();
+    let existingSketchData = {};
+    let existingPreviewData = {};
+    if (watchMode || incremental) {
+      try {
+        const { projectRoot } = getDirectories();
+        const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
+        const existingData = await readFile(sketchesJsonPath, 'utf-8');
+        const existingSketchList = JSON.parse(existingData);
+        existingSketches = new Set(existingSketchList.map(s => s.id));
+        // 既存のスケッチのユーザー情報とプレビュー情報を保存
+        existingSketchList.forEach(sketch => {
+          existingSketchData[sketch.id] = {
+            userData: sketch.userData,
+            title: sketch.title,
+            sketchUrl: sketch.sketchUrl,
+            previewGif: sketch.previewGif
+          };
+          if (sketch.previewGif) {
+            existingPreviewData[sketch.id] = sketch.previewGif;
+          }
+        });
+      } catch (error) {
+        // ファイルが存在しない場合は空のセットのまま
+        console.error(`ℹ️ sketches.jsonが存在しません。新規作成します。`);
+      }
+    }
+    
     // 必要なディレクトリを作成
     await ensureDirectoryExists(sketchesDir, 'sketches directory');
     await ensureDirectoryExists(publicSketchesDir, 'public/sketches directory');
     
-    if (generatePreviews) {
+    if (generatePreviews || watchMode) {
       await ensureDirectoryExists(previewsDir, 'public/previews directory');
     }
     
@@ -51,6 +82,7 @@ async function scanSketches(options = {}) {
     const sketches = [];
     const currentSketchNames = new Set();
     const sketchIds = []; // ユーザー情報取得用のスケッチIDリスト
+    const newSketches = []; // 新規検出されたスケッチ
     
     for (const entry of entries) {
       if (entry.isDirectory()) {
@@ -62,7 +94,31 @@ async function scanSketches(options = {}) {
         const sketchPath = resolve(sketchesDir, entry.name);
         const sketchInfo = await analyzeSketch(entry.name, sketchPath);
         if (sketchInfo) {
+          // watchModeまたはincrementalで既存の情報を復元
+          if ((watchMode || incremental) && existingSketchData[entry.name]) {
+            const existingData = existingSketchData[entry.name];
+            if (existingData.userData) {
+              sketchInfo.userData = existingData.userData;
+            }
+            if (existingData.title && existingData.title !== entry.name) {
+              sketchInfo.title = existingData.title;
+            }
+            if (existingData.sketchUrl) {
+              sketchInfo.sketchUrl = existingData.sketchUrl;
+            }
+            // 既存のプレビューがあれば使用
+            if (existingData.previewGif) {
+              sketchInfo.previewGif = existingData.previewGif;
+            }
+          }
+          
           sketches.push(sketchInfo);
+          
+          // watchModeで新規スケッチを検出
+          if (watchMode && !existingSketches.has(entry.name)) {
+            newSketches.push(entry.name);
+            console.error(`🆕 新しいスケッチを検出: ${entry.name}`);
+          }
           
           // スケッチIDをリストに追加（数値の場合のみ）
           if (/^\d+$/.test(entry.name)) {
@@ -80,8 +136,10 @@ async function scanSketches(options = {}) {
           // スケッチをpublicディレクトリにコピー
           await copySketchToPublic(entry.name, sketchPath, publicSketchesDir, forceRegenerate);
           
-          // プレビューGIFを生成（オプション指定時のみ）
-          if (generatePreviews) {
+          // プレビューGIFを生成（オプション指定時、watchModeで新規、またはincrementalでプレビューがない場合）
+          const needsPreview = incremental && !existingPreviewData[entry.name];
+          const shouldGeneratePreview = generatePreviews || (watchMode && newSketches.includes(entry.name)) || needsPreview;
+          if (shouldGeneratePreview) {
             try {
               const previewPath = await generateSketchPreview(entry.name, sketchPath, previewsDir, forceRegenerate);
               if (previewPath) {
@@ -101,7 +159,21 @@ async function scanSketches(options = {}) {
       await cleanupRemovedSketches(currentSketchNames, publicSketchesDir, previewsDir);
     }
     
-    // スケッチ情報を取得（オプション指定時のみ）
+    // incrementalモードでユーザー情報がないスケッチのIDを収集
+    let needsUserData = [];
+    if (incremental) {
+      needsUserData = sketchIds.filter(id => {
+        const sketchName = `sketch${id}`;
+        return !existingSketchData[sketchName] || !existingSketchData[sketchName].userData;
+      });
+      if (needsUserData.length > 0) {
+        console.error(`🆕 ユーザー情報がないスケッチ: ${needsUserData.length}件`);
+        fetchUserData = true;
+        sketchIds = needsUserData;
+      }
+    }
+    
+    // スケッチ情報を取得（オプション指定時またはincrementalで必要な場合）
     if (fetchUserData && sketchIds.length > 0) {
       console.error(`\n🔍 スケッチIDからスケッチ情報を取得中... (${sketchIds.length}件)`);
       console.error(`📋 検出されたスケッチID: ${JSON.stringify(sketchIds)}`);
@@ -212,6 +284,12 @@ async function scanSketches(options = {}) {
     console.error(`   - スケッチデータ統合済み: ${sketches.filter(s => s.userData).length}件`);
     console.error(`   - アバター画像付き: ${sketches.filter(s => s.userData && s.userData.avatarFile).length}件`);
     
+    // watchModeの場合は新規スケッチ情報を出力
+    if (watchMode && newSketches.length > 0) {
+      console.error(`\n📝 新規スケッチ ${newSketches.length} 件のプレビューを生成しました`);
+      console.error(`   スケッチ: ${newSketches.join(', ')}`);
+    }
+    
     // 結果を出力（stdoutにJSONのみ）
     console.log(JSON.stringify(sketches, null, 2));
     
@@ -258,6 +336,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     generatePreviews: args.includes('--force-preview') || args.includes('--generate-previews'),
     forceRegenerate: args.includes('--reset') || args.includes('--force-regenerate'),
     fetchUserData: args.includes('--fetch-userdata') || args.includes('--fetch-user-data'),
+    watchMode: args.includes('--watch-mode'),
+    incremental: args.includes('--incremental'),
     
     // 特定のスケッチのみ処理
     targetSketch: null
