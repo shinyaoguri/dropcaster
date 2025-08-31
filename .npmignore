@@ -1,0 +1,36 @@
+# Development files
+.git
+.gitignore
+*.log
+node_modules
+.DS_Store
+
+# Test files
+test/
+*.test.js
+coverage/
+
+# Source sketches (not needed in package)
+sketches/
+
+# Generated files (users will generate their own)
+public/sketches/
+public/previews/
+public/avatars/
+public/sketches.json
+dist/
+
+# Config files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+docs/
+examples/
+
+# Temporary files
+*.tmp
+temp/
+tmp/

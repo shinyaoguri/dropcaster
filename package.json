@@ -1,7 +1,25 @@
 {
-  "name": "@dropcaster/viewer",
-  "version": "1.0.0",
+  "name": "dropcaster",
+  "version": "0.1.0",
   "description": "A static PWA generator for creative coding sketches",
+  "keywords": [
+    "openprocessing",
+    "p5js",
+    "creative-coding",
+    "pwa",
+    "gallery",
+    "static-site-generator"
+  ],
+  "homepage": "https://github.com/yourusername/dropcaster",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/dropcaster.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/dropcaster/issues"
+  },
+  "author": "Shinya Oguri",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -19,6 +37,7 @@
   ],
   "scripts": {
     "postinstall": "npx playwright install chromium",
+    "prepublishOnly": "npm run build",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview dist",
@@ -29,19 +48,14 @@
     "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"npm run scan\""
   },
   "devDependencies": {
-    "autoprefixer": "^10.4.21",
     "nodemon": "^3.0.2",
     "playwright": "^1.47.0",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.11",
     "terser": "^5.43.1",
     "typescript": "~5.8.3",
     "vite": "^7.1.0"
   },
   "dependencies": {
     "@fortawesome/fontawesome-free": "^7.0.0",
-    "@tailwindcss/postcss": "^4.1.11",
-    "@tailwindcss/vite": "^4.1.11",
     "axios": "^1.11.0",
     "chalk": "^5.3.0",
     "commander": "^11.1.0",

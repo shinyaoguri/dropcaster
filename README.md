@@ -1,4 +1,154 @@
 # dropcaster
+
+> ⚠️ **Alpha Version**: This project is under active development. APIs may change.
+
+A static PWA generator for creative coding sketches from OpenProcessing.
+
+## Features
+
+- 🎨 Import sketches from OpenProcessing
+- 📱 Progressive Web App (PWA) support
+- 🖼️ Automatic preview generation
+- 👤 User information fetching
+- 🚀 Static site generation
+- 📦 Easy deployment
+
+## Installation
+
+```bash
+npm install -g @dropcaster/viewer
+```
+
+## Quick Start
+
+### 1. Create a new gallery
+
+```bash
+dropcaster init my-gallery
+cd my-gallery
+```
+
+### 2. Add sketches
+
+Place your OpenProcessing sketches in the `sketches/` directory:
+```
+sketches/
+  sketch2257553/
+    index.html
+  sketch2326097/
+    index.html
+```
+
+### 3. Scan and generate previews
+
+```bash
+# Scan sketches and generate metadata
+npm run scan
+
+# Generate previews and fetch user data
+npm run scan:full
+
+# Reset and regenerate all previews
+npm run scan:reset
+```
+
+### 4. Development
+
+```bash
+npm run dev
+```
+
+### 5. Build for production
+
+```bash
+npm run build
+```
+
+The built files will be in the `dist/` directory, ready for deployment.
+
+## CLI Commands
+
+### `dropcaster init <project-name>`
+Create a new gallery project.
+
+### `dropcaster scan [options]`
+Scan sketches and generate metadata.
+
+Options:
+- `--sketch <name>` - Scan specific sketch only
+- `--force-preview` - Force regenerate preview images
+- `--reset` - Reset and regenerate all previews
+- `--fetch-userdata` - Fetch user data from OpenProcessing
+- `-v, --verbose` - Show detailed output
+
+### `dropcaster build [options]`
+Build the gallery for production.
+
+Options:
+- `-o, --output <dir>` - Output directory (default: "dist")
+- `-b, --base <path>` - Base URL path (default: "/")
+
+### `dropcaster dev`
+Start development server.
+
+## Configuration
+
+Edit `dropcaster.config.json` to customize your gallery:
+
+```json
+{
+  "title": "My Gallery",
+  "description": "A collection of creative coding sketches",
+  "theme_color": "#000000",
+  "background_color": "#000000",
+  "display": "standalone",
+  "orientation": "portrait",
+  "categories": ["generative", "interactive", "3D", "audio"]
+}
+```
+
+## Project Structure
+
+```
+my-gallery/
+├── sketches/          # OpenProcessing sketches
+├── public/
+│   ├── sketches/      # Copied sketches
+│   ├── previews/      # Generated GIF previews
+│   ├── avatars/       # User avatars
+│   └── sketches.json  # Metadata
+├── dist/              # Built files
+├── package.json
+└── dropcaster.config.json
+```
+
+## Deployment
+
+The built gallery can be deployed to any static hosting service:
+
+- GitHub Pages
+- Netlify
+- Vercel
+- Surge.sh
+- AWS S3
+- Firebase Hosting
+
+## Requirements
+
+- Node.js 18+
+- FFmpeg (for GIF generation)
+
+## License
+
+MIT
+
+## Author
+
+Your Name
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 ブラウザベースのプロジェクションマッピングツール
 
 # Web技術完結型のエコシステム統合
