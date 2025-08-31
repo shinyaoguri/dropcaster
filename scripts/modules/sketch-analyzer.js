@@ -200,7 +200,9 @@ function detectInteractivePatterns(code, elements) {
     /\bmouseWheel\b|\bmouseScrolled\b/i,
     /\bhandleMouseClick\b/i,
     /\bonmousedown\b|\bonmouseup\b|\bonmousemove\b|\bonclick\b/i,
-    /addEventListener\s*\(\s*['"`](mousedown|mouseup|mousemove|click|mousewheel|wheel)['"`]/i
+    /addEventListener\s*\(\s*['"`](mousedown|mouseup|mousemove|click|mousewheel|wheel)['"`]/i,
+    /\borbitControl\b/i,  // p5.jsの3Dカメラコントロール
+    /\bmouseX\b|\bmouseY\b/i  // マウス座標の参照
   ];
   
   if (mousePatterns.some(pattern => pattern.test(cleanCode))) {
