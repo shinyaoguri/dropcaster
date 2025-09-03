@@ -38,7 +38,7 @@
   "scripts": {
     "postinstall": "npx playwright install chromium",
     "prepublishOnly": "npm run build",
-    "dev": "node scripts/scan-sketches.js --incremental > public/sketches.json && (vite & nodemon --watch sketches --ext html,js,css --exec \"node scripts/scan-sketches.js --watch-mode > public/sketches.json\" & wait)",
+    "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview dist",
     "scan": "node scripts/scan-sketches.js 2>/dev/null > public/sketches.json && echo '📁 スケッチリストを更新しました'",
