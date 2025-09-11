@@ -220,14 +220,6 @@ npx github:yourusername/dropcaster#feature-branch init test-gallery
 
 詳細は [DEVELOPMENT.md](DEVELOPMENT.md) を参照。
 
-## ライセンス
-
-MIT
-
-## 作者
-
-Shinya Oguri
-
 ## 貢献
 
 Pull Requestを歓迎します！問題や提案がある場合は [Issues](https://github.com/yourusername/dropcaster/issues) にお願いします。

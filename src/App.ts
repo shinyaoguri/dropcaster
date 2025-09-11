@@ -31,12 +31,20 @@ export class App {
 
     // 個別スケッチページ（パラメータ付き）
     this.router.registerRoute('/:sketchId', async (sketchId: string) => {
+      console.log('App: Navigating to sketch ID:', sketchId);
       const sketch = this.sketchService.getSketchById(sketchId);
+      console.log('App: Found sketch:', sketch);
+      
       if (sketch) {
         // 既存のコントローラーを破棄
         if (this.sketchPageController) {
+          this.sketchPageController.setInternalNavigation(true);
           this.sketchPageController.destroy();
+          this.sketchPageController = null;
         }
+        
+        // 少し待機してから新しいコントローラーを作成
+        await new Promise(resolve => setTimeout(resolve, 100));
         
         // 新しいコントローラーを作成してスケッチを表示
         this.sketchPageController = new SketchPageController();

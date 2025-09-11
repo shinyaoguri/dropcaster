@@ -24,8 +24,19 @@ export class SketchPageView {
   render(sketch: Sketch): void {
     const app = document.querySelector<HTMLDivElement>('#app')!;
     
+    // デバッグログ
+    console.log('SketchPageView: Rendering sketch:', sketch);
+    console.log('SketchPageView: userData:', sketch.userData);
+    
     // パスを正しい形式に変換
     const sketchPath = sketch.path.replace('../', '/');
+    
+    // userDataの存在チェックとデフォルト値の設定
+    const userName = sketch.userData?.userName || 'Unknown User';
+    const avatarFile = sketch.userData?.avatarFile ? sketch.userData.avatarFile.replace('../', '/') : '/vite.svg';
+    
+    console.log('SketchPageView: Using userName:', userName);
+    console.log('SketchPageView: Using avatarFile:', avatarFile);
     
     app.innerHTML = `
       <div class="fullscreen-sketch-container">
@@ -51,12 +62,12 @@ export class SketchPageView {
         <div class="sketch-overlay-info ui-element">
           <div class="sketch-overlay-content">
             <img 
-              src="${(sketch.userData?.avatarFile || '/assets/placeholder-avatar.jpg').replace('../', '/')}" 
-              alt="${sketch.userData.userName || 'Unknown User'}" 
+              src="${avatarFile}" 
+              alt="${userName}" 
               class="overlay-avatar-small"
             />
             <div class="overlay-text">
-              <div class="overlay-username-small">${sketch.userData.userName}</div>
+              <div class="overlay-username-small">${userName}</div>
               <div class="overlay-title-small">${sketch.title}</div>
             </div>
           </div>

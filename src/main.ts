@@ -2,7 +2,7 @@ import './style.css';
 import { App } from './App.js';
 
 // Service Workerの登録
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && window.location.hostname !== 'localhost') {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
       .then(registration => {

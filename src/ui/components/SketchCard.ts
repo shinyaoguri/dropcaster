@@ -14,9 +14,9 @@ export class SketchCard {
       `;
     }
     
-    // 安全なプロパティアクセス（デフォルト画像を汎用的なプレースホルダーに変更）
-    const previewGif = sketch.previewGif || '/assets/placeholder-preview.gif';
-    const avatarFile = sketch.userData?.avatarFile || '/assets/placeholder-avatar.jpg';
+    // 安全なプロパティアクセス
+    const previewGif = sketch.previewGif || '/vite.svg';
+    const avatarFile = sketch.userData?.avatarFile || '/vite.svg';
     
     return `
       <div class="sketch-card">

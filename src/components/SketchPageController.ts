@@ -167,42 +167,71 @@ export class SketchPageController {
     }
   }
 
+  private isInternalNavigation = false;
+
+  private beforeUnloadHandler = (event: BeforeUnloadEvent) => {
+    // 内部ナビゲーションの場合は警告を表示しない
+    if (this.isInternalNavigation) {
+      this.isInternalNavigation = false;
+      return;
+    }
+    
+    const message = 'このページを離れますか？';
+    
+    // 標準的なブラウザの離脱警告を表示
+    event.preventDefault();
+    event.returnValue = message;
+    
+    console.log('SketchPageController: ページ離脱警告を表示');
+    return message;
+  };
+
+  private unloadHandler = () => {
+    console.log('SketchPageController: ページアンロード - 開いているウィンドウを全て閉じます');
+    this.windowController.closeAllWindows();
+  };
+
+  private pagehideHandler = () => {
+    console.log('SketchPageController: ページ非表示 - 開いているウィンドウを全て閉じます');
+    this.windowController.closeAllWindows();
+  };
+
   private setupBeforeUnloadWarning(): void {
     // ページ離脱時に常に警告を表示
-    window.addEventListener('beforeunload', (event) => {
-      const message = 'このページを離れますか？';
-      
-      // 標準的なブラウザの離脱警告を表示
-      event.preventDefault();
-      event.returnValue = message;
-      
-      console.log('SketchPageController: ページ離脱警告を表示');
-      return message;
-    });
+    window.addEventListener('beforeunload', this.beforeUnloadHandler);
     
     // ページが実際にアンロードされる時に開いているウィンドウを全て閉じる
-    window.addEventListener('unload', () => {
-      console.log('SketchPageController: ページアンロード - 開いているウィンドウを全て閉じます');
-      this.windowController.closeAllWindows();
-    });
+    window.addEventListener('unload', this.unloadHandler);
     
     // ページが非表示になる時にもウィンドウを閉じる（ブラウザタブが閉じられた場合）
-    window.addEventListener('pagehide', () => {
-      console.log('SketchPageController: ページ非表示 - 開いているウィンドウを全て閉じます');
-      this.windowController.closeAllWindows();
-    });
+    window.addEventListener('pagehide', this.pagehideHandler);
     
     console.log('SketchPageController: ページ離脱警告とクリーンアップを設定しました');
   }
 
+  setInternalNavigation(value: boolean): void {
+    this.isInternalNavigation = value;
+  }
+
   destroy(): void {
     console.log('SketchPageController: 破棄処理開始');
+    
+    // 内部ナビゲーションフラグを設定
+    this.isInternalNavigation = true;
+    
+    // イベントリスナーを削除
+    window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+    window.removeEventListener('unload', this.unloadHandler);
+    window.removeEventListener('pagehide', this.pagehideHandler);
+    
+    // 各マネージャーの破棄
     this.fullscreenManager.destroy();
     this.iframeManager.destroy();
     this.cursorManager.destroy();
     this.resizeManager.destroy();
     this.view.destroy();
     this.windowController.closeAllWindows();
+    
     console.log('SketchPageController: 破棄処理完了');
   }
 }
