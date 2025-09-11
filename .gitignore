@@ -24,4 +24,10 @@ dist-ssr
 *.sw?
 
 sketches/*
+
+# Public directory - ignore generated content but keep PWA files
 public/*
+!public/manifest.json
+!public/sw.js
+!public/vite.svg
+!public/.gitkeep

@@ -1,0 +1,19 @@
+{
+  "name": "dropcaster",
+  "short_name": "dropcaster",
+  "description": "A static PWA generator for creative coding sketches",
+  "theme_color": "#000000",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "orientation": "portrait",
+  "scope": "/",
+  "start_url": "/",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
