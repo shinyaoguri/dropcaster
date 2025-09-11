@@ -2,35 +2,67 @@
 
 > ⚠️ **Alpha Version**: This project is under active development. APIs may change.
 
-A static PWA generator for creative coding sketches from OpenProcessing.
+OpenProcessingのクリエイティブコーディングスケッチを静的PWAギャラリーとして生成するツール。ブラウザベースのプロジェクションマッピング機能も実装。
 
-## Features
+## 特徴
 
-- 🎨 Import sketches from OpenProcessing
-- 📱 Progressive Web App (PWA) support
-- 🖼️ Automatic preview generation
-- 👤 User information fetching
-- 🚀 Static site generation
-- 📦 Easy deployment
+- 🎨 OpenProcessingからスケッチをインポート
+- 📱 Progressive Web App (PWA) サポート
+- 🖼️ アニメーションプレビューの自動生成
+- 🎭 ブラウザベースのプロジェクションマッピング
+- 🚀 静的サイト生成
+- 📦 簡単なデプロイ
 
-## Installation
+## インストール
+
+### GitHubから直接インストール
 
 ```bash
-npm install -g @dropcaster/viewer
+# グローバルインストール
+npm install -g github:shinyaoguri/dropcaster
+
+# または特定のブランチから
+npm install -g github:shinyaoguri/dropcaster#branch-name
+
+# npxで直接実行
+npx github:shinyaoguri/dropcaster init my-gallery
 ```
 
-## Quick Start
-
-### 1. Create a new gallery
+### ローカル開発用
 
 ```bash
+# リポジトリをクローン
+git clone https://github.com/shinyaoguri/dropcaster.git
+cd dropcaster
+
+# 依存関係をインストール
+npm install
+
+# ローカルでリンク
+npm link
+```
+
+## クイックスタート
+
+### 1. 新しいギャラリーを作成
+
+```bash
+# GitHubから直接実行
+npx github:shinyaoguri/dropcaster init my-gallery
+cd my-gallery
+
+# ローカル開発中のリポジトリから実行
+npx /path/to/dropcaster init my-gallery
+cd my-gallery
+
+# またはローカルインストール後
 dropcaster init my-gallery
 cd my-gallery
 ```
 
-### 2. Add sketches
+### 2. スケッチを追加
 
-Place your OpenProcessing sketches in the `sketches/` directory:
+OpenProcessingのスケッチを `sketches/` ディレクトリに配置:
 ```
 sketches/
   sketch2257553/
@@ -39,92 +71,118 @@ sketches/
     index.html
 ```
 
-### 3. Scan and generate previews
+### 3. スケッチをスキャンしてプレビュー生成
 
 ```bash
-# Scan sketches and generate metadata
+# スケッチをスキャンしてメタデータ生成
 npm run scan
 
-# Generate previews and fetch user data
+# プレビューとユーザーデータを生成
 npm run scan:full
 
-# Reset and regenerate all previews
+# すべてのプレビューをリセットして再生成
 npm run scan:reset
+
+# 変更を監視して自動更新
+npm run scan:watch
 ```
 
-### 4. Development
+### 4. 開発サーバー起動
 
 ```bash
 npm run dev
 ```
 
-### 5. Build for production
+### 5. プロダクションビルド
 
 ```bash
 npm run build
 ```
 
-The built files will be in the `dist/` directory, ready for deployment.
+ビルドされたファイルは `dist/` ディレクトリに出力されます。
 
-## CLI Commands
+## CLIコマンド
 
 ### `dropcaster init <project-name>`
-Create a new gallery project.
+新しいギャラリープロジェクトを作成。
 
 ### `dropcaster scan [options]`
-Scan sketches and generate metadata.
+スケッチをスキャンしてメタデータを生成。
 
-Options:
-- `--sketch <name>` - Scan specific sketch only
-- `--force-preview` - Force regenerate preview images
-- `--reset` - Reset and regenerate all previews
-- `--fetch-userdata` - Fetch user data from OpenProcessing
-- `-v, --verbose` - Show detailed output
+オプション:
+- `--sketch <name>` - 特定のスケッチのみスキャン
+- `--force-preview` - プレビュー画像を強制再生成
+- `--reset` - すべてのプレビューをリセットして再生成
+- `--fetch-userdata` - OpenProcessingからユーザーデータを取得
+- `-v, --verbose` - 詳細出力を表示
 
 ### `dropcaster build [options]`
-Build the gallery for production.
+ギャラリーをプロダクション用にビルド。
 
-Options:
-- `-o, --output <dir>` - Output directory (default: "dist")
-- `-b, --base <path>` - Base URL path (default: "/")
+オプション:
+- `-o, --output <dir>` - 出力ディレクトリ (デフォルト: "dist")
+- `-b, --base <path>` - ベースURLパス (デフォルト: "/")
 
 ### `dropcaster dev`
-Start development server.
+開発サーバーを起動。
 
-## Configuration
+## 設定
 
-Edit `dropcaster.config.json` to customize your gallery:
+`dropcaster.config.js` でギャラリーをカスタマイズ:
 
-```json
-{
-  "title": "My Gallery",
-  "description": "A collection of creative coding sketches",
-  "theme_color": "#000000",
-  "background_color": "#000000",
-  "display": "standalone",
-  "orientation": "portrait",
-  "categories": ["generative", "interactive", "3D", "audio"]
+```javascript
+export default {
+  title: 'My Gallery',
+  description: 'クリエイティブコーディング作品集',
+  theme_color: '#000000',
+  background_color: '#000000',
+  display: 'standalone',
+  orientation: 'portrait',
+  categories: ['generative', 'interactive', '3D', 'audio']
 }
 ```
 
-## Project Structure
+## プロジェクト構造
 
 ```
 my-gallery/
-├── sketches/          # OpenProcessing sketches
+├── sketches/          # OpenProcessingスケッチ
 ├── public/
-│   ├── sketches/      # Copied sketches
-│   ├── previews/      # Generated GIF previews
-│   ├── avatars/       # User avatars
-│   └── sketches.json  # Metadata
-├── dist/              # Built files
+│   ├── sketches/      # コピーされたスケッチ
+│   ├── previews/      # 生成されたGIFプレビュー
+│   ├── avatars/       # ユーザーアバター
+│   └── sketches.json  # メタデータ
+├── dist/              # ビルドファイル
 ├── package.json
-└── dropcaster.config.json
+└── dropcaster.config.js
 ```
 
-## Deployment
+## アーキテクチャ
 
-The built gallery can be deployed to any static hosting service:
+### Web技術完結型のエコシステム統合
+- OpenProcessing等の既存クリエイティブコーディングコミュニティとの連携
+- p5.js/WebGL/WebGPUコンテンツをiframeで隔離実行
+- コンテンツ作者のコードを改変せずにそのまま利用可能
+
+### ブラウザネイティブなアーキテクチャ
+- PWAの特性を活かしたインストール不要なマッピングツール
+- WebRTC DataChannelやBroadcastChannelAPIを使った低遅延な窓間通信
+- オフライン動作とクラウド同期のハイブリッド運用
+- MediaStream APIのcaptureStream()を用いた効率的なコンテンツ同期
+
+## プレビュー生成
+
+アニメーションGIFプレビューの自動生成:
+- **サイズ**: 800x800px
+- **録画時間**: 3秒間
+- **フレームレート**: 10fps
+- **生成方法**: Playwright + FFmpeg
+
+詳細は [PREVIEW_GENERATION.md](PREVIEW_GENERATION.md) を参照。
+
+## デプロイ
+
+ビルドしたギャラリーは以下の静的ホスティングサービスにデプロイ可能:
 
 - GitHub Pages
 - Netlify
@@ -133,37 +191,43 @@ The built gallery can be deployed to any static hosting service:
 - AWS S3
 - Firebase Hosting
 
-## Requirements
+## システム要件
 
 - Node.js 18+
-- FFmpeg (for GIF generation)
+- FFmpeg (GIF生成用)
+- Chromium (Playwright経由で自動インストール)
 
-## License
+## 開発
+
+### ローカルテスト
+
+```bash
+# ローカルでパッケージをリンク
+npm link
+
+# 別ディレクトリでテスト
+mkdir test-project
+cd test-project
+npm link dropcaster
+```
+
+### GitHubからテスト
+
+```bash
+# 特定のブランチから実行
+npx github:yourusername/dropcaster#feature-branch init test-gallery
+```
+
+詳細は [DEVELOPMENT.md](DEVELOPMENT.md) を参照。
+
+## ライセンス
 
 MIT
 
-## Author
+## 作者
 
-Your Name
+Shinya Oguri
 
-## Contributing
+## 貢献
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-ブラウザベースのプロジェクションマッピングツール
-
-# Web技術完結型のエコシステム統合
-既存のクリエイティブコーディングコミュニティ（OpenProcessing等）との連携．
-p5.js/WebGL/WebGPUコンテンツをiframeで隔離実行し、安全に取り込む
-コンテンツ作者のコードを改変せずに、そのまま利用可能にする仕組み
-
-# ブラウザネイティブなアーキテクチャ
-PWAの特性を活かした、インストール不要な本格的マッピングツール
-WebRTC DataChannelやBroadcastChannelAPIを使った低遅延な窓間通信
-オフライン動作とクラウド同期のハイブリッド運用
-スケッチページに対して，操作用の2つのウィンドウ（ソースウィンドウ，マッピングウィンドウ）を動的に生成し，可能な限り効率的にコンテンツを同期するためにMediaStream APIでcaptureStream()を用いる．
-
-# 全体アーキテクチャ
-- レイヤードアーキテクチャ（層分離）
-- MVC（Model-View-Controller）の変形
-- ドメイン駆動設計（DDD）の要素
-- イベント駆動アーキテクチャ
+Pull Requestを歓迎します！問題や提案がある場合は [Issues](https://github.com/yourusername/dropcaster/issues) にお願いします。
