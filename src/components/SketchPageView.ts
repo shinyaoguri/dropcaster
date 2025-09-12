@@ -44,7 +44,6 @@ export class SketchPageView {
           src="${sketchPath}" 
           class="fullscreen-iframe" 
           title="${sketch.title}"
-          sandbox="allow-scripts allow-same-origin allow-modals"
           id="sketch-iframe"
         ></iframe>
         
