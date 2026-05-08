@@ -21,20 +21,93 @@ export const CORNER_KEYS = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] 
 export type CornerKey = typeof CORNER_KEYS[number];
 
 /**
- * マッピング機能全体の正規状態。
- * WindowController が単一の canonical 保持者で、ControlWindow / SketchPageView は
- * いずれもこれの mirror をレンダリングするだけ。
+ * 個別マッピング。source crop と destination quad を1組持つ。
  */
-export interface MappingState {
+export interface MappingEntry {
+  id: string;
+  name?: string;
   source: SourceRect;
   quad: Quad;
 }
 
-export function defaultMappingState(): MappingState {
+/**
+ * マッピング機能全体の正規状態。
+ * mappings は1件以上、activeId は常に mappings 中のいずれかを指す。
+ * WindowController が単一の canonical 保持者で、ControlWindow / SketchPageView は
+ * これの mirror をレンダリングするだけ。
+ */
+export interface MappingsState {
+  mappings: MappingEntry[];
+  activeId: string;
+}
+
+let _idCounter = 0;
+export function generateMappingId(): string {
+  _idCounter += 1;
+  return `m${Date.now().toString(36)}_${_idCounter}`;
+}
+
+function defaultEntry(name?: string): MappingEntry {
   return {
+    id: generateMappingId(),
+    name,
     source: { x: 0, y: 0, width: 100, height: 100 },
     quad: defaultQuad(),
   };
+}
+
+export function defaultMappingsState(): MappingsState {
+  const e = defaultEntry('Mapping 1');
+  return { mappings: [e], activeId: e.id };
+}
+
+export function getActiveMapping(state: MappingsState): MappingEntry {
+  return state.mappings.find(m => m.id === state.activeId) ?? state.mappings[0];
+}
+
+/** active な entry に partial を適用した新しい state を返す（純関数）。 */
+export function withActiveMapping(
+  state: MappingsState,
+  patch: Partial<Pick<MappingEntry, 'source' | 'quad' | 'name'>>
+): MappingsState {
+  return {
+    ...state,
+    mappings: state.mappings.map(m =>
+      m.id === state.activeId ? { ...m, ...patch } : m
+    ),
+  };
+}
+
+/** 新しい mapping を追加して active にする。可視性のため少しずらした quad で生成。 */
+export function withAddedMapping(state: MappingsState): MappingsState {
+  const offset = (state.mappings.length * 4) % 30; // 4% 刻みで重ならないよう少しずらす
+  const id = generateMappingId();
+  const entry: MappingEntry = {
+    id,
+    name: `Mapping ${state.mappings.length + 1}`,
+    source: { x: 0, y: 0, width: 100, height: 100 },
+    quad: {
+      topLeft:     { x: 25 + offset, y: 25 + offset },
+      topRight:    { x: 75 + offset, y: 25 + offset },
+      bottomRight: { x: 75 + offset, y: 75 + offset },
+      bottomLeft:  { x: 25 + offset, y: 75 + offset },
+    },
+  };
+  return { mappings: [...state.mappings, entry], activeId: id };
+}
+
+/** 指定 id を削除（最後の1個は残す）。active が消えたら先頭を active に。 */
+export function withRemovedMapping(state: MappingsState, id: string): MappingsState {
+  if (state.mappings.length <= 1) return state;
+  const filtered = state.mappings.filter(m => m.id !== id);
+  const activeId = id === state.activeId ? filtered[0].id : state.activeId;
+  return { mappings: filtered, activeId };
+}
+
+/** active 切替（存在しない id なら無視）。 */
+export function withActiveSet(state: MappingsState, id: string): MappingsState {
+  if (!state.mappings.some(m => m.id === id)) return state;
+  return { ...state, activeId: id };
 }
 
 const MIN_DIMENSION = 0.0001;

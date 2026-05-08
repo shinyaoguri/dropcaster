@@ -1,8 +1,8 @@
 import { WindowManager, type WindowConfig } from '../managers/WindowManager';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import {
-  defaultMappingState,
-  type MappingState,
+  defaultMappingsState,
+  type MappingsState,
 } from '../utils/mappingTransform';
 
 export class WindowController {
@@ -23,10 +23,13 @@ export class WindowController {
     }
   };
 
-  // 単一の正規 state（source crop ＋ destination quad）。
+  // 正規 state（複数 mapping ＋ activeId）。
   // ControlWindow と SketchPageView はこれの mirror をレンダリングするだけで、
   // 直接書き込まない（必ず state-mutation メッセージ／state-update 経由）。
-  private state: MappingState = defaultMappingState();
+  private state: MappingsState = defaultMappingsState();
+
+  // canvas captureStream の参照（SketchPageView が新規 video 要素に紐付けるため公開）
+  private canvasStream: MediaStream | null = null;
 
   private videoActualDimensions = {
     width: 1,
@@ -109,7 +112,7 @@ export class WindowController {
    *  - ControlWindow へ state-update を broadcast（プログラム的変更時のみ）
    */
   private applyState(
-    next: MappingState,
+    next: MappingsState,
     options: { broadcastToControl?: boolean } = {}
   ): void {
     this.state = next;
@@ -132,12 +135,28 @@ export class WindowController {
   private dispatchOverlayUpdate(): void {
     const event = new CustomEvent('mapping-overlay-update', {
       detail: {
-        source: this.state.source,
-        quad: this.state.quad,
-        videoDimensions: this.videoActualDimensions
+        mappings: this.state.mappings,
+        activeId: this.state.activeId,
+        videoDimensions: this.videoActualDimensions,
       }
     });
     window.dispatchEvent(event);
+  }
+
+  /** SketchPageView が新規 video 要素に渡すための clone を提供 */
+  getCanvasStreamClone(): MediaStream | null {
+    return this.canvasStream ? this.cloneStream(this.canvasStream) : null;
+  }
+
+  /**
+   * canvas captureStream の参照を SketchPageView へ通知。
+   * 同一ウィンドウ内なので CustomEvent.detail にそのまま MediaStream を載せて渡せる。
+   * stream が null なら停止通知。
+   */
+  private dispatchCanvasStream(stream: MediaStream | null): void {
+    window.dispatchEvent(new CustomEvent('canvas-stream-ready', {
+      detail: { stream }
+    }));
   }
 
   private setupStreamToWindow(targetWindow: Window, stream: MediaStream): void {
@@ -181,46 +200,28 @@ export class WindowController {
         console.error('WindowController: MediaStreamの取得に失敗しました');
         return;
       }
+      this.canvasStream = stream;
 
-      // スケッチページの複数のビデオ要素にストリームを設定
-      const mappingOverlayVideo = document.getElementById('mapping-overlay-video') as HTMLVideoElement;
-      if (mappingOverlayVideo) {
-        mappingOverlayVideo.srcObject = this.cloneStream(stream);
-        
-        // ビデオの実際のサイズを取得
-        mappingOverlayVideo.addEventListener('loadedmetadata', () => {
-          this.videoActualDimensions = {
-            width: mappingOverlayVideo.videoWidth,
-            height: mappingOverlayVideo.videoHeight
-          };
-          
-          const controlWindow = this.windowManager.getWindow('control_window');
-          if (controlWindow && !controlWindow.closed) {
-            controlWindow.postMessage({
-              type: 'video-dimensions-update',
-              data: this.videoActualDimensions
-            }, window.location.origin);
-          }
-          
-          this.dispatchOverlayUpdate();
-        }, { once: true });
-        
-        // ストリーム設定後、初期状態を送信
-        setTimeout(() => this.dispatchOverlayUpdate(), 100);
+      // canvas のサイズを初期 video dimensions として記録
+      this.videoActualDimensions = {
+        width: canvas.width || 1920,
+        height: canvas.height || 1080,
+      };
+
+      // SketchPageView へ stream を broadcast（dynamic な video 要素に bind してもらう）
+      this.dispatchCanvasStream(stream);
+
+      // ControlWindow にも video dimensions を通知
+      const controlWindowForDims = this.windowManager.getWindow('control_window');
+      if (controlWindowForDims && !controlWindowForDims.closed) {
+        controlWindowForDims.postMessage({
+          type: 'video-dimensions-update',
+          data: this.videoActualDimensions,
+        }, window.location.origin);
       }
-      
-      // iframe-overlay内のビデオ要素にもストリームを設定
-      const iframeMappingVideo = document.getElementById('iframe-mapping-video') as HTMLVideoElement;
-      if (iframeMappingVideo) {
-        iframeMappingVideo.srcObject = this.cloneStream(stream);
-        iframeMappingVideo.play().catch(error => {
-          console.error('WindowController: iframe-mapping-videoの再生エラー:', error);
-        });
-        
-        iframeMappingVideo.addEventListener('loadedmetadata', () => {
-          setTimeout(() => this.dispatchOverlayUpdate(), 100);
-        }, { once: true });
-      }
+
+      // 初期 overlay 更新
+      this.dispatchOverlayUpdate();
 
       // 統合ウィンドウにストリームを設定
       const controlWindow = this.windowManager.getWindow('control_window');
@@ -373,14 +374,10 @@ export class WindowController {
     });
     this.activeStreams = [];
     this.controlStream = null;
+    this.canvasStream = null;
 
-    const localVideos = [
-      document.getElementById('mapping-overlay-video') as HTMLVideoElement | null,
-      document.getElementById('iframe-mapping-video') as HTMLVideoElement | null
-    ];
-    localVideos.forEach(video => {
-      if (video) video.srcObject = null;
-    });
+    // SketchPageView に stream 停止を通知（dynamic video 要素は SketchPageView 側でクリア）
+    this.dispatchCanvasStream(null);
 
     // ウィンドウ監視を停止
     if (this.windowMonitoringInterval !== null) {

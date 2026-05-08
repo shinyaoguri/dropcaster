@@ -725,7 +725,8 @@ body {
   will-change: transform;
 }
 
-#iframe-mapping-video {
+.iframe-mapping-container > video,
+.mapping-overlay > video {
   position: absolute;
   top: 0;
   left: 0;
@@ -733,7 +734,8 @@ body {
   pointer-events: none;
   /* source 矩形を destination 矩形へストレッチ写像（mappingTransform.ts と対応） */
   object-fit: fill;
-  /* サイズはJavaScriptで動的に設定 */
+  width: 100%;
+  height: 100%;
 }
 
 /* マッピングオーバーレイ（matrix3d で 4 隅へ写像） */
@@ -752,15 +754,7 @@ body {
   will-change: transform;
 }
 
-#mapping-overlay-video {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: top left;
-  pointer-events: none;
-  /* source 矩形を destination 矩形へストレッチ写像（mappingTransform.ts と対応） */
-  object-fit: fill;
-}
+/* mapping-overlay/iframe-mapping-container 内の <video> はクラス側でカバー済み */
 
 
 /* iframe-mapping-container位置調整（位置・transformはJSで設定） */

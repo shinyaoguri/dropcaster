@@ -5,21 +5,29 @@ import { UIElementController } from '../ui/services/UIElementController';
 import { OverlayManager } from '../managers/OverlayManager';
 import { escapeHtml } from '../utils/html.js';
 import { publicAssetPath } from '../utils/paths.js';
-import { applyVideoCrop, applyQuadTransform, defaultQuad, rectToQuad, type Quad } from '../utils/mappingTransform.js';
+import {
+  applyVideoCrop,
+  applyQuadTransform,
+  type MappingEntry,
+} from '../utils/mappingTransform.js';
 
 export class SketchPageView {
   private eventEmitter: EventEmitter;
   private cursorManager: CursorManager;
   private uiController: UIElementController;
   private overlayManager: OverlayManager;
-  private mappingOverlay: HTMLDivElement | null = null;
-  private mappingVideo: HTMLVideoElement | null = null;
-  private iframeMappingContainer: HTMLDivElement | null = null;
-  private iframeMappingVideo: HTMLVideoElement | null = null;
+  // dynamic な mapping-overlay 要素はここに生成される
+  private projectionStage: HTMLDivElement | null = null;
+  private settingsStage: HTMLDivElement | null = null;
+  // canvas captureStream の現在値（WindowController から canvas-stream-ready で渡される）
+  private currentStream: MediaStream | null = null;
+  // 直近の mapping-overlay-update の payload を保持（resize 時の再描画に使う）
+  private lastMappings: MappingEntry[] = [];
   private boundFullscreenChange = this.handleFullscreenChange.bind(this);
   private boundMappingOverlayUpdate = this.handleMappingOverlayUpdate.bind(this);
   private boundResize = this.handleResize.bind(this);
   private boundProjectionModeChange = this.handleProjectionModeChange.bind(this);
+  private boundCanvasStreamReady = this.handleCanvasStreamReady.bind(this);
   private domSetupTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
@@ -57,16 +65,11 @@ export class SketchPageView {
           id="sketch-iframe"
         ></iframe>
 
-        <!-- iframeの外側に配置するオーバーレイ -->
+        <!-- iframeの外側に配置するオーバーレイ（設定モード用 stage、子は動的生成） -->
         <div
           id="iframe-overlay"
           class="iframe-overlay"
-        >
-          <!-- マッピング映像を表示するコンテナ -->
-          <div id="iframe-mapping-container" class="iframe-mapping-container">
-            <video id="iframe-mapping-video" autoplay muted playsinline></video>
-          </div>
-        </div>
+        ></div>
 
         <div class="sketch-overlay-info ui-element">
           <div class="sketch-overlay-content">
@@ -114,41 +117,23 @@ export class SketchPageView {
           <i class="fas fa-external-link-alt button-icon"></i>
         </button>
 
-        <!-- iframeオーバーレイコンテナ -->
-        <div id="iframe-content-overlay" class="iframe-content-overlay">
-          <!-- マッピングオーバーレイ -->
-          <div id="mapping-overlay" class="mapping-overlay" style="display: none;">
-            <video id="mapping-overlay-video" autoplay muted playsinline></video>
-          </div>
-        </div>
+        <!-- 投影 stage（projecting 時に黒背景で前面化、子の mapping-overlay は動的生成） -->
+        <div id="iframe-content-overlay" class="iframe-content-overlay"></div>
       </div>
     `;
 
     this.setupEventListeners();
 
-    // プロジェクションモードの切替を購読
+    // プロジェクションモード／canvas stream の通知を購読
     window.addEventListener('projection-mode-change', this.boundProjectionModeChange);
+    window.addEventListener('canvas-stream-ready', this.boundCanvasStreamReady);
 
-    // DOMが完全に描画されるのを待ってから要素を取得
+    // DOM が完全に描画されるのを待ってから dynamic stage を取得してイベント購読
     this.domSetupTimeout = setTimeout(() => {
-      // オーバーレイ要素を取得
-      this.mappingOverlay = document.getElementById('mapping-overlay') as HTMLDivElement;
-      this.mappingVideo = document.getElementById('mapping-overlay-video') as HTMLVideoElement;
-      this.iframeMappingContainer = document.getElementById('iframe-mapping-container') as HTMLDivElement;
-      this.iframeMappingVideo = document.getElementById('iframe-mapping-video') as HTMLVideoElement;
+      this.projectionStage = document.getElementById('iframe-content-overlay') as HTMLDivElement;
+      this.settingsStage = document.getElementById('iframe-overlay') as HTMLDivElement;
 
-      console.log('SketchPageView: DOM要素取得結果', {
-        mappingOverlay: !!this.mappingOverlay,
-        mappingVideo: !!this.mappingVideo,
-        iframeMappingContainer: !!this.iframeMappingContainer,
-        iframeMappingVideo: !!this.iframeMappingVideo
-      });
-
-      // 要素が取得できた場合のみリスナーを設定
-      if (this.iframeMappingContainer && this.iframeMappingVideo) {
-        this.setupMappingOverlayListener();
-        this.setupVideoEventListeners();
-      }
+      this.setupMappingOverlayListener();
       this.domSetupTimeout = null;
     }, 100);
 
@@ -227,46 +212,46 @@ export class SketchPageView {
     this.overlayManager.toggleOverlay(isVisible);
   }
 
-  private setupVideoEventListeners(): void {
-    // ビデオストリームが設定されたらオーバーレイを更新
-    if (this.mappingVideo) {
-      this.mappingVideo.addEventListener('loadedmetadata', () => {
-        console.log('SketchPageView: mapping-overlay-videoメタデータ読み込み完了');
-        const lastData = (window as any).lastMappingData;
-        if (lastData) {
-          this.updateMappingOverlay(lastData);
-        }
-      });
-    }
-
-    // iframe-mapping-videoのメタデータ読み込み時にも更新
-    if (this.iframeMappingVideo) {
-      this.iframeMappingVideo.addEventListener('loadedmetadata', () => {
-        console.log('SketchPageView: iframe-mapping-videoメタデータ読み込み完了');
-        const lastData = (window as any).lastMappingData;
-        if (lastData) {
-          this.updateMappingOverlay(lastData);
-        }
-      });
-    }
-  }
-
   private setupMappingOverlayListener(): void {
     window.addEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
-
-    // ウィンドウリサイズ時の再計算
+    // ウィンドウリサイズ時の再計算（matrix3d は親の pixel size 依存）
     window.addEventListener('resize', this.boundResize);
   }
 
+  private handleCanvasStreamReady(event: Event): void {
+    const detail = (event as CustomEvent).detail;
+    this.currentStream = (detail?.stream as MediaStream | null) ?? null;
+    this.applyStreamToAllVideos();
+  }
+
+  private applyStreamToAllVideos(): void {
+    const videos = document.querySelectorAll<HTMLVideoElement>(
+      '.mapping-overlay video, .iframe-mapping-container video'
+    );
+    videos.forEach(video => {
+      if (this.currentStream) {
+        if (video.srcObject !== this.currentStream) {
+          video.srcObject = this.currentStream;
+          video.play().catch(error => {
+            console.warn('SketchPageView: video.play 失敗', error);
+          });
+        }
+      } else {
+        video.srcObject = null;
+      }
+    });
+  }
+
   private handleMappingOverlayUpdate(event: Event): void {
-    const customEvent = event as CustomEvent;
-    this.updateMappingOverlay(customEvent.detail);
+    const detail = (event as CustomEvent).detail;
+    const mappings = (detail?.mappings as MappingEntry[]) ?? [];
+    this.lastMappings = mappings;
+    this.updateMappingOverlay(mappings);
   }
 
   private handleResize(): void {
-    const lastData = (window as any).lastMappingData;
-    if (lastData) {
-      this.updateMappingOverlay(lastData);
+    if (this.lastMappings.length > 0) {
+      this.updateMappingOverlay(this.lastMappings);
     }
   }
 
@@ -278,71 +263,68 @@ export class SketchPageView {
     }
   }
 
-  private updateMappingOverlay(data: any): void {
-    const { source } = data;
-    const quad: Quad = data.quad
-      ?? (data.mapping ? rectToQuad(data.mapping) : defaultQuad());
+  private updateMappingOverlay(mappings: MappingEntry[]): void {
+    if (!this.projectionStage || !this.settingsStage) return;
 
-    // データを保存
-    (window as any).lastMappingData = data;
+    // 投影 stage と設定モード stage の両方に同じ N 個の mapping を反映
+    this.syncMappingChildren(this.projectionStage, 'mapping-overlay', mappings);
+    this.syncMappingChildren(this.settingsStage, 'iframe-mapping-container', mappings);
+  }
 
-    // iframe-content-overlay の mapping-overlay
-    if (this.mappingOverlay && this.mappingVideo) {
-      if (!this.mappingVideo.srcObject) {
-        this.mappingOverlay.style.display = 'none';
-      } else {
-        this.mappingOverlay.style.display = 'block';
-        this.updateMappingOverlayPosition(this.mappingOverlay, this.mappingVideo, source, quad);
+  /**
+   * parent の中に mappings 件分の `<div class="${baseClass}" data-mapping-id>`
+   * を生成・更新・削除する。各 div は内部に `<video>` を持ち、自分の quad を
+   * matrix3d で適用、source rect を video の crop で適用する。
+   */
+  private syncMappingChildren(parent: HTMLElement, baseClass: string, mappings: MappingEntry[]): void {
+    // 親の position は明示しておく（matrix3d は親の rect に対する相対 % を使う）
+    parent.style.position = 'absolute';
+    parent.style.top = '0';
+    parent.style.left = '0';
+    parent.style.width = '100%';
+    parent.style.height = '100%';
+
+    const existing = new Map<string, HTMLDivElement>();
+    parent.querySelectorAll<HTMLDivElement>(`:scope > .${baseClass}`).forEach(el => {
+      const id = el.dataset.mappingId;
+      if (id) existing.set(id, el);
+    });
+
+    // 不要になった entry を削除
+    const validIds = new Set(mappings.map(m => m.id));
+    existing.forEach((el, id) => {
+      if (!validIds.has(id)) {
+        el.remove();
+        existing.delete(id);
       }
-    }
+    });
 
-    // iframe-overlay 内のマッピングコンテナ（設定モード時のプレビュー）
-    if (this.iframeMappingContainer && this.iframeMappingVideo) {
-      this.updateIframeMappingPosition(this.iframeMappingContainer, this.iframeMappingVideo, source, quad);
-    }
-  }
+    // 各 mapping を反映（新規なら生成）
+    for (const mapping of mappings) {
+      let el = existing.get(mapping.id);
+      if (!el) {
+        el = parent.ownerDocument.createElement('div');
+        el.className = baseClass;
+        el.dataset.mappingId = mapping.id;
+        const video = parent.ownerDocument.createElement('video');
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        el.appendChild(video);
+        parent.appendChild(el);
 
-  private updateMappingOverlayPosition(
-    container: HTMLElement,
-    video: HTMLVideoElement,
-    source: any,
-    quad: Quad
-  ): void {
-    // iframe-content-overlay は viewport 全体に固定（投影ステージ）
-    const overlayContainer = document.getElementById('iframe-content-overlay') as HTMLDivElement | null;
-    if (overlayContainer) {
-      overlayContainer.style.width = '100%';
-      overlayContainer.style.height = '100%';
-    }
+        // 現在 stream がある場合は即座に bind
+        if (this.currentStream) {
+          video.srcObject = this.currentStream;
+          video.play().catch(error => {
+            console.warn(`SketchPageView: video.play 失敗 (${mapping.id})`, error);
+          });
+        }
+      }
 
-    // ホモグラフィー変換でマッピング四角形へ写像（container は 100%×100%）
-    applyQuadTransform(container, quad);
-    // ビデオは container 内で source rect を埋める（source crop）
-    applyVideoCrop(video, source);
-  }
-
-  private updateIframeMappingPosition(
-    container: HTMLElement,
-    video: HTMLVideoElement,
-    source: any,
-    quad: Quad
-  ): void {
-    const iframeOverlay = document.getElementById('iframe-overlay');
-    if (iframeOverlay) {
-      iframeOverlay.style.position = 'absolute';
-      iframeOverlay.style.top = '0';
-      iframeOverlay.style.left = '0';
-      iframeOverlay.style.width = '100%';
-      iframeOverlay.style.height = '100%';
-    }
-
-    applyQuadTransform(container, quad);
-    applyVideoCrop(video, source);
-  }
-
-  public setMappingVideoStream(stream: MediaStream): void {
-    if (this.mappingVideo) {
-      this.mappingVideo.srcObject = stream;
+      const video = el.querySelector('video') as HTMLVideoElement | null;
+      if (video) applyVideoCrop(video, mapping.source);
+      applyQuadTransform(el, mapping.quad);
     }
   }
 
@@ -369,6 +351,7 @@ export class SketchPageView {
     window.removeEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
     window.removeEventListener('resize', this.boundResize);
     window.removeEventListener('projection-mode-change', this.boundProjectionModeChange);
+    window.removeEventListener('canvas-stream-ready', this.boundCanvasStreamReady);
     this.eventEmitter.removeAllListeners();
     this.cursorManager.destroy();
     this.overlayManager.destroy();

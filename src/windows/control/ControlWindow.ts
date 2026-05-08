@@ -2,15 +2,19 @@ import { BaseWindow } from '../shared/BaseWindow';
 import {
   applyVideoCrop,
   applyQuadTransform,
-  defaultMappingState,
+  defaultMappingsState,
   defaultQuad,
   rectToQuad,
   translateQuad,
   cloneQuad,
+  getActiveMapping,
+  withAddedMapping,
+  withRemovedMapping,
+  withActiveSet,
   CORNER_KEYS,
   type Quad,
   type CornerKey,
-  type MappingState,
+  type MappingsState,
   type SourceRect,
 } from '../../utils/mappingTransform';
 
@@ -34,11 +38,35 @@ export class ControlWindow extends BaseWindow {
     height: 100
   };
   
-  // canonical state は親 (WindowController) が保持。
-  // これは local mirror で、ローカル UI 操作では optimistic に直接書き換え、
-  // 直後に state-mutation を親へ送信する。state-update で親から再同期。
-  private sourceSelectionData: SourceRect = defaultMappingState().source;
-  private quadData: Quad = defaultMappingState().quad;
+  // canonical state は親 (WindowController) が保持。これは mirror。
+  // ローカル UI 操作では optimistic に書き換えて即座に state-mutation を送る。
+  // state-update で親から再同期。
+  private state: MappingsState = defaultMappingsState();
+  // active な mapping の source / quad オブジェクトへの alias。
+  // 既存ハンドラが this.sourceSelectionData.x = ... のように内部 mutation するので、
+  // 同じ参照を保持して active 切替時に rebindActiveAliases() で貼り直す。
+  private sourceSelectionData: SourceRect = this.state.mappings[0].source;
+  private quadData: Quad = this.state.mappings[0].quad;
+
+  private rebindActiveAliases(): void {
+    const active = getActiveMapping(this.state);
+    this.sourceSelectionData = active.source;
+    this.quadData = active.quad;
+  }
+
+  /** active な entry の quad を新しいオブジェクトで差し替え、alias も同期。 */
+  private setActiveQuad(quad: Quad): void {
+    const active = getActiveMapping(this.state);
+    active.quad = quad;
+    this.quadData = quad;
+  }
+
+  /** active な entry の source を新しいオブジェクトで差し替え、alias も同期。 */
+  private setActiveSource(source: SourceRect): void {
+    const active = getActiveMapping(this.state);
+    active.source = source;
+    this.sourceSelectionData = source;
+  }
 
   constructor() {
     super('control_window', '統合操作ウィンドウ');
@@ -64,6 +92,12 @@ export class ControlWindow extends BaseWindow {
             <h2>ツール</h2>
           </div>
           <div class="tool-content">
+            <div class="tool-section">
+              <h3>マッピング一覧</h3>
+              <div id="mappings-list" class="mappings-list"></div>
+              <button id="add-mapping-btn" class="tool-button">＋ 追加</button>
+            </div>
+
             <div class="tool-section">
               <h3>ソース設定</h3>
               <div class="tool-item">
@@ -348,6 +382,64 @@ export class ControlWindow extends BaseWindow {
 
       .preset-btn {
         margin-bottom: 8px;
+      }
+
+      /* マッピング一覧 */
+      .mappings-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 10px;
+      }
+
+      .mapping-list-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 8px;
+        background: #333;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+        color: #ccc;
+        transition: all 0.15s;
+      }
+
+      .mapping-list-item:hover {
+        background: #3a3a3a;
+      }
+
+      .mapping-list-item.active {
+        background: #4a2a4a;
+        border-color: #ff00ff;
+        color: #fff;
+      }
+
+      .mapping-list-item .name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mapping-list-item .remove-btn {
+        background: transparent;
+        border: none;
+        color: #888;
+        cursor: pointer;
+        font-size: 14px;
+        padding: 0 4px;
+        line-height: 1;
+      }
+
+      .mapping-list-item .remove-btn:hover {
+        color: #ff5555;
+      }
+
+      .mapping-list-item .remove-btn:disabled {
+        color: #555;
+        cursor: not-allowed;
       }
       
       .display-status {
@@ -826,7 +918,7 @@ export class ControlWindow extends BaseWindow {
     const resetSourceBtn = doc.getElementById('reset-source-btn');
     if (resetSourceBtn) {
       resetSourceBtn.addEventListener('click', () => {
-        this.sourceSelectionData = { x: 0, y: 0, width: 100, height: 100 };
+        this.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
         this.updateSelectionBox();
         this.updateToolValues();
         this.broadcastStateMutation();
@@ -836,7 +928,7 @@ export class ControlWindow extends BaseWindow {
     const resetMappingBtn = doc.getElementById('reset-mapping-btn');
     if (resetMappingBtn) {
       resetMappingBtn.addEventListener('click', () => {
-        this.quadData = defaultQuad();
+        this.setActiveQuad(defaultQuad());
         this.updateQuadTransform();
         this.updateToolValues();
         this.broadcastStateMutation();
@@ -851,24 +943,76 @@ export class ControlWindow extends BaseWindow {
         this.applyPreset(preset!);
       });
     });
-    
+
+    // マッピング追加ボタン
+    const addMappingBtn = doc.getElementById('add-mapping-btn');
+    if (addMappingBtn) {
+      addMappingBtn.addEventListener('click', () => {
+        this.replaceState(withAddedMapping(this.state));
+      });
+    }
+
+    // 初期一覧を描画
+    this.renderMappingsList();
+
     // ディスプレイサイズを更新
     this.updateDisplayInfo();
+  }
+
+  /** マッピング一覧の HTML を再生成し、クリック・削除ハンドラを貼り直す。 */
+  private renderMappingsList(): void {
+    if (!this.window) return;
+    const listEl = this.window.document.getElementById('mappings-list');
+    if (!listEl) return;
+
+    const canRemove = this.state.mappings.length > 1;
+    listEl.innerHTML = this.state.mappings
+      .map(m => {
+        const isActive = m.id === this.state.activeId;
+        const name = m.name ?? m.id;
+        return `
+          <div class="mapping-list-item${isActive ? ' active' : ''}" data-id="${m.id}">
+            <span class="name">${name}</span>
+            <button class="remove-btn" data-id="${m.id}" ${canRemove ? '' : 'disabled'}
+              title="削除">×</button>
+          </div>
+        `;
+      })
+      .join('');
+
+    listEl.querySelectorAll<HTMLDivElement>('.mapping-list-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        // 削除ボタンへのクリックは別ハンドラで処理（stopPropagation 付き）
+        if ((e.target as HTMLElement).classList.contains('remove-btn')) return;
+        const id = item.dataset.id!;
+        if (id !== this.state.activeId) {
+          this.replaceState(withActiveSet(this.state, id));
+        }
+      });
+    });
+
+    listEl.querySelectorAll<HTMLButtonElement>('.remove-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id!;
+        this.replaceState(withRemovedMapping(this.state, id));
+      });
+    });
   }
 
   private applyPreset(preset: string): void {
     switch(preset) {
       case 'fullscreen':
-        this.quadData = rectToQuad({ x: 0,  y: 0,  width: 100, height: 100 });
+        this.setActiveQuad(rectToQuad({ x: 0,  y: 0,  width: 100, height: 100 }));
         break;
       case 'pip':
-        this.quadData = rectToQuad({ x: 70, y: 5,  width: 25,  height: 25  });
+        this.setActiveQuad(rectToQuad({ x: 70, y: 5,  width: 25,  height: 25  }));
         break;
       case 'center':
-        this.quadData = rectToQuad({ x: 25, y: 25, width: 50,  height: 50  });
+        this.setActiveQuad(rectToQuad({ x: 25, y: 25, width: 50,  height: 50  }));
         break;
       case 'corner':
-        this.quadData = rectToQuad({ x: 5,  y: 5,  width: 30,  height: 30  });
+        this.setActiveQuad(rectToQuad({ x: 5,  y: 5,  width: 30,  height: 30  }));
         break;
     }
     this.updateQuadTransform();
@@ -907,12 +1051,7 @@ export class ControlWindow extends BaseWindow {
     if (!this.sourceVideo || !this.selectionBox) return;
 
     // デフォルトで全体を選択
-    this.sourceSelectionData = {
-      x: 0,
-      y: 0,
-      width: 100,
-      height: 100
-    };
+    this.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
 
     this.updateSelectionBox();
     this.broadcastStateMutation();
@@ -1073,7 +1212,7 @@ export class ControlWindow extends BaseWindow {
       const parentRect = parent.getBoundingClientRect();
       const dx = ((e.clientX - startX) / parentRect.width) * 100;
       const dy = ((e.clientY - startY) / parentRect.height) * 100;
-      this.quadData = translateQuad(initialQuad, dx, dy);
+      this.setActiveQuad(translateQuad(initialQuad, dx, dy));
       this.updateQuadTransform();
       this.updateToolValues();
       this.broadcastStateMutation();
@@ -1119,10 +1258,10 @@ export class ControlWindow extends BaseWindow {
         if (parentRect.width <= 0 || parentRect.height <= 0) return;
         const dx = ((e.clientX - startX) / parentRect.width) * 100;
         const dy = ((e.clientY - startY) / parentRect.height) * 100;
-        this.quadData = {
+        this.setActiveQuad({
           ...this.quadData,
           [corner]: { x: initialPoint.x + dx, y: initialPoint.y + dy },
-        };
+        });
         this.updateQuadTransform();
         this.updateToolValues();
         this.broadcastStateMutation();
@@ -1260,23 +1399,22 @@ export class ControlWindow extends BaseWindow {
 
   /**
    * 親 (WindowController) からの canonical state push を mirror に反映。
-   * UI 全体（ソース選択枠・matrix3d・4隅ハンドル・数値表示・video crop）を再描画。
+   * active alias を貼り直して UI 全体を再描画。
    */
-  private handleStateUpdate(state: MappingState): void {
-    if (state.source) {
-      this.sourceSelectionData = state.source;
-    }
-    if (state.quad) {
-      this.quadData = state.quad;
-    }
+  private handleStateUpdate(state: MappingsState): void {
+    if (!state || !Array.isArray(state.mappings) || state.mappings.length === 0) return;
+    this.state = state;
+    this.rebindActiveAliases();
     this.updateSelectionBox();
     this.updateQuadTransform();
     this.updateToolValues();
+    this.renderMappingsList();
   }
 
   /**
-   * ローカル UI の操作で mirror を更新したあと、親へ canonical state を送る。
-   * 親はこれを受け取って自分の state を差し替え、SketchPageView へ broadcast する。
+   * ローカル mutation 後に呼ぶ。alias 経由で source/quad オブジェクトを直接書き換えると
+   * active な entry の同じ参照が更新される（state は同じインスタンス）。
+   * postMessage は structured clone でコピーされて親に届くので、双方向の流入はない。
    */
   private broadcastStateMutation(): void {
     const targetWindow = this.getParentWindow();
@@ -1284,14 +1422,22 @@ export class ControlWindow extends BaseWindow {
     try {
       targetWindow.postMessage({
         type: 'state-mutation',
-        data: {
-          source: this.sourceSelectionData,
-          quad: this.quadData,
-        } satisfies MappingState,
+        data: this.state satisfies MappingsState,
       }, targetWindow.location.origin);
     } catch (error) {
       console.error('ControlWindow: state-mutation 送信エラー', error);
     }
+  }
+
+  /** プログラム的に state を差し替える時に使う（active 切替・追加・削除など）。 */
+  private replaceState(next: MappingsState): void {
+    this.state = next;
+    this.rebindActiveAliases();
+    this.updateSelectionBox();
+    this.updateQuadTransform();
+    this.updateToolValues();
+    this.renderMappingsList();
+    this.broadcastStateMutation();
   }
   
   private updateDisplayInfo(): void {
