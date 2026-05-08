@@ -1440,10 +1440,9 @@ export class ControlWindow extends BaseWindow {
 
     if (!this.mappingVideo) return;
 
-    // ソースビデオのストリームをコピー
+    // 同じ MediaStream を共有 bind（clone なし、同期再生される）
     if (this.mappingVideo.srcObject && !this.croppedVideo.srcObject) {
-      const stream = this.mappingVideo.srcObject as MediaStream;
-      this.croppedVideo.srcObject = stream.clone();
+      this.croppedVideo.srcObject = this.mappingVideo.srcObject;
 
       this.croppedVideo.addEventListener('loadedmetadata', () => {
         this.videoActualDimensions = {

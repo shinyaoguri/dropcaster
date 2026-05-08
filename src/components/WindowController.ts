@@ -8,7 +8,6 @@ import {
 export class WindowController {
   private windowManager: WindowManager;
   private controlWindow: ControlWindow;
-  private controlStream: MediaStream | null = null;
   private activeStreams: MediaStream[] = [];
   private windowMonitoringInterval: number | null = null;
   private canvasResizeObserver: ResizeObserver | null = null;
@@ -28,8 +27,6 @@ export class WindowController {
   // 直接書き込まない（必ず state-mutation メッセージ／state-update 経由）。
   private state: MappingsState = defaultMappingsState();
 
-  // canvas captureStream の参照（SketchPageView が新規 video 要素に紐付けるため公開）
-  private canvasStream: MediaStream | null = null;
 
   private videoActualDimensions = {
     width: 1,
@@ -143,11 +140,6 @@ export class WindowController {
     window.dispatchEvent(event);
   }
 
-  /** SketchPageView が新規 video 要素に渡すための clone を提供 */
-  getCanvasStreamClone(): MediaStream | null {
-    return this.canvasStream ? this.cloneStream(this.canvasStream) : null;
-  }
-
   /**
    * canvas captureStream の参照を SketchPageView へ通知。
    * 同一ウィンドウ内なので CustomEvent.detail にそのまま MediaStream を載せて渡せる。
@@ -159,21 +151,19 @@ export class WindowController {
     }));
   }
 
+  /**
+   * 同一の MediaStream を統合ウィンドウ内の各 video 要素に共有 bind する。
+   * clone は作らない —— 全 video が同じ stream を参照するだけで同期再生されるため、
+   * GPU/CPU のデコーダ・コンポジット負荷を最小化できる。
+   */
   private setupStreamToWindow(targetWindow: Window, stream: MediaStream): void {
     try {
       const targetDoc = targetWindow.document;
-      
-      // 統合ウィンドウ内のビデオ要素にストリームを設定
-      const videos = [
-        { id: 'source-video', clone: false },
-        { id: 'mapping-video', clone: true },
-        { id: 'cropped-video', clone: true },
-      ];
-
-      videos.forEach(({ id, clone }) => {
-        const video = targetDoc.getElementById(id) as HTMLVideoElement;
+      const videoIds = ['source-video', 'mapping-video', 'cropped-video'];
+      videoIds.forEach(id => {
+        const video = targetDoc.getElementById(id) as HTMLVideoElement | null;
         if (video) {
-          video.srcObject = clone ? this.cloneStream(stream) : stream;
+          video.srcObject = stream;
           video.play().catch(error => {
             console.error(`WindowController: ${id}の再生エラー:`, error);
           });
@@ -199,8 +189,6 @@ export class WindowController {
         console.error('WindowController: MediaStreamの取得に失敗しました');
         return;
       }
-      this.canvasStream = stream;
-
       // canvas のサイズを初期 video dimensions として記録
       this.videoActualDimensions = {
         width: canvas.width || 1920,
@@ -222,11 +210,10 @@ export class WindowController {
       // 初期 overlay 更新
       this.dispatchOverlayUpdate();
 
-      // 統合ウィンドウにストリームを設定
+      // 統合ウィンドウにストリームを設定（clone せず元の stream を共有）
       const controlWindow = this.windowManager.getWindow('control_window');
       if (controlWindow && !controlWindow.closed) {
-        this.controlStream = this.cloneStream(stream);
-        this.setupStreamToWindow(controlWindow, this.controlStream);
+        this.setupStreamToWindow(controlWindow, stream);
       }
 
       // ウィンドウの状態を定期的にチェック
@@ -372,8 +359,6 @@ export class WindowController {
       stream.getTracks().forEach(track => track.stop());
     });
     this.activeStreams = [];
-    this.controlStream = null;
-    this.canvasStream = null;
 
     // SketchPageView に stream 停止を通知（dynamic video 要素は SketchPageView 側でクリア）
     this.dispatchCanvasStream(null);
@@ -391,10 +376,6 @@ export class WindowController {
   private trackStream(stream: MediaStream): MediaStream {
     this.activeStreams.push(stream);
     return stream;
-  }
-
-  private cloneStream(stream: MediaStream): MediaStream {
-    return this.trackStream(stream.clone());
   }
 
   destroy(): void {
