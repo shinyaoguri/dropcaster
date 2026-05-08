@@ -12,6 +12,7 @@ import {
   withRemovedMapping,
   withActiveSet,
   withMappingToggled,
+  withMappingRenamed,
   isMappingEnabled,
   mappingColor,
   CORNER_KEYS,
@@ -457,6 +458,19 @@ export class ControlWindow extends BaseWindow {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        user-select: none;
+      }
+
+      .mapping-list-item .name-input {
+        flex: 1;
+        background: #222;
+        border: 1px solid var(--mapping-color, #ff00ff);
+        color: #fff;
+        font-size: 12px;
+        padding: 1px 4px;
+        border-radius: 3px;
+        outline: none;
+        min-width: 0;
       }
 
       .mapping-list-item .remove-btn {
@@ -1029,7 +1043,7 @@ export class ControlWindow extends BaseWindow {
       .map((m, idx) => {
         const isActive = m.id === this.state.activeId;
         const enabled = isMappingEnabled(m);
-        const name = m.name ?? m.id;
+        const name = m.name ?? `Mapping ${idx + 1}`;
         const color = mappingColor(idx);
         const cls = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}`;
         return `
@@ -1067,12 +1081,58 @@ export class ControlWindow extends BaseWindow {
       });
     });
 
+    // 名前のダブルクリックでインライン編集
+    listEl.querySelectorAll<HTMLSpanElement>('.mapping-list-item .name').forEach(nameSpan => {
+      nameSpan.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        const item = nameSpan.closest('.mapping-list-item') as HTMLDivElement | null;
+        const id = item?.dataset.id;
+        if (!id || !this.window) return;
+        this.startInlineRename(nameSpan, id);
+      });
+    });
+
     listEl.querySelectorAll<HTMLButtonElement>('.remove-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.id!;
         this.replaceState(withRemovedMapping(this.state, id));
       });
+    });
+  }
+
+  private startInlineRename(nameSpan: HTMLElement, id: string): void {
+    if (!this.window) return;
+    const doc = this.window.document;
+    const input = doc.createElement('input');
+    input.className = 'name-input';
+    input.type = 'text';
+    input.value = nameSpan.textContent ?? '';
+    nameSpan.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let committed = false;
+    const commit = () => {
+      if (committed) return;
+      committed = true;
+      this.replaceState(withMappingRenamed(this.state, id, input.value));
+    };
+    const cancel = () => {
+      if (committed) return;
+      committed = true;
+      this.renderMappingsList(); // 元の表示に戻す
+    };
+
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancel();
+      }
     });
   }
 

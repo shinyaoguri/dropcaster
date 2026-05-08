@@ -135,6 +135,17 @@ export function withMappingToggled(state: MappingsState, id: string): MappingsSt
   };
 }
 
+/** 指定 id の name を変更する（空文字なら id をフォールバック）。 */
+export function withMappingRenamed(state: MappingsState, id: string, name: string): MappingsState {
+  const trimmed = name.trim();
+  return {
+    ...state,
+    mappings: state.mappings.map(m =>
+      m.id === id ? { ...m, name: trimmed || undefined } : m
+    ),
+  };
+}
+
 const MIN_DIMENSION = 0.0001;
 
 /**
