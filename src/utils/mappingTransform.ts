@@ -20,6 +20,23 @@ export interface Quad {
 export const CORNER_KEYS = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] as const;
 export type CornerKey = typeof CORNER_KEYS[number];
 
+/**
+ * マッピング機能全体の正規状態。
+ * WindowController が単一の canonical 保持者で、ControlWindow / SketchPageView は
+ * いずれもこれの mirror をレンダリングするだけ。
+ */
+export interface MappingState {
+  source: SourceRect;
+  quad: Quad;
+}
+
+export function defaultMappingState(): MappingState {
+  return {
+    source: { x: 0, y: 0, width: 100, height: 100 },
+    quad: defaultQuad(),
+  };
+}
+
 const MIN_DIMENSION = 0.0001;
 
 /**

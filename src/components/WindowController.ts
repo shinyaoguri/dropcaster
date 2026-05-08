@@ -1,6 +1,9 @@
 import { WindowManager, type WindowConfig } from '../managers/WindowManager';
 import { ControlWindow } from '../windows/control/ControlWindow';
-import { defaultQuad, rectToQuad, type Quad } from '../utils/mappingTransform';
+import {
+  defaultMappingState,
+  type MappingState,
+} from '../utils/mappingTransform';
 
 export class WindowController {
   private windowManager: WindowManager;
@@ -13,22 +16,18 @@ export class WindowController {
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
 
-    switch (event.data?.type) {
-      case 'source-selection-change':
-        this.handleSourceSelectionChange(event.data.data);
-        break;
-      case 'mapping-transform-change':
-        this.handleMappingTransformChange(event.data.data);
-        break;
+    if (event.data?.type === 'state-mutation') {
+      // ControlWindow が user 入力で更新した state を受け取る。
+      // 既に control 側に反映済みなので broadcastBack=false。
+      this.applyState(event.data.data, { broadcastToControl: false });
     }
   };
-  private sourceSelectionData = {
-    x: 0,
-    y: 0,
-    width: 100,
-    height: 100
-  };
-  private mappingQuadData: Quad = defaultQuad();
+
+  // 単一の正規 state（source crop ＋ destination quad）。
+  // ControlWindow と SketchPageView はこれの mirror をレンダリングするだけで、
+  // 直接書き込まない（必ず state-mutation メッセージ／state-update 経由）。
+  private state: MappingState = defaultMappingState();
+
   private videoActualDimensions = {
     width: 1,
     height: 1
@@ -76,28 +75,18 @@ export class WindowController {
       this.controlWindow.setWindow(controlWin);
       // 親ウィンドウ参照を設定
       this.controlWindow.setParentWindow(window);
-      
-      // 初期値を設定
+
+      // 初期 state を broadcast
       setTimeout(() => {
-        // 初期化データを送信
-        controlWin.postMessage({
-          type: 'initialize-control',
-          data: {
-            source: this.sourceSelectionData,
-            quad: this.mappingQuadData,
-          }
-        }, window.location.origin);
+        this.broadcastStateToControl();
       }, 500);
     }
   }
 
   openBothWindows(): void {
-    // 統合ウィンドウを開く
     this.openControlWindow();
-    
-    // 初期状態を反映
     setTimeout(() => {
-      this.updateSketchPageOverlay();
+      this.dispatchOverlayUpdate();
     }, 1000);
   }
 
@@ -114,40 +103,37 @@ export class WindowController {
     window.addEventListener('message', this.messageHandler);
   }
 
-  private handleSourceSelectionChange(selectionData: any): void {
-    this.sourceSelectionData = selectionData;
-    this.updateSketchPageOverlay();
+  /**
+   * 正規 state の唯一の更新ポイント。state を差し替えてから:
+   *  - SketchPageView へ overlay 更新イベントを発火
+   *  - ControlWindow へ state-update を broadcast（プログラム的変更時のみ）
+   */
+  private applyState(
+    next: MappingState,
+    options: { broadcastToControl?: boolean } = {}
+  ): void {
+    this.state = next;
+    this.dispatchOverlayUpdate();
+    if (options.broadcastToControl !== false) {
+      this.broadcastStateToControl();
+    }
   }
 
-  private handleMappingTransformChange(transformData: any): void {
-    if (transformData.sourceSelection) {
-      this.sourceSelectionData = transformData.sourceSelection;
+  private broadcastStateToControl(): void {
+    const controlWin = this.windowManager.getWindow('control_window');
+    if (controlWin && !controlWin.closed) {
+      controlWin.postMessage({
+        type: 'state-update',
+        data: this.state,
+      }, window.location.origin);
     }
-    if (transformData.quad) {
-      this.mappingQuadData = transformData.quad;
-    } else if (
-      typeof transformData.x === 'number' &&
-      typeof transformData.y === 'number' &&
-      typeof transformData.width === 'number' &&
-      typeof transformData.height === 'number'
-    ) {
-      // 旧フォーマット（rect）からの変換
-      this.mappingQuadData = rectToQuad({
-        x: transformData.x,
-        y: transformData.y,
-        width: transformData.width,
-        height: transformData.height,
-      });
-    }
-
-    this.updateSketchPageOverlay();
   }
 
-  private updateSketchPageOverlay(): void {
+  private dispatchOverlayUpdate(): void {
     const event = new CustomEvent('mapping-overlay-update', {
       detail: {
-        source: this.sourceSelectionData,
-        quad: this.mappingQuadData,
+        source: this.state.source,
+        quad: this.state.quad,
         videoDimensions: this.videoActualDimensions
       }
     });
@@ -216,11 +202,11 @@ export class WindowController {
             }, window.location.origin);
           }
           
-          this.updateSketchPageOverlay();
+          this.dispatchOverlayUpdate();
         }, { once: true });
         
         // ストリーム設定後、初期状態を送信
-        setTimeout(() => this.updateSketchPageOverlay(), 100);
+        setTimeout(() => this.dispatchOverlayUpdate(), 100);
       }
       
       // iframe-overlay内のビデオ要素にもストリームを設定
@@ -232,7 +218,7 @@ export class WindowController {
         });
         
         iframeMappingVideo.addEventListener('loadedmetadata', () => {
-          setTimeout(() => this.updateSketchPageOverlay(), 100);
+          setTimeout(() => this.dispatchOverlayUpdate(), 100);
         }, { once: true });
       }
 

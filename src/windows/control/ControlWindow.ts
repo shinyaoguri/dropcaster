@@ -2,6 +2,7 @@ import { BaseWindow } from '../shared/BaseWindow';
 import {
   applyVideoCrop,
   applyQuadTransform,
+  defaultMappingState,
   defaultQuad,
   rectToQuad,
   translateQuad,
@@ -9,6 +10,8 @@ import {
   CORNER_KEYS,
   type Quad,
   type CornerKey,
+  type MappingState,
+  type SourceRect,
 } from '../../utils/mappingTransform';
 
 export class ControlWindow extends BaseWindow {
@@ -31,14 +34,11 @@ export class ControlWindow extends BaseWindow {
     height: 100
   };
   
-  private sourceSelectionData = {
-    x: 0,
-    y: 0,
-    width: 100,
-    height: 100
-  };
-  
-  private quadData: Quad = defaultQuad();
+  // canonical state は親 (WindowController) が保持。
+  // これは local mirror で、ローカル UI 操作では optimistic に直接書き換え、
+  // 直後に state-mutation を親へ送信する。state-update で親から再同期。
+  private sourceSelectionData: SourceRect = defaultMappingState().source;
+  private quadData: Quad = defaultMappingState().quad;
 
   constructor() {
     super('control_window', '統合操作ウィンドウ');
@@ -829,7 +829,7 @@ export class ControlWindow extends BaseWindow {
         this.sourceSelectionData = { x: 0, y: 0, width: 100, height: 100 };
         this.updateSelectionBox();
         this.updateToolValues();
-        this.broadcastSelectionChange();
+        this.broadcastStateMutation();
       });
     }
 
@@ -839,7 +839,7 @@ export class ControlWindow extends BaseWindow {
         this.quadData = defaultQuad();
         this.updateQuadTransform();
         this.updateToolValues();
-        this.broadcastTransformChange();
+        this.broadcastStateMutation();
       });
     }
 
@@ -873,7 +873,7 @@ export class ControlWindow extends BaseWindow {
     }
     this.updateQuadTransform();
     this.updateToolValues();
-    this.broadcastTransformChange();
+    this.broadcastStateMutation();
   }
 
   private updateToolValues(): void {
@@ -915,7 +915,7 @@ export class ControlWindow extends BaseWindow {
     };
 
     this.updateSelectionBox();
-    this.broadcastSelectionChange();
+    this.broadcastStateMutation();
   }
 
   private setupSourceDragHandlers(): void {
@@ -953,7 +953,7 @@ export class ControlWindow extends BaseWindow {
 
       this.updateSelectionBox();
       this.updateToolValues();
-      this.broadcastSelectionChange();
+      this.broadcastStateMutation();
     };
 
     const handleMouseUp = () => {
@@ -1033,7 +1033,7 @@ export class ControlWindow extends BaseWindow {
 
         this.updateSelectionBox();
         this.updateToolValues();
-        this.broadcastSelectionChange();
+        this.broadcastStateMutation();
       };
 
       const handleMouseUp = () => {
@@ -1076,7 +1076,7 @@ export class ControlWindow extends BaseWindow {
       this.quadData = translateQuad(initialQuad, dx, dy);
       this.updateQuadTransform();
       this.updateToolValues();
-      this.broadcastTransformChange();
+      this.broadcastStateMutation();
     };
 
     const handleMouseUp = () => {
@@ -1125,7 +1125,7 @@ export class ControlWindow extends BaseWindow {
         };
         this.updateQuadTransform();
         this.updateToolValues();
-        this.broadcastTransformChange();
+        this.broadcastStateMutation();
       };
 
       const onMouseUp = () => {
@@ -1227,11 +1227,8 @@ export class ControlWindow extends BaseWindow {
       if (parentWindow && event.origin !== parentWindow.location.origin) return;
 
       switch (event.data.type) {
-        case 'update-source-selection':
-          this.handleSourceSelectionUpdate(event.data.data);
-          break;
-        case 'initialize-control':
-          this.handleInitialize(event.data.data);
+        case 'state-update':
+          this.handleStateUpdate(event.data.data);
           break;
         case 'video-dimensions-update':
           this.handleVideoDimensionsUpdate(event.data.data);
@@ -1261,60 +1258,39 @@ export class ControlWindow extends BaseWindow {
     // display-frameは物理ディスプレイのアスペクト比を維持するので更新しない
   }
 
-  private handleSourceSelectionUpdate(selectionData: any): void {
-    this.sourceSelectionData = selectionData;
-    this.updateVideoCrop();
-    this.broadcastTransformChange();
-  }
-
-  private handleInitialize(data: any): void {
-    if (data.source) {
-      this.sourceSelectionData = data.source;
+  /**
+   * 親 (WindowController) からの canonical state push を mirror に反映。
+   * UI 全体（ソース選択枠・matrix3d・4隅ハンドル・数値表示・video crop）を再描画。
+   */
+  private handleStateUpdate(state: MappingState): void {
+    if (state.source) {
+      this.sourceSelectionData = state.source;
     }
-    if (data.quad) {
-      this.quadData = data.quad;
-    } else if (data.transform) {
-      // 旧フォーマット（rect）からの移行用
-      this.quadData = rectToQuad(data.transform);
+    if (state.quad) {
+      this.quadData = state.quad;
     }
-    this.updateQuadTransform();
     this.updateSelectionBox();
+    this.updateQuadTransform();
     this.updateToolValues();
   }
 
-  private broadcastSelectionChange(): void {
+  /**
+   * ローカル UI の操作で mirror を更新したあと、親へ canonical state を送る。
+   * 親はこれを受け取って自分の state を差し替え、SketchPageView へ broadcast する。
+   */
+  private broadcastStateMutation(): void {
     const targetWindow = this.getParentWindow();
-    
-    if (targetWindow) {
-      try {
-        targetWindow.postMessage({
-          type: 'source-selection-change',
-          data: this.sourceSelectionData
-        }, targetWindow.location.origin);
-      } catch (error) {
-        console.error('ControlWindow: ソース選択メッセージ送信エラー', error);
-      }
-    }
-
-    // 内部でも直接更新
-    this.updateVideoCrop();
-  }
-
-  private broadcastTransformChange(): void {
-    const targetWindow = this.getParentWindow();
-
-    if (targetWindow) {
-      try {
-        targetWindow.postMessage({
-          type: 'mapping-transform-change',
-          data: {
-            quad: this.quadData,
-            sourceSelection: this.sourceSelectionData,
-          }
-        }, targetWindow.location.origin);
-      } catch (error) {
-        console.error('ControlWindow: マッピング変更メッセージ送信エラー', error);
-      }
+    if (!targetWindow) return;
+    try {
+      targetWindow.postMessage({
+        type: 'state-mutation',
+        data: {
+          source: this.sourceSelectionData,
+          quad: this.quadData,
+        } satisfies MappingState,
+      }, targetWindow.location.origin);
+    } catch (error) {
+      console.error('ControlWindow: state-mutation 送信エラー', error);
     }
   }
   
