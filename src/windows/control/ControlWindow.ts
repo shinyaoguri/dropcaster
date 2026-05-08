@@ -24,6 +24,8 @@ export class ControlWindow extends BaseWindow {
   private selectionBox: HTMLDivElement | null = null;
   private croppedContainer: HTMLDivElement | null = null;
   private croppedVideo: HTMLVideoElement | null = null;
+  // 非アクティブ mapping のプレビュー要素（active は cropped-container を流用）
+  private inactivePreviews = new Map<string, { div: HTMLDivElement; video: HTMLVideoElement }>();
   private videoActualDimensions = {
     width: 1,
     height: 1
@@ -725,6 +727,39 @@ export class ControlWindow extends BaseWindow {
         border-color: #ff00ff;
       }
 
+      /* 非アクティブ mapping のプレビュー */
+      .preview-mapping.inactive {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        transform-origin: top left;
+        backface-visibility: hidden;
+        border: 1px dashed rgba(255, 0, 255, 0.5);
+        background: rgba(255, 0, 255, 0.04);
+        cursor: pointer;
+        pointer-events: auto;
+      }
+
+      .preview-mapping.inactive:hover {
+        border-color: rgba(255, 0, 255, 0.8);
+        background: rgba(255, 0, 255, 0.08);
+      }
+
+      .preview-mapping.inactive > video {
+        position: absolute;
+        top: 0;
+        left: 0;
+        transform-origin: top left;
+        object-fit: fill;
+        width: 100%;
+        height: 100%;
+        opacity: 0.55;
+        pointer-events: none;
+      }
+
       #cropped-video {
         position: absolute;
         top: 0;
@@ -841,7 +876,8 @@ export class ControlWindow extends BaseWindow {
     this.croppedVideo = doc.getElementById('cropped-video') as HTMLVideoElement;
     this.selectionBox = doc.getElementById('selection-box') as HTMLDivElement;
 
-    // sourceVideoのメタデータ読み込み時にアスペクト比を更新
+    // sourceVideoのメタデータ読み込み時にアスペクト比を更新し、
+    // すでに作成済みの非アクティブプレビュー video にも stream を bind する
     if (this.sourceVideo) {
       this.sourceVideo.addEventListener('loadedmetadata', () => {
         this.videoActualDimensions = {
@@ -849,6 +885,7 @@ export class ControlWindow extends BaseWindow {
           height: this.sourceVideo!.videoHeight || 1080
         };
         this.updateSourceVideoAspectRatio();
+        this.refreshInactivePreviewStreams();
       });
     }
 
@@ -1280,6 +1317,9 @@ export class ControlWindow extends BaseWindow {
     // matrix3d を再計算してコンテナへ適用
     applyQuadTransform(this.croppedContainer, this.quadData);
 
+    // 非アクティブ mapping のプレビューを同期
+    this.syncInactivePreviews();
+
     // 4 隅ハンドル位置を quad に追従させる
     this.updateQuadHandlePositions();
 
@@ -1297,6 +1337,73 @@ export class ControlWindow extends BaseWindow {
       handle.style.left = `${p.x}%`;
       handle.style.top = `${p.y}%`;
     });
+  }
+
+  /**
+   * 非 active な mapping ごとに preview-mapping div を生成・更新・削除する。
+   * cropped-container の前（DOM 順）に挿入することで、active なプレビューが
+   * 上に描画される。クリックでその mapping を active 化。
+   */
+  private syncInactivePreviews(): void {
+    if (!this.window || !this.croppedContainer) return;
+    const stage = this.croppedContainer.parentElement;
+    if (!stage) return;
+    const doc = this.window.document;
+
+    const inactiveIds = new Set(
+      this.state.mappings.filter(m => m.id !== this.state.activeId).map(m => m.id)
+    );
+
+    // 不要になった preview を削除（消滅・active 化）
+    for (const [id, { div }] of this.inactivePreviews) {
+      if (!inactiveIds.has(id)) {
+        div.remove();
+        this.inactivePreviews.delete(id);
+      }
+    }
+
+    // 各非 active mapping を反映
+    for (const m of this.state.mappings) {
+      if (m.id === this.state.activeId) continue;
+
+      let entry = this.inactivePreviews.get(m.id);
+      if (!entry) {
+        const div = doc.createElement('div');
+        div.className = 'preview-mapping inactive';
+        div.dataset.mappingId = m.id;
+        const video = doc.createElement('video');
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        div.appendChild(video);
+        // active container の前 = 描画上は active より後ろ
+        stage.insertBefore(div, this.croppedContainer);
+        // クリックで active 化（drag は不可）
+        div.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+          this.replaceState(withActiveSet(this.state, m.id));
+        });
+        this.bindStreamToInactiveVideo(video);
+        entry = { div, video };
+        this.inactivePreviews.set(m.id, entry);
+      }
+
+      applyQuadTransform(entry.div, m.quad);
+      applyVideoCrop(entry.video, m.source);
+    }
+  }
+
+  private bindStreamToInactiveVideo(video: HTMLVideoElement): void {
+    if (!this.sourceVideo || !this.sourceVideo.srcObject) return;
+    if (video.srcObject === this.sourceVideo.srcObject) return;
+    video.srcObject = this.sourceVideo.srcObject;
+    video.play().catch(error => {
+      console.warn('ControlWindow: inactive preview の再生失敗', error);
+    });
+  }
+
+  private refreshInactivePreviewStreams(): void {
+    this.inactivePreviews.forEach(({ video }) => this.bindStreamToInactiveVideo(video));
   }
 
   private updateCroppedVideo(): void {
