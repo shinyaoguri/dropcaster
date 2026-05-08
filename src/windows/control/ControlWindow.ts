@@ -1,4 +1,15 @@
 import { BaseWindow } from '../shared/BaseWindow';
+import {
+  applyVideoCrop,
+  applyQuadTransform,
+  defaultQuad,
+  rectToQuad,
+  translateQuad,
+  cloneQuad,
+  CORNER_KEYS,
+  type Quad,
+  type CornerKey,
+} from '../../utils/mappingTransform';
 
 export class ControlWindow extends BaseWindow {
   private sourceVideo: HTMLVideoElement | null = null;
@@ -27,13 +38,7 @@ export class ControlWindow extends BaseWindow {
     height: 100
   };
   
-  private transformData = {
-    x: 25,
-    y: 25,
-    width: 50,
-    height: 50,
-    scale: 1
-  };
+  private quadData: Quad = defaultQuad();
 
   constructor() {
     super('control_window', '統合操作ウィンドウ');
@@ -90,24 +95,12 @@ export class ControlWindow extends BaseWindow {
             <div class="tool-section">
               <h3>マッピング設定</h3>
               <div class="tool-item">
-                <label>表示位置</label>
-                <div class="tool-values">
-                  <div class="tool-value">
-                    <span class="label">X:</span>
-                    <span id="mapping-x-value">25</span>%
-                  </div>
-                  <div class="tool-value">
-                    <span class="label">Y:</span>
-                    <span id="mapping-y-value">25</span>%
-                  </div>
-                  <div class="tool-value">
-                    <span class="label">幅:</span>
-                    <span id="mapping-w-value">50</span>%
-                  </div>
-                  <div class="tool-value">
-                    <span class="label">高さ:</span>
-                    <span id="mapping-h-value">50</span>%
-                  </div>
+                <label>4隅 (% / ホモグラフィー)</label>
+                <div class="tool-values quad-values">
+                  <div class="tool-value"><span class="label">TL:</span><span id="mapping-tl-value">25, 25</span></div>
+                  <div class="tool-value"><span class="label">TR:</span><span id="mapping-tr-value">75, 25</span></div>
+                  <div class="tool-value"><span class="label">BL:</span><span id="mapping-bl-value">25, 75</span></div>
+                  <div class="tool-value"><span class="label">BR:</span><span id="mapping-br-value">75, 75</span></div>
                 </div>
               </div>
               <button id="reset-mapping-btn" class="tool-button">
@@ -191,11 +184,11 @@ export class ControlWindow extends BaseWindow {
                       <video id="background-video" autoplay muted playsinline></video>
                       <div id="cropped-container">
                         <video id="cropped-video" autoplay muted playsinline></video>
-                        <div class="handle handle-nw" data-handle="nw"></div>
-                        <div class="handle handle-ne" data-handle="ne"></div>
-                        <div class="handle handle-sw" data-handle="sw"></div>
-                        <div class="handle handle-se" data-handle="se"></div>
                       </div>
+                      <div class="quad-handle" data-corner="topLeft"></div>
+                      <div class="quad-handle" data-corner="topRight"></div>
+                      <div class="quad-handle" data-corner="bottomRight"></div>
+                      <div class="quad-handle" data-corner="bottomLeft"></div>
                     </div>
                   </div>
                 </div>
@@ -620,14 +613,37 @@ export class ControlWindow extends BaseWindow {
         border: 2px solid #ff00ff;
         background: rgba(255, 0, 255, 0.1);
         cursor: move;
-        min-width: 20px;
-        min-height: 20px;
         overflow: hidden;
-        /* デフォルトサイズと位置 */
-        left: 25%;
-        top: 25%;
-        width: 50%;
-        height: 50%;
+        /* 単位矩形を matrix3d で 4 隅に写像する */
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        transform-origin: top left;
+        backface-visibility: hidden;
+        will-change: transform;
+        pointer-events: auto;
+      }
+
+      .quad-handle {
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        background: #ff00ff;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        z-index: 20;
+        cursor: grab;
+        /* 4 隅の % 位置に置いた中心が一致するよう中央合わせ */
+        margin-left: -7px;
+        margin-top: -7px;
+        box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+      }
+
+      .quad-handle.dragging {
+        cursor: grabbing;
+        background: #ffffff;
+        border-color: #ff00ff;
       }
 
       #cropped-video {
@@ -789,13 +805,13 @@ export class ControlWindow extends BaseWindow {
   private setupMappingArea(): void {
     if (!this.croppedContainer || !this.croppedVideo) return;
 
-    // ドラッグとリサイズのハンドラーを設定
+    // ドラッグ（quad全体平行移動）と4隅ハンドル（独立操作）
     this.setupMappingDragHandlers();
-    this.setupMappingResizeHandlers();
+    this.setupQuadHandleHandlers();
 
     // 初期位置を設定
-    this.updateCroppedArea();
-    
+    this.updateQuadTransform();
+
     // ストリームが設定されるのを待つ
     setTimeout(() => {
       this.updateCroppedVideo();
@@ -820,8 +836,8 @@ export class ControlWindow extends BaseWindow {
     const resetMappingBtn = doc.getElementById('reset-mapping-btn');
     if (resetMappingBtn) {
       resetMappingBtn.addEventListener('click', () => {
-        this.transformData = { x: 25, y: 25, width: 50, height: 50, scale: 1 };
-        this.updateCroppedArea();
+        this.quadData = defaultQuad();
+        this.updateQuadTransform();
         this.updateToolValues();
         this.broadcastTransformChange();
       });
@@ -843,19 +859,19 @@ export class ControlWindow extends BaseWindow {
   private applyPreset(preset: string): void {
     switch(preset) {
       case 'fullscreen':
-        this.transformData = { x: 0, y: 0, width: 100, height: 100, scale: 1 };
+        this.quadData = rectToQuad({ x: 0,  y: 0,  width: 100, height: 100 });
         break;
       case 'pip':
-        this.transformData = { x: 70, y: 5, width: 25, height: 25, scale: 1 };
+        this.quadData = rectToQuad({ x: 70, y: 5,  width: 25,  height: 25  });
         break;
       case 'center':
-        this.transformData = { x: 25, y: 25, width: 50, height: 50, scale: 1 };
+        this.quadData = rectToQuad({ x: 25, y: 25, width: 50,  height: 50  });
         break;
       case 'corner':
-        this.transformData = { x: 5, y: 5, width: 30, height: 30, scale: 1 };
+        this.quadData = rectToQuad({ x: 5,  y: 5,  width: 30,  height: 30  });
         break;
     }
-    this.updateCroppedArea();
+    this.updateQuadTransform();
     this.updateToolValues();
     this.broadcastTransformChange();
   }
@@ -875,16 +891,16 @@ export class ControlWindow extends BaseWindow {
     if (sourceW) sourceW.textContent = this.sourceSelectionData.width.toFixed(1);
     if (sourceH) sourceH.textContent = this.sourceSelectionData.height.toFixed(1);
 
-    // マッピング値の更新
-    const mappingX = doc.getElementById('mapping-x-value');
-    const mappingY = doc.getElementById('mapping-y-value');
-    const mappingW = doc.getElementById('mapping-w-value');
-    const mappingH = doc.getElementById('mapping-h-value');
-
-    if (mappingX) mappingX.textContent = this.transformData.x.toFixed(1);
-    if (mappingY) mappingY.textContent = this.transformData.y.toFixed(1);
-    if (mappingW) mappingW.textContent = this.transformData.width.toFixed(1);
-    if (mappingH) mappingH.textContent = this.transformData.height.toFixed(1);
+    // マッピング: 4隅の値を更新
+    const fmt = (p: { x: number; y: number }) => `${p.x.toFixed(1)}, ${p.y.toFixed(1)}`;
+    const tl = doc.getElementById('mapping-tl-value');
+    const tr = doc.getElementById('mapping-tr-value');
+    const bl = doc.getElementById('mapping-bl-value');
+    const br = doc.getElementById('mapping-br-value');
+    if (tl) tl.textContent = fmt(this.quadData.topLeft);
+    if (tr) tr.textContent = fmt(this.quadData.topRight);
+    if (bl) bl.textContent = fmt(this.quadData.bottomLeft);
+    if (br) br.textContent = fmt(this.quadData.bottomRight);
   }
 
   private initializeSelectionBox(): void {
@@ -1030,44 +1046,35 @@ export class ControlWindow extends BaseWindow {
     });
   }
 
+  // quad 全体を平行移動（cropped-container の見た目領域をドラッグ）
   private setupMappingDragHandlers(): void {
     if (!this.croppedContainer || !this.window) return;
 
     let isDragging = false;
     let startX = 0;
     let startY = 0;
-    let initialX = 0;
-    let initialY = 0;
+    let initialQuad: Quad = defaultQuad();
 
     const handleMouseDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (target.classList.contains('handle')) {
-        return;
-      }
+      if (target.classList.contains('quad-handle')) return;
 
       isDragging = true;
       startX = e.clientX;
       startY = e.clientY;
-      
-      const rect = this.croppedContainer!.getBoundingClientRect();
-      const parentRect = this.croppedContainer!.parentElement!.getBoundingClientRect();
-      initialX = ((rect.left - parentRect.left) / parentRect.width) * 100;
-      initialY = ((rect.top - parentRect.top) / parentRect.height) * 100;
-      
+      initialQuad = cloneQuad(this.quadData);
       e.preventDefault();
     };
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging || !this.croppedContainer) return;
-
-      const parentRect = this.croppedContainer.parentElement!.getBoundingClientRect();
-      const deltaX = ((e.clientX - startX) / parentRect.width) * 100;
-      const deltaY = ((e.clientY - startY) / parentRect.height) * 100;
-
-      this.transformData.x = Math.max(0, Math.min(100 - this.transformData.width, initialX + deltaX));
-      this.transformData.y = Math.max(0, Math.min(100 - this.transformData.height, initialY + deltaY));
-
-      this.updateCroppedArea();
+      const parent = this.croppedContainer.parentElement;
+      if (!parent) return;
+      const parentRect = parent.getBoundingClientRect();
+      const dx = ((e.clientX - startX) / parentRect.width) * 100;
+      const dy = ((e.clientY - startY) / parentRect.height) * 100;
+      this.quadData = translateQuad(initialQuad, dx, dy);
+      this.updateQuadTransform();
       this.updateToolValues();
       this.broadcastTransformChange();
     };
@@ -1081,70 +1088,55 @@ export class ControlWindow extends BaseWindow {
     this.window.document.addEventListener('mouseup', handleMouseUp);
   }
 
-  private setupMappingResizeHandlers(): void {
-    if (!this.croppedContainer || !this.window) return;
+  // 4隅ハンドル: それぞれを独立に動かしてホモグラフィー変形を作る
+  private setupQuadHandleHandlers(): void {
+    if (!this.window || !this.croppedContainer) return;
+    const parent = this.croppedContainer.parentElement;
+    if (!parent) return;
 
-    const handles = this.croppedContainer.querySelectorAll('.handle');
-    
+    const handles = this.window.document.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
     handles.forEach(handle => {
-      let isResizing = false;
+      let isDragging = false;
       let startX = 0;
       let startY = 0;
-      let initialData = { x: 0, y: 0, width: 0, height: 0 };
+      let initialPoint = { x: 0, y: 0 };
+      const corner = handle.dataset.corner as CornerKey | undefined;
+      if (!corner || !CORNER_KEYS.includes(corner)) return;
 
-      const handleMouseDown = (e: MouseEvent) => {
-        isResizing = true;
+      const onMouseDown = (e: MouseEvent) => {
+        isDragging = true;
         startX = e.clientX;
         startY = e.clientY;
-        initialData = { ...this.transformData };
+        initialPoint = { ...this.quadData[corner] };
+        handle.classList.add('dragging');
         e.stopPropagation();
         e.preventDefault();
       };
 
-      const handleMouseMove = (e: MouseEvent) => {
-        if (!isResizing || !this.croppedContainer) return;
-
-        const parentRect = this.croppedContainer.parentElement!.getBoundingClientRect();
-        const deltaX = ((e.clientX - startX) / parentRect.width) * 100;
-        const deltaY = ((e.clientY - startY) / parentRect.height) * 100;
-
-        const handleType = (handle as HTMLElement).dataset.handle;
-        
-        switch(handleType) {
-          case 'nw':
-            this.transformData.x = Math.max(0, Math.min(initialData.x + initialData.width - 5, initialData.x + deltaX));
-            this.transformData.y = Math.max(0, Math.min(initialData.y + initialData.height - 5, initialData.y + deltaY));
-            this.transformData.width = initialData.width - (this.transformData.x - initialData.x);
-            this.transformData.height = initialData.height - (this.transformData.y - initialData.y);
-            break;
-          case 'ne':
-            this.transformData.y = Math.max(0, Math.min(initialData.y + initialData.height - 5, initialData.y + deltaY));
-            this.transformData.width = Math.max(5, Math.min(100 - initialData.x, initialData.width + deltaX));
-            this.transformData.height = initialData.height - (this.transformData.y - initialData.y);
-            break;
-          case 'sw':
-            this.transformData.x = Math.max(0, Math.min(initialData.x + initialData.width - 5, initialData.x + deltaX));
-            this.transformData.width = initialData.width - (this.transformData.x - initialData.x);
-            this.transformData.height = Math.max(5, Math.min(100 - initialData.y, initialData.height + deltaY));
-            break;
-          case 'se':
-            this.transformData.width = Math.max(5, Math.min(100 - initialData.x, initialData.width + deltaX));
-            this.transformData.height = Math.max(5, Math.min(100 - initialData.y, initialData.height + deltaY));
-            break;
-        }
-
-        this.updateCroppedArea();
+      const onMouseMove = (e: MouseEvent) => {
+        if (!isDragging) return;
+        const parentRect = parent.getBoundingClientRect();
+        if (parentRect.width <= 0 || parentRect.height <= 0) return;
+        const dx = ((e.clientX - startX) / parentRect.width) * 100;
+        const dy = ((e.clientY - startY) / parentRect.height) * 100;
+        this.quadData = {
+          ...this.quadData,
+          [corner]: { x: initialPoint.x + dx, y: initialPoint.y + dy },
+        };
+        this.updateQuadTransform();
         this.updateToolValues();
         this.broadcastTransformChange();
       };
 
-      const handleMouseUp = () => {
-        isResizing = false;
+      const onMouseUp = () => {
+        if (!isDragging) return;
+        isDragging = false;
+        handle.classList.remove('dragging');
       };
 
-      handle.addEventListener('mousedown', handleMouseDown as EventListener);
-      this.window!.document.addEventListener('mousemove', handleMouseMove as EventListener);
-      this.window!.document.addEventListener('mouseup', handleMouseUp as EventListener);
+      handle.addEventListener('mousedown', onMouseDown);
+      this.window!.document.addEventListener('mousemove', onMouseMove);
+      this.window!.document.addEventListener('mouseup', onMouseUp);
     });
   }
 
@@ -1157,17 +1149,29 @@ export class ControlWindow extends BaseWindow {
     this.selectionBox.style.height = `${this.sourceSelectionData.height}%`;
   }
 
-  private updateCroppedArea(): void {
+  private updateQuadTransform(): void {
     if (!this.croppedContainer) return;
 
-    // コンテナの位置とサイズを更新
-    this.croppedContainer.style.left = `${this.transformData.x}%`;
-    this.croppedContainer.style.top = `${this.transformData.y}%`;
-    this.croppedContainer.style.width = `${this.transformData.width}%`;
-    this.croppedContainer.style.height = `${this.transformData.height}%`;
+    // matrix3d を再計算してコンテナへ適用
+    applyQuadTransform(this.croppedContainer, this.quadData);
 
-    // クロップされたビデオの位置を更新
+    // 4 隅ハンドル位置を quad に追従させる
+    this.updateQuadHandlePositions();
+
+    // クロップされたビデオは quad とは独立で source rect を埋める
     this.updateVideoCrop();
+  }
+
+  private updateQuadHandlePositions(): void {
+    if (!this.window) return;
+    const handles = this.window.document.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
+    handles.forEach(handle => {
+      const corner = handle.dataset.corner as CornerKey | undefined;
+      if (!corner || !CORNER_KEYS.includes(corner)) return;
+      const p = this.quadData[corner];
+      handle.style.left = `${p.x}%`;
+      handle.style.top = `${p.y}%`;
+    });
   }
 
   private updateCroppedVideo(): void {
@@ -1205,17 +1209,8 @@ export class ControlWindow extends BaseWindow {
   private updateVideoCrop(): void {
     if (!this.croppedVideo || !this.croppedContainer) return;
 
-    // シンプルな相対座標変換
-    const scale = 100 / this.sourceSelectionData.width;
-    const translateX = -this.sourceSelectionData.x * scale;
-    const translateY = -this.sourceSelectionData.y * scale;
+    applyVideoCrop(this.croppedVideo, this.sourceSelectionData);
 
-    // ビデオのサイズと位置を設定
-    this.croppedVideo.style.width = `${scale * 100}%`;
-    this.croppedVideo.style.height = `${scale * 100}%`;
-    this.croppedVideo.style.transform = `translate(${translateX}%, ${translateY}%)`;
-    
-    // 背景ビデオにも同じクロップを適用（薄く表示）
     if (this.backgroundVideo) {
       this.backgroundVideo.style.width = '100%';
       this.backgroundVideo.style.height = '100%';
@@ -1247,9 +1242,10 @@ export class ControlWindow extends BaseWindow {
       }
     });
     
-    // ウィンドウリサイズ時にアスペクト比を再計算
+    // ウィンドウリサイズ時にアスペクト比とホモグラフィー行列を再計算
     this.window.addEventListener('resize', () => {
       this.updateSourceVideoAspectRatio();
+      this.updateQuadTransform();
       // display-frameは物理ディスプレイのアスペクト比を維持
       this.updateWindowBounds();
     });
@@ -1275,10 +1271,13 @@ export class ControlWindow extends BaseWindow {
     if (data.source) {
       this.sourceSelectionData = data.source;
     }
-    if (data.transform) {
-      this.transformData = data.transform;
+    if (data.quad) {
+      this.quadData = data.quad;
+    } else if (data.transform) {
+      // 旧フォーマット（rect）からの移行用
+      this.quadData = rectToQuad(data.transform);
     }
-    this.updateCroppedArea();
+    this.updateQuadTransform();
     this.updateSelectionBox();
     this.updateToolValues();
   }
@@ -1303,14 +1302,14 @@ export class ControlWindow extends BaseWindow {
 
   private broadcastTransformChange(): void {
     const targetWindow = this.getParentWindow();
-    
+
     if (targetWindow) {
       try {
         targetWindow.postMessage({
           type: 'mapping-transform-change',
           data: {
-            ...this.transformData,
-            sourceSelection: this.sourceSelectionData
+            quad: this.quadData,
+            sourceSelection: this.sourceSelectionData,
           }
         }, targetWindow.location.origin);
       } catch (error) {

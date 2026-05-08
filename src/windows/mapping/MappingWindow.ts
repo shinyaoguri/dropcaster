@@ -1,4 +1,5 @@
 import { BaseWindow } from '../shared/BaseWindow';
+import { applyVideoCrop } from '../../utils/mappingTransform';
 
 export class MappingWindow extends BaseWindow {
   private sourceVideo: HTMLVideoElement | null = null;
@@ -377,32 +378,13 @@ export class MappingWindow extends BaseWindow {
   private updateVideoCrop(): void {
     if (!this.croppedVideo || !this.croppedContainer) return;
 
-    // シンプルな相対座標変換
-    // 選択領域をコンテナ全体に表示する
-    const scale = 100 / this.sourceSelectionData.width;
-    
-    // 選択領域の開始位置分だけオフセット
-    const translateX = -this.sourceSelectionData.x * scale;
-    const translateY = -this.sourceSelectionData.y * scale;
+    applyVideoCrop(this.croppedVideo, this.sourceSelectionData);
 
-    // ビデオのサイズと位置を設定
-    this.croppedVideo.style.width = `${scale * 100}%`;
-    this.croppedVideo.style.height = `${scale * 100}%`;
-    this.croppedVideo.style.transform = `translate(${translateX}%, ${translateY}%)`;
-    
-    // 背景ビデオにも同じクロップを適用（薄く表示）
     if (this.backgroundVideo) {
       this.backgroundVideo.style.width = '100%';
       this.backgroundVideo.style.height = '100%';
       this.backgroundVideo.style.transform = 'none';
     }
-    
-    console.log('MappingWindow: updateVideoCrop', {
-      scale,
-      translateX,
-      translateY,
-      sourceSelection: this.sourceSelectionData
-    });
   }
 
   private broadcastTransformChange(): void {

@@ -1,5 +1,6 @@
 import { WindowManager, type WindowConfig } from '../managers/WindowManager';
 import { ControlWindow } from '../windows/control/ControlWindow';
+import { defaultQuad, rectToQuad, type Quad } from '../utils/mappingTransform';
 
 export class WindowController {
   private windowManager: WindowManager;
@@ -27,13 +28,7 @@ export class WindowController {
     width: 100,
     height: 100
   };
-  private mappingTransformData = {
-    x: 25,
-    y: 25,
-    width: 50,
-    height: 50,
-    scale: 1
-  };
+  private mappingQuadData: Quad = defaultQuad();
   private videoActualDimensions = {
     width: 1,
     height: 1
@@ -89,7 +84,7 @@ export class WindowController {
           type: 'initialize-control',
           data: {
             source: this.sourceSelectionData,
-            transform: this.mappingTransformData
+            quad: this.mappingQuadData,
           }
         }, window.location.origin);
       }, 500);
@@ -128,15 +123,23 @@ export class WindowController {
     if (transformData.sourceSelection) {
       this.sourceSelectionData = transformData.sourceSelection;
     }
-    
-    this.mappingTransformData = {
-      x: transformData.x,
-      y: transformData.y,
-      width: transformData.width,
-      height: transformData.height,
-      scale: transformData.scale || 1
-    };
-    
+    if (transformData.quad) {
+      this.mappingQuadData = transformData.quad;
+    } else if (
+      typeof transformData.x === 'number' &&
+      typeof transformData.y === 'number' &&
+      typeof transformData.width === 'number' &&
+      typeof transformData.height === 'number'
+    ) {
+      // 旧フォーマット（rect）からの変換
+      this.mappingQuadData = rectToQuad({
+        x: transformData.x,
+        y: transformData.y,
+        width: transformData.width,
+        height: transformData.height,
+      });
+    }
+
     this.updateSketchPageOverlay();
   }
 
@@ -144,7 +147,7 @@ export class WindowController {
     const event = new CustomEvent('mapping-overlay-update', {
       detail: {
         source: this.sourceSelectionData,
-        mapping: this.mappingTransformData,
+        quad: this.mappingQuadData,
         videoDimensions: this.videoActualDimensions
       }
     });
@@ -243,9 +246,18 @@ export class WindowController {
       // ウィンドウの状態を定期的にチェック
       this.startWindowMonitoring();
 
+      // メインページをプロジェクションモードに切り替え
+      this.setProjectionMode(true);
+
     } catch (error) {
       console.error('WindowController: Canvas streaming開始エラー:', error);
     }
+  }
+
+  private setProjectionMode(active: boolean): void {
+    window.dispatchEvent(new CustomEvent('projection-mode-change', {
+      detail: { active }
+    }));
   }
 
   private monitorCanvasResize(canvas: HTMLCanvasElement): void {
@@ -390,7 +402,8 @@ export class WindowController {
       this.windowMonitoringInterval = null;
     }
 
-    // ストリーム停止完了
+    // プロジェクションモードを解除
+    this.setProjectionMode(false);
   }
 
   private trackStream(stream: MediaStream): MediaStream {

@@ -709,18 +709,20 @@ body {
   overflow: hidden;
 }
 
-/* iframe内のマッピングコンテナ */
+/* iframe内のマッピングコンテナ（matrix3d で 4 隅へ写像） */
 .iframe-mapping-container {
   position: absolute;
   border: 2px solid #ff00ff;
   background: rgba(255, 0, 255, 0.05);
   pointer-events: none;
   overflow: hidden;
-  /* デフォルト位置とサイズ */
-  left: 25%;
-  top: 25%;
-  width: 50%;
-  height: 50%;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: top left;
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 #iframe-mapping-video {
@@ -729,23 +731,25 @@ body {
   left: 0;
   transform-origin: top left;
   pointer-events: none;
-  /* アスペクト比を保持せずにクロップ */
-  object-fit: none;
+  /* source 矩形を destination 矩形へストレッチ写像（mappingTransform.ts と対応） */
+  object-fit: fill;
   /* サイズはJavaScriptで動的に設定 */
 }
 
-/* マッピングオーバーレイ */
+/* マッピングオーバーレイ（matrix3d で 4 隅へ写像） */
 .mapping-overlay {
   position: absolute;
   border: 2px solid #ff00ff;
   background: rgba(255, 0, 255, 0.05);
   pointer-events: none;
   overflow: hidden;
-  /* デフォルト位置とサイズ */
-  left: 25%;
-  top: 25%;
-  width: 50%;
-  height: 50%;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: top left;
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 #mapping-overlay-video {
@@ -754,25 +758,53 @@ body {
   left: 0;
   transform-origin: top left;
   pointer-events: none;
-  /* アスペクト比を保持せずにクロップ */
-  object-fit: none;
+  /* source 矩形を destination 矩形へストレッチ写像（mappingTransform.ts と対応） */
+  object-fit: fill;
 }
 
 
-/* iframe-mapping-container位置調整 */
+/* iframe-mapping-container位置調整（位置・transformはJSで設定） */
 .iframe-mapping-container {
   position: absolute !important;
   border: 2px solid #ff00ff;
   background: rgba(255, 0, 255, 0.05);
   pointer-events: none;
   overflow: hidden;
-  /* 位置とサイズはJavaScriptで動的に設定 */
 }
 
 /* iframe-overlayを透明に */
 .iframe-overlay {
   background: transparent !important;
   border: none !important;
+}
+
+/*
+ * プロジェクションモード:
+ *   元のスケッチ canvas は captureStream のソースとして描画を継続させる必要があるため
+ *   消さずに背面へ送り、その上に黒ステージを重ねて視覚的に隠す。
+ *   切り抜き＋再配置されたマッピング映像のみが画面に出る。
+ */
+.fullscreen-sketch-container.projecting .fullscreen-iframe {
+  z-index: 1;
+  pointer-events: none;
+}
+
+.fullscreen-sketch-container.projecting .iframe-content-overlay {
+  z-index: 1100;
+  background: #000;
+  pointer-events: none;
+}
+
+.fullscreen-sketch-container.projecting .mapping-overlay {
+  /* 投影出力なのでデバッグ用の枠線・背景は消す */
+  border: none;
+  background: transparent;
+}
+
+/* 操作系UIはステージより前面へ */
+.fullscreen-sketch-container.projecting .top-right-button,
+.fullscreen-sketch-container.projecting .sketch-overlay-info {
+  z-index: 1200;
 }
 
 /* フッター */
