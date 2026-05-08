@@ -43,13 +43,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview dist",
-    "scan": "node scripts/scan-sketches.js --write-file >/dev/null 2>/dev/null && echo '📁 スケッチリストを更新しました'",
-    "scan:previews": "node scripts/scan-sketches.js --generate-previews --write-file",
-    "scan:full": "node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file",
-    "scan:full:headed": "node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file --headed --manual-challenge --browser-profile .dropcaster/browser-profile",
-    "scan:full:browser": "node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file --external-browser",
-    "scan:reset": "rm -rf public/sketches public/previews public/avatars && node scripts/scan-sketches.js --generate-previews --fetch-user-data --force-regenerate --write-file && echo '🔄 公開ファイルをリセット・再生成しました'",
-    "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node scripts/scan-sketches.js --watch-mode --write-file >/dev/null 2>/dev/null && echo '📁 スケッチリストを更新しました（新規スケッチのプレビューも生成）'\""
+    "scan": "node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file --external-browser",
+    "scan:reset": "rm -rf public/sketches public/previews public/avatars && node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file --external-browser --force-regenerate",
+    "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node scripts/scan-sketches.js --watch-mode --write-file\""
   },
   "devDependencies": {
     "nodemon": "^3.0.2",

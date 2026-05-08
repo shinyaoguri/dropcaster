@@ -59,26 +59,16 @@ program
   .option('--sketch <name>', 'Scan specific sketch only')
   .option('--force-preview', 'Force regenerate preview images')
   .option('--reset', 'Reset and regenerate all previews')
-  .option('--fetch-userdata', 'Fetch user data from OpenProcessing')
-  .option('--headed', 'Open a visible browser for human-assisted OpenProcessing checks')
-  .option('--external-browser', 'Open OpenProcessing pages in the default browser and create manual metadata templates')
+  .option('--fetch-userdata', 'Fetch user data via the default browser (creates manual metadata templates)')
   .option('--external-browser-interval-ms <ms>', 'Delay between default-browser opens, clamped to at least 1000ms', '1000')
-  .option('--browser-profile <dir>', 'Browser profile directory for headed OpenProcessing checks', '.dropcaster/browser-profile')
-  .option('--manual-challenge', 'Pause when a Cloudflare/Turnstile challenge is detected', true)
-  .option('--challenge-timeout-ms <ms>', 'Maximum time to wait for a human-assisted challenge', '180000')
   .option('-v, --verbose', 'Show detailed output')
   .action(scan);
 
 program
   .command('scan:reset')
   .description('Reset and regenerate all preview images')
-  .option('--fetch-userdata', 'Also fetch user data from OpenProcessing')
-  .option('--headed', 'Open a visible browser for human-assisted OpenProcessing checks')
-  .option('--external-browser', 'Open OpenProcessing pages in the default browser and create manual metadata templates')
+  .option('--fetch-userdata', 'Also fetch user data via the default browser')
   .option('--external-browser-interval-ms <ms>', 'Delay between default-browser opens, clamped to at least 1000ms', '1000')
-  .option('--browser-profile <dir>', 'Browser profile directory for headed OpenProcessing checks', '.dropcaster/browser-profile')
-  .option('--manual-challenge', 'Pause when a Cloudflare/Turnstile challenge is detected', true)
-  .option('--challenge-timeout-ms <ms>', 'Maximum time to wait for a human-assisted challenge', '180000')
   .action(scanReset);
 
 program.parse();

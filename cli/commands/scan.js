@@ -47,37 +47,18 @@ export async function scan(options = {}) {
     args.push('--reset');
   }
   
+  // ユーザーデータ取得は常に外部ブラウザ経由（puppeteer ヘッドレス取得は廃止）
   if (options.fetchUserdata) {
-    args.push('--fetch-userdata');
-  }
-
-  if (options.headed) {
-    args.push('--headed');
-  }
-
-  if (options.externalBrowser) {
-    args.push('--external-browser');
+    args.push('--fetch-userdata', '--external-browser');
   }
 
   if (options.externalBrowserIntervalMs) {
     args.push('--external-browser-interval-ms', options.externalBrowserIntervalMs);
   }
 
-  if (options.headed && options.browserProfile) {
-    args.push('--browser-profile', options.browserProfile);
-  }
-
-  if (options.manualChallenge !== false) {
-    args.push('--manual-challenge');
-  }
-
-  if (options.challengeTimeoutMs) {
-    args.push('--challenge-timeout-ms', options.challengeTimeoutMs);
-  }
-  
   // スピナーを開始
   let spinner;
-  const inheritStdio = options.verbose || options.headed || options.externalBrowser;
+  const inheritStdio = options.verbose || options.fetchUserdata;
   if (!inheritStdio) {
     spinner = ora('Scanning sketches...').start();
   }

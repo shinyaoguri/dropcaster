@@ -74,26 +74,17 @@ sketches/
 ### 3. スケッチをスキャンしてプレビュー生成
 
 ```bash
-# スケッチをスキャンしてメタデータ生成
+# スケッチをスキャンし、プレビューを生成、ユーザーデータ取得用に既定ブラウザを開く
 npm run scan
-
-# プレビューとユーザーデータを生成
-npm run scan:full
-
-# OpenProcessing側の確認画面が出る場合は、ブラウザを開いて人間が確認する
-npm run scan:full:headed
-
-# Puppeteerのブラウザ起動自体が弾かれる場合は、普段使いの既定ブラウザで開く
-npm run scan:full:browser
 
 # すべてのプレビューをリセットして再生成
 npm run scan:reset
 
-# 変更を監視して自動更新
+# 変更を監視して自動更新（メタデータのみ）
 npm run scan:watch
 ```
 
-Cloudflare TurnstileなどでOpenProcessingの取得が止まる場合は、クロールに依存せず手動メタデータを使えます。`scan:full:browser` はPuppeteerではなくOSの既定ブラウザでOpenProcessingを開き、取得失敗扱いとして `dropcaster.meta.example.json` を作成します。同じディレクトリで `dropcaster.meta.json` にリネームして、ブラウザで見た値を埋めてください。
+`npm run scan` は OpenProcessing のページを OS の既定ブラウザで順に開き、取得失敗扱いとして `dropcaster.meta.example.json` をスケッチごとに作成します。ブラウザで見たユーザー名・URL などを `dropcaster.meta.json` にリネームしたうえで埋めてください。Cloudflare Turnstile 等を puppeteer で突破する経路は持たない設計です（手動入力で常に確実に通せる方を選択）。
 
 ```json
 {
@@ -138,13 +129,8 @@ npm run build
 - `--sketch <name>` - 特定のスケッチのみスキャン
 - `--force-preview` - プレビュー画像を強制再生成
 - `--reset` - すべてのプレビューをリセットして再生成
-- `--fetch-userdata` - OpenProcessingからユーザーデータを取得
-- `--headed` - OpenProcessing取得時に人間操作用のブラウザを開く
-- `--external-browser` - PuppeteerではなくOSの既定ブラウザでOpenProcessingを開く
+- `--fetch-userdata` - 既定ブラウザで OpenProcessing を開き、手動記入用のメタテンプレートを作成
 - `--external-browser-interval-ms <ms>` - 既定ブラウザで開く間隔（最小1000ms）
-- `--browser-profile <dir>` - 人間操作用ブラウザのプロファイル保存先
-- `--manual-challenge` - Cloudflare/Turnstileらしき確認画面でEnter待ちにする
-- `--challenge-timeout-ms <ms>` - 人間操作の待機時間
 - `-v, --verbose` - 詳細出力を表示
 
 ### `dropcaster build [options]`
