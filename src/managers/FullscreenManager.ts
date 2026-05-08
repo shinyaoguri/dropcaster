@@ -9,6 +9,7 @@ export class FullscreenManager {
   private readonly UI_HIDE_DELAY = 3000; // 3秒後にUI要素を非表示
   private uiController: UIElementController;
   private mouseHandler: MouseEventHandler;
+  private boundFullscreenChange = this.handleFullscreenChange.bind(this);
 
   constructor() {
     this.eventEmitter = new EventEmitter();
@@ -18,7 +19,7 @@ export class FullscreenManager {
 
   initialize(): void {
     // フルスクリーン状態の変更を監視
-    document.addEventListener('fullscreenchange', this.handleFullscreenChange.bind(this));
+    document.addEventListener('fullscreenchange', this.boundFullscreenChange);
     
     // マウスイベントハンドラーを初期化
     this.mouseHandler.initialize(this.handleMouseActivity);
@@ -99,7 +100,7 @@ export class FullscreenManager {
 
   destroy(): void {
     this.stopUIHideTimer();
-    document.removeEventListener('fullscreenchange', this.handleFullscreenChange.bind(this));
+    document.removeEventListener('fullscreenchange', this.boundFullscreenChange);
     this.mouseHandler.destroy();
     this.eventEmitter.removeAllListeners();
   }

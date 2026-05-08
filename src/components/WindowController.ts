@@ -5,6 +5,22 @@ export class WindowController {
   private windowManager: WindowManager;
   private controlWindow: ControlWindow;
   private controlStream: MediaStream | null = null;
+  private activeStreams: MediaStream[] = [];
+  private windowMonitoringInterval: number | null = null;
+  private canvasResizeObserver: ResizeObserver | null = null;
+  private canvasMutationObserver: MutationObserver | null = null;
+  private messageHandler = (event: MessageEvent) => {
+    if (event.origin !== window.location.origin) return;
+
+    switch (event.data?.type) {
+      case 'source-selection-change':
+        this.handleSourceSelectionChange(event.data.data);
+        break;
+      case 'mapping-transform-change':
+        this.handleMappingTransformChange(event.data.data);
+        break;
+    }
+  };
   private sourceSelectionData = {
     x: 0,
     y: 0,
@@ -75,7 +91,7 @@ export class WindowController {
             source: this.sourceSelectionData,
             transform: this.mappingTransformData
           }
-        }, '*');
+        }, window.location.origin);
       }, 500);
     }
   }
@@ -100,16 +116,7 @@ export class WindowController {
   }
 
   private setupWindowCommunication(): void {
-    window.addEventListener('message', (event) => {
-      switch (event.data.type) {
-        case 'source-selection-change':
-          this.handleSourceSelectionChange(event.data.data);
-          break;
-        case 'mapping-transform-change':
-          this.handleMappingTransformChange(event.data.data);
-          break;
-      }
-    });
+    window.addEventListener('message', this.messageHandler);
   }
 
   private handleSourceSelectionChange(selectionData: any): void {
@@ -159,7 +166,7 @@ export class WindowController {
       videos.forEach(({ id, clone }) => {
         const video = targetDoc.getElementById(id) as HTMLVideoElement;
         if (video) {
-          video.srcObject = clone ? stream.clone() : stream;
+          video.srcObject = clone ? this.cloneStream(stream) : stream;
           video.play().catch(error => {
             console.error(`WindowController: ${id}の再生エラー:`, error);
           });
@@ -180,6 +187,7 @@ export class WindowController {
 
       // MediaStreamをキャプチャ（30fps）
       const stream = canvas.captureStream(30);
+      this.trackStream(stream);
       if (!stream) {
         console.error('WindowController: MediaStreamの取得に失敗しました');
         return;
@@ -188,7 +196,7 @@ export class WindowController {
       // スケッチページの複数のビデオ要素にストリームを設定
       const mappingOverlayVideo = document.getElementById('mapping-overlay-video') as HTMLVideoElement;
       if (mappingOverlayVideo) {
-        mappingOverlayVideo.srcObject = stream.clone();
+        mappingOverlayVideo.srcObject = this.cloneStream(stream);
         
         // ビデオの実際のサイズを取得
         mappingOverlayVideo.addEventListener('loadedmetadata', () => {
@@ -202,7 +210,7 @@ export class WindowController {
             controlWindow.postMessage({
               type: 'video-dimensions-update',
               data: this.videoActualDimensions
-            }, '*');
+            }, window.location.origin);
           }
           
           this.updateSketchPageOverlay();
@@ -215,7 +223,7 @@ export class WindowController {
       // iframe-overlay内のビデオ要素にもストリームを設定
       const iframeMappingVideo = document.getElementById('iframe-mapping-video') as HTMLVideoElement;
       if (iframeMappingVideo) {
-        iframeMappingVideo.srcObject = stream.clone();
+        iframeMappingVideo.srcObject = this.cloneStream(stream);
         iframeMappingVideo.play().catch(error => {
           console.error('WindowController: iframe-mapping-videoの再生エラー:', error);
         });
@@ -228,7 +236,7 @@ export class WindowController {
       // 統合ウィンドウにストリームを設定
       const controlWindow = this.windowManager.getWindow('control_window');
       if (controlWindow && !controlWindow.closed) {
-        this.controlStream = stream.clone();
+        this.controlStream = this.cloneStream(stream);
         this.setupStreamToWindow(controlWindow, this.controlStream);
       }
 
@@ -241,6 +249,9 @@ export class WindowController {
   }
 
   private monitorCanvasResize(canvas: HTMLCanvasElement): void {
+    this.canvasResizeObserver?.disconnect();
+    this.canvasMutationObserver?.disconnect();
+
     // ResizeObserverを使用してCanvasのサイズ変更を監視
     const resizeObserver = new ResizeObserver(() => {
       // Canvasの実際の描画サイズを取得
@@ -266,12 +277,13 @@ export class WindowController {
           controlWindow.postMessage({
             type: 'video-dimensions-update',
             data: this.videoActualDimensions
-          }, '*');
+          }, window.location.origin);
         }
       }
     });
     
     resizeObserver.observe(canvas);
+    this.canvasResizeObserver = resizeObserver;
     
     // Canvasの属性変更も監視
     const mutationObserver = new MutationObserver((mutations) => {
@@ -300,7 +312,7 @@ export class WindowController {
               controlWindow.postMessage({
                 type: 'video-dimensions-update',
                 data: this.videoActualDimensions
-              }, '*');
+              }, window.location.origin);
             }
           }
         }
@@ -311,6 +323,7 @@ export class WindowController {
       attributes: true,
       attributeFilter: ['width', 'height']
     });
+    this.canvasMutationObserver = mutationObserver;
   }
 
   private getCanvasFromIframe(iframeElement: HTMLIFrameElement): HTMLCanvasElement | null {
@@ -332,9 +345,6 @@ export class WindowController {
     return canvas;
   }
 
-  // ウィンドウの状態を監視
-  private windowMonitoringInterval: number | null = null;
-  
   private startWindowMonitoring(): void {
     if (this.windowMonitoringInterval !== null) {
       return;
@@ -355,11 +365,24 @@ export class WindowController {
 
   // Canvas配信を停止
   stopCanvasStreaming(): void {
-    // MediaStreamのトラックを停止
-    if (this.controlStream) {
-      this.controlStream.getTracks().forEach(track => track.stop());
-      this.controlStream = null;
-    }
+    this.canvasResizeObserver?.disconnect();
+    this.canvasResizeObserver = null;
+    this.canvasMutationObserver?.disconnect();
+    this.canvasMutationObserver = null;
+
+    this.activeStreams.forEach(stream => {
+      stream.getTracks().forEach(track => track.stop());
+    });
+    this.activeStreams = [];
+    this.controlStream = null;
+
+    const localVideos = [
+      document.getElementById('mapping-overlay-video') as HTMLVideoElement | null,
+      document.getElementById('iframe-mapping-video') as HTMLVideoElement | null
+    ];
+    localVideos.forEach(video => {
+      if (video) video.srcObject = null;
+    });
 
     // ウィンドウ監視を停止
     if (this.windowMonitoringInterval !== null) {
@@ -368,6 +391,20 @@ export class WindowController {
     }
 
     // ストリーム停止完了
+  }
+
+  private trackStream(stream: MediaStream): MediaStream {
+    this.activeStreams.push(stream);
+    return stream;
+  }
+
+  private cloneStream(stream: MediaStream): MediaStream {
+    return this.trackStream(stream.clone());
+  }
+
+  destroy(): void {
+    window.removeEventListener('message', this.messageHandler);
+    this.closeAllWindows();
   }
 
   // ウィンドウの状態確認

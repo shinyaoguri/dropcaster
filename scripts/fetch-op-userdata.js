@@ -7,11 +7,11 @@ import { SCRAPING_CONFIG } from './modules/config.js';
  * @param {string[]} sketchIds - スケッチIDの配列
  * @returns {Promise<Object[]>} ユーザー情報の配列
  */
-export async function fetchUserDataForSketches(sketchIds) {
+export async function fetchUserDataForSketches(sketchIds, options = {}) {
   console.error(`🚀 fetchUserDataForSketches関数が呼び出されました`);
   console.error(`📋 受け取ったスケッチID: ${JSON.stringify(sketchIds)}`);
   
-  const scraper = new OpenProcessingScraper();
+  const scraper = new OpenProcessingScraper(options);
   const avatarManager = new AvatarManager();
   
   try {
@@ -34,21 +34,21 @@ export async function fetchUserDataForSketches(sketchIds) {
     console.error(`   - 重複回避による節約: ${results.length - stats.totalDownloaded}件`);
     
     // 結果をコンソールに出力
-    console.log('\n=== 取得したスケッチ情報 ===');
+    console.error('\n=== 取得したスケッチ情報 ===');
     results.forEach((result, index) => {
       if (result.error) {
-        console.log(`${index + 1}. スケッチID ${result.sketchId}: エラー - ${result.error}`);
+        console.error(`${index + 1}. スケッチID ${result.sketchId}: エラー - ${result.error}`);
       } else {
-        console.log(`${index + 1}. スケッチID ${result.sketchId}:`);
-        console.log(`   スケッチタイトル: ${result.sketchTitle}`);
-        console.log(`   ユーザーID: ${result.userId}`);
-        console.log(`   ユーザー名: ${result.userName}`);
-        console.log(`   ユーザーURL: ${result.userUrl}`);
-        console.log(`   アイコンURL: ${result.avatarUrl}`);
+        console.error(`${index + 1}. スケッチID ${result.sketchId}:`);
+        console.error(`   スケッチタイトル: ${result.sketchTitle}`);
+        console.error(`   ユーザーID: ${result.userId}`);
+        console.error(`   ユーザー名: ${result.userName}`);
+        console.error(`   ユーザーURL: ${result.userUrl}`);
+        console.error(`   アイコンURL: ${result.avatarUrl}`);
         if (result.avatarFile) {
-          console.log(`   アイコンファイル: ${result.avatarFile}`);
+          console.error(`   アイコンファイル: ${result.avatarFile}`);
         }
-        console.log('');
+        console.error('');
       }
     });
     

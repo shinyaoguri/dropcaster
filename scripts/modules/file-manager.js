@@ -1,5 +1,10 @@
 import { readdir, stat, cp, mkdir, rm } from 'fs/promises';
-import { join } from 'path';
+import { basename, join } from 'path';
+
+const SKETCH_COPY_EXCLUDES = new Set([
+  'dropcaster.meta.json',
+  'dropcaster.meta.example.json'
+]);
 
 /**
  * 削除されたスケッチのクリーンアップ
@@ -44,10 +49,10 @@ export async function copySketchToPublic(sketchName, sourcePath, destinationDir,
     try {
       await stat(destinationPath);
       // 既に存在する場合は、更新日時を比較
-      const sourceStats = await stat(sourcePath);
-      const destStats = await stat(destinationPath);
+      const sourceMtime = await getLatestMtime(sourcePath);
+      const destMtime = await getLatestMtime(destinationPath);
       
-      if (!forceRegenerate && sourceStats.mtime <= destStats.mtime) {
+      if (!forceRegenerate && sourceMtime <= destMtime) {
         console.error(`✓ ${sketchName} is up to date`);
         return;
       }
@@ -56,11 +61,35 @@ export async function copySketchToPublic(sketchName, sourcePath, destinationDir,
     }
     
     // コピーを実行
-    await cp(sourcePath, destinationPath, { recursive: true });
+    await rm(destinationPath, { recursive: true, force: true });
+    await cp(sourcePath, destinationPath, {
+      recursive: true,
+      filter: shouldCopySketchFile
+    });
     console.error(`📁 Copied ${sketchName} to public directory`);
   } catch (error) {
     console.warn(`Warning: Failed to copy ${sketchName}:`, error.message);
   }
+}
+
+function shouldCopySketchFile(source) {
+  return !SKETCH_COPY_EXCLUDES.has(basename(source));
+}
+
+async function getLatestMtime(path) {
+  const stats = await stat(path);
+  if (!stats.isDirectory()) {
+    return stats.mtime;
+  }
+
+  const entries = await readdir(path, { withFileTypes: true });
+  const mtimes = await Promise.all(entries.map(async (entry) => {
+    return getLatestMtime(join(path, entry.name));
+  }));
+
+  return mtimes.reduce((latest, current) => {
+    return current > latest ? current : latest;
+  }, stats.mtime);
 }
 
 /**

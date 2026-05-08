@@ -44,6 +44,7 @@ export const SCRAPING_CONFIG = {
   
   // リクエスト間隔（レート制限対策）
   requestInterval: 1000,
+  externalBrowserIntervalMs: 1000,
   
   // アバター画像設定
   avatarDownloadTimeout: 10000,

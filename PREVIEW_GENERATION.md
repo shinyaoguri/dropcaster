@@ -4,9 +4,10 @@
 
 ## 技術仕様
 
-- **プレビューサイズ**: 800x800px
+- **キャプチャサイズ**: 1000x1000px
+- **出力サイズ**: 幅400px
 - **録画時間**: 3秒間
-- **フレームレート**: 10fps
+- **キャプチャフレームレート**: 30fps
 - **生成方法**: Playwright + FFmpeg
 
 ## 使用方法
@@ -41,21 +42,21 @@ node scripts/scan-sketches.js --generate-previews
 
 ## 設定オプション
 
-`scripts/scan-sketches.js` の `PREVIEW_OPTIONS` で設定可能:
+`scripts/modules/config.js` の `PREVIEW_OPTIONS` で設定可能:
 
 ```javascript
 const PREVIEW_OPTIONS = {
-  width: 800,        // プレビューの幅 (px) - Canvas全体をキャプチャ
-  height: 800,       // プレビューの高さ (px)
+  width: 1000,       // キャプチャの幅 (px) - Canvas全体をキャプチャ
+  height: 1000,      // キャプチャの高さ (px)
   duration: 3000,    // 録画時間 (ms)
-  fps: 10,          // フレームレート
+  fps: 30,          // キャプチャフレームレート
   quality: 80       // GIF品質 (1-100)
 };
 ```
 
 ## 生成プロセス
 
-1. **フレーム取得**: Playwrightで800x800のスケッチを3秒間連続撮影
+1. **フレーム取得**: Playwrightで1000x1000のスケッチを3秒間連続撮影
 2. **一時保存**: フレームを一時ディレクトリにPNG形式で保存
 3. **パレット生成**: FFmpegで最適カラーパレット生成
 4. **GIF合成**: パレットを使用して高品質なアニメーションGIF作成

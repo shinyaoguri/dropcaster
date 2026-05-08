@@ -2,6 +2,8 @@ import { readFile, readdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX } from './config.js';
 
+const MANUAL_METADATA_FILE = 'dropcaster.meta.json';
+
 /**
  * 個別のスケッチを分析
  */
@@ -9,34 +11,124 @@ export async function analyzeSketch(dirName, sketchPath) {
   try {
     const indexPath = join(sketchPath, 'index.html');
     const stats = await stat(indexPath);
-    
+
     if (!stats.isFile()) {
       console.warn(`Warning: ${dirName} has no index.html, skipping...`);
       return null;
     }
-    
+
     // index.htmlを解析してメタデータを抽出
     const htmlContent = await readFile(indexPath, 'utf-8');
     const metadata = extractMetadata(htmlContent, dirName);
-    
+    const manualMetadata = await loadManualMetadata(sketchPath, dirName);
+
     // インタラクティブ要素を検出
-    const interactiveElements = await detectInteractiveElements(sketchPath, htmlContent);
-    
-    return {
+    const detectedInteractiveElements = await detectInteractiveElements(sketchPath, htmlContent);
+    const interactiveElements = manualMetadata.interactiveElements || detectedInteractiveElements;
+
+    const sketchInfo = {
       id: dirName,
-      title: metadata.title || dirName,
-      description: metadata.description || `${dirName}${DEFAULT_DESCRIPTION_SUFFIX}`,
+      title: manualMetadata.title || metadata.title || dirName,
+      description: manualMetadata.description || metadata.description || `${dirName}${DEFAULT_DESCRIPTION_SUFFIX}`,
       path: `${DEFAULT_PATH_PREFIX}${dirName}/`,
-      type: detectSketchType(htmlContent, sketchPath),
-      tags: metadata.tags || [],
-      interactiveElements: interactiveElements,
+      type: manualMetadata.type || metadata.type || detectSketchType(htmlContent, sketchPath),
+      tags: manualMetadata.tags || metadata.tags || [],
+      interactiveElements,
       lastModified: stats.mtime.toISOString(),
-      ...metadata
+      ...(manualMetadata.sketchUrl ? { sketchUrl: manualMetadata.sketchUrl } : {}),
+      ...(manualMetadata.previewGif ? { previewGif: manualMetadata.previewGif } : {}),
+      ...(manualMetadata.userData ? { userData: manualMetadata.userData } : {})
     };
+    Object.defineProperty(sketchInfo, '__manualMetadataFields', {
+      value: new Set(Object.keys(manualMetadata)),
+      enumerable: false
+    });
+    return sketchInfo;
   } catch (error) {
     console.warn(`Warning: Error analyzing ${dirName}:`, error.message);
     return null;
   }
+}
+
+async function loadManualMetadata(sketchPath, dirName) {
+  const metadataPath = join(sketchPath, MANUAL_METADATA_FILE);
+
+  try {
+    const rawMetadata = await readFile(metadataPath, 'utf-8');
+    const parsedMetadata = JSON.parse(rawMetadata);
+    const normalizedMetadata = normalizeManualMetadata(parsedMetadata);
+    console.error(`📝 手動メタデータを読み込み: ${dirName}/${MANUAL_METADATA_FILE}`);
+    return normalizedMetadata;
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.warn(`Warning: Could not load ${dirName}/${MANUAL_METADATA_FILE}:`, error.message);
+    }
+    return {};
+  }
+}
+
+function normalizeManualMetadata(metadata) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return {};
+  }
+
+  const normalized = {};
+
+  for (const field of ['title', 'description', 'type', 'sketchUrl', 'previewGif']) {
+    const value = normalizeString(metadata[field]);
+    if (value) {
+      normalized[field] = value;
+    }
+  }
+
+  const tags = normalizeStringArray(metadata.tags);
+  if (tags) {
+    normalized.tags = tags;
+  }
+
+  const interactiveElements = normalizeStringArray(metadata.interactiveElements);
+  if (interactiveElements) {
+    normalized.interactiveElements = interactiveElements;
+  }
+
+  const userData = normalizeUserData(metadata.userData);
+  if (userData) {
+    normalized.userData = userData;
+  }
+
+  return normalized;
+}
+
+function normalizeUserData(userData) {
+  if (!userData || typeof userData !== 'object' || Array.isArray(userData)) {
+    return null;
+  }
+
+  const normalized = {};
+  for (const field of ['userId', 'userName', 'userUrl', 'avatarUrl', 'avatarFile']) {
+    const value = normalizeString(userData[field]);
+    if (value) {
+      normalized[field] = value;
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function normalizeString(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const normalized = value
+    .map(item => normalizeString(item))
+    .filter(Boolean);
+
+  return normalized.length > 0 ? normalized : null;
 }
 
 /**
@@ -44,31 +136,31 @@ export async function analyzeSketch(dirName, sketchPath) {
  */
 function extractMetadata(htmlContent, dirName) {
   const metadata = {};
-  
+
   // タイトルを抽出
   const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i);
   if (titleMatch) {
     metadata.title = titleMatch[1].trim();
   }
-  
+
   // メタタグからdescriptionを抽出
   const descMatch = htmlContent.match(/<meta\s+name=["\']description["\']\s+content=["\']([^"']*)["\'][^>]*>/i);
   if (descMatch) {
     metadata.description = descMatch[1].trim();
   }
-  
+
   // メタタグからkeywordsを抽出
   const keywordsMatch = htmlContent.match(/<meta\s+name=["\']keywords["\']\s+content=["\']([^"']*)["\'][^>]*>/i);
   if (keywordsMatch) {
     metadata.tags = keywordsMatch[1].split(',').map(tag => tag.trim()).filter(Boolean);
   }
-  
+
   // カスタムメタタグを抽出
   const sketchTypeMatch = htmlContent.match(/<meta\s+name=["\']sketch-type["\']\s+content=["\']([^"']*)["\'][^>]*>/i);
   if (sketchTypeMatch) {
     metadata.type = sketchTypeMatch[1].trim();
   }
-  
+
   return metadata;
 }
 
@@ -83,19 +175,19 @@ function detectSketchType(htmlContent, sketchPath) {
     }
     return 'p5.js';
   }
-  
+
   if (htmlContent.includes('three.js') || htmlContent.includes('three.min.js')) {
     return 'Three.js';
   }
-  
+
   if (htmlContent.includes('webgpu') || htmlContent.toLowerCase().includes('webgpu')) {
     return 'WebGPU';
   }
-  
+
   if (htmlContent.includes('webgl') || htmlContent.toLowerCase().includes('webgl')) {
     return 'WebGL';
   }
-  
+
   return 'Unknown';
 }
 
@@ -104,12 +196,12 @@ function detectSketchType(htmlContent, sketchPath) {
  */
 export async function detectInteractiveElements(sketchPath, htmlContent) {
   const elements = new Set();
-  
+
   try {
     // HTMLファイル内のインラインスクリプトから検出
     const scriptContent = extractInlineScripts(htmlContent);
     detectInteractivePatterns(scriptContent, elements);
-    
+
     // 外部JavaScriptファイルを検索・解析
     const jsFiles = await findJavaScriptFiles(sketchPath);
     for (const jsFile of jsFiles) {
@@ -120,7 +212,7 @@ export async function detectInteractiveElements(sketchPath, htmlContent) {
         console.warn(`Warning: Could not read JS file ${jsFile}:`, error.message);
       }
     }
-    
+
     // HTMLファイル内のスクリプトsrc属性から検出
     const scriptSrcs = extractScriptSrcs(htmlContent);
     for (const src of scriptSrcs) {
@@ -134,11 +226,11 @@ export async function detectInteractiveElements(sketchPath, htmlContent) {
         }
       }
     }
-    
+
   } catch (error) {
     console.warn(`Warning: Error detecting interactive elements:`, error.message);
   }
-  
+
   return Array.from(elements);
 }
 
@@ -148,7 +240,7 @@ export async function detectInteractiveElements(sketchPath, htmlContent) {
 function extractInlineScripts(htmlContent) {
   const scriptMatches = htmlContent.match(/<script[^>]*>([\s\S]*?)<\/script>/gi);
   if (!scriptMatches) return '';
-  
+
   return scriptMatches
     .map(script => script.replace(/<script[^>]*>|<\/script>/gi, ''))
     .join('\n');
@@ -160,7 +252,7 @@ function extractInlineScripts(htmlContent) {
 function extractScriptSrcs(htmlContent) {
   const srcMatches = htmlContent.match(/<script[^>]+src=["']([^"']+)["'][^>]*>/gi);
   if (!srcMatches) return [];
-  
+
   return srcMatches.map(script => {
     const srcMatch = script.match(/src=["']([^"']+)["']/);
     return srcMatch ? srcMatch[1] : null;
@@ -172,7 +264,7 @@ function extractScriptSrcs(htmlContent) {
  */
 async function findJavaScriptFiles(sketchPath) {
   const jsFiles = [];
-  
+
   try {
     const files = await readdir(sketchPath);
     for (const file of files) {
@@ -183,7 +275,7 @@ async function findJavaScriptFiles(sketchPath) {
   } catch (error) {
     // ディレクトリが読めない場合は空配列を返す
   }
-  
+
   return jsFiles;
 }
 
@@ -193,7 +285,7 @@ async function findJavaScriptFiles(sketchPath) {
 function detectInteractivePatterns(code, elements) {
   // コメントを除外した一時的なコードを作成
   const cleanCode = removeComments(code);
-  
+
   // マウス操作の検出（より厳密に）
   const mousePatterns = [
     /\bmousePressed\b|\bmouseDragged\b|\bmouseReleased\b|\bmouseClicked\b|\bmouseMoved\b/i,
@@ -204,11 +296,11 @@ function detectInteractivePatterns(code, elements) {
     /\borbitControl\b/i,  // p5.jsの3Dカメラコントロール
     /\bmouseX\b|\bmouseY\b/i  // マウス座標の参照
   ];
-  
+
   if (mousePatterns.some(pattern => pattern.test(cleanCode))) {
     elements.add('マウス');
   }
-  
+
   // キーボード操作の検出（より厳密に）
   const keyboardPatterns = [
     /\bkeyPressed\b|\bkeyReleased\b|\bkeyTyped\b/i,
@@ -216,22 +308,22 @@ function detectInteractivePatterns(code, elements) {
     /addEventListener\s*\(\s*['"`](keydown|keyup|keypress)['"`]/i,
     /\bkeyCode\b.*[!=]==|\bkey\s*[!=]==.*['"`][a-zA-Z0-9]['"`]/i
   ];
-  
+
   if (keyboardPatterns.some(pattern => pattern.test(cleanCode))) {
     elements.add('キーボード');
   }
-  
+
   // タッチ操作の検出
   const touchPatterns = [
     /\btouchStarted\b|\btouchMoved\b|\btouchEnded\b/i,
     /addEventListener\s*\(\s*['"`](touchstart|touchmove|touchend|touchcancel)['"`]/i,
     /\bontouchstart\b|\bontouchmove\b|\bontouchend\b/i
   ];
-  
+
   if (touchPatterns.some(pattern => pattern.test(cleanCode))) {
     elements.add('タッチ');
   }
-  
+
   // Webカメラの検出（明確なAPI呼び出しのみ）
   const cameraPatterns = [
     /\bcreateCapture\b/i,
@@ -239,11 +331,11 @@ function detectInteractivePatterns(code, elements) {
     /getUserMedia\s*\(/i,
     /video\s*=.*createCapture/i
   ];
-  
+
   if (cameraPatterns.some(pattern => pattern.test(cleanCode))) {
     elements.add('Webカメラ');
   }
-  
+
   // 音声の検出（明確なAPI呼び出しのみ）
   const audioPatterns = [
     /\bcreateAudio\b|\bloadSound\b/i,
@@ -252,18 +344,18 @@ function detectInteractivePatterns(code, elements) {
     /\bmicrophone\b|\bmic\b.*capture/i,
     /navigator\.mediaDevices.*audio/i
   ];
-  
+
   if (audioPatterns.some(pattern => pattern.test(cleanCode))) {
     elements.add('音声');
   }
-  
+
   // センサー系の検出
   const sensorPatterns = [
     /\bdeviceOrientation\b|\baccelerometer\b|\bgyroscope\b/i,
     /addEventListener\s*\(\s*['"`](deviceorientation)['"`]/i,
     /addEventListener\s*\(\s*['"`](devicemotion)['"`]/i
   ];
-  
+
   if (sensorPatterns.some(pattern => pattern.test(cleanCode))) {
     elements.add('センサー');
   }
@@ -275,9 +367,9 @@ function detectInteractivePatterns(code, elements) {
 function removeComments(code) {
   // 単行コメント(//)を除去
   let cleanCode = code.replace(/\/\/.*$/gm, '');
-  
+
   // 複数行コメント(/* */)を除去
   cleanCode = cleanCode.replace(/\/\*[\s\S]*?\*\//g, '');
-  
+
   return cleanCode;
 }

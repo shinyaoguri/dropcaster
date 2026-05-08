@@ -178,6 +178,10 @@ export class MappingWindow extends BaseWindow {
     if (!this.window) return;
 
     this.window.addEventListener('message', (event) => {
+      const parentWindow = this.getParentWindow();
+      if (parentWindow && event.source !== parentWindow) return;
+      if (parentWindow && event.origin !== parentWindow.location.origin) return;
+
       switch (event.data.type) {
         case 'update-source-selection':
           this.handleSourceSelectionUpdate(event.data.data);
@@ -412,7 +416,7 @@ export class MappingWindow extends BaseWindow {
             ...this.transformData,
             sourceSelection: this.sourceSelectionData
           }
-        }, '*');
+        }, targetWindow.location.origin);
       } catch (error) {
         console.error('MappingWindow: メッセージ送信エラー', error);
       }

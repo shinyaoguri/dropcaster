@@ -1227,6 +1227,10 @@ export class ControlWindow extends BaseWindow {
     if (!this.window) return;
 
     this.window.addEventListener('message', (event) => {
+      const parentWindow = this.getParentWindow();
+      if (parentWindow && event.source !== parentWindow) return;
+      if (parentWindow && event.origin !== parentWindow.location.origin) return;
+
       switch (event.data.type) {
         case 'update-source-selection':
           this.handleSourceSelectionUpdate(event.data.data);
@@ -1287,7 +1291,7 @@ export class ControlWindow extends BaseWindow {
         targetWindow.postMessage({
           type: 'source-selection-change',
           data: this.sourceSelectionData
-        }, '*');
+        }, targetWindow.location.origin);
       } catch (error) {
         console.error('ControlWindow: ソース選択メッセージ送信エラー', error);
       }
@@ -1308,7 +1312,7 @@ export class ControlWindow extends BaseWindow {
             ...this.transformData,
             sourceSelection: this.sourceSelectionData
           }
-        }, '*');
+        }, targetWindow.location.origin);
       } catch (error) {
         console.error('ControlWindow: マッピング変更メッセージ送信エラー', error);
       }

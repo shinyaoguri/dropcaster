@@ -1,4 +1,6 @@
 import type { Sketch } from '../types/sketch.js';
+import { safeUrl } from '../utils/html.js';
+import { publicAssetPath } from '../utils/paths.js';
 
 export class SlideshowView {
   private currentIndex: number = 0;
@@ -7,6 +9,7 @@ export class SlideshowView {
   private intervalId: number | null = null;
   private isPaused: boolean = false;
   private SLIDE_INTERVAL = 30000; // 30秒
+  private boundHandleKeydown = this.handleKeydown.bind(this);
 
   render(sketchIds: string[], sketches: Sketch[]): void {
     this.sketchIds = sketchIds;
@@ -81,7 +84,9 @@ export class SlideshowView {
       // URLから現在のインデックスを取得
       const urlParams = new URLSearchParams(window.location.search);
       const startIndex = parseInt(urlParams.get('index') || '0', 10);
-      this.currentIndex = Math.min(startIndex, sketchIds.length - 1);
+      this.currentIndex = Number.isFinite(startIndex)
+        ? Math.max(0, Math.min(startIndex, sketchIds.length - 1))
+        : 0;
       
       // 初回表示時は特別な処理
       this.showInitialSketch(this.currentIndex);
@@ -400,14 +405,7 @@ export class SlideshowView {
     });
 
     // キーボードショートカット
-    document.addEventListener('keydown', this.handleKeydown.bind(this));
-
-    // フルスクリーン切り替え
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'f' || e.key === 'F') {
-        this.toggleFullscreen();
-      }
-    });
+    document.addEventListener('keydown', this.boundHandleKeydown);
   }
 
   private handleKeydown(e: KeyboardEvent): void {
@@ -421,6 +419,10 @@ export class SlideshowView {
       case ' ':
         e.preventDefault();
         this.togglePlayPause();
+        break;
+      case 'f':
+      case 'F':
+        this.toggleFullscreen();
         break;
     }
   }
@@ -452,7 +454,7 @@ export class SlideshowView {
     
     if (frame) {
       // スケッチのHTMLファイルを直接表示（UIなし）
-      frame.src = `/sketches/${sketchId}/index.html`;
+      frame.src = publicAssetPath(`sketches/${sketchId}/index.html`);
       
       // iframeが読み込まれたら、canvasを中央配置
       frame.addEventListener('load', () => {
@@ -527,7 +529,7 @@ export class SlideshowView {
       setTimeout(() => {
         if (frame) {
           // スケッチのHTMLファイルを直接表示（UIなし）
-          frame.src = `/sketches/${sketchId}/index.html`;
+          frame.src = publicAssetPath(`sketches/${sketchId}/index.html`);
           
           // iframeが読み込まれたら、canvasを中央配置
           frame.addEventListener('load', () => {
@@ -590,7 +592,7 @@ export class SlideshowView {
       // アバター画像があれば設定、なければデフォルトアバター
       const avatarUrl = sketch.userData?.avatarUrl || sketch.userData?.avatarFile;
       if (avatarUrl) {
-        avatarElement.src = avatarUrl;
+        avatarElement.src = safeUrl(publicAssetPath(avatarUrl), publicAssetPath('vite.svg'));
         avatarElement.style.display = 'block';
         // 既存のデフォルトアバターを削除
         const existingDefault = avatarElement.parentElement?.querySelector('.default-avatar');
@@ -722,6 +724,6 @@ export class SlideshowView {
 
   public destroy(): void {
     this.stopAutoPlay();
-    document.removeEventListener('keydown', this.handleKeydown);
+    document.removeEventListener('keydown', this.boundHandleKeydown);
   }
 }

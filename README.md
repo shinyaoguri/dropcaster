@@ -80,11 +80,36 @@ npm run scan
 # プレビューとユーザーデータを生成
 npm run scan:full
 
+# OpenProcessing側の確認画面が出る場合は、ブラウザを開いて人間が確認する
+npm run scan:full:headed
+
+# Puppeteerのブラウザ起動自体が弾かれる場合は、普段使いの既定ブラウザで開く
+npm run scan:full:browser
+
 # すべてのプレビューをリセットして再生成
 npm run scan:reset
 
 # 変更を監視して自動更新
 npm run scan:watch
+```
+
+Cloudflare TurnstileなどでOpenProcessingの取得が止まる場合は、クロールに依存せず手動メタデータを使えます。`scan:full:browser` はPuppeteerではなくOSの既定ブラウザでOpenProcessingを開き、取得失敗扱いとして `dropcaster.meta.example.json` を作成します。同じディレクトリで `dropcaster.meta.json` にリネームして、ブラウザで見た値を埋めてください。
+
+```json
+{
+  "title": "Sketch title",
+  "description": "Short description",
+  "sketchUrl": "https://openprocessing.org/sketch/2326097",
+  "tags": ["p5.js", "generative"],
+  "interactiveElements": ["マウス"],
+  "userData": {
+    "userId": "12345",
+    "userName": "Author name",
+    "userUrl": "https://openprocessing.org/user/12345",
+    "avatarUrl": "",
+    "avatarFile": ""
+  }
+}
 ```
 
 ### 4. 開発サーバー起動
@@ -114,6 +139,12 @@ npm run build
 - `--force-preview` - プレビュー画像を強制再生成
 - `--reset` - すべてのプレビューをリセットして再生成
 - `--fetch-userdata` - OpenProcessingからユーザーデータを取得
+- `--headed` - OpenProcessing取得時に人間操作用のブラウザを開く
+- `--external-browser` - PuppeteerではなくOSの既定ブラウザでOpenProcessingを開く
+- `--external-browser-interval-ms <ms>` - 既定ブラウザで開く間隔（最小1000ms）
+- `--browser-profile <dir>` - 人間操作用ブラウザのプロファイル保存先
+- `--manual-challenge` - Cloudflare/Turnstileらしき確認画面でEnter待ちにする
+- `--challenge-timeout-ms <ms>` - 人間操作の待機時間
 - `-v, --verbose` - 詳細出力を表示
 
 ### `dropcaster build [options]`
@@ -173,9 +204,10 @@ my-gallery/
 ## プレビュー生成
 
 アニメーションGIFプレビューの自動生成:
-- **サイズ**: 800x800px
+- **キャプチャサイズ**: 1000x1000px
+- **出力サイズ**: 幅400px
 - **録画時間**: 3秒間
-- **フレームレート**: 10fps
+- **キャプチャフレームレート**: 30fps
 - **生成方法**: Playwright + FFmpeg
 
 詳細は [PREVIEW_GENERATION.md](PREVIEW_GENERATION.md) を参照。
@@ -193,7 +225,7 @@ my-gallery/
 
 ## システム要件
 
-- Node.js 18+
+- Node.js 20.19+
 - FFmpeg (GIF生成用)
 - Chromium (Playwright経由で自動インストール)
 
@@ -222,4 +254,4 @@ npx github:yourusername/dropcaster#feature-branch init test-gallery
 
 ## 貢献
 
-Pull Requestを歓迎します！問題や提案がある場合は [Issues](https://github.com/yourusername/dropcaster/issues) にお願いします。
+Pull Requestを歓迎します！問題や提案がある場合は [Issues](https://github.com/shinyaoguri/dropcaster/issues) にお願いします。

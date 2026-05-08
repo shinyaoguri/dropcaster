@@ -1,15 +1,60 @@
 import puppeteer from 'puppeteer';
+import { mkdir } from 'fs/promises';
+import { resolve } from 'path';
+import { spawn } from 'child_process';
+import { createInterface } from 'readline/promises';
+import { stdin as input, stdout as output } from 'process';
 import { SCRAPING_CONFIG, DEFAULTS } from './config.js';
 
 export class OpenProcessingScraper {
-  constructor() {
+  constructor(options = {}) {
     this.browser = null;
+    this.lastExternalBrowserOpenAt = 0;
+    this.options = {
+      headed: Boolean(options.headed),
+      externalBrowser: Boolean(options.externalBrowser),
+      browserProfile: options.browserProfile || null,
+      manualChallenge: options.manualChallenge ?? Boolean(options.headed),
+      challengeTimeoutMs: Number(options.challengeTimeoutMs || 180000),
+      externalBrowserIntervalMs: Math.max(
+        Number(options.externalBrowserIntervalMs || SCRAPING_CONFIG.externalBrowserIntervalMs || 1000),
+        1000
+      )
+    };
   }
 
   async init() {
+    if (this.options.externalBrowser) {
+      console.error('🌐 External browser mode: OSの既定ブラウザでOpenProcessingを開きます');
+      console.error('   Puppeteerでは取得せず、手動メタデータ用の雛形を作成します');
+      return;
+    }
+
+    const args = [];
+    const launchOptions = {
+      headless: !this.options.headed,
+      args
+    };
+
+    if (this.options.headed) {
+      args.push('--start-maximized');
+      launchOptions.defaultViewport = null;
+      console.error('🧑‍💻 Headed browser mode: OpenProcessingの確認画面が出たら、開いたブラウザで操作してください');
+    }
+
+    if (this.options.browserProfile) {
+      const profilePath = resolve(this.options.browserProfile);
+      await mkdir(profilePath, { recursive: true });
+      launchOptions.userDataDir = profilePath;
+      console.error(`👤 Browser profile: ${profilePath}`);
+    }
+
+    if (!this.options.headed || process.env.DROPCASTER_NO_SANDBOX === '1') {
+      args.push('--no-sandbox', '--disable-setuid-sandbox');
+    }
+
     this.browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      ...launchOptions
     });
   }
 
@@ -20,12 +65,26 @@ export class OpenProcessingScraper {
   }
 
   async getSketchUserInfo(sketchId) {
+    const url = `${SCRAPING_CONFIG.baseUrl}/sketch/${sketchId}`;
+
+    if (this.options.externalBrowser) {
+      await this.waitForExternalBrowserInterval(sketchId);
+      await openExternalBrowser(url);
+      this.lastExternalBrowserOpenAt = Date.now();
+      return {
+        error: 'Opened in external browser. Fill dropcaster.meta.json manually.',
+        sketchId
+      };
+    }
+
+    let page = null;
     try {
-      const page = await this.browser.newPage();
-      
-      // User-Agentを設定してブロックを回避
-      await page.setUserAgent(SCRAPING_CONFIG.userAgent);
-      
+      page = await this.browser.newPage();
+
+      if (!this.options.headed && SCRAPING_CONFIG.userAgent) {
+        await page.setUserAgent(SCRAPING_CONFIG.userAgent);
+      }
+
       // ページ内のコンソールログをキャプチャ
       page.on('console', msg => {
         if (msg.type() === 'log') {
@@ -33,7 +92,6 @@ export class OpenProcessingScraper {
         }
       });
       
-      const url = `${SCRAPING_CONFIG.baseUrl}/sketch/${sketchId}`;
       console.error(`🔍 アクセス中: ${url}`);
       
       // ページの読み込み状況を詳細にログ出力
@@ -48,6 +106,7 @@ export class OpenProcessingScraper {
       
       // ページの読み込みを待つ
       await new Promise(resolve => setTimeout(resolve, SCRAPING_CONFIG.pageWaitTime));
+      await this.handleChallengeIfNeeded(page, sketchId);
       
       console.error(`⏱️ [${sketchId}] 待機完了、ページ内容確認開始...`);
       
@@ -94,7 +153,7 @@ export class OpenProcessingScraper {
       
       // スケッチのタイトルとユーザー情報を取得
       console.error(`🔍 [${sketchId}] スケッチ情報抽出開始...`);
-      const sketchInfo = await page.evaluate(() => {
+      const sketchInfo = await page.evaluate(({ baseUrl, unknownUser, unknownTitle }) => {
         // スケッチのタイトルを取得
         let sketchTitle = '';
         const titleElement = document.querySelector('.sketchTitle');
@@ -175,7 +234,7 @@ export class OpenProcessingScraper {
                 !matchedName.match(/^Q-\d+-\d+$/)) {
               userName = matchedName;
               // ユーザー名からURLを推測
-              userHref = `${SCRAPING_CONFIG.baseUrl}/user/${userName}`;
+              userHref = `${baseUrl}/user/${userName}`;
               console.log(`✅ テキストマッチでユーザー情報を発見:`, { userName, userHref });
             }
           }
@@ -206,7 +265,7 @@ export class OpenProcessingScraper {
           avatarUrl = avatarElement.src;
           // 相対URLを絶対URLに変換
           if (avatarUrl.startsWith('/')) {
-            avatarUrl = SCRAPING_CONFIG.baseUrl + avatarUrl;
+            avatarUrl = baseUrl + avatarUrl;
           }
           console.log(`✅ アバター画像を発見:`, avatarUrl);
         } else {
@@ -215,20 +274,25 @@ export class OpenProcessingScraper {
 
         const result = {
           userId,
-          userName: userName || DEFAULTS.unknownUser,
+          userName: userName || unknownUser,
           userUrl: userHref,
           avatarUrl,
-          sketchTitle: sketchTitle || DEFAULTS.unknownTitle,
+          sketchTitle: sketchTitle || unknownTitle,
           sketchId: window.location.pathname.match(/\/sketch\/(\d+)/)?.[1]
         };
         
         console.log(`🎯 最終的なスケッチ情報:`, result);
         return result;
+      }, {
+        baseUrl: SCRAPING_CONFIG.baseUrl,
+        unknownUser: DEFAULTS.unknownUser,
+        unknownTitle: DEFAULTS.unknownTitle
       });
       
       console.error(`✅ [${sketchId}] スケッチ情報抽出完了:`, sketchInfo);
       
       await page.close();
+      page = null;
       
       if (sketchInfo.error) {
         throw new Error(sketchInfo.error);
@@ -240,6 +304,143 @@ export class OpenProcessingScraper {
       console.error(`❌ [${sketchId}] エラー詳細:`, error.message);
       console.error(`📚 [${sketchId}] スタックトレース:`, error.stack);
       return { error: error.message, sketchId };
+    } finally {
+      if (page && !page.isClosed()) {
+        await page.close().catch(() => {});
+      }
     }
   }
+
+  async handleChallengeIfNeeded(page, sketchId) {
+    const challenge = await this.detectChallenge(page);
+    if (!challenge) return;
+
+    if (!this.options.headed) {
+      throw new Error(`Cloudflare/Turnstile challenge detected for sketch ${sketchId}. Re-run with --headed --manual-challenge.`);
+    }
+
+    if (!this.options.manualChallenge) {
+      console.error(`⚠️ [${sketchId}] Cloudflare/Turnstileらしき確認画面を検出しました`);
+      return;
+    }
+
+    console.error(`\n🧑‍💻 [${sketchId}] Cloudflare/Turnstileらしき確認画面を検出しました`);
+    console.error('   開いたブラウザで確認を完了してから、このターミナルで Enter を押してください。');
+    console.error('   同じプロファイルを使うため、次回以降は通りやすくなることがあります。');
+
+    await this.waitForEnter();
+
+    const deadline = Date.now() + this.options.challengeTimeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (!await this.detectChallenge(page)) {
+        console.error(`✅ [${sketchId}] 確認画面を抜けたようです。取得を続行します。`);
+        return;
+      }
+
+      console.error('   まだ確認画面が残っています。完了したらもう一度 Enter を押してください。');
+      await this.waitForEnter();
+    }
+
+    throw new Error(`Cloudflare/Turnstile challenge was not cleared within ${Math.round(this.options.challengeTimeoutMs / 1000)}s`);
+  }
+
+  async detectChallenge(page) {
+    try {
+      const title = (await page.title()).toLowerCase();
+      const url = page.url().toLowerCase();
+      const pageSignals = await page.evaluate(() => {
+        const text = (document.body?.innerText || '').toLowerCase();
+        return {
+          hasTurnstile: Boolean(document.querySelector('[name="cf-turnstile-response"], .cf-turnstile, iframe[src*="turnstile"]')),
+          hasChallengeForm: Boolean(document.querySelector('#challenge-form, form[action*="challenge"]')),
+          text: text.slice(0, 3000)
+        };
+      });
+
+      return title.includes('just a moment') ||
+        title.includes('attention required') ||
+        url.includes('/cdn-cgi/challenge-platform/') ||
+        pageSignals.hasTurnstile ||
+        pageSignals.hasChallengeForm ||
+        pageSignals.text.includes('checking if the site connection is secure') ||
+        pageSignals.text.includes('verify you are human') ||
+        pageSignals.text.includes('turnstile');
+    } catch {
+      return false;
+    }
+  }
+
+  async waitForEnter() {
+    if (!input.isTTY) {
+      console.error('   TTYがないため入力待ちはスキップします。');
+      return;
+    }
+
+    const rl = createInterface({ input, output });
+    try {
+      await rl.question('Press Enter to continue...');
+    } finally {
+      rl.close();
+    }
+  }
+
+  async waitForExternalBrowserInterval(sketchId) {
+    if (!this.lastExternalBrowserOpenAt) {
+      return;
+    }
+
+    const elapsed = Date.now() - this.lastExternalBrowserOpenAt;
+    const remaining = this.options.externalBrowserIntervalMs - elapsed;
+    if (remaining <= 0) {
+      return;
+    }
+
+    console.error(`⏱️ [${sketchId}] 次のブラウザ起動まで${remaining}ms待機します`);
+    await new Promise(resolve => setTimeout(resolve, remaining));
+  }
+}
+
+async function openExternalBrowser(url) {
+  const command = getOpenCommand(url);
+  console.error(`🌐 OpenProcessingを既定ブラウザで開きます: ${url}`);
+
+  if (!command) {
+    console.error(`   ブラウザを自動で開けない環境です。手元のブラウザでこのURLを開いてください: ${url}`);
+    return;
+  }
+
+  await new Promise((resolveOpen) => {
+    const child = spawn(command.command, command.args, {
+      detached: true,
+      stdio: 'ignore'
+    });
+
+    child.on('error', (error) => {
+      console.error(`   ブラウザ起動に失敗しました: ${error.message}`);
+      console.error(`   手元のブラウザでこのURLを開いてください: ${url}`);
+      resolveOpen();
+    });
+
+    child.on('spawn', () => {
+      child.unref();
+      resolveOpen();
+    });
+  });
+}
+
+function getOpenCommand(url) {
+  if (process.platform === 'darwin') {
+    return { command: 'open', args: [url] };
+  }
+
+  if (process.platform === 'win32') {
+    return { command: 'cmd', args: ['/c', 'start', '', url] };
+  }
+
+  if (process.platform === 'linux') {
+    return { command: 'xdg-open', args: [url] };
+  }
+
+  return null;
 }

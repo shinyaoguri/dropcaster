@@ -13,94 +13,90 @@ export async function generateServiceWorker(config, outputDir) {
   
   const swContent = `
 const CACHE_NAME = '${cacheName}';
-const urlsToCache = [
-  '/',
-  '/index.html',
-  '/assets/index.js',
-  '/assets/index.css',
-  '/manifest.json',
-  '/sketches.json'
-];
-
-// Configure cache strategy
 const CACHE_STRATEGY = '${config.cache_strategy || 'network-first'}';
 const OFFLINE_MODE = ${config.offline_mode !== false};
+const OFFLINE_FALLBACK = new URL('index.html', self.registration.scope).toString();
 
 self.addEventListener('install', (event) => {
-  if (OFFLINE_MODE) {
-    event.waitUntil(
-      caches.open(CACHE_NAME)
-        .then((cache) => {
-          return cache.addAll(urlsToCache);
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => {
+        if (!OFFLINE_MODE) return undefined;
+        return cache.add(OFFLINE_FALLBACK).catch(() => undefined);
+      })
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((cacheNames) => Promise.all(
+        cacheNames.map((cacheName) => {
+          if (cacheName !== CACHE_NAME) {
+            return caches.delete(cacheName);
+          }
+          return undefined;
         })
-    );
-  } else {
-    self.skipWaiting();
-  }
+      ))
+      .then(() => self.clients.claim())
+  );
 });
 
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin !== self.location.origin) return;
+
   if (!OFFLINE_MODE) {
     event.respondWith(fetch(event.request));
     return;
   }
-  
-  if (CACHE_STRATEGY === 'cache-first') {
-    // Cache first, fallback to network
-    event.respondWith(
-      caches.match(event.request)
-        .then((response) => {
-          if (response) {
-            return response;
-          }
-          return fetch(event.request)
-            .then((response) => {
-              // Cache new resources
-              if (response.status === 200) {
-                const responseClone = response.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                  cache.put(event.request, responseClone);
-                });
-              }
-              return response;
-            });
-        })
-    );
-  } else {
-    // Network first, fallback to cache
+
+  if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          // Cache successful responses
-          if (response.status === 200) {
-            const responseClone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseClone);
-            });
-          }
+          const responseClone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(OFFLINE_FALLBACK, responseClone);
+          });
           return response;
         })
-        .catch(() => {
-          return caches.match(event.request);
+        .catch(() => caches.match(OFFLINE_FALLBACK))
+    );
+    return;
+  }
+
+  if (CACHE_STRATEGY === 'cache-first') {
+    event.respondWith(
+      caches.match(event.request)
+        .then((cachedResponse) => {
+          if (cachedResponse) return cachedResponse;
+          return fetchAndCache(event.request);
         })
     );
+    return;
   }
+
+  event.respondWith(
+    fetchAndCache(event.request)
+      .catch(() => caches.match(event.request))
+  );
 });
 
-self.addEventListener('activate', (event) => {
-  const cacheWhitelist = [CACHE_NAME];
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (!cacheWhitelist.includes(cacheName)) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
-});`;
+function fetchAndCache(request) {
+  return fetch(request).then((response) => {
+    if (response && response.status === 200 && response.type === 'basic') {
+      const responseClone = response.clone();
+      caches.open(CACHE_NAME).then((cache) => {
+        cache.put(request, responseClone);
+      });
+    }
+    return response;
+  });
+}`;
   
   const swPath = join(outputDir, 'sw.js');
   await fs.writeFile(swPath, swContent, 'utf-8');

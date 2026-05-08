@@ -21,10 +21,10 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     try {
       const [previewStats, indexStats] = await Promise.all([
         stat(previewPath),
-        stat(indexPath)
+        getLatestMtime(sketchPath)
       ]);
       
-      if (!forceRegenerate && previewStats.mtime >= indexStats.mtime) {
+      if (!forceRegenerate && previewStats.mtime >= indexStats) {
         console.error(`✓ ${sketchName} preview is up to date`);
         return `${PREVIEW_PATH_PREFIX}${sketchName}.gif`;
       }
@@ -227,6 +227,23 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     
     return null;
   }
+}
+
+async function getLatestMtime(path) {
+  const stats = await stat(path);
+  if (!stats.isDirectory()) {
+    return stats.mtime;
+  }
+
+  const { readdir } = await import('fs/promises');
+  const entries = await readdir(path, { withFileTypes: true });
+  const mtimes = await Promise.all(entries.map(async (entry) => {
+    return getLatestMtime(join(path, entry.name));
+  }));
+
+  return mtimes.reduce((latest, current) => {
+    return current > latest ? current : latest;
+  }, stats.mtime);
 }
 
 async function generateAnimatedGIF(tempDir, outputPath, frameCount) {

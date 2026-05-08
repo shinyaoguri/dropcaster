@@ -10,23 +10,25 @@
     "gallery",
     "static-site-generator"
   ],
-  "homepage": "https://github.com/yourusername/dropcaster",
+  "homepage": "https://github.com/shinyaoguri/dropcaster",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yourusername/dropcaster.git"
+    "url": "git+https://github.com/shinyaoguri/dropcaster.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/dropcaster/issues"
+    "url": "https://github.com/shinyaoguri/dropcaster/issues"
   },
   "author": "Shinya Oguri",
   "license": "MIT",
   "type": "module",
-  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "main": "cli/index.js",
   "bin": {
     "dropcaster": "./cli/index.js"
   },
   "files": [
-    "dist",
     "cli",
     "scripts",
     "src",
@@ -36,23 +38,22 @@
     "tsconfig.json"
   ],
   "scripts": {
-    "postinstall": "npx playwright install chromium",
+    "postinstall": "playwright install chromium",
     "prepublishOnly": "npm run build",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview dist",
-    "scan": "node scripts/scan-sketches.js 2>/dev/null > public/sketches.json && echo '📁 スケッチリストを更新しました'",
-    "scan:previews": "node scripts/scan-sketches.js --generate-previews",
-    "scan:full": "node scripts/scan-sketches.js --generate-previews --fetch-user-data",
-    "scan:reset": "rm -rf public/sketches public/previews public/avatars && node scripts/scan-sketches.js --generate-previews --fetch-user-data --force-regenerate && echo '🔄 公開ファイルをリセット・再生成しました'",
-    "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node scripts/scan-sketches.js --watch-mode 2>/dev/null > public/sketches.json && echo '📁 スケッチリストを更新しました（新規スケッチのプレビューも生成）'\""
+    "scan": "node scripts/scan-sketches.js --write-file >/dev/null 2>/dev/null && echo '📁 スケッチリストを更新しました'",
+    "scan:previews": "node scripts/scan-sketches.js --generate-previews --write-file",
+    "scan:full": "node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file",
+    "scan:full:headed": "node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file --headed --manual-challenge --browser-profile .dropcaster/browser-profile",
+    "scan:full:browser": "node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file --external-browser",
+    "scan:reset": "rm -rf public/sketches public/previews public/avatars && node scripts/scan-sketches.js --generate-previews --fetch-user-data --force-regenerate --write-file && echo '🔄 公開ファイルをリセット・再生成しました'",
+    "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node scripts/scan-sketches.js --watch-mode --write-file >/dev/null 2>/dev/null && echo '📁 スケッチリストを更新しました（新規スケッチのプレビューも生成）'\""
   },
   "devDependencies": {
     "nodemon": "^3.0.2",
-    "playwright": "^1.47.0",
-    "terser": "^5.43.1",
-    "typescript": "~5.8.3",
-    "vite": "^7.1.5"
+    "typescript": "~5.8.3"
   },
   "dependencies": {
     "@fortawesome/fontawesome-free": "^7.0.0",
@@ -60,7 +61,10 @@
     "chalk": "^5.3.0",
     "commander": "^11.1.0",
     "ora": "^7.0.1",
+    "playwright": "^1.47.0",
     "prompts": "^2.4.2",
-    "puppeteer": "^24.16.2"
+    "puppeteer": "^24.16.2",
+    "terser": "^5.43.1",
+    "vite": "^7.1.5"
   }
 }

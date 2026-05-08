@@ -14,6 +14,20 @@ export class SketchPageController {
   private view: SketchPageView;
   private windowController: WindowController;
   private isSettingsMode = false;
+  private openWindowsTimeout: ReturnType<typeof setTimeout> | null = null;
+  private canvasRetryTimeout: ReturnType<typeof setTimeout> | null = null;
+  private isDestroyed = false;
+  private messageHandler = (event: MessageEvent) => {
+    if (event.origin !== window.location.origin) return;
+
+    if (event.data?.type === 'toggle-fullscreen-request') {
+      console.log('SketchPageController: フルスクリーン切り替えリクエストを受信');
+      const container = document.querySelector('.fullscreen-sketch-container') as HTMLElement;
+      if (container) {
+        this.fullscreenManager.toggleFullscreen(container);
+      }
+    }
+  };
 
   constructor() {
     this.fullscreenManager = new FullscreenManager();
@@ -25,29 +39,30 @@ export class SketchPageController {
   }
 
   async renderSketch(sketch: Sketch): Promise<void> {
+    this.isDestroyed = false;
     console.log('SketchPageController: スケッチのレンダリング開始:', sketch.title);
-    
+
     // ビューのレンダリング
     this.view.render(sketch);
-    
+
     // 各マネージャーの初期化
     await this.iframeManager.initialize();
     this.fullscreenManager.initialize();
     this.cursorManager.initialize();
     this.resizeManager.initialize();
-    
+
     // ページ離脱時の警告を設定
     this.setupBeforeUnloadWarning();
-    
+
     // イベントリスナーの設定
     this.setupEventListeners();
-    
+
     console.log('SketchPageController: スケッチのレンダリング完了');
   }
 
   private setupEventListeners(): void {
     console.log('SketchPageController: イベントリスナーの設定開始');
-    
+
     // フルスクリーンボタンのイベント
     this.view.onFullscreenToggle((container: HTMLElement) => {
       console.log('SketchPageController: フルスクリーンボタンクリック');
@@ -86,43 +101,37 @@ export class SketchPageController {
       this.isSettingsMode = !this.isSettingsMode;
       const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
       windowSettingsBtn.classList.toggle('settings-active', this.isSettingsMode);
-      
+
       // iframeオーバーレイの表示/非表示を制御
       this.view.toggleIframeOverlay(this.isSettingsMode);
-      
+
       // iframe内のCanvas要素の設定モードも更新
       this.iframeManager.toggleSettingsMode(this.isSettingsMode);
-      
+
       console.log('SketchPageController: 設定モード:', this.isSettingsMode ? 'ON' : 'OFF');
       console.log('SketchPageController: iframe内のCanvas要素の枠を', this.isSettingsMode ? '追加' : '削除');
     });
-    
+
     // フルスクリーン制御リクエストを監視
-    window.addEventListener('message', (event) => {
-      if (event.data.type === 'toggle-fullscreen-request') {
-        console.log('SketchPageController: フルスクリーン切り替えリクエストを受信');
-        const container = document.querySelector('.fullscreen-sketch-container') as HTMLElement;
-        if (container) {
-          this.fullscreenManager.toggleFullscreen(container);
-        }
-      }
-    });
+    window.addEventListener('message', this.messageHandler);
 
     // ウィンドウ開くボタンのイベント
     this.view.onOpenWindowsToggle(() => {
       console.log('SketchPageController: ウィンドウ開くボタンクリック');
       this.openWindows();
     });
-    
+
     console.log('SketchPageController: イベントリスナーの設定完了');
   }
 
   private openWindows(): void {
     console.log('SketchPageController: ウィンドウコントローラーを使用してウィンドウを開きます');
     this.windowController.openBothWindows();
-    
+
     // ウィンドウが開かれた後、Canvasストリーミングを開始（より長い遅延で確実に）
-    setTimeout(() => {
+    this.openWindowsTimeout = setTimeout(() => {
+      this.openWindowsTimeout = null;
+      if (this.isDestroyed) return;
       this.startCanvasStreamingToWindows();
       this.windowController.logWindowStatus();
     }, 2000); // 2秒後に実行
@@ -130,7 +139,7 @@ export class SketchPageController {
 
   private startCanvasStreamingToWindows(): void {
     console.log('SketchPageController: Canvasストリーミング開始');
-    
+
     const iframe = this.iframeManager.getIframe();
     if (iframe) {
       // iframe内のcanvasが読み込まれるのを待ってから開始
@@ -141,8 +150,10 @@ export class SketchPageController {
   }
 
   private waitForCanvasAndStartStreaming(iframe: HTMLIFrameElement, retryCount: number): void {
+    if (this.isDestroyed) return;
+
     const maxRetries = 10;
-    
+
     try {
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
       if (iframeDoc) {
@@ -159,7 +170,8 @@ export class SketchPageController {
 
     if (retryCount < maxRetries) {
       console.log(`SketchPageController: Canvas要素が見つかりません。再試行 ${retryCount + 1}/${maxRetries}`);
-      setTimeout(() => {
+      this.canvasRetryTimeout = setTimeout(() => {
+        this.canvasRetryTimeout = null;
         this.waitForCanvasAndStartStreaming(iframe, retryCount + 1);
       }, 500);
     } else {
@@ -175,13 +187,13 @@ export class SketchPageController {
       this.isInternalNavigation = false;
       return;
     }
-    
+
     const message = 'このページを離れますか？';
-    
+
     // 標準的なブラウザの離脱警告を表示
     event.preventDefault();
     event.returnValue = message;
-    
+
     console.log('SketchPageController: ページ離脱警告を表示');
     return message;
   };
@@ -199,13 +211,13 @@ export class SketchPageController {
   private setupBeforeUnloadWarning(): void {
     // ページ離脱時に常に警告を表示
     window.addEventListener('beforeunload', this.beforeUnloadHandler);
-    
+
     // ページが実際にアンロードされる時に開いているウィンドウを全て閉じる
     window.addEventListener('unload', this.unloadHandler);
-    
+
     // ページが非表示になる時にもウィンドウを閉じる（ブラウザタブが閉じられた場合）
     window.addEventListener('pagehide', this.pagehideHandler);
-    
+
     console.log('SketchPageController: ページ離脱警告とクリーンアップを設定しました');
   }
 
@@ -215,23 +227,35 @@ export class SketchPageController {
 
   destroy(): void {
     console.log('SketchPageController: 破棄処理開始');
-    
+    this.isDestroyed = true;
+
     // 内部ナビゲーションフラグを設定
     this.isInternalNavigation = true;
-    
+
     // イベントリスナーを削除
     window.removeEventListener('beforeunload', this.beforeUnloadHandler);
     window.removeEventListener('unload', this.unloadHandler);
     window.removeEventListener('pagehide', this.pagehideHandler);
-    
+    window.removeEventListener('message', this.messageHandler);
+
+    if (this.openWindowsTimeout) {
+      clearTimeout(this.openWindowsTimeout);
+      this.openWindowsTimeout = null;
+    }
+
+    if (this.canvasRetryTimeout) {
+      clearTimeout(this.canvasRetryTimeout);
+      this.canvasRetryTimeout = null;
+    }
+
     // 各マネージャーの破棄
     this.fullscreenManager.destroy();
     this.iframeManager.destroy();
     this.cursorManager.destroy();
     this.resizeManager.destroy();
     this.view.destroy();
-    this.windowController.closeAllWindows();
-    
+    this.windowController.destroy();
+
     console.log('SketchPageController: 破棄処理完了');
   }
 }

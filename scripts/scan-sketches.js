@@ -12,10 +12,10 @@ import { generateSketchPreview } from './modules/preview-generator.js';
 const getDirectories = () => {
   const currentFilename = fileURLToPath(import.meta.url);
   const currentDirname = resolve(currentFilename, '..');
-  
+
   // CLIから呼ばれた場合は環境変数からプロジェクトルートを取得
   const projectRoot = process.env.DROPCASTER_PROJECT_ROOT || resolve(currentDirname, '..');
-  
+
   return {
     __dirname: currentDirname,
     projectRoot,
@@ -26,64 +26,67 @@ const getDirectories = () => {
 };
 
 const { sketchesDir, publicSketchesDir, previewsDir } = getDirectories();
+const MANUAL_METADATA_FILE = 'dropcaster.meta.json';
+const MANUAL_METADATA_TEMPLATE_FILE = 'dropcaster.meta.example.json';
 
 /**
  * スケッチディレクトリをスキャンしてメタデータを生成
  */
 async function scanSketches(options = {}) {
-  const { 
-    generatePreviews = false, 
-    forceRegenerate = false, 
-    fetchUserData = false,
+  const {
+    generatePreviews = false,
+    forceRegenerate = false,
+    fetchUserData: shouldFetchUserData = false,
     targetSketch = null,
     watchMode = false,
-    incremental = false
+    incremental = false,
+    writeFileOutput = false,
+    fetchOptions = {}
   } = options;
-  
+  let fetchUserData = shouldFetchUserData;
+
   try {
-    // watchModeまたはincrementalの場合、既存のスケッチリストを読み込む（ユーザー情報も含む）
+    // 既存のスケッチリストを読み込む（ユーザー情報やプレビュー情報を保持するため）
     let existingSketches = new Set();
     let existingSketchData = {};
     let existingPreviewData = {};
-    if (watchMode || incremental) {
-      try {
-        const { projectRoot } = getDirectories();
-        const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
-        const existingData = await readFile(sketchesJsonPath, 'utf-8');
-        const existingSketchList = JSON.parse(existingData);
-        existingSketches = new Set(existingSketchList.map(s => s.id));
-        // 既存のスケッチのユーザー情報とプレビュー情報を保存
-        existingSketchList.forEach(sketch => {
-          existingSketchData[sketch.id] = {
-            userData: sketch.userData,
-            title: sketch.title,
-            sketchUrl: sketch.sketchUrl,
-            previewGif: sketch.previewGif
-          };
-          if (sketch.previewGif) {
-            existingPreviewData[sketch.id] = sketch.previewGif;
-          }
-        });
-      } catch (error) {
-        // ファイルが存在しない場合は空のセットのまま
-        console.error(`ℹ️ sketches.jsonが存在しません。新規作成します。`);
-      }
+    try {
+      const { projectRoot } = getDirectories();
+      const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
+      const existingData = await readFile(sketchesJsonPath, 'utf-8');
+      const existingSketchList = JSON.parse(existingData);
+      existingSketches = new Set(existingSketchList.map(s => s.id));
+      // 既存のスケッチのユーザー情報とプレビュー情報を保存
+      existingSketchList.forEach(sketch => {
+        existingSketchData[sketch.id] = {
+          userData: sketch.userData,
+          title: sketch.title,
+          sketchUrl: sketch.sketchUrl,
+          previewGif: sketch.previewGif
+        };
+        if (sketch.previewGif) {
+          existingPreviewData[sketch.id] = sketch.previewGif;
+        }
+      });
+    } catch (error) {
+      // ファイルが存在しない場合は空のセットのまま
+      console.error(`ℹ️ sketches.jsonが存在しません。新規作成します。`);
     }
-    
+
     // 必要なディレクトリを作成
     await ensureDirectoryExists(sketchesDir, 'sketches directory');
     await ensureDirectoryExists(publicSketchesDir, 'public/sketches directory');
-    
+
     if (generatePreviews || watchMode) {
       await ensureDirectoryExists(previewsDir, 'public/previews directory');
     }
-    
+
     const entries = await readdir(sketchesDir, { withFileTypes: true });
     const sketches = [];
     const currentSketchNames = new Set();
-    const sketchIds = []; // ユーザー情報取得用のスケッチIDリスト
+    let sketchIds = []; // ユーザー情報取得用のスケッチIDリスト
     const newSketches = []; // 新規検出されたスケッチ
-    
+
     for (const entry of entries) {
       if (entry.isDirectory()) {
         // targetSketchが指定されている場合、それ以外はスキップ
@@ -94,32 +97,33 @@ async function scanSketches(options = {}) {
         const sketchPath = resolve(sketchesDir, entry.name);
         const sketchInfo = await analyzeSketch(entry.name, sketchPath);
         if (sketchInfo) {
-          // watchModeまたはincrementalで既存の情報を復元
-          if ((watchMode || incremental) && existingSketchData[entry.name]) {
+          // 既存の情報を復元
+          if (existingSketchData[entry.name]) {
             const existingData = existingSketchData[entry.name];
-            if (existingData.userData) {
+            const manualMetadataFields = sketchInfo.__manualMetadataFields || new Set();
+            if (existingData.userData && !manualMetadataFields.has('userData')) {
               sketchInfo.userData = existingData.userData;
             }
-            if (existingData.title && existingData.title !== entry.name) {
+            if (existingData.title && existingData.title !== entry.name && !manualMetadataFields.has('title')) {
               sketchInfo.title = existingData.title;
             }
-            if (existingData.sketchUrl) {
+            if (existingData.sketchUrl && !manualMetadataFields.has('sketchUrl')) {
               sketchInfo.sketchUrl = existingData.sketchUrl;
             }
             // 既存のプレビューがあれば使用
-            if (existingData.previewGif) {
+            if (existingData.previewGif && !manualMetadataFields.has('previewGif')) {
               sketchInfo.previewGif = existingData.previewGif;
             }
           }
-          
+
           sketches.push(sketchInfo);
-          
+
           // watchModeで新規スケッチを検出
           if (watchMode && !existingSketches.has(entry.name)) {
             newSketches.push(entry.name);
             console.error(`🆕 新しいスケッチを検出: ${entry.name}`);
           }
-          
+
           // スケッチIDをリストに追加（数値の場合のみ）
           if (/^\d+$/.test(entry.name)) {
             sketchIds.push(entry.name);
@@ -132,10 +136,10 @@ async function scanSketches(options = {}) {
           } else {
             console.error(`ℹ️ 数値以外のスケッチ名: ${entry.name}`);
           }
-          
+
           // スケッチをpublicディレクトリにコピー
           await copySketchToPublic(entry.name, sketchPath, publicSketchesDir, forceRegenerate);
-          
+
           // プレビューGIFを生成（オプション指定時、watchModeで新規、またはincrementalでプレビューがない場合）
           const needsPreview = incremental && !existingPreviewData[entry.name];
           const shouldGeneratePreview = generatePreviews || (watchMode && newSketches.includes(entry.name)) || needsPreview;
@@ -153,12 +157,12 @@ async function scanSketches(options = {}) {
         }
       }
     }
-    
+
     // 不要になったpublicディレクトリのスケッチを削除
     if (!forceRegenerate) {
       await cleanupRemovedSketches(currentSketchNames, publicSketchesDir, previewsDir);
     }
-    
+
     // incrementalモードでユーザー情報がないスケッチのIDを収集
     let needsUserData = [];
     if (incremental) {
@@ -172,27 +176,27 @@ async function scanSketches(options = {}) {
         sketchIds = needsUserData;
       }
     }
-    
+
     // スケッチ情報を取得（オプション指定時またはincrementalで必要な場合）
     if (fetchUserData && sketchIds.length > 0) {
       console.error(`\n🔍 スケッチIDからスケッチ情報を取得中... (${sketchIds.length}件)`);
       console.error(`📋 検出されたスケッチID: ${JSON.stringify(sketchIds)}`);
-      
+
       try {
         console.error(`🚀 fetchUserDataForSketches関数を呼び出し中...`);
-        const userDataResults = await fetchUserDataForSketches(sketchIds);
+        const userDataResults = await fetchUserDataForSketches(sketchIds, fetchOptions);
         console.error(`📊 取得結果: ${userDataResults.length}件`);
         console.error(`📄 結果の詳細:`, JSON.stringify(userDataResults, null, 2));
-        
+
         // スケッチ情報にユーザーデータを統合
         let updatedCount = 0;
         let skippedCount = 0;
         let errorCount = 0;
-        
-        userDataResults.forEach((userData, index) => {
+
+        for (const [index, userData] of userDataResults.entries()) {
           console.error(`\n🔄 [${index + 1}/${userDataResults.length}] スケッチデータ処理中: ${userData.sketchId}`);
           console.error(`📋 スケッチデータ詳細:`, JSON.stringify(userData, null, 2));
-          
+
           if (!userData.error) {
             // 数値IDとsketchプレフィックス付きIDの両方で検索
             let sketchIndex = sketches.findIndex(s => s.id === userData.sketchId);
@@ -200,43 +204,48 @@ async function scanSketches(options = {}) {
               // 数値IDで見つからない場合は、sketchプレフィックス付きで検索
               sketchIndex = sketches.findIndex(s => s.id === `sketch${userData.sketchId}`);
             }
-            
+
             console.error(`🔍 スケッチ検索結果: ${userData.sketchId} -> index: ${sketchIndex}`);
-            
+
             if (sketchIndex !== -1) {
               console.error(`✅ スケッチ情報を更新中: ${userData.sketchId}`);
-              
+
               // 更新前の状態をログ出力
               console.error(`📝 更新前:`, JSON.stringify(sketches[sketchIndex], null, 2));
-              
+              const manualMetadataFields = sketches[sketchIndex].__manualMetadataFields || new Set();
+
               // スケッチのタイトルを更新（HTMLから取得したタイトルがある場合）
-              if (userData.sketchTitle && userData.sketchTitle !== 'Unknown Title') {
+              if (!manualMetadataFields.has('title') && userData.sketchTitle && userData.sketchTitle !== 'Unknown Title') {
                 sketches[sketchIndex].title = userData.sketchTitle;
                 console.error(`📝 スケッチタイトルを更新: "${userData.sketchTitle}"`);
               }
-              
+
               // 重複を避けるため、authorとuserDataを統合
               // authorフィールドは削除し、userDataのみを使用
               delete sketches[sketchIndex].author;
               delete sketches[sketchIndex].author_icon;
               delete sketches[sketchIndex].author_icon_local;
-              
+
               // userDataオブジェクトを設定
-              sketches[sketchIndex].userData = {
-                userId: userData.userId,
-                userName: userData.userName,
-                userUrl: userData.userUrl,
-                avatarUrl: userData.avatarUrl,
-                avatarFile: userData.avatarFile
-              };
-              
+              if (!manualMetadataFields.has('userData')) {
+                sketches[sketchIndex].userData = {
+                  userId: userData.userId,
+                  userName: userData.userName,
+                  userUrl: userData.userUrl,
+                  avatarUrl: userData.avatarUrl,
+                  avatarFile: userData.avatarFile
+                };
+              }
+
               // オリジナルスケッチのURLを設定
               const sketchNumId = userData.sketchId.replace('sketch', '');
-              sketches[sketchIndex].sketchUrl = `https://openprocessing.org/sketch/${sketchNumId}`;
-              
+              if (!manualMetadataFields.has('sketchUrl')) {
+                sketches[sketchIndex].sketchUrl = `https://openprocessing.org/sketch/${sketchNumId}`;
+              }
+
               // 更新後の状態をログ出力
               console.error(`📝 更新後:`, JSON.stringify(sketches[sketchIndex], null, 2));
-              
+
               updatedCount++;
               console.error(`✅ 更新完了: ${userData.sketchId}`);
             } else {
@@ -246,25 +255,26 @@ async function scanSketches(options = {}) {
             }
           } else {
             console.error(`❌ スケッチデータエラー: ${userData.sketchId} - ${userData.error}`);
+            await writeManualMetadataTemplate(userData.sketchId, userData.error);
             errorCount++;
           }
-        });
-        
+        }
+
         console.error(`\n📊 スケッチデータ統合結果:`);
         console.error(`   - 成功: ${updatedCount}件`);
         console.error(`   - スキップ: ${skippedCount}件`);
         console.error(`   - エラー: ${errorCount}件`);
         console.error(`   - 合計: ${userDataResults.length}件`);
-        
+
         console.error(`✅ スケッチ情報の取得と統合が完了しました`);
-        
+
         // 統合後のスケッチ情報を確認
         const sketchesWithUserData = sketches.filter(s => s.userData);
         console.error(`🔍 スケッチデータが統合されたスケッチ: ${sketchesWithUserData.length}件`);
         sketchesWithUserData.forEach(sketch => {
           console.error(`   - ${sketch.id}: "${sketch.title}" by ${sketch.userData.userName} (${sketch.userData.userId})`);
         });
-        
+
       } catch (error) {
         console.error(`❌ スケッチ情報の取得に失敗しました:`, error.message);
         console.error(`📚 エラーの詳細:`, error.stack);
@@ -277,48 +287,48 @@ async function scanSketches(options = {}) {
         console.error(`ℹ️ 数値のスケッチIDが見つかりませんでした`);
       }
     }
-    
+
     // 最終的なスケッチ情報の確認
     console.error(`\n📋 最終的なスケッチ情報確認:`);
     console.error(`   - 総スケッチ数: ${sketches.length}件`);
     console.error(`   - スケッチデータ統合済み: ${sketches.filter(s => s.userData).length}件`);
     console.error(`   - アバター画像付き: ${sketches.filter(s => s.userData && s.userData.avatarFile).length}件`);
-    
+
     // watchModeの場合は新規スケッチ情報を出力
     if (watchMode && newSketches.length > 0) {
       console.error(`\n📝 新規スケッチ ${newSketches.length} 件のプレビューを生成しました`);
       console.error(`   スケッチ: ${newSketches.join(', ')}`);
     }
-    
+
     // 結果を出力（stdoutにJSONのみ）
     console.log(JSON.stringify(sketches, null, 2));
-    
-    // スケッチデータ取得オプションが有効な場合は、sketches.jsonファイルも生成
-    if (fetchUserData) {
+
+    // CLIやnpm scriptsからの実行時はsketches.jsonファイルも生成
+    if (fetchUserData || writeFileOutput) {
       try {
         const { projectRoot } = getDirectories();
         const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
         await writeFile(sketchesJsonPath, JSON.stringify(sketches, null, 2), 'utf-8');
         console.error(`💾 sketches.jsonファイルを生成: ${sketchesJsonPath}`);
-        
+
         // ファイルの内容確認
         const fileStats = await stat(sketchesJsonPath);
         console.error(`📊 ファイルサイズ: ${fileStats.size} bytes`);
-        
+
         // 生成されたファイルの内容を確認
         const generatedContent = await readFile(sketchesJsonPath, 'utf-8');
         const parsedContent = JSON.parse(generatedContent);
         const userDataCount = parsedContent.filter(s => s.userData).length;
         const avatarCount = parsedContent.filter(s => s.userData && s.userData.avatarFile).length;
         const titleCount = parsedContent.filter(s => s.title && s.title !== s.id).length;
-        
+
         console.error(`✅ ファイル内容確認: スケッチ${parsedContent.length}件, スケッチデータ${userDataCount}件, アバター画像${avatarCount}件, タイトル更新${titleCount}件`);
-        
+
       } catch (error) {
         console.error(`❌ sketches.jsonファイルの生成に失敗:`, error.message);
       }
     }
-    
+
     return sketches;
   } catch (error) {
     console.error('Error scanning sketches:', error);
@@ -329,7 +339,14 @@ async function scanSketches(options = {}) {
 // スクリプトが直接実行された場合
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
-  
+  const headed = args.includes('--headed') || process.env.DROPCASTER_HEADED === '1';
+  const externalBrowser = args.includes('--external-browser') || process.env.DROPCASTER_EXTERNAL_BROWSER === '1';
+  const externalBrowserIntervalMs = Math.max(
+    Number(getArgValue(args, '--external-browser-interval-ms') || process.env.DROPCASTER_EXTERNAL_BROWSER_INTERVAL_MS || 1000),
+    1000
+  );
+  const browserProfile = getArgValue(args, '--browser-profile') || process.env.DROPCASTER_BROWSER_PROFILE || (headed ? '.dropcaster/browser-profile' : null);
+
   // コマンドライン引数を解析（新旧両方のオプション名をサポート）
   const options = {
     // 新しいオプション名
@@ -338,18 +355,102 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     fetchUserData: args.includes('--fetch-userdata') || args.includes('--fetch-user-data'),
     watchMode: args.includes('--watch-mode'),
     incremental: args.includes('--incremental'),
-    
+    writeFileOutput: args.includes('--write-file'),
+    fetchOptions: {
+      headed,
+      externalBrowser,
+      externalBrowserIntervalMs,
+      browserProfile,
+      manualChallenge: args.includes('--manual-challenge') || headed || process.env.DROPCASTER_MANUAL_CHALLENGE === '1',
+      challengeTimeoutMs: Number(getArgValue(args, '--challenge-timeout-ms') || process.env.DROPCASTER_CHALLENGE_TIMEOUT_MS || 180000)
+    },
+
     // 特定のスケッチのみ処理
     targetSketch: null
   };
-  
+
   // --sketch オプションの処理
   const sketchIndex = args.indexOf('--sketch');
   if (sketchIndex !== -1 && args[sketchIndex + 1]) {
     options.targetSketch = args[sketchIndex + 1];
   }
-  
+
   scanSketches(options);
+}
+
+function getArgValue(args, name) {
+  const index = args.indexOf(name);
+  if (index === -1) return null;
+  return args[index + 1] || null;
+}
+
+async function writeManualMetadataTemplate(sketchId, reason) {
+  const sketchName = await findSketchDirectoryName(sketchId);
+  if (!sketchName) {
+    return;
+  }
+
+  const manualMetadataPath = resolve(sketchesDir, sketchName, MANUAL_METADATA_FILE);
+  const templatePath = resolve(sketchesDir, sketchName, MANUAL_METADATA_TEMPLATE_FILE);
+
+  if (await fileExists(manualMetadataPath) || await fileExists(templatePath)) {
+    return;
+  }
+
+  const normalizedSketchId = String(sketchId || '').replace(/^sketch/, '');
+  const template = {
+    title: '',
+    description: '',
+    sketchUrl: normalizedSketchId ? `https://openprocessing.org/sketch/${normalizedSketchId}` : '',
+    tags: [],
+    interactiveElements: [],
+    userData: {
+      userId: '',
+      userName: '',
+      userUrl: '',
+      avatarUrl: '',
+      avatarFile: ''
+    }
+  };
+
+  await writeFile(templatePath, `${JSON.stringify(template, null, 2)}\n`, 'utf-8');
+  console.error(`📝 OpenProcessing取得失敗のため手動メタデータ雛形を作成: ${sketchName}/${MANUAL_METADATA_TEMPLATE_FILE}`);
+  console.error(`   ${MANUAL_METADATA_FILE} にリネームして必要な値を埋めると、次回scanで反映されます`);
+  console.error(`   取得エラー: ${reason}`);
+}
+
+async function findSketchDirectoryName(sketchId) {
+  const normalizedSketchId = String(sketchId || '').trim();
+  if (!normalizedSketchId) {
+    return null;
+  }
+
+  const numericId = normalizedSketchId.replace(/^sketch/, '');
+  const candidates = normalizedSketchId.startsWith('sketch')
+    ? [normalizedSketchId, numericId]
+    : [`sketch${normalizedSketchId}`, normalizedSketchId];
+
+  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+    try {
+      const stats = await stat(resolve(sketchesDir, candidate));
+      if (stats.isDirectory()) {
+        return candidate;
+      }
+    } catch (error) {
+      // 次の候補を確認する
+    }
+  }
+
+  return null;
+}
+
+async function fileExists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 export { scanSketches };

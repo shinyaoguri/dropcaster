@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync } from 'fs';
+import { promises as fs } from 'fs';
 import chalk from 'chalk';
 import ora from 'ora';
 
@@ -31,7 +32,7 @@ export async function scan(options = {}) {
   const scanScriptPath = resolve(__dirname, '../../scripts/scan-sketches.js');
   
   // コマンドライン引数を構築
-  const args = [];
+  const args = ['--write-file'];
   
   // オプションに応じた引数を追加
   if (options.sketch) {
@@ -49,14 +50,39 @@ export async function scan(options = {}) {
   if (options.fetchUserdata) {
     args.push('--fetch-userdata');
   }
+
+  if (options.headed) {
+    args.push('--headed');
+  }
+
+  if (options.externalBrowser) {
+    args.push('--external-browser');
+  }
+
+  if (options.externalBrowserIntervalMs) {
+    args.push('--external-browser-interval-ms', options.externalBrowserIntervalMs);
+  }
+
+  if (options.headed && options.browserProfile) {
+    args.push('--browser-profile', options.browserProfile);
+  }
+
+  if (options.manualChallenge !== false) {
+    args.push('--manual-challenge');
+  }
+
+  if (options.challengeTimeoutMs) {
+    args.push('--challenge-timeout-ms', options.challengeTimeoutMs);
+  }
   
   // スピナーを開始
   let spinner;
-  if (!options.verbose) {
+  const inheritStdio = options.verbose || options.headed || options.externalBrowser;
+  if (!inheritStdio) {
     spinner = ora('Scanning sketches...').start();
   }
   
-  return new Promise((resolve, reject) => {
+  return new Promise((fulfill, reject) => {
     // 環境変数を設定してscan-sketches.jsを実行
     const env = {
       ...process.env,
@@ -65,13 +91,13 @@ export async function scan(options = {}) {
     
     const scanProcess = spawn('node', [scanScriptPath, ...args], {
       env,
-      stdio: options.verbose ? 'inherit' : 'pipe'
+      stdio: inheritStdio ? 'inherit' : 'pipe'
     });
     
     let stdout = '';
     let stderr = '';
     
-    if (!options.verbose) {
+    if (!inheritStdio) {
       scanProcess.stdout.on('data', (data) => {
         stdout += data.toString();
       });
@@ -124,24 +150,28 @@ export async function scan(options = {}) {
       });
     }
     
-    scanProcess.on('close', (code) => {
+    scanProcess.on('close', async (code) => {
       if (spinner) {
         spinner.stop();
       }
       
       if (code === 0) {
         // 成功時の処理
-        if (!options.verbose && stdout) {
+        if (!inheritStdio && stdout) {
           // JSONを解析してスケッチ数を表示
           try {
             const sketches = JSON.parse(stdout);
+            const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
+            await fs.mkdir(resolve(projectRoot, 'public'), { recursive: true });
+            await fs.writeFile(sketchesJsonPath, JSON.stringify(sketches, null, 2), 'utf-8');
             console.log(chalk.green(`✅ ${sketches.length}個のスケッチをスキャンしました`));
             
             // プレビュー生成状況を表示
-            const withPreviews = sketches.filter(s => s.preview).length;
+            const withPreviews = sketches.filter(s => s.previewGif).length;
             if (withPreviews > 0) {
               console.log(chalk.gray(`   プレビュー生成済み: ${withPreviews}/${sketches.length}`));
             }
+            console.log(chalk.gray(`   保存先: ${sketchesJsonPath}`));
           } catch (e) {
             // JSON解析に失敗した場合は生のメッセージを表示
             console.log(chalk.green('✅ スキャンが完了しました'));
@@ -149,7 +179,7 @@ export async function scan(options = {}) {
         }
         
         // stderrの最終確認メッセージを表示（すでに表示済みのものは除く）
-        if (!options.verbose && stderr) {
+        if (!inheritStdio && stderr) {
           const lines = stderr.split('\n');
           for (const line of lines) {
             // 💾のみ表示（📋は既に表示済み）
@@ -159,7 +189,7 @@ export async function scan(options = {}) {
           }
         }
         
-        resolve();
+        fulfill();
       } else {
         // エラー時の処理
         console.error(chalk.red(`❌ スキャンに失敗しました (exit code: ${code})`));

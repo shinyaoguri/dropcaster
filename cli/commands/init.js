@@ -128,9 +128,10 @@ export async function init(options) {
 dist/
 public/
 .DS_Store
-*.log
-.env
-.cache/`;
+	*.log
+	.env
+	.cache/
+	.dropcaster/`;
     
     await fs.writeFile(join(projectPath, '.gitignore'), gitignore, 'utf-8');
     

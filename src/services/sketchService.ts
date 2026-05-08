@@ -1,4 +1,5 @@
 import type { Sketch, SketchService } from '../types/sketch.js';
+import { publicAssetPath } from '../utils/paths.js';
 
 export class SketchServiceImpl implements SketchService {
   private sketches: Sketch[] = [];
@@ -6,12 +7,25 @@ export class SketchServiceImpl implements SketchService {
 
   async loadSketches(): Promise<Sketch[]> {
     try {
-      const response = await fetch('/sketches.json');
-      this.sketches = await response.json();
+      const response = await fetch(publicAssetPath('sketches.json'), {
+        cache: 'no-cache'
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const sketches = await response.json();
+      if (!Array.isArray(sketches)) {
+        throw new Error('sketches.json must contain an array');
+      }
+
+      this.sketches = sketches;
       this.isInitialized = true;
       return this.sketches;
     } catch (error) {
       console.error('Failed to load sketches:', error);
+      this.sketches = [];
       this.isInitialized = true;
       return [];
     }

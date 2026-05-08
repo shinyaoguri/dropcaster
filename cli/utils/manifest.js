@@ -2,11 +2,14 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 
 export async function generateManifest(config, outputDir) {
+  const startUrl = config.start_url || config.base || './';
+  const scope = config.scope || config.base || './';
   const manifest = {
     name: config.title,
     short_name: config.title.substring(0, 12),
     description: config.description,
-    start_url: config.start_url || '/',
+    start_url: startUrl,
+    scope,
     display: config.display || 'standalone',
     background_color: config.background_color || '#ffffff',
     theme_color: config.theme_color || '#000000',
@@ -22,7 +25,7 @@ export async function generateManifest(config, outputDir) {
     await fs.access(iconPngPath);
     manifest.icons = [
       {
-        src: '/icon.png',
+        src: 'icon.png',
         sizes: '512x512',
         type: 'image/png',
         purpose: 'any maskable'
@@ -34,7 +37,7 @@ export async function generateManifest(config, outputDir) {
       await fs.access(iconSvgPath);
       manifest.icons = [
         {
-          src: '/icon.svg',
+          src: 'icon.svg',
           sizes: 'any',
           type: 'image/svg+xml',
           purpose: 'any maskable'
@@ -51,7 +54,7 @@ export async function generateManifest(config, outputDir) {
       await fs.writeFile(iconSvgPath, defaultIcon, 'utf-8');
       manifest.icons = [
         {
-          src: '/icon.svg',
+          src: 'icon.svg',
           sizes: 'any',
           type: 'image/svg+xml',
           purpose: 'any maskable'

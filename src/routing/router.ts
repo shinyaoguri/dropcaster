@@ -1,12 +1,15 @@
+import type { SketchService } from '../types/sketch.js';
+import { routeHref, stripBasePath } from '../utils/paths.js';
+
 export interface RouteHandler {
-  (params?: any): void;
+  (params: string): void | Promise<void>;
 }
 
 export class Router {
   private routes: Map<string, RouteHandler> = new Map();
-  private sketchService: any;
+  private sketchService: SketchService;
 
-  constructor(sketchService: any) {
+  constructor(sketchService: SketchService) {
     this.sketchService = sketchService;
     this.setupEventListeners();
   }
@@ -16,7 +19,7 @@ export class Router {
   }
 
   navigate(path: string): void {
-    window.history.pushState({}, '', path);
+    window.history.pushState({}, '', routeHref(path));
     this.handleRoute();
   }
 
@@ -25,29 +28,29 @@ export class Router {
       return;
     }
 
-    const path = window.location.pathname;
+    const path = stripBasePath(window.location.pathname);
     
     // 完全一致のルートをまずチェック
     const exactHandler = this.routes.get(path);
     if (exactHandler) {
-      exactHandler();
+      exactHandler('');
       return;
     }
     
     // ホームページ
     if (path === '/') {
       const handler = this.routes.get('/');
-      if (handler) handler();
+      if (handler) handler('');
     } else {
       // パラメータ付きルートの処理
       const pathSegments = path.split('/').filter(segment => segment);
       if (pathSegments.length === 1 && pathSegments[0] !== 'slideshow') {
-        const sketchId = pathSegments[0];
+        const sketchId = decodeURIComponent(pathSegments[0]);
         const handler = this.routes.get('/:sketchId');
         if (handler) handler(sketchId);
       } else if (path !== '/slideshow') {
         const handler = this.routes.get('/404');
-        if (handler) handler();
+        if (handler) handler('');
       }
     }
   }
@@ -62,7 +65,7 @@ export class Router {
       if (link && link.href.startsWith(window.location.origin) && link.target !== '_blank') {
         e.preventDefault();
         const url = new URL(link.href);
-        this.navigate(url.pathname);
+        this.navigate(stripBasePath(url.pathname));
       }
     });
   }

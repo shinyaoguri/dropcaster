@@ -185,7 +185,11 @@ export class SourceWindow extends BaseWindow {
 
   protected setupEventListeners(): void {
     // 初期化メッセージのリスナーを追加
-    window.addEventListener('message', (event) => {
+    this.window?.addEventListener('message', (event) => {
+      const parentWindow = this.getParentWindow();
+      if (parentWindow && event.source !== parentWindow) return;
+      if (parentWindow && event.origin !== parentWindow.location.origin) return;
+
       switch (event.data.type) {
         case 'initialize-selection':
           this.selectionData = event.data.data;
@@ -390,7 +394,7 @@ export class SourceWindow extends BaseWindow {
         targetWindow.postMessage({
           type: 'source-selection-change',
           data: this.selectionData
-        }, '*');
+        }, targetWindow.location.origin);
       } catch (error) {
         console.error('SourceWindow: メッセージ送信エラー', error);
       }
@@ -455,7 +459,7 @@ export class SourceWindow extends BaseWindow {
         targetWindow.postMessage({
           type: 'video-dimensions-update',
           data: this.videoActualDimensions
-        }, '*');
+        }, targetWindow.location.origin);
       } catch (error) {
         console.error('SourceWindow: ビデオサイズ通知エラー', error);
       }

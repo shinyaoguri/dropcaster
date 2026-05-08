@@ -9,7 +9,7 @@ export interface Sketch {
   lastModified: string;
   previewGif?: string; // オプショナルに変更
   sketchUrl?: string; // オリジナルスケッチのURL
-  userData: {
+  userData?: {
     userId: string;
     userName: string;
     userUrl: string;
@@ -22,4 +22,5 @@ export interface SketchService {
   loadSketches(): Promise<Sketch[]>;
   getSketchById(id: string): Sketch | undefined;
   getAllSketches(): Sketch[];
+  isReady(): boolean;
 }

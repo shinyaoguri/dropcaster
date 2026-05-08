@@ -19,7 +19,7 @@ export async function build(options) {
   try {
     // Load user config
     const config = await loadConfig(process.cwd());
-    const outputDir = join(process.cwd(), options.output);
+    const outputDir = resolve(process.cwd(), options.output);
     
     // Clean output directory
     await fs.rm(outputDir, { recursive: true, force: true });
@@ -34,7 +34,13 @@ export async function build(options) {
     
     // Generate PWA manifest
     spinner.text = 'Generating PWA manifest...';
-    await generateManifest(config, outputDir);
+    const manifestStartUrl = config.start_url === '/' ? options.base : config.start_url;
+    await generateManifest({
+      ...config,
+      base: options.base,
+      start_url: manifestStartUrl || options.base,
+      scope: config.scope || options.base
+    }, outputDir);
     
     // Generate Service Worker
     spinner.text = 'Generating Service Worker...';
@@ -109,9 +115,10 @@ export async function build(options) {
     
     // Ensure manifest link exists
     if (!indexHtml.includes('rel="manifest"')) {
+      const basePath = options.base.replace(/\/?$/, '/');
       indexHtml = indexHtml.replace(
         '</head>',
-        '  <link rel="manifest" href="/manifest.json">\n  </head>'
+        `  <link rel="manifest" href="${basePath}manifest.json">\n  </head>`
       );
     }
     

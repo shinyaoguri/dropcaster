@@ -1,5 +1,6 @@
 import type { Sketch } from '../types/sketch.js';
 import { SketchCard } from '../ui/components/SketchCard.js';
+import { routeHref } from '../utils/paths.js';
 
 export class SketchGalleryView {
   static render(sketches: Sketch[]): void {
@@ -10,7 +11,7 @@ export class SketchGalleryView {
         <header class="header">
           <h1>Sketch Gallery</h1>
           <div class="header-actions">
-            <a href="/slideshow" class="slideshow-btn" target="_blank">
+            <a href="${routeHref('/slideshow')}" class="slideshow-btn" target="_blank">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>
                 <line x1="7" y1="2" x2="7" y2="22"/>

@@ -1,5 +1,6 @@
 import type { Sketch } from '../types/sketch.js';
 import { SlideshowView } from './SlideshowView';
+import { routeHref } from '../utils/paths.js';
 
 export class SlideshowController {
   private view: SlideshowView;
@@ -50,7 +51,7 @@ export class SlideshowController {
       ">
         <h2 style="margin-bottom: 20px;">スケッチがありません</h2>
         <p style="margin-bottom: 30px; color: #888;">表示できるスケッチが見つかりませんでした</p>
-        <button onclick="window.location.href='/'" style="
+        <button onclick="window.location.href='${routeHref('/')}'" style="
           padding: 12px 24px;
           background: #333;
           border: 1px solid #555;

@@ -1,6 +1,7 @@
 import { createServer } from 'vite';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import os from 'os';
 import chalk from 'chalk';
 import { loadConfig } from '../utils/config.js';
 import { generateManifest } from '../utils/manifest.js';
@@ -117,7 +118,6 @@ self.addEventListener('fetch', (event) => {
 }
 
 function getNetworkAddress() {
-  const os = require('os');
   const interfaces = os.networkInterfaces();
   
   for (const name of Object.keys(interfaces)) {

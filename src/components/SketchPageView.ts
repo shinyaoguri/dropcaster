@@ -3,6 +3,8 @@ import { EventEmitter } from '../events/EventEmitter';
 import { CursorManager } from '../managers/CursorManager';
 import { UIElementController } from '../ui/services/UIElementController';
 import { OverlayManager } from '../managers/OverlayManager';
+import { escapeHtml } from '../utils/html.js';
+import { publicAssetPath } from '../utils/paths.js';
 
 export class SketchPageView {
   private eventEmitter: EventEmitter;
@@ -13,6 +15,10 @@ export class SketchPageView {
   private mappingVideo: HTMLVideoElement | null = null;
   private iframeMappingContainer: HTMLDivElement | null = null;
   private iframeMappingVideo: HTMLVideoElement | null = null;
+  private boundFullscreenChange = this.handleFullscreenChange.bind(this);
+  private boundMappingOverlayUpdate = this.handleMappingOverlayUpdate.bind(this);
+  private boundResize = this.handleResize.bind(this);
+  private domSetupTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     this.eventEmitter = new EventEmitter();
@@ -23,33 +29,35 @@ export class SketchPageView {
 
   render(sketch: Sketch): void {
     const app = document.querySelector<HTMLDivElement>('#app')!;
-    
+
     // デバッグログ
     console.log('SketchPageView: Rendering sketch:', sketch);
     console.log('SketchPageView: userData:', sketch.userData);
-    
+
     // パスを正しい形式に変換
-    const sketchPath = sketch.path.replace('../', '/');
-    
+    const sketchPath = publicAssetPath(sketch.path);
+
     // userDataの存在チェックとデフォルト値の設定
     const userName = sketch.userData?.userName || 'Unknown User';
-    const avatarFile = sketch.userData?.avatarFile ? sketch.userData.avatarFile.replace('../', '/') : '/vite.svg';
-    
+    const avatarFile = publicAssetPath(sketch.userData?.avatarFile || 'vite.svg');
+    const title = escapeHtml(sketch.title);
+    const escapedUserName = escapeHtml(userName);
+
     console.log('SketchPageView: Using userName:', userName);
     console.log('SketchPageView: Using avatarFile:', avatarFile);
-    
+
     app.innerHTML = `
       <div class="fullscreen-sketch-container">
-        <iframe 
-          src="${sketchPath}" 
-          class="fullscreen-iframe" 
-          title="${sketch.title}"
+        <iframe
+          src="${escapeHtml(sketchPath)}"
+          class="fullscreen-iframe"
+          title="${title}"
           id="sketch-iframe"
         ></iframe>
-        
+
         <!-- iframeの外側に配置するオーバーレイ -->
-        <div 
-          id="iframe-overlay" 
+        <div
+          id="iframe-overlay"
           class="iframe-overlay"
         >
           <!-- マッピング映像を表示するコンテナ -->
@@ -57,24 +65,24 @@ export class SketchPageView {
             <video id="iframe-mapping-video" autoplay muted playsinline></video>
           </div>
         </div>
-        
+
         <div class="sketch-overlay-info ui-element">
           <div class="sketch-overlay-content">
-            <img 
-              src="${avatarFile}" 
-              alt="${userName}" 
+            <img
+              src="${escapeHtml(avatarFile)}"
+              alt="${escapedUserName}"
               class="overlay-avatar-small"
             />
             <div class="overlay-text">
-              <div class="overlay-username-small">${userName}</div>
-              <div class="overlay-title-small">${sketch.title}</div>
+              <div class="overlay-username-small">${escapedUserName}</div>
+              <div class="overlay-title-small">${title}</div>
             </div>
           </div>
         </div>
 
         <!-- フルスクリーンボタン -->
-        <button 
-          id="fullscreen-btn" 
+        <button
+          id="fullscreen-btn"
           class="fullscreen-button top-right-button ui-element"
           title="フルスクリーン"
           aria-label="フルスクリーン"
@@ -83,8 +91,8 @@ export class SketchPageView {
         </button>
 
         <!-- ウィンドウ設定ボタン -->
-        <button 
-          id="window-settings-btn" 
+        <button
+          id="window-settings-btn"
           class="window-settings-button top-right-button ui-element"
           title="ウィンドウ設定"
           aria-label="ウィンドウ設定"
@@ -95,15 +103,15 @@ export class SketchPageView {
         </button>
 
         <!-- ウィンドウ開くボタン -->
-        <button 
-          id="open-windows-btn" 
+        <button
+          id="open-windows-btn"
           class="open-windows-button top-right-button ui-element"
           title="ウィンドウを開く"
           aria-label="ウィンドウを開く"
         >
           <i class="fas fa-external-link-alt button-icon"></i>
         </button>
-        
+
         <!-- iframeオーバーレイコンテナ -->
         <div id="iframe-content-overlay" class="iframe-content-overlay">
           <!-- マッピングオーバーレイ -->
@@ -113,31 +121,32 @@ export class SketchPageView {
         </div>
       </div>
     `;
-    
+
     this.setupEventListeners();
-    
+
     // DOMが完全に描画されるのを待ってから要素を取得
-    setTimeout(() => {
+    this.domSetupTimeout = setTimeout(() => {
       // オーバーレイ要素を取得
       this.mappingOverlay = document.getElementById('mapping-overlay') as HTMLDivElement;
       this.mappingVideo = document.getElementById('mapping-overlay-video') as HTMLVideoElement;
       this.iframeMappingContainer = document.getElementById('iframe-mapping-container') as HTMLDivElement;
       this.iframeMappingVideo = document.getElementById('iframe-mapping-video') as HTMLVideoElement;
-      
+
       console.log('SketchPageView: DOM要素取得結果', {
         mappingOverlay: !!this.mappingOverlay,
         mappingVideo: !!this.mappingVideo,
         iframeMappingContainer: !!this.iframeMappingContainer,
         iframeMappingVideo: !!this.iframeMappingVideo
       });
-      
+
       // 要素が取得できた場合のみリスナーを設定
       if (this.iframeMappingContainer && this.iframeMappingVideo) {
         this.setupMappingOverlayListener();
         this.setupVideoEventListeners();
       }
+      this.domSetupTimeout = null;
     }, 100);
-    
+
     // CursorManagerを初期化
     this.cursorManager.initialize();
   }
@@ -146,7 +155,7 @@ export class SketchPageView {
     const fullscreenBtn = document.getElementById('fullscreen-btn') as HTMLButtonElement;
     const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
     const openWindowsBtn = document.getElementById('open-windows-btn') as HTMLButtonElement;
-    
+
     // フルスクリーンボタンのイベント
     fullscreenBtn.addEventListener('click', () => {
       const container = document.querySelector('.fullscreen-sketch-container') as HTMLDivElement;
@@ -172,22 +181,24 @@ export class SketchPageView {
     });
 
     // フルスクリーン状態の変更を監視
-    document.addEventListener('fullscreenchange', () => {
-      const isFullscreen = !!document.fullscreenElement;
-      this.updateFullscreenUI(isFullscreen);
-      
-      // CursorManagerにフルスクリーン状態を通知
-      this.cursorManager.setFullscreenMode(isFullscreen);
-    });
+    document.addEventListener('fullscreenchange', this.boundFullscreenChange);
+  }
+
+  private handleFullscreenChange(): void {
+    const isFullscreen = !!document.fullscreenElement;
+    this.updateFullscreenUI(isFullscreen);
+
+    // CursorManagerにフルスクリーン状態を通知
+    this.cursorManager.setFullscreenMode(isFullscreen);
   }
 
   private updateFullscreenUI(isFullscreen: boolean): void {
     console.log(`🔄 フルスクリーン状態更新: ${isFullscreen ? '開始' : '終了'}`);
-    
+
     // UI要素の状態を更新
     this.uiController.setFullscreenActiveState(isFullscreen);
     this.uiController.updateFullscreenButtonIcon(isFullscreen);
-    
+
     // UI要素の表示/非表示を統一的に管理
     const shouldShowUI = !isFullscreen;
     console.log(`👁️ UI要素の表示状態: ${shouldShowUI ? '表示' : '非表示'}`);
@@ -196,13 +207,13 @@ export class SketchPageView {
 
   updateFullscreenState(isFullscreen: boolean): void {
     const container = document.querySelector('.fullscreen-sketch-container') as HTMLDivElement;
-    
+
     if (isFullscreen) {
       container.classList.add('fullscreen');
     } else {
       container.classList.remove('fullscreen');
     }
-    
+
     // UI要素の更新も統一的に処理
     this.updateFullscreenUI(isFullscreen);
   }
@@ -222,7 +233,7 @@ export class SketchPageView {
         }
       });
     }
-    
+
     // iframe-mapping-videoのメタデータ読み込み時にも更新
     if (this.iframeMappingVideo) {
       this.iframeMappingVideo.addEventListener('loadedmetadata', () => {
@@ -236,28 +247,32 @@ export class SketchPageView {
   }
 
   private setupMappingOverlayListener(): void {
-    window.addEventListener('mapping-overlay-update', (event: Event) => {
-      const customEvent = event as CustomEvent;
-      this.updateMappingOverlay(customEvent.detail);
-    });
-    
+    window.addEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
+
     // ウィンドウリサイズ時の再計算
-    window.addEventListener('resize', () => {
-      const lastData = (window as any).lastMappingData;
-      if (lastData) {
-        this.updateMappingOverlay(lastData);
-      }
-    });
+    window.addEventListener('resize', this.boundResize);
+  }
+
+  private handleMappingOverlayUpdate(event: Event): void {
+    const customEvent = event as CustomEvent;
+    this.updateMappingOverlay(customEvent.detail);
+  }
+
+  private handleResize(): void {
+    const lastData = (window as any).lastMappingData;
+    if (lastData) {
+      this.updateMappingOverlay(lastData);
+    }
   }
 
   private updateMappingOverlay(data: any): void {
     const { source, mapping } = data;
-    
+
     console.log('SketchPageView: updateMappingOverlay called with:', data);
-    
+
     // データを保存
     (window as any).lastMappingData = data;
-    
+
     // iframe-content-overlayの更新
     if (this.mappingOverlay && this.mappingVideo) {
       // ビデオにストリームが設定されているか確認
@@ -270,7 +285,7 @@ export class SketchPageView {
         this.updateMappingOverlayPosition(this.mappingOverlay, this.mappingVideo, source, mapping);
       }
     }
-    
+
     // iframe-overlay内のマッピングコンテナの更新
     if (this.iframeMappingContainer && this.iframeMappingVideo) {
       console.log('SketchPageView: Updating iframe-mapping-container');
@@ -283,43 +298,43 @@ export class SketchPageView {
       });
     }
   }
-  
+
   private updateMappingOverlayPosition(
     container: HTMLElement,
     video: HTMLVideoElement,
     source: any,
     mapping: any
   ): void {
-    
+
     // iframeのサイズを取得してスケーリングを調整
     const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
     if (iframe) {
       const iframeRect = iframe.getBoundingClientRect();
       const overlayContainer = document.getElementById('iframe-content-overlay') as HTMLDivElement;
-      
+
       // iframeオーバーレイコンテナをiframeと同じサイズに設定
       if (overlayContainer) {
         overlayContainer.style.width = `${iframeRect.width}px`;
         overlayContainer.style.height = `${iframeRect.height}px`;
       }
     }
-    
+
     // コンテナの位置とサイズを更新（マッピングウィンドウと同期）
     container.style.left = `${mapping.x}%`;
     container.style.top = `${mapping.y}%`;
     container.style.width = `${mapping.width}%`;
     container.style.height = `${mapping.height}%`;
-    
+
     // ビデオのクロップ位置を更新（ソース選択領域のみを表示）
     // シンプルなスケール計算
     const scale = 100 / source.width;
     const translateX = -source.x * scale;
     const translateY = -source.y * scale;
-    
+
     video.style.width = `${scale * 100}%`;
     video.style.height = `${scale * 100}%`;
     video.style.transform = `translate(${translateX}%, ${translateY}%)`;
-    
+
     console.log('SketchPageView: オーバーレイ更新', {
       containerType: container.id,
       source,
@@ -330,7 +345,7 @@ export class SketchPageView {
       hasStream: !!video.srcObject
     });
   }
-  
+
   private updateIframeMappingPosition(
     container: HTMLElement,
     video: HTMLVideoElement,
@@ -343,9 +358,9 @@ export class SketchPageView {
       console.warn('SketchPageView: iframe要素が見つかりません');
       return;
     }
-    
+
     const iframeRect = iframe.getBoundingClientRect();
-    
+
     // iframe-overlayがiframeと同じサイズに設定されていることを確認
     const iframeOverlay = document.getElementById('iframe-overlay');
     if (iframeOverlay) {
@@ -355,7 +370,7 @@ export class SketchPageView {
       iframeOverlay.style.width = '100%';
       iframeOverlay.style.height = '100%';
     }
-    
+
     // マッピングウィンドウのcropped-containerと同じ相対位置に配置
     // パーセンテージをそのまま使用
     container.style.position = 'absolute';
@@ -363,12 +378,12 @@ export class SketchPageView {
     container.style.top = `${mapping.y}%`;
     container.style.width = `${mapping.width}%`;
     container.style.height = `${mapping.height}%`;
-    
+
     // マッピングウィンドウと同じシンプルな変換を使用
     const scale = 100 / source.width;
     const translateX = -source.x * scale;
     const translateY = -source.y * scale;
-    
+
     // ビデオ要素のスタイルを設定
     video.style.position = 'absolute';
     video.style.top = '0';
@@ -377,7 +392,7 @@ export class SketchPageView {
     video.style.height = `${scale * 100}%`;
     video.style.transform = `translate(${translateX}%, ${translateY}%)`;
     video.style.transformOrigin = 'top left';
-    
+
     // ビデオストリームの状態を確認
     const hasStream = !!video.srcObject;
     if (!hasStream) {
@@ -386,7 +401,7 @@ export class SketchPageView {
         videoElement: video
       });
     }
-    
+
     console.log('SketchPageView: iframe-mapping-container更新', {
       position: {
         left: `${mapping.x}%`,
@@ -430,6 +445,13 @@ export class SketchPageView {
   }
 
   destroy(): void {
+    if (this.domSetupTimeout) {
+      clearTimeout(this.domSetupTimeout);
+      this.domSetupTimeout = null;
+    }
+    document.removeEventListener('fullscreenchange', this.boundFullscreenChange);
+    window.removeEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
+    window.removeEventListener('resize', this.boundResize);
     this.eventEmitter.removeAllListeners();
     this.cursorManager.destroy();
     this.overlayManager.destroy();
