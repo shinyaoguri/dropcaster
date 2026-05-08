@@ -47,6 +47,15 @@ export function generateMappingId(): string {
   return `m${Date.now().toString(36)}_${_idCounter}`;
 }
 
+/**
+ * mappings 配列の index から識別色を生成。
+ * 黄金角（137.508°）でずらすことで隣接 index が常に最大限離れた hue になる。
+ */
+export function mappingColor(index: number): string {
+  const hue = (index * 137.508) % 360;
+  return `hsl(${hue.toFixed(1)}, 75%, 60%)`;
+}
+
 function defaultEntry(name?: string): MappingEntry {
   return {
     id: generateMappingId(),

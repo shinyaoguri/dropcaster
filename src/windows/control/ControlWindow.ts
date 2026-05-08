@@ -11,6 +11,7 @@ import {
   withAddedMapping,
   withRemovedMapping,
   withActiveSet,
+  mappingColor,
   CORNER_KEYS,
   type Quad,
   type CornerKey,
@@ -410,9 +411,17 @@ export class ControlWindow extends BaseWindow {
       }
 
       .mapping-list-item.active {
-        background: #4a2a4a;
-        border-color: #ff00ff;
+        background: rgba(255, 255, 255, 0.06);
+        border-color: var(--mapping-color, #ff00ff);
         color: #fff;
+      }
+
+      .mapping-list-item .color-chip {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--mapping-color, #ff00ff);
+        flex-shrink: 0;
       }
 
       .mapping-list-item .name {
@@ -691,8 +700,8 @@ export class ControlWindow extends BaseWindow {
       
       #cropped-container {
         position: absolute;
-        border: 2px solid #ff00ff;
-        background: rgba(255, 0, 255, 0.1);
+        border: 2px solid var(--mapping-color, #ff00ff);
+        background: transparent;
         cursor: move;
         overflow: hidden;
         /* 単位矩形を matrix3d で 4 隅に写像する */
@@ -710,7 +719,7 @@ export class ControlWindow extends BaseWindow {
         position: absolute;
         width: 14px;
         height: 14px;
-        background: #ff00ff;
+        background: var(--mapping-color, #ff00ff);
         border: 2px solid #fff;
         border-radius: 50%;
         z-index: 20;
@@ -724,7 +733,7 @@ export class ControlWindow extends BaseWindow {
       .quad-handle.dragging {
         cursor: grabbing;
         background: #ffffff;
-        border-color: #ff00ff;
+        border-color: var(--mapping-color, #ff00ff);
       }
 
       /* 非アクティブ mapping のプレビュー */
@@ -737,15 +746,14 @@ export class ControlWindow extends BaseWindow {
         overflow: hidden;
         transform-origin: top left;
         backface-visibility: hidden;
-        border: 1px dashed rgba(255, 0, 255, 0.5);
-        background: rgba(255, 0, 255, 0.04);
+        border: 1px dashed var(--mapping-color, rgba(255, 0, 255, 0.5));
+        background: transparent;
         cursor: pointer;
         pointer-events: auto;
       }
 
       .preview-mapping.inactive:hover {
-        border-color: rgba(255, 0, 255, 0.8);
-        background: rgba(255, 0, 255, 0.08);
+        border-style: solid;
       }
 
       .preview-mapping.inactive > video {
@@ -990,11 +998,14 @@ export class ControlWindow extends BaseWindow {
 
     const canRemove = this.state.mappings.length > 1;
     listEl.innerHTML = this.state.mappings
-      .map(m => {
+      .map((m, idx) => {
         const isActive = m.id === this.state.activeId;
         const name = m.name ?? m.id;
+        const color = mappingColor(idx);
         return `
-          <div class="mapping-list-item${isActive ? ' active' : ''}" data-id="${m.id}">
+          <div class="mapping-list-item${isActive ? ' active' : ''}" data-id="${m.id}"
+            style="--mapping-color: ${color}">
+            <span class="color-chip"></span>
             <span class="name">${name}</span>
             <button class="remove-btn" data-id="${m.id}" ${canRemove ? '' : 'disabled'}
               title="削除">×</button>
@@ -1317,6 +1328,16 @@ export class ControlWindow extends BaseWindow {
     // matrix3d を再計算してコンテナへ適用
     applyQuadTransform(this.croppedContainer, this.quadData);
 
+    // active な mapping の色を CSS 変数として伝播（cropped-container と quad-handle に効く）
+    const activeIdx = this.state.mappings.findIndex(m => m.id === this.state.activeId);
+    const activeColor = mappingColor(activeIdx >= 0 ? activeIdx : 0);
+    this.croppedContainer.style.setProperty('--mapping-color', activeColor);
+    if (this.window) {
+      this.window.document
+        .querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle')
+        .forEach(h => h.style.setProperty('--mapping-color', activeColor));
+    }
+
     // 非アクティブ mapping のプレビューを同期
     this.syncInactivePreviews();
 
@@ -1363,7 +1384,8 @@ export class ControlWindow extends BaseWindow {
     }
 
     // 各非 active mapping を反映
-    for (const m of this.state.mappings) {
+    for (let i = 0; i < this.state.mappings.length; i++) {
+      const m = this.state.mappings[i];
       if (m.id === this.state.activeId) continue;
 
       let entry = this.inactivePreviews.get(m.id);
@@ -1388,6 +1410,8 @@ export class ControlWindow extends BaseWindow {
         this.inactivePreviews.set(m.id, entry);
       }
 
+      // 色を CSS 変数に
+      entry.div.style.setProperty('--mapping-color', mappingColor(i));
       applyQuadTransform(entry.div, m.quad);
       applyVideoCrop(entry.video, m.source);
     }
