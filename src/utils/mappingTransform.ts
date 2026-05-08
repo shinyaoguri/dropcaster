@@ -22,12 +22,18 @@ export type CornerKey = typeof CORNER_KEYS[number];
 
 /**
  * 個別マッピング。source crop と destination quad を1組持つ。
+ * enabled が false の場合、メイン画面の投影出力からは除外される（コントロール上は編集可能）。
  */
 export interface MappingEntry {
   id: string;
   name?: string;
+  enabled?: boolean;
   source: SourceRect;
   quad: Quad;
+}
+
+export function isMappingEnabled(m: MappingEntry): boolean {
+  return m.enabled !== false;
 }
 
 /**
@@ -117,6 +123,16 @@ export function withRemovedMapping(state: MappingsState, id: string): MappingsSt
 export function withActiveSet(state: MappingsState, id: string): MappingsState {
   if (!state.mappings.some(m => m.id === id)) return state;
   return { ...state, activeId: id };
+}
+
+/** 指定 id の enabled をトグルする。 */
+export function withMappingToggled(state: MappingsState, id: string): MappingsState {
+  return {
+    ...state,
+    mappings: state.mappings.map(m =>
+      m.id === id ? { ...m, enabled: !isMappingEnabled(m) } : m
+    ),
+  };
 }
 
 const MIN_DIMENSION = 0.0001;

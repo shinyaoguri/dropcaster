@@ -8,6 +8,7 @@ import { publicAssetPath } from '../utils/paths.js';
 import {
   applyVideoCrop,
   applyQuadTransform,
+  isMappingEnabled,
   type MappingEntry,
 } from '../utils/mappingTransform.js';
 
@@ -266,9 +267,10 @@ export class SketchPageView {
   private updateMappingOverlay(mappings: MappingEntry[]): void {
     if (!this.projectionStage || !this.settingsStage) return;
 
-    // 投影 stage と設定モード stage の両方に同じ N 個の mapping を反映
-    this.syncMappingChildren(this.projectionStage, 'mapping-overlay', mappings);
-    this.syncMappingChildren(this.settingsStage, 'iframe-mapping-container', mappings);
+    // disabled な mapping は投影出力には出さない
+    const enabled = mappings.filter(isMappingEnabled);
+    this.syncMappingChildren(this.projectionStage, 'mapping-overlay', enabled);
+    this.syncMappingChildren(this.settingsStage, 'iframe-mapping-container', enabled);
   }
 
   /**

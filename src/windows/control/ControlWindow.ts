@@ -11,6 +11,8 @@ import {
   withAddedMapping,
   withRemovedMapping,
   withActiveSet,
+  withMappingToggled,
+  isMappingEnabled,
   mappingColor,
   CORNER_KEYS,
   type Quad,
@@ -422,6 +424,32 @@ export class ControlWindow extends BaseWindow {
         border-radius: 50%;
         background: var(--mapping-color, #ff00ff);
         flex-shrink: 0;
+      }
+
+      .mapping-list-item .toggle-btn {
+        background: transparent;
+        border: 1px solid #555;
+        color: #999;
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 1;
+        padding: 2px 6px;
+        border-radius: 3px;
+        flex-shrink: 0;
+      }
+
+      .mapping-list-item .toggle-btn.enabled {
+        background: var(--mapping-color, #ff00ff);
+        border-color: var(--mapping-color, #ff00ff);
+        color: #000;
+      }
+
+      .mapping-list-item.disabled {
+        opacity: 0.5;
+      }
+
+      .mapping-list-item.disabled .name {
+        text-decoration: line-through;
       }
 
       .mapping-list-item .name {
@@ -1000,13 +1028,17 @@ export class ControlWindow extends BaseWindow {
     listEl.innerHTML = this.state.mappings
       .map((m, idx) => {
         const isActive = m.id === this.state.activeId;
+        const enabled = isMappingEnabled(m);
         const name = m.name ?? m.id;
         const color = mappingColor(idx);
+        const cls = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}`;
         return `
-          <div class="mapping-list-item${isActive ? ' active' : ''}" data-id="${m.id}"
-            style="--mapping-color: ${color}">
+          <div class="${cls}" data-id="${m.id}" style="--mapping-color: ${color}">
             <span class="color-chip"></span>
             <span class="name">${name}</span>
+            <button class="toggle-btn${enabled ? ' enabled' : ''}" data-id="${m.id}"
+              title="${enabled ? '出力中（クリックで停止）' : '停止中（クリックで出力）'}"
+            >${enabled ? '●' : '○'}</button>
             <button class="remove-btn" data-id="${m.id}" ${canRemove ? '' : 'disabled'}
               title="削除">×</button>
           </div>
@@ -1016,12 +1048,22 @@ export class ControlWindow extends BaseWindow {
 
     listEl.querySelectorAll<HTMLDivElement>('.mapping-list-item').forEach(item => {
       item.addEventListener('click', (e) => {
-        // 削除ボタンへのクリックは別ハンドラで処理（stopPropagation 付き）
-        if ((e.target as HTMLElement).classList.contains('remove-btn')) return;
+        // toggle / remove ボタンへのクリックは別ハンドラで処理
+        const target = e.target as HTMLElement;
+        if (target.classList.contains('remove-btn')) return;
+        if (target.classList.contains('toggle-btn')) return;
         const id = item.dataset.id!;
         if (id !== this.state.activeId) {
           this.replaceState(withActiveSet(this.state, id));
         }
+      });
+    });
+
+    listEl.querySelectorAll<HTMLButtonElement>('.toggle-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id!;
+        this.replaceState(withMappingToggled(this.state, id));
       });
     });
 
