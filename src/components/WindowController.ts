@@ -163,12 +163,11 @@ export class WindowController {
     try {
       const targetDoc = targetWindow.document;
       
-      // 統合ウィンドウ内の全てのビデオ要素にストリームを設定
+      // 統合ウィンドウ内のビデオ要素にストリームを設定
       const videos = [
         { id: 'source-video', clone: false },
         { id: 'mapping-video', clone: true },
         { id: 'cropped-video', clone: true },
-        { id: 'background-video', clone: true }
       ];
 
       videos.forEach(({ id, clone }) => {

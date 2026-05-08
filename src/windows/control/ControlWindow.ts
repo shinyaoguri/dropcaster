@@ -24,8 +24,6 @@ export class ControlWindow extends BaseWindow {
   private selectionBox: HTMLDivElement | null = null;
   private croppedContainer: HTMLDivElement | null = null;
   private croppedVideo: HTMLVideoElement | null = null;
-  private backgroundVideo: HTMLVideoElement | null = null;
-  
   private videoActualDimensions = {
     width: 1,
     height: 1
@@ -215,7 +213,6 @@ export class ControlWindow extends BaseWindow {
                       <p>MediaStreamの読み込み中...</p>
                     </video>
                     <div id="mapping-area">
-                      <video id="background-video" autoplay muted playsinline></video>
                       <div id="cropped-container">
                         <video id="cropped-video" autoplay muted playsinline></video>
                       </div>
@@ -690,16 +687,6 @@ export class ControlWindow extends BaseWindow {
         display: none;  /* 非表示（ストリームのソースとして使用） */
       }
       
-      #background-video {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        opacity: 0.2;
-        position: absolute;
-        top: 0;
-        left: 0;
-      }
-
       #cropped-container {
         position: absolute;
         border: 2px solid #ff00ff;
@@ -850,7 +837,6 @@ export class ControlWindow extends BaseWindow {
     // ビデオ要素を取得
     this.sourceVideo = doc.getElementById('source-video') as HTMLVideoElement;
     this.mappingVideo = doc.getElementById('mapping-video') as HTMLVideoElement;
-    this.backgroundVideo = doc.getElementById('background-video') as HTMLVideoElement;
     this.croppedContainer = doc.getElementById('cropped-container') as HTMLDivElement;
     this.croppedVideo = doc.getElementById('cropped-video') as HTMLVideoElement;
     this.selectionBox = doc.getElementById('selection-box') as HTMLDivElement;
@@ -1327,11 +1313,6 @@ export class ControlWindow extends BaseWindow {
     if (this.mappingVideo.srcObject && !this.croppedVideo.srcObject) {
       const stream = this.mappingVideo.srcObject as MediaStream;
       this.croppedVideo.srcObject = stream.clone();
-      
-      // 背景ビデオにも設定
-      if (this.backgroundVideo && !this.backgroundVideo.srcObject) {
-        this.backgroundVideo.srcObject = stream.clone();
-      }
 
       this.croppedVideo.addEventListener('loadedmetadata', () => {
         this.videoActualDimensions = {
@@ -1347,14 +1328,7 @@ export class ControlWindow extends BaseWindow {
 
   private updateVideoCrop(): void {
     if (!this.croppedVideo || !this.croppedContainer) return;
-
     applyVideoCrop(this.croppedVideo, this.sourceSelectionData);
-
-    if (this.backgroundVideo) {
-      this.backgroundVideo.style.width = '100%';
-      this.backgroundVideo.style.height = '100%';
-      this.backgroundVideo.style.transform = 'none';
-    }
   }
 
   private setupMessageListener(): void {
