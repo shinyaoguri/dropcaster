@@ -2,8 +2,11 @@ import { WindowManager, type WindowConfig } from '../managers/WindowManager';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import {
   defaultMappingsState,
+  parseMappingsState,
   type MappingsState,
 } from '../utils/mappingTransform';
+
+const STATE_STORAGE_KEY = 'dropcaster.mappings.v1';
 
 export class WindowController {
   private windowManager: WindowManager;
@@ -36,8 +39,31 @@ export class WindowController {
   constructor() {
     this.windowManager = new WindowManager();
     this.controlWindow = new ControlWindow();
-    
+
+    // 前回のマッピング設定を localStorage から復元（あれば）
+    const restored = this.loadFromStorage();
+    if (restored) this.state = restored;
+
     this.setupWindowCommunication();
+  }
+
+  private loadFromStorage(): MappingsState | null {
+    try {
+      const raw = localStorage.getItem(STATE_STORAGE_KEY);
+      if (!raw) return null;
+      return parseMappingsState(JSON.parse(raw));
+    } catch (error) {
+      console.warn('WindowController: localStorage 読込失敗', error);
+      return null;
+    }
+  }
+
+  private saveToStorage(): void {
+    try {
+      localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(this.state));
+    } catch (error) {
+      console.warn('WindowController: localStorage 書込失敗', error);
+    }
   }
 
   private calculateWindowPosition(): WindowConfig {
@@ -113,6 +139,7 @@ export class WindowController {
     options: { broadcastToControl?: boolean } = {}
   ): void {
     this.state = next;
+    this.saveToStorage();
     this.dispatchOverlayUpdate();
     if (options.broadcastToControl !== false) {
       this.broadcastStateToControl();

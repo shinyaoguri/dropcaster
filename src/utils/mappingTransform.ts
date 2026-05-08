@@ -146,6 +146,57 @@ export function withMappingRenamed(state: MappingsState, id: string, name: strin
   };
 }
 
+/**
+ * 任意の値が MappingsState として妥当かチェックして返す（不正なら null）。
+ * 保存ファイルや localStorage の読み込み時に使う。
+ */
+export function parseMappingsState(data: unknown): MappingsState | null {
+  if (!data || typeof data !== 'object') return null;
+  const obj = data as Record<string, unknown>;
+  const list = obj.mappings;
+  if (!Array.isArray(list) || list.length === 0) return null;
+
+  const isPoint = (p: unknown): p is Point =>
+    !!p && typeof (p as Point).x === 'number' && typeof (p as Point).y === 'number';
+
+  const validMappings: MappingEntry[] = [];
+  for (const raw of list) {
+    if (!raw || typeof raw !== 'object') return null;
+    const m = raw as Record<string, unknown>;
+    if (typeof m.id !== 'string') return null;
+    const src = m.source as Record<string, unknown> | undefined;
+    if (!src) return null;
+    if (
+      typeof src.x !== 'number' ||
+      typeof src.y !== 'number' ||
+      typeof src.width !== 'number' ||
+      typeof src.height !== 'number'
+    ) return null;
+    const q = m.quad as Record<string, unknown> | undefined;
+    if (!q || !isPoint(q.topLeft) || !isPoint(q.topRight) || !isPoint(q.bottomRight) || !isPoint(q.bottomLeft)) {
+      return null;
+    }
+    validMappings.push({
+      id: m.id,
+      name: typeof m.name === 'string' ? m.name : undefined,
+      enabled: typeof m.enabled === 'boolean' ? m.enabled : undefined,
+      source: { x: src.x, y: src.y, width: src.width, height: src.height },
+      quad: {
+        topLeft:     { x: q.topLeft.x,     y: q.topLeft.y },
+        topRight:    { x: q.topRight.x,    y: q.topRight.y },
+        bottomRight: { x: q.bottomRight.x, y: q.bottomRight.y },
+        bottomLeft:  { x: q.bottomLeft.x,  y: q.bottomLeft.y },
+      },
+    });
+  }
+
+  let activeId = typeof obj.activeId === 'string' ? obj.activeId : '';
+  if (!validMappings.some(m => m.id === activeId)) {
+    activeId = validMappings[0].id;
+  }
+  return { mappings: validMappings, activeId };
+}
+
 const MIN_DIMENSION = 0.0001;
 
 /**

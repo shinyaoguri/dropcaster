@@ -13,6 +13,7 @@ import {
   withActiveSet,
   withMappingToggled,
   withMappingRenamed,
+  parseMappingsState,
   isMappingEnabled,
   mappingColor,
   CORNER_KEYS,
@@ -100,6 +101,10 @@ export class ControlWindow extends BaseWindow {
               <h3>マッピング一覧</h3>
               <div id="mappings-list" class="mappings-list"></div>
               <button id="add-mapping-btn" class="tool-button">＋ 追加</button>
+              <div class="io-buttons">
+                <button id="export-mappings-btn" class="tool-button">保存</button>
+                <button id="import-mappings-btn" class="tool-button">読み込み</button>
+              </div>
             </div>
 
             <div class="tool-section">
@@ -393,6 +398,16 @@ export class ControlWindow extends BaseWindow {
         flex-direction: column;
         gap: 4px;
         margin-bottom: 10px;
+      }
+
+      .io-buttons {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .io-buttons .tool-button {
+        flex: 1;
       }
 
       .mapping-list-item {
@@ -1025,6 +1040,18 @@ export class ControlWindow extends BaseWindow {
       });
     }
 
+    // 保存（JSON ダウンロード）
+    const exportBtn = doc.getElementById('export-mappings-btn');
+    if (exportBtn) {
+      exportBtn.addEventListener('click', () => this.exportMappingsToFile());
+    }
+
+    // 読み込み（JSON ファイルピッカー）
+    const importBtn = doc.getElementById('import-mappings-btn');
+    if (importBtn) {
+      importBtn.addEventListener('click', () => this.importMappingsFromFile());
+    }
+
     // 初期一覧を描画
     this.renderMappingsList();
 
@@ -1099,6 +1126,48 @@ export class ControlWindow extends BaseWindow {
         this.replaceState(withRemovedMapping(this.state, id));
       });
     });
+  }
+
+  private exportMappingsToFile(): void {
+    if (!this.window) return;
+    const json = JSON.stringify(this.state, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = this.window.document.createElement('a');
+    a.href = url;
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.download = `dropcaster-mappings-${ts}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private importMappingsFromFile(): void {
+    if (!this.window) return;
+    const input = this.window.document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      file.text()
+        .then(text => {
+          try {
+            const parsed = parseMappingsState(JSON.parse(text));
+            if (!parsed) {
+              this.window?.alert('読み込みに失敗しました（フォーマット不正）');
+              return;
+            }
+            this.replaceState(parsed);
+          } catch (error) {
+            this.window?.alert('読み込みに失敗しました（JSON 解析失敗）');
+            console.error('ControlWindow: JSON parse error', error);
+          }
+        })
+        .catch(error => {
+          console.error('ControlWindow: file read error', error);
+        });
+    });
+    input.click();
   }
 
   private startInlineRename(nameSpan: HTMLElement, id: string): void {
