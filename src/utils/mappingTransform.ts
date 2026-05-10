@@ -215,9 +215,23 @@ export function applyVideoCrop(video: HTMLVideoElement, source: SourceRect): voi
   const safeHeight = Math.max(source.height, MIN_DIMENSION);
   const scaleX = 100 / safeWidth;
   const scaleY = 100 / safeHeight;
+
+  // source は元 canvas / video 全体を 0..100% とする矩形。
+  // destination container に表示されるべき元画像上の座標 p は、
+  // container 内では (p - source.x) / source.width の位置に来る必要がある。
+  //
+  // そのためまず video 自身を 100 / source.width 倍に拡大し、
+  // source.width% 分の元画像が container の 100% 幅をちょうど埋めるようにする。
+  // 次に translate(-source.x%) をかける。CSS の translate(%) は「変形後の親」
+  // ではなく「移動する要素自身のサイズ」基準なので、拡大済み video の
+  // source.x% は元画像座標で source.x% ぶんの移動に相当する。
+  //
+  // 例: x=25,width=50 の場合、video 幅は 200%。translateX(-25%) は
+  // 200% 幅の 25% = container 幅の 50% だけ左へ動くため、
+  // 元画像の 25..75% が container の 0..100% に一致する。
   video.style.width = `${scaleX * 100}%`;
   video.style.height = `${scaleY * 100}%`;
-  video.style.transform = `translate(${-source.x * scaleX}%, ${-source.y * scaleY}%)`;
+  video.style.transform = `translate(${-source.x}%, ${-source.y}%)`;
 }
 
 export function defaultQuad(): Quad {
