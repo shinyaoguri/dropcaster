@@ -231,9 +231,7 @@ async function scanSketches(options = {}) {
                 sketches[sketchIndex].userData = {
                   userId: userData.userId,
                   userName: userData.userName,
-                  userUrl: userData.userUrl,
-                  avatarUrl: userData.avatarUrl,
-                  avatarFile: userData.avatarFile
+                  userUrl: userData.userUrl
                 };
               }
 
@@ -292,7 +290,6 @@ async function scanSketches(options = {}) {
     console.error(`\n📋 最終的なスケッチ情報確認:`);
     console.error(`   - 総スケッチ数: ${sketches.length}件`);
     console.error(`   - スケッチデータ統合済み: ${sketches.filter(s => s.userData).length}件`);
-    console.error(`   - アバター画像付き: ${sketches.filter(s => s.userData && s.userData.avatarFile).length}件`);
 
     // watchModeの場合は新規スケッチ情報を出力
     if (watchMode && newSketches.length > 0) {
@@ -319,10 +316,9 @@ async function scanSketches(options = {}) {
         const generatedContent = await readFile(sketchesJsonPath, 'utf-8');
         const parsedContent = JSON.parse(generatedContent);
         const userDataCount = parsedContent.filter(s => s.userData).length;
-        const avatarCount = parsedContent.filter(s => s.userData && s.userData.avatarFile).length;
         const titleCount = parsedContent.filter(s => s.title && s.title !== s.id).length;
 
-        console.error(`✅ ファイル内容確認: スケッチ${parsedContent.length}件, スケッチデータ${userDataCount}件, アバター画像${avatarCount}件, タイトル更新${titleCount}件`);
+        console.error(`✅ ファイル内容確認: スケッチ${parsedContent.length}件, スケッチデータ${userDataCount}件, タイトル更新${titleCount}件`);
 
       } catch (error) {
         console.error(`❌ sketches.jsonファイルの生成に失敗:`, error.message);
@@ -345,6 +341,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     Number(getArgValue(args, '--external-browser-interval-ms') || process.env.DROPCASTER_EXTERNAL_BROWSER_INTERVAL_MS || 1000),
     1000
   );
+  const apiRequestIntervalMs = Math.max(
+    Number(getArgValue(args, '--api-request-interval-ms') || process.env.DROPCASTER_API_REQUEST_INTERVAL_MS || 1500),
+    0
+  );
+  const apiToken = getArgValue(args, '--api-token') ||
+    getArgValue(args, '--openprocessing-api-token') ||
+    process.env.OPENPROCESSING_API_TOKEN ||
+    process.env.OP_API_TOKEN ||
+    process.env.DROPCASTER_OPENPROCESSING_API_TOKEN ||
+    null;
   const browserProfile = getArgValue(args, '--browser-profile') || process.env.DROPCASTER_BROWSER_PROFILE || (headed ? '.dropcaster/browser-profile' : null);
 
   // コマンドライン引数を解析（新旧両方のオプション名をサポート）
@@ -360,6 +366,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       headed,
       externalBrowser,
       externalBrowserIntervalMs,
+      apiRequestIntervalMs,
+      apiToken,
       browserProfile,
       manualChallenge: args.includes('--manual-challenge') || headed || process.env.DROPCASTER_MANUAL_CHALLENGE === '1',
       challengeTimeoutMs: Number(getArgValue(args, '--challenge-timeout-ms') || process.env.DROPCASTER_CHALLENGE_TIMEOUT_MS || 180000)
@@ -407,9 +415,7 @@ async function writeManualMetadataTemplate(sketchId, reason) {
     userData: {
       userId: '',
       userName: '',
-      userUrl: '',
-      avatarUrl: '',
-      avatarFile: ''
+      userUrl: ''
     }
   };
 

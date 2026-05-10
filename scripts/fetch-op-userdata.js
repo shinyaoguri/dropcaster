@@ -1,5 +1,4 @@
 import { OpenProcessingScraper } from './modules/scraper.js';
-import { AvatarManager } from './modules/avatar-manager.js';
 import { SCRAPING_CONFIG } from './modules/config.js';
 
 /**
@@ -12,26 +11,21 @@ export async function fetchUserDataForSketches(sketchIds, options = {}) {
   console.error(`📋 受け取ったスケッチID: ${JSON.stringify(sketchIds)}`);
   
   const scraper = new OpenProcessingScraper(options);
-  const avatarManager = new AvatarManager();
   
   try {
-    console.error(`🔧 ブラウザを初期化中...`);
+    console.error(`🔧 OpenProcessing取得クライアントを初期化中...`);
     await scraper.init();
-    console.error(`✅ ブラウザ初期化完了`);
+    console.error(`✅ OpenProcessing取得クライアント初期化完了`);
     console.error(`🚀 OpenProcessingから${sketchIds.length}件のスケッチのユーザー情報を取得中...`);
     
-    const results = await scrapeMultipleSketches(sketchIds, scraper, avatarManager);
+    const results = await scrapeMultipleSketches(sketchIds, scraper);
     
     console.error(`✅ 完了: ${results.length}件のスケッチを処理しました`);
     
-    // アバター画像の統計情報を出力
-    const stats = avatarManager.getDownloadStats();
     const uniqueUsers = new Set(results.filter(r => !r.error && r.userId).map(r => r.userId)).size;
     console.error(`📊 ユーザー統計:`);
     console.error(`   - 処理したスケッチ数: ${results.length}`);
     console.error(`   - ユニークユーザー数: ${uniqueUsers}`);
-    console.error(`   - ダウンロードしたアバター画像数: ${stats.totalDownloaded}`);
-    console.error(`   - 重複回避による節約: ${results.length - stats.totalDownloaded}件`);
     
     // 結果をコンソールに出力
     console.error('\n=== 取得したスケッチ情報 ===');
@@ -44,10 +38,6 @@ export async function fetchUserDataForSketches(sketchIds, options = {}) {
         console.error(`   ユーザーID: ${result.userId}`);
         console.error(`   ユーザー名: ${result.userName}`);
         console.error(`   ユーザーURL: ${result.userUrl}`);
-        console.error(`   アイコンURL: ${result.avatarUrl}`);
-        if (result.avatarFile) {
-          console.error(`   アイコンファイル: ${result.avatarFile}`);
-        }
         console.error('');
       }
     });
@@ -59,16 +49,16 @@ export async function fetchUserDataForSketches(sketchIds, options = {}) {
     console.error('📚 エラーの詳細:', error.stack);
     return [];
   } finally {
-    console.error(`🔧 ブラウザを終了中...`);
+    console.error(`🔧 OpenProcessing取得クライアントを終了中...`);
     await scraper.close();
-    console.error(`✅ ブラウザ終了完了`);
+    console.error(`✅ OpenProcessing取得クライアント終了完了`);
   }
 }
 
 /**
  * 複数のスケッチを処理
  */
-async function scrapeMultipleSketches(sketchIds, scraper, avatarManager) {
+async function scrapeMultipleSketches(sketchIds, scraper) {
   const results = [];
   
   for (const sketchId of sketchIds) {
@@ -76,27 +66,6 @@ async function scrapeMultipleSketches(sketchIds, scraper, avatarManager) {
     
     try {
       const sketchInfo = await scraper.getSketchUserInfo(sketchId);
-      
-      if (!sketchInfo.error) {
-        // アイコンをダウンロード（ユーザーIDベースで管理）
-        const avatarFile = await avatarManager.downloadAvatar(
-          sketchInfo.avatarUrl, 
-          sketchInfo.userId, 
-          sketchId
-        );
-        sketchInfo.avatarFile = avatarFile;
-        
-        // ダウンロード状況をログ出力
-        if (avatarFile) {
-          const avatarKey = sketchInfo.userId || `sketch_${sketchId}`;
-          if (avatarManager.isAlreadyDownloaded(avatarKey)) {
-            console.error(`♻️ [${sketchId}] アバター画像を再利用: ${avatarFile}`);
-          } else {
-            console.error(`✅ [${sketchId}] アバター画像を新規ダウンロード: ${avatarFile}`);
-          }
-        }
-      }
-      
       results.push(sketchInfo);
       
       // リクエスト間隔を空ける
@@ -109,19 +78,12 @@ async function scrapeMultipleSketches(sketchIds, scraper, avatarManager) {
     }
   }
   
-  // ダウンロード統計を出力
-  const stats = avatarManager.getDownloadStats();
-  console.error(`\n📊 アバター画像ダウンロード統計:`);
-  console.error(`   - 総ダウンロード数: ${stats.totalDownloaded}`);
-  console.error(`   - 重複回避による節約: ${sketchIds.length - stats.totalDownloaded}件`);
-  
   return results;
 }
 
 // 使用例
 async function main() {
   const scraper = new OpenProcessingScraper();
-  const avatarManager = new AvatarManager();
   
   try {
     await scraper.init();
@@ -136,10 +98,6 @@ async function main() {
       console.log('- ユーザーID:', sketchInfo.userId);
       console.log('- ユーザー名:', sketchInfo.userName);
       console.log('- ユーザーURL:', sketchInfo.userUrl);
-      console.log('- アイコンURL:', sketchInfo.avatarUrl);
-      
-      // アイコンをダウンロード
-      await avatarManager.downloadAvatar(sketchInfo.avatarUrl, sketchInfo.userId, sketchId);
     } else {
       console.error('エラー:', sketchInfo.error);
     }

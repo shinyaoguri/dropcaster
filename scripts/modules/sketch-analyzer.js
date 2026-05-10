@@ -105,7 +105,7 @@ function normalizeUserData(userData) {
   }
 
   const normalized = {};
-  for (const field of ['userId', 'userName', 'userUrl', 'avatarUrl', 'avatarFile']) {
+  for (const field of ['userId', 'userName', 'userUrl']) {
     const value = normalizeString(userData[field]);
     if (value) {
       normalized[field] = value;

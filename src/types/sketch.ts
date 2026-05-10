@@ -13,8 +13,6 @@ export interface Sketch {
     userId: string;
     userName: string;
     userUrl: string;
-    avatarUrl: string;
-    avatarFile?: string; // オプショナルに変更
   };
 }
 

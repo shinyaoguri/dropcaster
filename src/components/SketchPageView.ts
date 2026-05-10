@@ -50,12 +50,10 @@ export class SketchPageView {
 
     // userDataの存在チェックとデフォルト値の設定
     const userName = sketch.userData?.userName || 'Unknown User';
-    const avatarFile = publicAssetPath(sketch.userData?.avatarFile || 'vite.svg');
     const title = escapeHtml(sketch.title);
     const escapedUserName = escapeHtml(userName);
 
     console.log('SketchPageView: Using userName:', userName);
-    console.log('SketchPageView: Using avatarFile:', avatarFile);
 
     app.innerHTML = `
       <div class="fullscreen-sketch-container">
@@ -74,11 +72,6 @@ export class SketchPageView {
 
         <div class="sketch-overlay-info ui-element">
           <div class="sketch-overlay-content">
-            <img
-              src="${escapeHtml(avatarFile)}"
-              alt="${escapedUserName}"
-              class="overlay-avatar-small"
-            />
             <div class="overlay-text">
               <div class="overlay-username-small">${escapedUserName}</div>
               <div class="overlay-title-small">${title}</div>

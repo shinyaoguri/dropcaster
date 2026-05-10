@@ -18,7 +18,6 @@ export class SketchCard {
 
     // 安全なプロパティアクセス
     const previewGif = publicAssetPath(sketch.previewGif || 'vite.svg');
-    const avatarFile = publicAssetPath(sketch.userData?.avatarFile || 'vite.svg');
     const title = escapeHtml(sketch.title);
     const userName = escapeHtml(sketch.userData?.userName || 'Unknown User');
     const sketchUrl = safeUrl(sketch.sketchUrl);
@@ -35,11 +34,6 @@ export class SketchCard {
           />
           <div class="sketch-overlay">
             <div class="sketch-bottom-left">
-              <img
-                src="${escapeHtml(avatarFile)}"
-                alt="${userName}"
-                class="author-avatar"
-              />
               <div class="sketch-info">
                 <div class="sketch-title">
                   ${sketch.sketchUrl ?

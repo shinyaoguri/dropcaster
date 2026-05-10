@@ -15,25 +15,12 @@ export const PREVIEW_OPTIONS = {
 export const DEFAULT_DESCRIPTION_SUFFIX = ' スケッチ';
 export const DEFAULT_PATH_PREFIX = '../sketches/';
 export const PREVIEW_PATH_PREFIX = '../previews/';
-export const AVATAR_PATH_PREFIX = '../avatars/';
-
-// CLIから呼ばれた場合のプロジェクトルート
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
-// __filenameと__dirnameを関数でラップして重複定義を避ける
-function getProjectRoot() {
-  const currentFilename = fileURLToPath(import.meta.url);
-  const currentDirname = dirname(currentFilename);
-  return process.env.DROPCASTER_PROJECT_ROOT || resolve(currentDirname, '../..');
-}
-
-const projectRoot = getProjectRoot();
 
 // スクレイピング関連の設定
 export const SCRAPING_CONFIG = {
   // OpenProcessing.orgの設定
   baseUrl: 'https://openprocessing.org',
+  apiBaseUrl: 'https://openprocessing.org/api',
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
   
   // タイムアウト設定
@@ -41,28 +28,16 @@ export const SCRAPING_CONFIG = {
   elementWaitTimeout: 10000,
   elementWaitTimeoutShort: 5000,
   pageWaitTime: 3000,
+  apiRequestTimeout: 30000,
   
   // リクエスト間隔（レート制限対策）
   requestInterval: 1000,
-  externalBrowserIntervalMs: 1000,
-  
-  // アバター画像設定
-  avatarDownloadTimeout: 10000,
-  avatarDirectory: resolve(projectRoot, 'public/avatars')
-};
-
-// ファイル拡張子マッピング
-export const CONTENT_TYPE_EXTENSIONS = {
-  'image/png': '.png',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-  'image/jpeg': '.jpg',
-  'image/jpg': '.jpg'
+  apiRequestIntervalMs: 1500,
+  externalBrowserIntervalMs: 1000
 };
 
 // デフォルト値
 export const DEFAULTS = {
-  extension: '.jpg',
   unknownUser: 'Unknown User',
   unknownTitle: 'Unknown Title'
 };

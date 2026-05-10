@@ -84,7 +84,11 @@ npm run scan:reset
 npm run scan:watch
 ```
 
-`npm run scan` は OpenProcessing のページを OS の既定ブラウザで順に開き、取得失敗扱いとして `dropcaster.meta.example.json` をスケッチごとに作成します。ブラウザで見たユーザー名・URL などを `dropcaster.meta.json` にリネームしたうえで埋めてください。Cloudflare Turnstile 等を puppeteer で突破する経路は持たない設計です（手動入力で常に確実に通せる方を選択）。
+`npm run scan` は OpenProcessing Public API (`/api/sketch/{id}`, `/api/user/{id}`) から、スケッチタイトル・ユーザー名・ユーザーURLなどを取得します。API token が必要な環境では、OpenProcessing のアカウント設定で token を作成してから `OPENPROCESSING_API_TOKEN` に設定してください。
+
+```bash
+OPENPROCESSING_API_TOKEN=your_token npm run scan
+```
 
 ```json
 {
@@ -96,9 +100,7 @@ npm run scan:watch
   "userData": {
     "userId": "12345",
     "userName": "Author name",
-    "userUrl": "https://openprocessing.org/user/12345",
-    "avatarUrl": "",
-    "avatarFile": ""
+    "userUrl": "https://openprocessing.org/user/12345"
   }
 }
 ```
@@ -167,7 +169,6 @@ my-gallery/
 ├── public/
 │   ├── sketches/      # コピーされたスケッチ
 │   ├── previews/      # 生成されたGIFプレビュー
-│   ├── avatars/       # ユーザーアバター
 │   └── sketches.json  # メタデータ
 ├── dist/              # ビルドファイル
 ├── package.json

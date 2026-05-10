@@ -1,5 +1,4 @@
 import type { Sketch } from '../types/sketch.js';
-import { safeUrl } from '../utils/html.js';
 import { publicAssetPath } from '../utils/paths.js';
 
 export class SlideshowView {
@@ -67,7 +66,6 @@ export class SlideshowView {
         <div class="slideshow-frame-container">
           <iframe id="slideshow-frame" class="slideshow-frame" frameborder="0"></iframe>
           <div id="sketch-info" class="sketch-info">
-            <img id="sketch-avatar" class="sketch-avatar" src="" alt="">
             <div class="sketch-details">
               <h3 id="sketch-title" class="sketch-title"></h3>
               <p id="sketch-author" class="sketch-author"><span class="author-by">by</span> <span class="author-name"></span></p>
@@ -291,55 +289,50 @@ export class SlideshowView {
       }
       
       /* スケッチ情報 */
-      .sketch-info {
+      .slideshow-container .sketch-info {
         position: absolute;
         bottom: 30px;
         right: 30px;
         display: flex;
-        align-items: center;
-        gap: 15px;
-        background: rgba(0, 0, 0, 0.7);
+        align-items: stretch;
+        background: rgba(15, 23, 42, 0.72);
         backdrop-filter: blur(10px);
-        padding: 15px 20px;
-        border-radius: 12px;
+        padding: 14px 18px 14px 20px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-left: 2px solid rgba(96, 165, 250, 0.9);
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
         color: white;
         transition: opacity 0.5s ease;
-        max-width: 400px;
+        max-width: min(440px, calc(100vw - 60px));
         opacity: 0;
       }
       
-      .sketch-info.fade-in {
+      .slideshow-container .sketch-info.fade-in {
         opacity: 1;
       }
       
       .slideshow-container:not(:hover) .sketch-info.fade-in {
         opacity: 0.7;
       }
-      
-      .sketch-avatar {
-        width: 50px;
-        height: 50px;
-        border-radius: 50%;
-        object-fit: cover;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-      }
-      
-      .sketch-details {
+
+      .slideshow-container .sketch-details {
         flex: 1;
         min-width: 0;
       }
       
-      .sketch-title {
+      .slideshow-container .sketch-title {
         margin: 0;
-        font-size: 16px;
+        font-size: 18px;
         font-weight: 600;
+        line-height: 1.15;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
       
-      .sketch-author {
-        margin: 4px 0 0 0;
+      .slideshow-container .sketch-author {
+        margin: 6px 0 0 0;
         font-size: 14px;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -348,13 +341,13 @@ export class SlideshowView {
         align-items: baseline;
       }
       
-      .author-by {
+      .slideshow-container .author-by {
         color: rgba(255, 255, 255, 0.5);
         font-size: 12px;
         margin-right: 4px;
       }
       
-      .author-name {
+      .slideshow-container .author-name {
         color: rgba(255, 255, 255, 0.9);
       }
 
@@ -577,7 +570,6 @@ export class SlideshowView {
     
     const titleElement = document.getElementById('sketch-title') as HTMLHeadingElement;
     const authorNameElement = document.querySelector('.author-name') as HTMLSpanElement;
-    const avatarElement = document.getElementById('sketch-avatar') as HTMLImageElement;
     
     if (titleElement) {
       titleElement.textContent = sketch.title || `Sketch ${sketch.id}`;
@@ -586,49 +578,6 @@ export class SlideshowView {
     if (authorNameElement) {
       // userDataが存在する場合はユーザ名を使用
       authorNameElement.textContent = sketch.userData?.userName || 'Anonymous';
-    }
-    
-    if (avatarElement) {
-      // アバター画像があれば設定、なければデフォルトアバター
-      const avatarUrl = sketch.userData?.avatarUrl || sketch.userData?.avatarFile;
-      if (avatarUrl) {
-        avatarElement.src = safeUrl(publicAssetPath(avatarUrl), publicAssetPath('vite.svg'));
-        avatarElement.style.display = 'block';
-        // 既存のデフォルトアバターを削除
-        const existingDefault = avatarElement.parentElement?.querySelector('.default-avatar');
-        if (existingDefault) {
-          existingDefault.remove();
-        }
-      } else {
-        // デフォルトアバターを生成（名前の頭文字）
-        const userName = sketch.userData?.userName || 'Anonymous';
-        const initial = userName[0].toUpperCase();
-        avatarElement.style.display = 'none';
-        const avatarContainer = avatarElement.parentElement;
-        if (avatarContainer) {
-          const defaultAvatar = document.createElement('div');
-          defaultAvatar.className = 'default-avatar';
-          defaultAvatar.textContent = initial;
-          defaultAvatar.style.cssText = `
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-            font-weight: bold;
-            color: white;
-            border: 2px solid rgba(255, 255, 255, 0.3);
-          `;
-          const existingDefault = avatarContainer.querySelector('.default-avatar');
-          if (existingDefault) {
-            existingDefault.remove();
-          }
-          avatarContainer.insertBefore(defaultAvatar, avatarContainer.firstChild);
-        }
-      }
     }
   }
 
