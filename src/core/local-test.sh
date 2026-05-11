@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ローカルテスト用スクリプト
-# 使い方: ./scripts/local-test.sh [project-name]
+# 使い方: ./src/core/local-test.sh [project-name]
 
 PROJECT_NAME=${1:-test-gallery}
 DROPCASTER_DIR=$(pwd)

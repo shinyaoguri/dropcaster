@@ -33,7 +33,7 @@ sudo apt-get install ffmpeg
 
 3. プレビュー生成付きでスケッチをスキャン:
 ```bash
-node scripts/scan-sketches.js --generate-previews
+node src/core/scan-sketches.js --generate-previews
 ```
 
 ### GitHub Actions での自動実行
@@ -42,7 +42,7 @@ node scripts/scan-sketches.js --generate-previews
 
 ## 設定オプション
 
-`scripts/modules/config.js` の `PREVIEW_OPTIONS` で設定可能:
+`src/core/modules/config.js` の `PREVIEW_OPTIONS` で設定可能:
 
 ```javascript
 const PREVIEW_OPTIONS = {
@@ -99,7 +99,7 @@ sudo apt-get update && sudo apt-get install --reinstall ffmpeg
 ### メモリ不足エラー
 大量のスケッチがある場合、Node.jsのヒープサイズを増加:
 ```bash
-node --max-old-space-size=4096 scripts/scan-sketches.js --generate-previews
+node --max-old-space-size=4096 src/core/scan-sketches.js --generate-previews
 ```
 
 ### 権限エラー（GitHub Actions）

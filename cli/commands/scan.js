@@ -29,7 +29,7 @@ export async function scan(options = {}) {
   }
   
   // scan-sketches.jsのパスを解決
-  const scanScriptPath = resolve(__dirname, '../../scripts/scan-sketches.js');
+  const scanScriptPath = resolve(__dirname, '../../src/core/scan-sketches.js');
   
   // コマンドライン引数を構築
   const args = ['--write-file'];

@@ -30,7 +30,6 @@
   },
   "files": [
     "cli",
-    "scripts",
     "src",
     "public/assets",
     "index.html",
@@ -43,9 +42,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview dist",
-    "scan": "node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file",
-    "scan:reset": "rm -rf public/sketches public/previews && node scripts/scan-sketches.js --generate-previews --fetch-user-data --write-file --force-regenerate",
-    "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node scripts/scan-sketches.js --watch-mode --write-file\""
+    "scan": "node src/core/scan-sketches.js --generate-previews --fetch-user-data --write-file",
+    "scan:reset": "rm -rf public/sketches public/previews && node src/core/scan-sketches.js --generate-previews --fetch-user-data --write-file --force-regenerate",
+    "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node src/core/scan-sketches.js --watch-mode --write-file\""
   },
   "devDependencies": {
     "nodemon": "^3.0.2",

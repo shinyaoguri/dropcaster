@@ -33,7 +33,7 @@ jobs:
         ffmpeg -version
       
     - name: Generate sketch previews
-      run: node scripts/scan-sketches.js --generate-previews
+      run: node src/core/scan-sketches.js --generate-previews
       
     - name: Commit and push changes
       run: |
