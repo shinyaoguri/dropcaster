@@ -24,6 +24,9 @@ dist-ssr
 *.sln
 *.sw?
 
+# このリポジトリ（= dropcaster ツール本体）の sketches/ と public/ はローカルでの
+# 動作確認用なので git 管理しない。`dropcaster init` で作るギャラリー側はこれらをコミットする
+# （生成される .gitignore を参照: src/cli/commands/init.js）。
 sketches/*
 
 # Public directory - ignore generated content but keep PWA files

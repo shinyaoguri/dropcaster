@@ -63,14 +63,14 @@ export async function init(options) {
     // Create project directory
     await fs.mkdir(projectPath, { recursive: true });
     
-    // Create source sketches directory (for development)
+    // Create source sketches directory（作品ソース。git にコミットする）
     await fs.mkdir(join(projectPath, 'sketches'), { recursive: true });
-    
-    // Create public directories (auto-generated, should be gitignored)
+
+    // Create public directory（dropcaster scan が sketches.json / sketches/ / previews/ を生成。
+    // これらも git にコミットして GitHub Pages のデプロイに含める）
     await fs.mkdir(join(projectPath, 'public'), { recursive: true });
     await fs.mkdir(join(projectPath, 'public/sketches'), { recursive: true });
     await fs.mkdir(join(projectPath, 'public/previews'), { recursive: true });
-    await fs.mkdir(join(projectPath, 'public/avatars'), { recursive: true });
     
     // Create default icon (simple SVG)
     const defaultIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
@@ -125,15 +125,25 @@ export async function init(options) {
     );
     
     // Create .gitignore
-    const gitignore = `node_modules/
+    // ※ sketches/ と public/ は意図的に無視しない — GitHub Pages のデプロイにはこれらが必要。
+    //   無視するのは依存・ビルド成果物・OS/エディタの一時ファイルのみ。
+    const gitignore = `# 依存・ビルド成果物
+node_modules/
 dist/
-public/
+
+# OS / エディタ
 .DS_Store
-	*.log
-	.env
-	.cache/
-	.dropcaster/`;
-    
+*.log
+.env
+.cache/
+.dropcaster/
+
+# 注意:
+#   sketches/ … 作品のソース
+#   public/   … \`npm run scan\` が生成するメタデータ・プレビュー（sketches.json / sketches/ / previews/）
+# どちらも git にコミットしてください。GitHub Pages へのデプロイに含まれます。
+`;
+
     await fs.writeFile(join(projectPath, '.gitignore'), gitignore, 'utf-8');
     
     // Create README
@@ -167,11 +177,19 @@ npm run build
 
 ## Deployment
 
-Deploy the \`dist/\` directory to any static hosting service:
-- GitHub Pages
-- Netlify
-- Vercel
-- Surge.sh
+\`sketches/\`（作品ソース）と \`public/\`（\`npm run scan\` が生成するメタデータ・プレビュー）を
+git にコミットしてください — GitHub Pages のデプロイにはこれらが必要です。
+
+\`\`\`bash
+npm run scan      # メタデータ・プレビューを更新（public/ に出力）
+git add sketches public
+git commit -m "Update gallery"
+git push
+\`\`\`
+
+公開先での配信:
+- **GitHub Pages**: \`npm run build\` で \`dist/\` を生成してデプロイ（GitHub Actions のワークフロー例は今後追加予定）
+- **Netlify / Vercel**: ビルドコマンド \`npm run build\`、公開ディレクトリ \`dist\`
 
 ## Configuration
 
