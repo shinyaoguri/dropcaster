@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import ora from 'ora';
 import prompts from 'prompts';
+import { checkEnv, formatEnvReport } from '../../core/check-env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -237,7 +238,22 @@ function windowResized() {
     console.log(chalk.cyan('  npm run scan'));
     console.log(chalk.cyan('  npm run dev'));
     console.log();
-    
+
+    // 環境チェック（FFmpeg / Chromium / Node）— プレビュー生成に必要なもの
+    try {
+      const report = await checkEnv();
+      const envMessage = formatEnvReport(report, { title: '環境チェック（プレビュー生成に必要）' });
+      if (envMessage) {
+        console.log(envMessage);
+        if (!report.ffmpeg.ok || !report.chromium.ok) {
+          console.log(chalk.gray('  ※ 不足分はプレビュー GIF 生成にのみ必要です。後から入れてもOK（`dropcaster doctor` で再確認）。'));
+        }
+        console.log();
+      }
+    } catch {
+      // 環境チェックの失敗は致命的ではないので無視
+    }
+
   } catch (error) {
     spinner.fail('Failed to create project');
     console.error(chalk.red(error.message));

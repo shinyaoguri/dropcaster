@@ -6,6 +6,7 @@ import { dev } from './commands/dev.js';
 import { preview } from './commands/preview.js';
 import { scan, scanReset } from './commands/scan.js';
 import { init } from './commands/init.js';
+import { doctor } from './commands/doctor.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -73,5 +74,10 @@ program
   .option('--external-browser', 'Open sketches in the default browser instead of the API (for manual dropcaster.meta.json entry)')
   .option('--external-browser-interval-ms <ms>', 'Delay between default-browser opens, clamped to at least 1000ms', '1000')
   .action(scanReset);
+
+program
+  .command('doctor')
+  .description('Check that required tools (FFmpeg, Chromium, Node) are available')
+  .action(doctor);
 
 program.parse();

@@ -7,6 +7,7 @@ import { fetchUserDataForSketches } from './fetch-op-userdata.js';
 import { analyzeSketch } from './modules/sketch-analyzer.js';
 import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists } from './modules/file-manager.js';
 import { generateSketchPreview } from './modules/preview-generator.js';
+import { checkPreviewTools } from './check-env.js';
 
 // __filenameと__dirnameをローカルスコープで定義
 const getDirectories = () => {
@@ -76,11 +77,26 @@ async function scanSketches(options = {}) {
       console.error(`ℹ️ sketches.jsonが存在しません。新規作成します。`);
     }
 
+    // プレビュー生成に必要なツール（FFmpeg / Chromium）が無ければスキップ（メタデータ収集は続行）
+    let previewToolsOk = true;
+    if (generatePreviews || watchMode || incremental) {
+      const { ok, missing } = await checkPreviewTools();
+      if (!ok) {
+        previewToolsOk = false;
+        console.error('\n⚠️  プレビュー GIF の生成に必要なツールが見つからないため、プレビュー生成をスキップします:');
+        for (const item of missing) {
+          console.error(`   ✗ ${item.name}${item.detail ? ` — ${item.detail}` : ''}`);
+          if (item.hint) console.error(`     インストール方法: ${item.hint}`);
+        }
+        console.error('   （メタデータのスキャンとスケッチのコピーは続行します。状態は `dropcaster doctor` で確認できます）\n');
+      }
+    }
+
     // 必要なディレクトリを作成
     await ensureDirectoryExists(sketchesDir, 'sketches directory');
     await ensureDirectoryExists(publicSketchesDir, 'public/sketches directory');
 
-    if (generatePreviews || watchMode) {
+    if (previewToolsOk && (generatePreviews || watchMode)) {
       await ensureDirectoryExists(previewsDir, 'public/previews directory');
     }
 
@@ -144,8 +160,9 @@ async function scanSketches(options = {}) {
           await copySketchToPublic(entry.name, sketchPath, publicSketchesDir, forceRegenerate);
 
           // プレビューGIFを生成（オプション指定時、watchModeで新規、またはincrementalでプレビューがない場合）
+          // ただし FFmpeg / Chromium が無いときは previewToolsOk=false でスキップ
           const needsPreview = incremental && !existingPreviewData[entry.name];
-          const shouldGeneratePreview = generatePreviews || (watchMode && newSketches.includes(entry.name)) || needsPreview;
+          const shouldGeneratePreview = previewToolsOk && (generatePreviews || (watchMode && newSketches.includes(entry.name)) || needsPreview);
           if (shouldGeneratePreview) {
             try {
               const previewPath = await generateSketchPreview(entry.name, sketchPath, previewsDir, forceRegenerate);

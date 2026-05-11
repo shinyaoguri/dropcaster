@@ -36,7 +36,7 @@
     "tsconfig.json"
   ],
   "scripts": {
-    "postinstall": "playwright install chromium",
+    "postinstall": "node src/core/postinstall.js",
     "prepublishOnly": "npm run build",
     "dev": "vite",
     "build": "tsc && vite build",
