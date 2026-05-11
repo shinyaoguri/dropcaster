@@ -126,7 +126,9 @@ export class SketchPageController {
 
   private openWindows(): void {
     console.log('SketchPageController: ウィンドウコントローラーを使用してウィンドウを開きます');
+    // クリックの user gesture 内で コントロール／出力ウィンドウを開く（スライドショーと同様）
     this.windowController.openBothWindows();
+    this.windowController.openOutputWindow();
 
     // ウィンドウが開かれた後、Canvasストリーミングを開始（より長い遅延で確実に）
     this.openWindowsTimeout = setTimeout(() => {
