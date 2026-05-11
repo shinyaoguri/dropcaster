@@ -15,6 +15,8 @@ export class WindowController {
   private windowMonitoringInterval: number | null = null;
   private canvasResizeObserver: ResizeObserver | null = null;
   private canvasMutationObserver: MutationObserver | null = null;
+  /** いまマッピングのソースにしているスケッチ iframe（差し替え可能）。 */
+  private currentSourceIframe: HTMLIFrameElement | null = null;
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
 
@@ -202,55 +204,64 @@ export class WindowController {
   }
 
   async startCanvasStreaming(iframeElement: HTMLIFrameElement): Promise<void> {
-    const canvas = this.getCanvasFromIframe(iframeElement);
-    if (!canvas) return;
-    
-    try {
-      // 既存のストリームがあれば停止
-      this.stopCanvasStreaming();
+    this.currentSourceIframe = iframeElement;
+    this.stopCanvasCapture(); // 既存のキャプチャがあれば一旦止める（ウィンドウは閉じない）
+    if (!this.captureFromSource()) return;
+    this.startWindowMonitoring();
+    this.setProjectionMode(true);
+  }
 
-      // MediaStreamをキャプチャ（30fps）
-      const stream = canvas.captureStream(30);
-      this.trackStream(stream);
+  /**
+   * 配信中のマッピングソースを別のスケッチ iframe に差し替える（ポップアウトウィンドウは閉じない）。
+   * スライドショーでスライドが切り替わったときなどに呼ぶ。新しい iframe の <canvas> から
+   * captureStream し直し、各所（in-page オーバーレイ・コントロール・ポップアウト）へ再 broadcast する。
+   */
+  setSource(iframeElement: HTMLIFrameElement): void {
+    if (iframeElement === this.currentSourceIframe && this.activeStreams.length > 0) return;
+    this.currentSourceIframe = iframeElement;
+    this.stopCanvasCapture();
+    this.captureFromSource();
+  }
+
+  /** currentSourceIframe の <canvas> から captureStream し、video dimensions・stream を各所へ broadcast する。成功なら true。 */
+  private captureFromSource(): boolean {
+    const iframe = this.currentSourceIframe;
+    if (!iframe) return false;
+    const canvas = this.getCanvasFromIframe(iframe); // resize 監視の (再)アタッチも兼ねる
+    if (!canvas) return false;
+
+    try {
+      // fps 指定なし = canvas の描画レートに追従（最大滑らかさ。静的スケッチでは変化時のみキャプチャ）
+      const stream = canvas.captureStream();
       if (!stream) {
         console.error('WindowController: MediaStreamの取得に失敗しました');
-        return;
+        return false;
       }
-      // canvas のサイズを初期 video dimensions として記録
+      this.trackStream(stream);
+
       this.videoActualDimensions = {
         width: canvas.width || 1920,
         height: canvas.height || 1080,
       };
 
-      // SketchPageView へ stream を broadcast（dynamic な video 要素に bind してもらう）
+      // in-page オーバーレイ（SketchPageView 等）へ stream を broadcast
       this.dispatchCanvasStream(stream);
 
-      // ControlWindow にも video dimensions を通知
-      const controlWindowForDims = this.windowManager.getWindow('control_window');
-      if (controlWindowForDims && !controlWindowForDims.closed) {
-        controlWindowForDims.postMessage({
+      // コントロールウィンドウへ dimensions 通知 ＋ stream を bind（clone せず共有）
+      const controlWindow = this.windowManager.getWindow('control_window');
+      if (controlWindow && !controlWindow.closed) {
+        controlWindow.postMessage({
           type: 'video-dimensions-update',
           data: this.videoActualDimensions,
         }, window.location.origin);
-      }
-
-      // 初期 overlay 更新
-      this.dispatchOverlayUpdate();
-
-      // 統合ウィンドウにストリームを設定（clone せず元の stream を共有）
-      const controlWindow = this.windowManager.getWindow('control_window');
-      if (controlWindow && !controlWindow.closed) {
         this.setupStreamToWindow(controlWindow, stream);
       }
 
-      // ウィンドウの状態を定期的にチェック
-      this.startWindowMonitoring();
-
-      // メインページをプロジェクションモードに切り替え
-      this.setProjectionMode(true);
-
+      this.dispatchOverlayUpdate();
+      return true;
     } catch (error) {
       console.error('WindowController: Canvas streaming開始エラー:', error);
+      return false;
     }
   }
 
@@ -375,8 +386,8 @@ export class WindowController {
     return controlWindow !== null && !controlWindow.closed;
   }
 
-  // Canvas配信を停止
-  stopCanvasStreaming(): void {
+  /** canvas からのキャプチャだけを止める（observer 切断 ＋ tracks 停止）。ウィンドウ・監視はそのまま。 */
+  private stopCanvasCapture(): void {
     this.canvasResizeObserver?.disconnect();
     this.canvasResizeObserver = null;
     this.canvasMutationObserver?.disconnect();
@@ -386,6 +397,12 @@ export class WindowController {
       stream.getTracks().forEach(track => track.stop());
     });
     this.activeStreams = [];
+  }
+
+  // Canvas配信を停止（ウィンドウ監視・プロジェクションモードも解除）
+  stopCanvasStreaming(): void {
+    this.stopCanvasCapture();
+    this.currentSourceIframe = null;
 
     // SketchPageView に stream 停止を通知（dynamic video 要素は SketchPageView 側でクリア）
     this.dispatchCanvasStream(null);
