@@ -88,9 +88,7 @@ export async function init(options) {
       theme_color: response.theme_color || '#000000',
       background_color: '#ffffff',
       display: 'standalone',
-      start_url: '/',
-      offline_mode: true,
-      cache_strategy: 'network-first'
+      start_url: '/'
     };
     
     await fs.writeFile(

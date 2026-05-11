@@ -5,6 +5,7 @@ import os from 'os';
 import chalk from 'chalk';
 import { loadConfig } from '../utils/config.js';
 import { generateManifest } from '../utils/manifest.js';
+import { generateServiceWorker } from '../utils/service-worker.js';
 import { promises as fs } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -22,59 +23,11 @@ export async function dev(options) {
     // Ensure public directory exists
     await fs.mkdir(publicDir, { recursive: true });
     
-    // Generate manifest.json in public directory
+    // Generate manifest.json + (minimal) service worker in public directory.
+    // ※ dev は localhost なので main.ts は SW を登録しない（--host で LAN IP 経由のときだけ登録される）。
+    //   そのためのファイルとして置いておくだけ。
     await generateManifest(config, publicDir);
-    
-    // Create dev service worker (minimal caching for PWA testing)
-    const devServiceWorker = `
-// Development Service Worker - Minimal caching for PWA testing
-const CACHE_NAME = 'dropcaster-dev-v1';
-const urlsToCache = [
-  '/',
-  '/manifest.json'
-];
-
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        return cache.addAll(urlsToCache);
-      })
-  );
-});
-
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    }).then(() => {
-      return self.clients.claim();
-    })
-  );
-});
-
-self.addEventListener('fetch', (event) => {
-  // For development, always fetch from network except for the manifest
-  if (event.request.url.includes('/manifest.json')) {
-    event.respondWith(
-      caches.match(event.request)
-        .then((response) => {
-          return response || fetch(event.request);
-        })
-    );
-  } else {
-    // Always fetch from network for other resources
-    event.respondWith(fetch(event.request));
-  }
-});`;
-    
-    await fs.writeFile(join(publicDir, 'sw.js'), devServiceWorker, 'utf-8');
+    await generateServiceWorker(publicDir);
     
     // Create Vite server
     const server = await createServer({

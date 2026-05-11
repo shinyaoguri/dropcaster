@@ -42,9 +42,9 @@ export async function build(options) {
       scope: config.scope || options.base
     }, outputDir);
     
-    // Generate Service Worker
+    // Generate (minimal) Service Worker
     spinner.text = 'Generating Service Worker...';
-    await generateServiceWorker(config, outputDir);
+    await generateServiceWorker(outputDir);
     
     // Build with Vite
     spinner.text = 'Building application...';
