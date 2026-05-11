@@ -297,10 +297,8 @@ async function scanSketches(options = {}) {
       console.error(`   スケッチ: ${newSketches.join(', ')}`);
     }
 
-    // 結果を出力（stdoutにJSONのみ）
-    console.log(JSON.stringify(sketches, null, 2));
-
-    // CLIやnpm scriptsからの実行時はsketches.jsonファイルも生成
+    // CLI / npm scripts から呼ばれた場合（--write-file または --fetch-userdata）は
+    // public/sketches.json を書き出す。それ以外（フィルタとして使う場合）は stdout に JSON を出す。
     if (fetchUserData || writeFileOutput) {
       try {
         const { projectRoot } = getDirectories();
@@ -319,10 +317,13 @@ async function scanSketches(options = {}) {
         const titleCount = parsedContent.filter(s => s.title && s.title !== s.id).length;
 
         console.error(`✅ ファイル内容確認: スケッチ${parsedContent.length}件, スケッチデータ${userDataCount}件, タイトル更新${titleCount}件`);
-
       } catch (error) {
         console.error(`❌ sketches.jsonファイルの生成に失敗:`, error.message);
+        process.exitCode = 1;
       }
+    } else {
+      // ファイル出力しない場合のみ stdout に JSON を出す（フィルタ用途）
+      console.log(JSON.stringify(sketches, null, 2));
     }
 
     return sketches;

@@ -76,17 +76,14 @@ export async function scan(options = {}) {
     
     const scanProcess = spawn('node', [scanScriptPath, ...args], {
       env,
-      stdio: inheritStdio ? 'inherit' : 'pipe'
+      // stdout は使わない（sketches.json は scan-sketches.js が --write-file で書き込む）。
+      // stderr は進捗表示のため pipe して解析する。
+      stdio: inheritStdio ? 'inherit' : ['ignore', 'ignore', 'pipe']
     });
-    
-    let stdout = '';
+
     let stderr = '';
-    
+
     if (!inheritStdio) {
-      scanProcess.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-      
       scanProcess.stderr.on('data', (data) => {
         const dataStr = data.toString();
         stderr += dataStr;
@@ -141,39 +138,33 @@ export async function scan(options = {}) {
       }
       
       if (code === 0) {
-        // 成功時の処理
-        if (!inheritStdio && stdout) {
-          // JSONを解析してスケッチ数を表示
+        // sketches.json は scan-sketches.js が --write-file で書き込み済み。
+        // ここでは表示用に読み直すだけ（多重書き込みを避ける）。
+        if (!inheritStdio) {
+          const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
           try {
-            const sketches = JSON.parse(stdout);
-            const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
-            await fs.mkdir(resolve(projectRoot, 'public'), { recursive: true });
-            await fs.writeFile(sketchesJsonPath, JSON.stringify(sketches, null, 2), 'utf-8');
+            const sketches = JSON.parse(await fs.readFile(sketchesJsonPath, 'utf-8'));
             console.log(chalk.green(`✅ ${sketches.length}個のスケッチをスキャンしました`));
-            
-            // プレビュー生成状況を表示
+
             const withPreviews = sketches.filter(s => s.previewGif).length;
             if (withPreviews > 0) {
               console.log(chalk.gray(`   プレビュー生成済み: ${withPreviews}/${sketches.length}`));
             }
             console.log(chalk.gray(`   保存先: ${sketchesJsonPath}`));
           } catch (e) {
-            // JSON解析に失敗した場合は生のメッセージを表示
             console.log(chalk.green('✅ スキャンが完了しました'));
           }
-        }
-        
-        // stderrの最終確認メッセージを表示（すでに表示済みのものは除く）
-        if (!inheritStdio && stderr) {
-          const lines = stderr.split('\n');
-          for (const line of lines) {
-            // 💾のみ表示（📋は既に表示済み）
-            if (line.includes('💾')) {
-              console.log(chalk.gray(line));
+
+          // stderr の最終確認メッセージ（💾）を表示（📋 は既に表示済み）
+          if (stderr) {
+            for (const line of stderr.split('\n')) {
+              if (line.includes('💾')) {
+                console.log(chalk.gray(line));
+              }
             }
           }
         }
-        
+
         fulfill();
       } else {
         // エラー時の処理
