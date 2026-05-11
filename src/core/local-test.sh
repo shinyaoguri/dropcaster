@@ -14,7 +14,7 @@ rm -rf "$TEST_DIR"
 mkdir -p "$TEST_DIR"
 
 # initコマンドを実行
-node "$DROPCASTER_DIR/cli/index.js" init -n "$PROJECT_NAME"
+node "$DROPCASTER_DIR/src/cli/index.js" init -n "$PROJECT_NAME"
 
 # テストプロジェクトに移動
 cd "$TEST_DIR/../$PROJECT_NAME"

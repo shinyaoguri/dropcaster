@@ -113,7 +113,7 @@ export async function init(options) {
         preview: 'dropcaster preview'
       },
       dependencies: {
-        '@dropcaster/viewer': `file:${join(__dirname, '../..')}`
+        '@dropcaster/viewer': `file:${join(__dirname, '../../..')}`
       }
     };
     

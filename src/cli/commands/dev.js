@@ -9,7 +9,7 @@ import { promises as fs } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const rootDir = resolve(__dirname, '../..');
+const rootDir = resolve(__dirname, '../../..'); // package root (src/cli/commands → repo root)
 
 export async function dev(options) {
   try {

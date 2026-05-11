@@ -11,7 +11,7 @@ import { copyPublicFiles } from '../utils/files.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const rootDir = resolve(__dirname, '../..');
+const rootDir = resolve(__dirname, '../../..'); // package root (src/cli/commands → repo root)
 
 export async function build(options) {
   const spinner = ora('Building for production...').start();

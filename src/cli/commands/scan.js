@@ -28,8 +28,8 @@ export async function scan(options = {}) {
     process.exit(1);
   }
   
-  // scan-sketches.jsのパスを解決
-  const scanScriptPath = resolve(__dirname, '../../src/core/scan-sketches.js');
+  // scan-sketches.jsのパスを解決（src/cli/commands → src/core）
+  const scanScriptPath = resolve(__dirname, '../../core/scan-sketches.js');
   
   // コマンドライン引数を構築
   const args = ['--write-file'];

@@ -24,12 +24,11 @@
   "engines": {
     "node": ">=20.19.0"
   },
-  "main": "cli/index.js",
+  "main": "src/cli/index.js",
   "bin": {
-    "dropcaster": "./cli/index.js"
+    "dropcaster": "./src/cli/index.js"
   },
   "files": [
-    "cli",
     "src",
     "public/assets",
     "index.html",
