@@ -1,5 +1,6 @@
 import type { Sketch } from '../types/sketch.js';
 import { publicAssetPath } from '../utils/paths.js';
+import { SketchPool } from '../runtime/SketchPool.js';
 
 export class SlideshowView {
   private currentIndex: number = 0;
@@ -9,6 +10,7 @@ export class SlideshowView {
   private isPaused: boolean = false;
   private SLIDE_INTERVAL = 30000; // 30秒
   private boundHandleKeydown = this.handleKeydown.bind(this);
+  private pool: SketchPool | null = null;
 
   render(sketchIds: string[], sketches: Sketch[]): void {
     this.sketchIds = sketchIds;
@@ -64,7 +66,7 @@ export class SlideshowView {
           </div>
         </div>
         <div class="slideshow-frame-container">
-          <iframe id="slideshow-frame" class="slideshow-frame" frameborder="0"></iframe>
+          <div id="slideshow-stage"></div>
           <div id="sketch-info" class="sketch-info">
             <div class="sketch-details">
               <h3 id="sketch-title" class="sketch-title"></h3>
@@ -77,7 +79,10 @@ export class SlideshowView {
 
     this.addStyles();
     this.setupEventListeners();
-    
+
+    const stage = document.getElementById('slideshow-stage');
+    if (stage) this.pool = new SketchPool(stage, { size: 2 });
+
     if (sketchIds.length > 0) {
       // URLから現在のインデックスを取得
       const urlParams = new URLSearchParams(window.location.search);
@@ -85,9 +90,8 @@ export class SlideshowView {
       this.currentIndex = Number.isFinite(startIndex)
         ? Math.max(0, Math.min(startIndex, sketchIds.length - 1))
         : 0;
-      
-      // 初回表示時は特別な処理
-      this.showInitialSketch(this.currentIndex);
+
+      void this.goToSketch(this.currentIndex);
       this.startAutoPlay();
     }
   }
@@ -268,26 +272,8 @@ export class SlideshowView {
         height: 100%;
       }
 
-      .slideshow-frame {
-        width: 100%;
-        height: 100%;
-        border: none;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        opacity: 0;
-        transition: opacity 0.5s ease-in-out;
-      }
-      
-      .slideshow-frame.fade-in {
-        opacity: 1;
-      }
-      
-      /* iframe内のcanvasを中央配置 */
-      .slideshow-frame-container {
-        position: relative;
-      }
-      
+      /* スケッチ本体は SketchPool が #slideshow-stage 内に iframe を重ねて表示する（.dc-sketch-* クラス） */
+
       /* スケッチ情報 */
       .slideshow-container .sketch-info {
         position: absolute;
@@ -420,150 +406,46 @@ export class SlideshowView {
     }
   }
 
-  private showInitialSketch(index: number): void {
-    if (index < 0 || index >= this.sketchIds.length) return;
+  // インデックスのスケッチへ移動して表示する（初回・通常の両方に使う）。
+  // SketchPool が iframe のクロスフェードと次スケッチの先読みを担当するので、
+  // ここではスケッチ情報・URL・番号・プログレスバーの更新だけ行う。
+  private async goToSketch(index: number): Promise<void> {
+    if (index < 0 || index >= this.sketchIds.length || !this.pool) return;
 
     this.currentIndex = index;
-    const sketchId = this.sketchIds[index];
-    const frame = document.getElementById('slideshow-frame') as HTMLIFrameElement;
-    const sketchInfo = document.getElementById('sketch-info');
-    
-    // スケッチ情報を更新
-    this.updateSketchInfo(index);
+    const sketchInfo = document.getElementById("sketch-info");
 
-    // URLを更新（ブラウザの履歴に追加しない）
+    // 情報パネルをフェードアウト
+    sketchInfo?.classList.remove("fade-in");
+
+    // URL を更新（履歴には積まない）
     const url = new URL(window.location.href);
-    url.searchParams.set('index', index.toString());
-    window.history.replaceState({}, '', url.toString());
+    url.searchParams.set("index", index.toString());
+    window.history.replaceState({}, "", url.toString());
 
-    // スケッチ番号を更新
-    const numberElement = document.getElementById('current-sketch-number');
-    if (numberElement) {
-      numberElement.textContent = (index + 1).toString();
-    }
-
-    // プログレスバーをリセット
+    // スケッチ番号・プログレスバーを更新
+    const numberElement = document.getElementById("current-sketch-number");
+    if (numberElement) numberElement.textContent = (index + 1).toString();
     this.resetProgressBar();
-    
-    if (frame) {
-      // スケッチのHTMLファイルを直接表示（UIなし）
-      frame.src = publicAssetPath(`sketches/${sketchId}/index.html`);
-      
-      // iframeが読み込まれたら、canvasを中央配置
-      frame.addEventListener('load', () => {
-        try {
-          const iframeDoc = frame.contentDocument || frame.contentWindow?.document;
-          if (iframeDoc) {
-            // bodyにスタイルを適用してcanvasを中央配置
-            const style = iframeDoc.createElement('style');
-            style.textContent = `
-              body {
-                margin: 0;
-                padding: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                min-height: 100vh;
-                background: #000;
-              }
-              canvas {
-                display: block;
-                max-width: 100%;
-                max-height: 100vh;
-              }
-            `;
-            iframeDoc.head.appendChild(style);
-          }
-        } catch (e) {
-          // クロスオリジンの場合はアクセスできないので無視
-        }
-        
-        // フェードイン
-        setTimeout(() => {
-          frame.classList.add('fade-in');
-          sketchInfo?.classList.add('fade-in');
-        }, 500);
-      }, { once: true });
-    }
-  }
 
-  private showSketch(index: number): void {
-    if (index < 0 || index >= this.sketchIds.length) return;
-
-    this.currentIndex = index;
+    // スケッチをプール経由で表示（先読み済みなら即時、未ロードなら読み込み完了後にクロスフェード）
     const sketchId = this.sketchIds[index];
-    const frame = document.getElementById('slideshow-frame') as HTMLIFrameElement;
-    const sketchInfo = document.getElementById('sketch-info');
-    
-    // フェードアウト
-    frame?.classList.remove('fade-in');
-    sketchInfo?.classList.remove('fade-in');
-    
-    // 完全に暗転させる時間を確保
-    setTimeout(() => {
-      // スケッチ情報を更新
-      this.updateSketchInfo(index);
+    try {
+      await this.pool.show(publicAssetPath(`sketches/${sketchId}/index.html`));
+    } catch {
+      return; // プールが破棄された（ルート遷移）— 中断
+    }
+    if (!this.pool) return;
 
-      // URLを更新（ブラウザの履歴に追加しない）
-      const url = new URL(window.location.href);
-      url.searchParams.set('index', index.toString());
-      window.history.replaceState({}, '', url.toString());
+    // 情報パネルを更新してフェードイン
+    this.updateSketchInfo(index);
+    sketchInfo?.classList.add("fade-in");
 
-      // スケッチ番号を更新
-      const numberElement = document.getElementById('current-sketch-number');
-      if (numberElement) {
-        numberElement.textContent = (index + 1).toString();
-      }
-
-      // プログレスバーをリセット
-      this.resetProgressBar();
-      
-      // さらに少し待ってから新しいコンテンツをロード
-      setTimeout(() => {
-        if (frame) {
-          // スケッチのHTMLファイルを直接表示（UIなし）
-          frame.src = publicAssetPath(`sketches/${sketchId}/index.html`);
-          
-          // iframeが読み込まれたら、canvasを中央配置
-          frame.addEventListener('load', () => {
-            try {
-              const iframeDoc = frame.contentDocument || frame.contentWindow?.document;
-              if (iframeDoc) {
-                // bodyにスタイルを適用してcanvasを中央配置
-                const style = iframeDoc.createElement('style');
-                style.textContent = `
-                  body {
-                    margin: 0;
-                    padding: 0;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    min-height: 100vh;
-                    background: #000;
-                  }
-                  canvas {
-                    display: block;
-                    max-width: 100%;
-                    max-height: 100vh;
-                  }
-                `;
-                iframeDoc.head.appendChild(style);
-              }
-            } catch (e) {
-              // クロスオリジンの場合はアクセスできないので無視
-            }
-            
-            // フェードイン
-            setTimeout(() => {
-              frame.classList.add('fade-in');
-              sketchInfo?.classList.add('fade-in');
-            }, 500);
-          }, { once: true });
-        }
-      }, 100); // 完全な暗転を確保
-    }, 500); // フェードアウトの時間
+    // 次のスケッチを先読みしておく（次の自動送りが即時になる）
+    const nextIndex = (index + 1) % this.sketchIds.length;
+    this.pool.preload(publicAssetPath(`sketches/${this.sketchIds[nextIndex]}/index.html`));
   }
-  
+
   private updateSketchInfo(index: number): void {
     const sketch = this.sketches[index];
     if (!sketch) return;
@@ -583,13 +465,13 @@ export class SlideshowView {
 
   private nextSketch(): void {
     const nextIndex = (this.currentIndex + 1) % this.sketchIds.length;
-    this.showSketch(nextIndex);
+    void this.goToSketch(nextIndex);
     this.restartAutoPlay();
   }
 
   private previousSketch(): void {
     const prevIndex = this.currentIndex === 0 ? this.sketchIds.length - 1 : this.currentIndex - 1;
-    this.showSketch(prevIndex);
+    void this.goToSketch(prevIndex);
     this.restartAutoPlay();
   }
 
@@ -674,5 +556,7 @@ export class SlideshowView {
   public destroy(): void {
     this.stopAutoPlay();
     document.removeEventListener('keydown', this.boundHandleKeydown);
+    this.pool?.destroy();
+    this.pool = null;
   }
 }
