@@ -4,7 +4,6 @@ import { CursorManager } from '../managers/CursorManager';
 import { UIElementController } from '../ui/services/UIElementController';
 import { OverlayManager } from '../managers/OverlayManager';
 import { escapeHtml } from '../utils/html.js';
-import { publicAssetPath } from '../utils/paths.js';
 import {
   applyVideoCrop,
   applyQuadTransform,
@@ -41,9 +40,6 @@ export class SketchPageView {
   render(sketch: Sketch): void {
     const app = document.querySelector<HTMLDivElement>('#app')!;
 
-    // パスを正しい形式に変換
-    const sketchPath = publicAssetPath(sketch.path);
-
     // userDataの存在チェックとデフォルト値の設定
     const userName = sketch.userData?.userName || 'Unknown User';
     const title = escapeHtml(sketch.title);
@@ -51,12 +47,8 @@ export class SketchPageView {
 
     app.innerHTML = `
       <div class="fullscreen-sketch-container">
-        <iframe
-          src="${escapeHtml(sketchPath)}"
-          class="fullscreen-iframe"
-          title="${title}"
-          id="sketch-iframe"
-        ></iframe>
+        <!-- スケッチ iframe は SketchPageController が SketchFrame を使ってここに差し込む -->
+        <div id="sketch-stage" class="fullscreen-iframe"></div>
 
         <!-- iframeの外側に配置するオーバーレイ（設定モード用 stage、子は動的生成） -->
         <div

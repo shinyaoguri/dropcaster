@@ -1,21 +1,21 @@
 import type { Sketch } from '../types/sketch.js';
 import { FullscreenManager } from '../managers/FullscreenManager';
-import { IframeManager } from '../managers/IframeManager';
+import { SketchFrame } from '../runtime/SketchFrame';
 import { CursorManager } from '../managers/CursorManager';
 import { ResizeManager } from '../managers/ResizeManager';
 import { SketchPageView } from './SketchPageView';
 import { WindowController } from './WindowController';
+import { publicAssetPath } from '../utils/paths.js';
 
 export class SketchPageController {
   private fullscreenManager: FullscreenManager;
-  private iframeManager: IframeManager;
+  private sketchFrame: SketchFrame | null = null;
   private cursorManager: CursorManager;
   private resizeManager: ResizeManager;
   private view: SketchPageView;
   private windowController: WindowController;
   private isSettingsMode = false;
   private openWindowsTimeout: ReturnType<typeof setTimeout> | null = null;
-  private canvasRetryTimeout: ReturnType<typeof setTimeout> | null = null;
   private isDestroyed = false;
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
@@ -31,7 +31,6 @@ export class SketchPageController {
 
   constructor() {
     this.fullscreenManager = new FullscreenManager();
-    this.iframeManager = new IframeManager();
     this.cursorManager = new CursorManager();
     this.resizeManager = new ResizeManager();
     this.view = new SketchPageView();
@@ -42,11 +41,21 @@ export class SketchPageController {
     this.isDestroyed = false;
     console.log('SketchPageController: スケッチのレンダリング開始:', sketch.title);
 
-    // ビューのレンダリング
+    // ビューのレンダリング（#sketch-stage を含む空のステージを描画）
     this.view.render(sketch);
 
+    // スケッチ iframe を SketchFrame で差し込む
+    const stage = document.getElementById('sketch-stage');
+    if (stage) {
+      this.sketchFrame = new SketchFrame(stage);
+      // CursorManager / MouseEventHandler が #sketch-iframe で参照するので id を付ける（このページは frame 1 枚）
+      this.sketchFrame.iframe.id = 'sketch-iframe';
+      await this.sketchFrame.load(publicAssetPath(sketch.path));
+    } else {
+      console.warn('SketchPageController: #sketch-stage が見つかりません');
+    }
+
     // 各マネージャーの初期化
-    await this.iframeManager.initialize();
     this.fullscreenManager.initialize();
     this.cursorManager.initialize();
     this.resizeManager.initialize();
@@ -106,7 +115,7 @@ export class SketchPageController {
       this.view.toggleIframeOverlay(this.isSettingsMode);
 
       // iframe内のCanvas要素の設定モードも更新
-      this.iframeManager.toggleSettingsMode(this.isSettingsMode);
+      this.sketchFrame?.setSettingsMode(this.isSettingsMode);
 
       console.log('SketchPageController: 設定モード:', this.isSettingsMode ? 'ON' : 'OFF');
       console.log('SketchPageController: iframe内のCanvas要素の枠を', this.isSettingsMode ? '追加' : '削除');
@@ -134,48 +143,25 @@ export class SketchPageController {
     this.openWindowsTimeout = setTimeout(() => {
       this.openWindowsTimeout = null;
       if (this.isDestroyed) return;
-      this.startCanvasStreamingToWindows();
+      void this.startCanvasStreamingToWindows();
       this.windowController.logWindowStatus();
     }, 2000); // 2秒後に実行
   }
 
-  private startCanvasStreamingToWindows(): void {
+  private async startCanvasStreamingToWindows(): Promise<void> {
     console.log('SketchPageController: Canvasストリーミング開始');
 
-    const iframe = this.iframeManager.getIframe();
-    if (iframe) {
-      // iframe内のcanvasが読み込まれるのを待ってから開始
-      this.waitForCanvasAndStartStreaming(iframe, 0);
-    } else {
-      console.warn('SketchPageController: iframe要素が見つかりません');
+    const frame = this.sketchFrame;
+    if (!frame) {
+      console.warn('SketchPageController: SketchFrame がありません');
+      return;
     }
-  }
-
-  private waitForCanvasAndStartStreaming(iframe: HTMLIFrameElement, retryCount: number): void {
+    // iframe内のcanvasが読み込まれる（p5 の setup() で生成される）のを待ってから開始
+    const canvas = await frame.whenCanvasReady();
     if (this.isDestroyed) return;
-
-    const maxRetries = 10;
-
-    try {
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-      if (iframeDoc) {
-        const canvas = iframeDoc.querySelector('canvas');
-        if (canvas) {
-          console.log('SketchPageController: Canvas要素が見つかりました。ストリーミング開始します');
-          this.windowController.startCanvasStreaming(iframe);
-          return;
-        }
-      }
-    } catch (error) {
-      console.log('SketchPageController: iframe内容へのアクセスエラー（CORS）:', error);
-    }
-
-    if (retryCount < maxRetries) {
-      console.log(`SketchPageController: Canvas要素が見つかりません。再試行 ${retryCount + 1}/${maxRetries}`);
-      this.canvasRetryTimeout = setTimeout(() => {
-        this.canvasRetryTimeout = null;
-        this.waitForCanvasAndStartStreaming(iframe, retryCount + 1);
-      }, 500);
+    if (canvas) {
+      console.log('SketchPageController: Canvas要素が見つかりました。ストリーミング開始します');
+      this.windowController.startCanvasStreaming(frame.iframe);
     } else {
       console.error('SketchPageController: Canvas要素が見つからないため、ストリーミングを開始できません');
     }
@@ -245,14 +231,10 @@ export class SketchPageController {
       this.openWindowsTimeout = null;
     }
 
-    if (this.canvasRetryTimeout) {
-      clearTimeout(this.canvasRetryTimeout);
-      this.canvasRetryTimeout = null;
-    }
-
     // 各マネージャーの破棄
     this.fullscreenManager.destroy();
-    this.iframeManager.destroy();
+    this.sketchFrame?.dispose();
+    this.sketchFrame = null;
     this.cursorManager.destroy();
     this.resizeManager.destroy();
     this.view.destroy();

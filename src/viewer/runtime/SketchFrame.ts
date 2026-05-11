@@ -40,6 +40,10 @@ export class SketchFrame {
     iframe.className = 'dc-sketch-frame';
     iframe.setAttribute('frameborder', '0');
     iframe.setAttribute('title', 'sketch');
+    // 単体（プール外）で使われたときでもコンテナを埋めるための最低限のスタイル。
+    // SketchPool 内では .dc-sketch-stage > .dc-sketch-frame の CSS が
+    // position:absolute や opacity を上書きする（同名プロパティは同値なので衝突しない）。
+    iframe.style.cssText = 'display:block; width:100%; height:100%; margin:0; padding:0; border:0;';
     // sandbox は付けない（同一オリジンでの canvas アクセスが必要なため）
     this.iframe = iframe;
     container.appendChild(iframe);
@@ -157,6 +161,31 @@ export class SketchFrame {
       w?.redraw?.();
     } catch {
       /* ignore */
+    }
+  }
+
+  /**
+   * 設定モードの ON/OFF。ON のとき iframe 内の <canvas> に緑の枠を出して
+   * 「マッピングのソースになっている矩形」を視認できるようにする。
+   */
+  setSettingsMode(active: boolean): void {
+    const doc = this.document;
+    if (!doc?.head) return;
+    try {
+      doc.getElementById('dc-settings-mode-style')?.remove();
+      if (!active) return;
+      const style = doc.createElement('style');
+      style.id = 'dc-settings-mode-style';
+      style.textContent = `
+        canvas {
+          border: 3px solid #10b981 !important;
+          border-radius: 8px !important;
+          box-shadow: 0 0 10px rgba(16, 185, 129, 0.3) !important;
+        }
+      `;
+      doc.head.appendChild(style);
+    } catch {
+      /* cross-origin など。無視 */
     }
   }
 
