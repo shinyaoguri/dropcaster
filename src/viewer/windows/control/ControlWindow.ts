@@ -134,7 +134,18 @@ export class ControlWindow extends BaseWindow {
                 リセット
               </button>
             </div>
-            
+
+            <div class="tool-section">
+              <h3>テストパターン</h3>
+              <p class="section-hint">プロジェクションの校正用にソース映像を一時的に差し替えます</p>
+              <div class="test-pattern-buttons">
+                <button class="tool-button test-pattern-btn active" data-pattern="off">通常</button>
+                <button class="tool-button test-pattern-btn" data-pattern="white">白</button>
+                <button class="tool-button test-pattern-btn" data-pattern="grid">グリッド</button>
+                <button class="tool-button test-pattern-btn" data-pattern="smpte">カラーバー</button>
+              </div>
+            </div>
+
             <div class="tool-section">
               <h3>マッピング設定</h3>
               <div class="tool-item">
@@ -390,6 +401,30 @@ export class ControlWindow extends BaseWindow {
 
       .preset-btn {
         margin-bottom: 8px;
+      }
+
+      .section-hint {
+        margin: 0 0 8px 0;
+        font-size: 11px;
+        color: #aaa;
+        line-height: 1.4;
+      }
+
+      .test-pattern-buttons {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+
+      .test-pattern-btn.active {
+        background: #2563eb;
+        border-color: #3b82f6;
+        color: #fff;
+      }
+
+      .test-pattern-btn.active:hover {
+        background: #1d4ed8;
+        border-color: #2563eb;
       }
 
       /* マッピング一覧 */
@@ -1032,6 +1067,18 @@ export class ControlWindow extends BaseWindow {
       });
     });
 
+    // テストパターンボタン（off / white / grid / smpte）
+    const testPatternBtns = doc.querySelectorAll('.test-pattern-btn');
+    testPatternBtns.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const kind = (e.currentTarget as HTMLElement).dataset.pattern;
+        if (!kind) return;
+        // optimistic に active 表示を切り替え（parent から test-pattern-update が返って確定）
+        this.updateTestPatternUI(kind);
+        this.sendTestPatternRequest(kind);
+      });
+    });
+
     // マッピング追加ボタン
     const addMappingBtn = doc.getElementById('add-mapping-btn');
     if (addMappingBtn) {
@@ -1650,6 +1697,9 @@ export class ControlWindow extends BaseWindow {
         case 'window-bounds-update':
           this.handleWindowBoundsUpdate(event.data.data);
           break;
+        case 'test-pattern-update':
+          this.updateTestPatternUI(event.data.data?.kind ?? 'off');
+          break;
       }
     });
     
@@ -1684,6 +1734,29 @@ export class ControlWindow extends BaseWindow {
     this.updateQuadTransform();
     this.updateToolValues();
     this.renderMappingsList();
+  }
+
+  /** テストパターンボタンの active 表示を kind に合わせて切り替える（state は親が持っている）。 */
+  private updateTestPatternUI(kind: string): void {
+    if (!this.window) return;
+    this.window.document.querySelectorAll('.test-pattern-btn').forEach(el => {
+      const btn = el as HTMLElement;
+      btn.classList.toggle('active', btn.dataset.pattern === kind);
+    });
+  }
+
+  /** ユーザーがテストパターン切り替えボタンを押したことを親に伝える。 */
+  private sendTestPatternRequest(kind: string): void {
+    const targetWindow = this.getParentWindow();
+    if (!targetWindow) return;
+    try {
+      targetWindow.postMessage({
+        type: 'test-pattern-set',
+        data: { kind },
+      }, targetWindow.location.origin);
+    } catch (error) {
+      console.error('ControlWindow: test-pattern-set 送信エラー', error);
+    }
   }
 
   /**

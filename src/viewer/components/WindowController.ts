@@ -1,6 +1,7 @@
 import { WindowManager, type WindowConfig } from '../managers/WindowManager';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import { OutputWindow } from '../windows/output/OutputWindow';
+import { TestPatternSource, type TestPatternKind } from '../runtime/TestPatternSource';
 import {
   defaultMappingsState,
   parseMappingsState,
@@ -35,6 +36,9 @@ export class WindowController {
   private canvasMutationObserver: MutationObserver | null = null;
   /** いまマッピングのソースにしているスケッチ iframe（差し替え可能）。 */
   private currentSourceIframe: HTMLIFrameElement | null = null;
+  /** テストパターン用のソース。校正中だけ生成し、'off' に戻すと破棄せず stop する（再利用）。 */
+  private testPattern: TestPatternSource | null = null;
+  private testPatternKind: TestPatternKind | 'off' = 'off';
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
 
@@ -45,6 +49,10 @@ export class WindowController {
     } else if (event.data?.type === 'output-needs-stream') {
       // 出力ウィンドウが video 群を組み直したので stream を bind し直す
       this.bindStreamToOutputWindow();
+    } else if (event.data?.type === 'test-pattern-set') {
+      // ControlWindow からのテストパターン切り替え要求
+      const kind = event.data.data?.kind as TestPatternKind | 'off' | undefined;
+      if (kind) this.setTestPattern(kind);
     }
   };
 
@@ -126,9 +134,10 @@ export class WindowController {
       // 親ウィンドウ参照を設定
       this.controlWindow.setParentWindow(window);
 
-      // 初期 state を broadcast
+      // 初期 state を broadcast（マッピング設定 ＋ 現在のテストパターン）
       setTimeout(() => {
         this.broadcastStateToControl();
+        this.broadcastTestPatternState();
       }, 500);
     }
   }
@@ -347,28 +356,91 @@ export class WindowController {
         width: canvas.width || 1920,
         height: canvas.height || 1080,
       };
-
-      // in-page オーバーレイ（SketchPageView 等）へ stream を broadcast
-      this.dispatchCanvasStream(stream);
-
-      // コントロールウィンドウへ dimensions 通知 ＋ stream を bind（clone せず共有）
-      const controlWindow = this.windowManager.getWindow('control_window');
-      if (controlWindow && !controlWindow.closed) {
-        controlWindow.postMessage({
-          type: 'video-dimensions-update',
-          data: this.videoActualDimensions,
-        }, window.location.origin);
-        this.setupStreamToWindow(controlWindow, stream);
-      }
-
-      // 出力ウィンドウの video 群にも同じ stream を bind
-      this.bindStreamToOutputWindow();
-
-      this.dispatchOverlayUpdate();
+      this.notifyVideoDimensions();
+      this.broadcastStream(stream);
       return true;
     } catch (error) {
       console.error('WindowController: Canvas streaming開始エラー:', error);
       return false;
+    }
+  }
+
+  /**
+   * いまの「カレント MediaStream」を、見える場所すべて（in-page overlay / control window /
+   * output window）に bind し直す。captureFromSource とテストパターン両方の共通経路。
+   */
+  private broadcastStream(stream: MediaStream): void {
+    // in-page オーバーレイ（SketchPageView 等）へ stream を broadcast
+    this.dispatchCanvasStream(stream);
+
+    // コントロールウィンドウの video 群（clone せず共有）
+    const controlWindow = this.windowManager.getWindow('control_window');
+    if (controlWindow && !controlWindow.closed) {
+      this.setupStreamToWindow(controlWindow, stream);
+    }
+
+    // 出力ウィンドウの video 群にも同じ stream を bind
+    this.bindStreamToOutputWindow();
+
+    this.dispatchOverlayUpdate();
+  }
+
+  private notifyVideoDimensions(): void {
+    const controlWindow = this.windowManager.getWindow('control_window');
+    if (controlWindow && !controlWindow.closed) {
+      controlWindow.postMessage({
+        type: 'video-dimensions-update',
+        data: this.videoActualDimensions,
+      }, window.location.origin);
+    }
+  }
+
+  /**
+   * ソースをスケッチ canvas ↔ テストパターンの間で切り替える。
+   * 'off' に戻すと currentSourceIframe から再キャプチャする（マッピング設定はいずれの場合も
+   * 不変 — 校正用に「いま投影している矩形がどこにあるか」を可視化するためのソース差し替え）。
+   */
+  setTestPattern(kind: TestPatternKind | 'off'): void {
+    if (this.testPatternKind === kind) return;
+    const prev = this.testPatternKind;
+    this.testPatternKind = kind;
+
+    if (kind === 'off') {
+      // テスト → 通常ソース。テスト stream を止めて、source iframe から再キャプチャする
+      this.testPattern?.stop();
+      this.stopCanvasCapture();
+      if (this.currentSourceIframe) {
+        this.captureFromSource();
+      } else {
+        this.dispatchCanvasStream(null);
+      }
+    } else if (prev === 'off') {
+      // 通常 → テスト。source の tracks は止めるが iframe 参照は残しておく（'off' で復帰するため）
+      this.stopCanvasCapture();
+      if (!this.testPattern) this.testPattern = new TestPatternSource();
+      const stream = this.testPattern.start(kind);
+      if (!stream) {
+        console.error('WindowController: テストパターン stream の生成に失敗');
+        this.testPatternKind = prev;
+        return;
+      }
+      this.trackStream(stream);
+      this.broadcastStream(stream);
+    } else {
+      // テスト → 別のテスト。canvas を描き直すだけで stream オブジェクトは同じ
+      this.testPattern?.start(kind);
+    }
+
+    this.broadcastTestPatternState();
+  }
+
+  private broadcastTestPatternState(): void {
+    const controlWindow = this.windowManager.getWindow('control_window');
+    if (controlWindow && !controlWindow.closed) {
+      controlWindow.postMessage({
+        type: 'test-pattern-update',
+        data: { kind: this.testPatternKind },
+      }, window.location.origin);
     }
   }
 
@@ -513,6 +585,10 @@ export class WindowController {
     this.stopCanvasCapture();
     this.currentSourceIframe = null;
 
+    // テストパターンも止めて 'off' に戻す（次回 start 時のクリーンな状態のため）
+    this.testPattern?.stop();
+    this.testPatternKind = 'off';
+
     // SketchPageView に stream 停止を通知（dynamic video 要素は SketchPageView 側でクリア）
     this.dispatchCanvasStream(null);
 
@@ -534,6 +610,8 @@ export class WindowController {
   destroy(): void {
     window.removeEventListener('message', this.messageHandler);
     this.closeAllWindows();
+    this.testPattern?.dispose();
+    this.testPattern = null;
   }
 
   // ウィンドウの状態確認
