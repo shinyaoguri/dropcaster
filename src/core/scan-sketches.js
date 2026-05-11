@@ -13,8 +13,11 @@ const getDirectories = () => {
   const currentFilename = fileURLToPath(import.meta.url);
   const currentDirname = resolve(currentFilename, '..');
 
-  // CLIから呼ばれた場合は環境変数からプロジェクトルートを取得
-  const projectRoot = process.env.DROPCASTER_PROJECT_ROOT || resolve(currentDirname, '..');
+  // プロジェクトルートの解決:
+  //   1. DROPCASTER_PROJECT_ROOT 環境変数（dropcaster CLI から呼ばれた場合に設定される）
+  //   2. それ以外（npm run scan / CI から直接実行）はカレントディレクトリ
+  // ※スクリプト自身の位置に依存させない（src/core/ に移動しても壊れないように）
+  const projectRoot = process.env.DROPCASTER_PROJECT_ROOT || process.cwd();
 
   return {
     __dirname: currentDirname,

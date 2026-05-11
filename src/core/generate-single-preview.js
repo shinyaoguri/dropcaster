@@ -1,12 +1,8 @@
 #!/usr/bin/env node
 
 import { generateSketchPreview } from './modules/preview-generator.js';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { resolve } from 'path';
 import { mkdir } from 'fs/promises';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const sketchName = process.argv[2];
 if (!sketchName) {
@@ -14,7 +10,8 @@ if (!sketchName) {
   process.exit(1);
 }
 
-const projectRoot = resolve(__dirname, '..');
+// プロジェクトルートはカレントディレクトリ（scan-sketches.js と同じ方針）
+const projectRoot = process.env.DROPCASTER_PROJECT_ROOT || process.cwd();
 const sketchPath = resolve(projectRoot, 'sketches', sketchName);
 const previewsDir = resolve(projectRoot, 'public', 'previews');
 
