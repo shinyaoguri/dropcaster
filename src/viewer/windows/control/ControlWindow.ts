@@ -4,7 +4,6 @@ import {
   applyQuadTransform,
   defaultMappingsState,
   defaultQuad,
-  rectToQuad,
   translateQuad,
   cloneQuad,
   getActiveMapping,
@@ -159,22 +158,6 @@ export class ControlWindow extends BaseWindow {
               </div>
               <button id="reset-mapping-btn" class="tool-button">
                 リセット
-              </button>
-            </div>
-            
-            <div class="tool-section">
-              <h3>プリセット</h3>
-              <button class="tool-button preset-btn" data-preset="fullscreen">
-                全画面
-              </button>
-              <button class="tool-button preset-btn" data-preset="pip">
-                ピクチャインピクチャ
-              </button>
-              <button class="tool-button preset-btn" data-preset="center">
-                中央配置
-              </button>
-              <button class="tool-button preset-btn" data-preset="corner">
-                コーナー配置
               </button>
             </div>
             
@@ -397,10 +380,6 @@ export class ControlWindow extends BaseWindow {
 
       .tool-button:active {
         background: #333;
-      }
-
-      .preset-btn {
-        margin-bottom: 8px;
       }
 
       .section-hint {
@@ -1058,15 +1037,6 @@ export class ControlWindow extends BaseWindow {
       });
     }
 
-    // プリセットボタン
-    const presetBtns = doc.querySelectorAll('.preset-btn');
-    presetBtns.forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const preset = (e.target as HTMLElement).dataset.preset;
-        this.applyPreset(preset!);
-      });
-    });
-
     // テストパターンボタン（off / white / grid / smpte）
     const testPatternBtns = doc.querySelectorAll('.test-pattern-btn');
     testPatternBtns.forEach(btn => {
@@ -1250,26 +1220,6 @@ export class ControlWindow extends BaseWindow {
         cancel();
       }
     });
-  }
-
-  private applyPreset(preset: string): void {
-    switch(preset) {
-      case 'fullscreen':
-        this.setActiveQuad(rectToQuad({ x: 0,  y: 0,  width: 100, height: 100 }));
-        break;
-      case 'pip':
-        this.setActiveQuad(rectToQuad({ x: 70, y: 5,  width: 25,  height: 25  }));
-        break;
-      case 'center':
-        this.setActiveQuad(rectToQuad({ x: 25, y: 25, width: 50,  height: 50  }));
-        break;
-      case 'corner':
-        this.setActiveQuad(rectToQuad({ x: 5,  y: 5,  width: 30,  height: 30  }));
-        break;
-    }
-    this.updateQuadTransform();
-    this.updateToolValues();
-    this.broadcastStateMutation();
   }
 
   private updateToolValues(): void {
