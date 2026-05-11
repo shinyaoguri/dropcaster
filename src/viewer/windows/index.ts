@@ -8,3 +8,6 @@ export { SourceWindow } from './source/SourceWindow';
 
 // マッピングウィンドウ
 export { MappingWindow } from './mapping/MappingWindow';
+
+// 出力（プロジェクタ）ウィンドウ
+export { OutputWindow } from './output/OutputWindow';

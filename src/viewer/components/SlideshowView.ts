@@ -589,7 +589,9 @@ export class SlideshowView {
 
   private startMapping(): void {
     if (!this.windowController) this.windowController = new WindowController();
+    // クリックの user gesture 内でコントロール／出力ウィンドウを開く
     this.windowController.openBothWindows();
+    this.windowController.openOutputWindow();
     this.mappingActive = true;
     this.updateMappingButton();
     // ウィンドウが開いてから（SketchPageController と同じく）少し待ってストリーミング開始
@@ -604,7 +606,7 @@ export class SlideshowView {
       clearTimeout(this.mappingStartTimeout);
       this.mappingStartTimeout = null;
     }
-    this.windowController?.stopCanvasStreaming();
+    // closeAllWindows() が stopCanvasStreaming() ＋ コントロール／出力ウィンドウのクローズを行う
     this.windowController?.closeAllWindows();
     this.mappingActive = false;
     this.updateMappingButton();

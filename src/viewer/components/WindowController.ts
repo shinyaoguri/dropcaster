@@ -1,5 +1,6 @@
 import { WindowManager, type WindowConfig } from '../managers/WindowManager';
 import { ControlWindow } from '../windows/control/ControlWindow';
+import { OutputWindow } from '../windows/output/OutputWindow';
 import {
   defaultMappingsState,
   parseMappingsState,
@@ -8,9 +9,26 @@ import {
 
 const STATE_STORAGE_KEY = 'dropcaster.mappings.v1';
 
+// Window Management API（Chrome/Edge 系のみ）の最小型定義
+interface ScreenDetailed {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  availLeft?: number;
+  availTop?: number;
+  availWidth: number;
+  availHeight: number;
+  isPrimary?: boolean;
+  isInternal?: boolean;
+  label?: string;
+}
+interface ScreenDetails { screens: ScreenDetailed[]; currentScreen?: ScreenDetailed; }
+
 export class WindowController {
   private windowManager: WindowManager;
   private controlWindow: ControlWindow;
+  private outputWindow: OutputWindow;
   private activeStreams: MediaStream[] = [];
   private windowMonitoringInterval: number | null = null;
   private canvasResizeObserver: ResizeObserver | null = null;
@@ -24,6 +42,9 @@ export class WindowController {
       // ControlWindow が user 入力で更新した state を受け取る。
       // 既に control 側に反映済みなので broadcastBack=false。
       this.applyState(event.data.data, { broadcastToControl: false });
+    } else if (event.data?.type === 'output-needs-stream') {
+      // 出力ウィンドウが video 群を組み直したので stream を bind し直す
+      this.bindStreamToOutputWindow();
     }
   };
 
@@ -41,6 +62,7 @@ export class WindowController {
   constructor() {
     this.windowManager = new WindowManager();
     this.controlWindow = new ControlWindow();
+    this.outputWindow = new OutputWindow();
 
     // 前回のマッピング設定を localStorage から復元（あれば）
     const restored = this.loadFromStorage();
@@ -122,6 +144,77 @@ export class WindowController {
     this.windowManager.closeWindow('control_window');
   }
 
+  /**
+   * プロジェクション出力専用のポップアウトウィンドウを開く（プロジェクタの画面に置く想定）。
+   * まず通常位置で開いてから、画面が複数あれば内蔵でない画面へ移動・最大化する
+   * （window.open の gesture を確実に通すため、画面移動は後追い）。
+   */
+  openOutputWindow(): Window | null {
+    const outputWin = this.windowManager.openWindow({
+      name: 'output_window',
+      title: 'プロジェクション出力',
+      width: 960,
+      height: 600,
+      left: Math.max(80, window.screenX + 120),
+      top: Math.max(80, window.screenY + 120),
+      features: ['scrollbars=no', 'resizable=yes'],
+    });
+    if (!outputWin) return null;
+
+    this.outputWindow.setWindow(outputWin);
+    this.outputWindow.setParentWindow(window);
+
+    void this.placeOnExternalScreen(outputWin);
+
+    // 初期 state を送る ＋ stream が既にあれば bind
+    setTimeout(() => {
+      this.broadcastStateToOutput();
+      this.bindStreamToOutputWindow();
+    }, 500);
+    return outputWin;
+  }
+
+  closeOutputWindow(): void {
+    this.windowManager.closeWindow('output_window');
+  }
+
+  /** Window Management API が使えれば、内蔵でない（＝プロジェクタの）画面へウィンドウを移動・最大化する。 */
+  private async placeOnExternalScreen(win: Window): Promise<void> {
+    try {
+      const w = window as unknown as { getScreenDetails?: () => Promise<ScreenDetails> };
+      if (typeof w.getScreenDetails !== 'function') return; // 未対応（Firefox/Safari）— そのまま
+      const details = await w.getScreenDetails();
+      const screens = details.screens ?? [];
+      const target =
+        screens.find(s => s.isInternal === false) ??
+        screens.find(s => s.isPrimary === false) ??
+        null;
+      if (!target || win.closed) return;
+      win.moveTo(target.availLeft ?? target.left, target.availTop ?? target.top);
+      win.resizeTo(target.availWidth, target.availHeight);
+    } catch {
+      /* 権限拒否や未対応 — 通常位置のまま（ユーザがプロジェクタへドラッグ） */
+    }
+  }
+
+  /** 出力ウィンドウ内の全 <video> に現在の stream を bind する（メイン → 子の DOM 直接アクセス）。 */
+  private bindStreamToOutputWindow(): void {
+    const win = this.windowManager.getWindow('output_window');
+    const stream = this.activeStreams[0];
+    if (!win || win.closed || !stream) return;
+    try {
+      win.document.querySelectorAll('video').forEach((el) => {
+        const video = el as HTMLVideoElement;
+        if (video.srcObject !== stream) {
+          video.srcObject = stream;
+          video.play().catch(() => { /* ignore */ });
+        }
+      });
+    } catch (error) {
+      console.error('WindowController: 出力ウィンドウへの stream 設定エラー:', error);
+    }
+  }
+
   closeAllWindows(): void {
     this.stopCanvasStreaming();
     this.windowManager.closeAllWindows();
@@ -143,6 +236,7 @@ export class WindowController {
     this.state = next;
     this.saveToStorage();
     this.dispatchOverlayUpdate();
+    this.broadcastStateToOutput();
     if (options.broadcastToControl !== false) {
       this.broadcastStateToControl();
     }
@@ -152,6 +246,16 @@ export class WindowController {
     const controlWin = this.windowManager.getWindow('control_window');
     if (controlWin && !controlWin.closed) {
       controlWin.postMessage({
+        type: 'state-update',
+        data: this.state,
+      }, window.location.origin);
+    }
+  }
+
+  private broadcastStateToOutput(): void {
+    const outputWin = this.windowManager.getWindow('output_window');
+    if (outputWin && !outputWin.closed) {
+      outputWin.postMessage({
         type: 'state-update',
         data: this.state,
       }, window.location.origin);
@@ -256,6 +360,9 @@ export class WindowController {
         }, window.location.origin);
         this.setupStreamToWindow(controlWindow, stream);
       }
+
+      // 出力ウィンドウの video 群にも同じ stream を bind
+      this.bindStreamToOutputWindow();
 
       this.dispatchOverlayUpdate();
       return true;
@@ -380,10 +487,12 @@ export class WindowController {
     }, 1000);
   }
 
-  // アクティブなウィンドウがあるかチェック
+  // アクティブなウィンドウ（コントロール or 出力）があるかチェック
   private hasActiveWindows(): boolean {
     const controlWindow = this.windowManager.getWindow('control_window');
-    return controlWindow !== null && !controlWindow.closed;
+    const outputWindow = this.windowManager.getWindow('output_window');
+    return (controlWindow !== null && !controlWindow.closed) ||
+           (outputWindow !== null && !outputWindow.closed);
   }
 
   /** canvas からのキャプチャだけを止める（observer 切断 ＋ tracks 停止）。ウィンドウ・監視はそのまま。 */
