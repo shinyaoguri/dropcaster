@@ -1,6 +1,7 @@
 import type { Sketch } from '../types/sketch.js';
 import { publicAssetPath } from '../utils/paths.js';
 import { SketchPool } from '../runtime/SketchPool.js';
+import { WindowController } from './WindowController';
 
 export class SlideshowView {
   private currentIndex: number = 0;
@@ -11,6 +12,11 @@ export class SlideshowView {
   private SLIDE_INTERVAL = 30000; // 30秒
   private boundHandleKeydown = this.handleKeydown.bind(this);
   private pool: SketchPool | null = null;
+  // プロジェクションマッピング（ポップアウトのコントロール／出力ウィンドウ）
+  private windowController: WindowController | null = null;
+  private mappingActive = false;
+  private mappingStartTimeout: number | null = null;
+  private boundClosePopouts = () => this.windowController?.closeAllWindows();
 
   render(sketchIds: string[], sketches: Sketch[]): void {
     this.sketchIds = sketchIds;
@@ -60,6 +66,12 @@ export class SlideshowView {
                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
               </svg>
             </button>
+            <button id="mapping-btn" class="control-btn" title="プロジェクションマッピング">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                <path d="M8 21h8M12 17v4"/>
+              </svg>
+            </button>
           </div>
           <div class="progress-bar-container">
             <div id="progress-bar" class="progress-bar"></div>
@@ -79,6 +91,8 @@ export class SlideshowView {
 
     this.addStyles();
     this.setupEventListeners();
+    // タブが閉じられたらマッピングのポップアウトウィンドウも閉じる
+    window.addEventListener('pagehide', this.boundClosePopouts);
 
     const stage = document.getElementById('slideshow-stage');
     if (stage) this.pool = new SketchPool(stage, { size: 2 });
@@ -164,6 +178,12 @@ export class SlideshowView {
 
       .control-btn:active {
         transform: scale(0.95);
+      }
+
+      .control-btn.mapping-active {
+        background: rgba(96, 165, 250, 0.35);
+        border-color: rgba(96, 165, 250, 0.8);
+        color: #bfdbfe;
       }
 
 
@@ -364,12 +384,14 @@ export class SlideshowView {
     const nextBtn = document.getElementById('next-btn');
     const playPauseBtn = document.getElementById('play-pause-btn');
     const fullscreenBtn = document.getElementById('fullscreen-btn');
+    const mappingBtn = document.getElementById('mapping-btn');
     const intervalInput = document.getElementById('interval-input') as HTMLInputElement;
 
     prevBtn?.addEventListener('click', () => this.previousSketch());
     nextBtn?.addEventListener('click', () => this.nextSketch());
     playPauseBtn?.addEventListener('click', () => this.togglePlayPause());
     fullscreenBtn?.addEventListener('click', () => this.toggleFullscreen());
+    mappingBtn?.addEventListener('click', () => this.toggleMapping());
     
     // 間隔変更
     intervalInput?.addEventListener('change', (e) => {
@@ -444,6 +466,9 @@ export class SlideshowView {
     // 次のスケッチを先読みしておく（次の自動送りが即時になる）
     const nextIndex = (index + 1) % this.sketchIds.length;
     this.pool.preload(publicAssetPath(`sketches/${this.sketchIds[nextIndex]}/index.html`));
+
+    // マッピング中なら、表示中スケッチをマッピングのソースに切り替える
+    if (this.mappingActive) void this.refreshMappingSource();
   }
 
   private updateSketchInfo(index: number): void {
@@ -552,10 +577,69 @@ export class SlideshowView {
     }
   }
 
+  // --- プロジェクションマッピング（ポップアウトのコントロール／出力ウィンドウ） ---
+
+  private toggleMapping(): void {
+    if (this.mappingActive) {
+      this.stopMapping();
+    } else {
+      this.startMapping();
+    }
+  }
+
+  private startMapping(): void {
+    if (!this.windowController) this.windowController = new WindowController();
+    this.windowController.openBothWindows();
+    this.mappingActive = true;
+    this.updateMappingButton();
+    // ウィンドウが開いてから（SketchPageController と同じく）少し待ってストリーミング開始
+    this.mappingStartTimeout = window.setTimeout(() => {
+      this.mappingStartTimeout = null;
+      void this.refreshMappingSource({ start: true });
+    }, 2000);
+  }
+
+  private stopMapping(): void {
+    if (this.mappingStartTimeout) {
+      clearTimeout(this.mappingStartTimeout);
+      this.mappingStartTimeout = null;
+    }
+    this.windowController?.stopCanvasStreaming();
+    this.windowController?.closeAllWindows();
+    this.mappingActive = false;
+    this.updateMappingButton();
+  }
+
+  /** いま表示中のスケッチをマッピングのソースにする。canvas が出来るのを待ってから差し替える。 */
+  private async refreshMappingSource(opts: { start?: boolean } = {}): Promise<void> {
+    const frame = this.pool?.current;
+    if (!frame || !this.windowController || !this.mappingActive) return;
+    await frame.whenCanvasReady();
+    if (!this.windowController || !this.mappingActive) return;
+    if (opts.start) {
+      this.windowController.startCanvasStreaming(frame.iframe);
+    } else {
+      this.windowController.setSource(frame.iframe);
+    }
+  }
+
+  private updateMappingButton(): void {
+    document.getElementById('mapping-btn')?.classList.toggle('mapping-active', this.mappingActive);
+  }
+
 
   public destroy(): void {
     this.stopAutoPlay();
     document.removeEventListener('keydown', this.boundHandleKeydown);
+    window.removeEventListener('pagehide', this.boundClosePopouts);
+    if (this.mappingStartTimeout) {
+      clearTimeout(this.mappingStartTimeout);
+      this.mappingStartTimeout = null;
+    }
+    this.windowController?.stopCanvasStreaming();
+    this.windowController?.destroy();
+    this.windowController = null;
+    this.mappingActive = false;
     this.pool?.destroy();
     this.pool = null;
   }

@@ -105,6 +105,21 @@ export class SketchFrame {
     return this.document?.querySelector('canvas') ?? null;
   }
 
+  /**
+   * iframe 内に <canvas> が現れるまで待つ（p5 の setup() などで遅れて生成されるため）。
+   * 先に load の完了を待ち、その後 timeout まで短間隔でポーリングする。timeout 時は最後の値（null かも）。
+   */
+  async whenCanvasReady(timeoutMs = 5000): Promise<HTMLCanvasElement | null> {
+    await this.loadPromise;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const c = this.canvas;
+      if (c) return c;
+      await new Promise<void>(resolve => window.setTimeout(resolve, 100));
+    }
+    return this.canvas;
+  }
+
   /** canvas の描画を MediaStream として取得する（プロジェクションマッピング用）。取れなければ null。 */
   captureStream(fps = 30): MediaStream | null {
     const canvas = this.canvas as (HTMLCanvasElement & { captureStream?(frameRate?: number): MediaStream }) | null;
