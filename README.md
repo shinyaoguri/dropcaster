@@ -21,9 +21,6 @@ OpenProcessingのクリエイティブコーディングスケッチを静的PWA
 # グローバルインストール
 npm install -g github:shinyaoguri/dropcaster
 
-# または特定のブランチから
-npm install -g github:shinyaoguri/dropcaster#branch-name
-
 # npxで直接実行
 npx github:shinyaoguri/dropcaster init my-gallery
 ```
