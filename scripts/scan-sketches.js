@@ -158,8 +158,11 @@ async function scanSketches(options = {}) {
       }
     }
 
-    // 不要になったpublicディレクトリのスケッチを削除
-    if (!forceRegenerate) {
+    // 不要になった public ディレクトリのスケッチを削除する。
+    // currentSketchNames は「今回走査したスケッチ」なので、--sketch で 1 件だけ走査した
+    // ときに実行すると他のスケッチを誤って消してしまう。全件走査したときだけ実行する。
+    // （forceRegenerate でスキップしていたのは誤り。reset 時こそ整理すべき）
+    if (!targetSketch) {
       await cleanupRemovedSketches(currentSketchNames, publicSketchesDir, previewsDir);
     }
 
