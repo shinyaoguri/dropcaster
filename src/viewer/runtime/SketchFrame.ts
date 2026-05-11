@@ -164,31 +164,6 @@ export class SketchFrame {
     }
   }
 
-  /**
-   * 設定モードの ON/OFF。ON のとき iframe 内の <canvas> に緑の枠を出して
-   * 「マッピングのソースになっている矩形」を視認できるようにする。
-   */
-  setSettingsMode(active: boolean): void {
-    const doc = this.document;
-    if (!doc?.head) return;
-    try {
-      doc.getElementById('dc-settings-mode-style')?.remove();
-      if (!active) return;
-      const style = doc.createElement('style');
-      style.id = 'dc-settings-mode-style';
-      style.textContent = `
-        canvas {
-          border: 3px solid #10b981 !important;
-          border-radius: 8px !important;
-          box-shadow: 0 0 10px rgba(16, 185, 129, 0.3) !important;
-        }
-      `;
-      doc.head.appendChild(style);
-    } catch {
-      /* cross-origin など。無視 */
-    }
-  }
-
   private injectViewerStyle(): void {
     const doc = this.document;
     if (!doc?.head) return;

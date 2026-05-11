@@ -2,7 +2,6 @@ import type { Sketch } from '../types/sketch.js';
 import { FullscreenManager } from '../managers/FullscreenManager';
 import { SketchFrame } from '../runtime/SketchFrame';
 import { CursorManager } from '../managers/CursorManager';
-import { ResizeManager } from '../managers/ResizeManager';
 import { SketchPageView } from './SketchPageView';
 import { WindowController } from './WindowController';
 import { publicAssetPath } from '../utils/paths.js';
@@ -11,10 +10,8 @@ export class SketchPageController {
   private fullscreenManager: FullscreenManager;
   private sketchFrame: SketchFrame | null = null;
   private cursorManager: CursorManager;
-  private resizeManager: ResizeManager;
   private view: SketchPageView;
   private windowController: WindowController;
-  private isSettingsMode = false;
   private openWindowsTimeout: ReturnType<typeof setTimeout> | null = null;
   private isDestroyed = false;
   private messageHandler = (event: MessageEvent) => {
@@ -32,7 +29,6 @@ export class SketchPageController {
   constructor() {
     this.fullscreenManager = new FullscreenManager();
     this.cursorManager = new CursorManager();
-    this.resizeManager = new ResizeManager();
     this.view = new SketchPageView();
     this.windowController = new WindowController();
   }
@@ -58,7 +54,6 @@ export class SketchPageController {
     // 各マネージャーの初期化
     this.fullscreenManager.initialize();
     this.cursorManager.initialize();
-    this.resizeManager.initialize();
 
     // ページ離脱時の警告を設定
     this.setupBeforeUnloadWarning();
@@ -101,24 +96,6 @@ export class SketchPageController {
 
     this.cursorManager.onCursorShown(() => {
       console.log('SketchPageController: カーソル表示イベントを受信');
-    });
-
-    // ウィンドウ設定ボタンのイベント
-    this.view.onWindowSettingsToggle(() => {
-      console.log('SketchPageController: ウィンドウ設定ボタンクリック');
-      // 設定モードの状態を切り替え
-      this.isSettingsMode = !this.isSettingsMode;
-      const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
-      windowSettingsBtn.classList.toggle('settings-active', this.isSettingsMode);
-
-      // iframeオーバーレイの表示/非表示を制御
-      this.view.toggleIframeOverlay(this.isSettingsMode);
-
-      // iframe内のCanvas要素の設定モードも更新
-      this.sketchFrame?.setSettingsMode(this.isSettingsMode);
-
-      console.log('SketchPageController: 設定モード:', this.isSettingsMode ? 'ON' : 'OFF');
-      console.log('SketchPageController: iframe内のCanvas要素の枠を', this.isSettingsMode ? '追加' : '削除');
     });
 
     // フルスクリーン制御リクエストを監視
@@ -236,7 +213,6 @@ export class SketchPageController {
     this.sketchFrame?.dispose();
     this.sketchFrame = null;
     this.cursorManager.destroy();
-    this.resizeManager.destroy();
     this.view.destroy();
     this.windowController.destroy();
 

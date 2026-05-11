@@ -2,7 +2,6 @@ import type { Sketch } from '../types/sketch.js';
 import { EventEmitter } from '../events/EventEmitter';
 import { CursorManager } from '../managers/CursorManager';
 import { UIElementController } from '../ui/services/UIElementController';
-import { OverlayManager } from '../managers/OverlayManager';
 import { escapeHtml } from '../utils/html.js';
 import {
   applyVideoCrop,
@@ -15,10 +14,8 @@ export class SketchPageView {
   private eventEmitter: EventEmitter;
   private cursorManager: CursorManager;
   private uiController: UIElementController;
-  private overlayManager: OverlayManager;
-  // dynamic な mapping-overlay 要素はここに生成される
+  // 投影中、ワープした映像の overlay 要素（.mapping-overlay）はここに生成される
   private projectionStage: HTMLDivElement | null = null;
-  private settingsStage: HTMLDivElement | null = null;
   // canvas captureStream の現在値（WindowController から canvas-stream-ready で渡される）
   private currentStream: MediaStream | null = null;
   // 直近の mapping-overlay-update の payload を保持（resize 時の再描画に使う）
@@ -34,7 +31,6 @@ export class SketchPageView {
     this.eventEmitter = new EventEmitter();
     this.cursorManager = new CursorManager();
     this.uiController = new UIElementController();
-    this.overlayManager = new OverlayManager();
   }
 
   render(sketch: Sketch): void {
@@ -49,12 +45,6 @@ export class SketchPageView {
       <div class="fullscreen-sketch-container">
         <!-- スケッチ iframe は SketchPageController が SketchFrame を使ってここに差し込む -->
         <div id="sketch-stage" class="fullscreen-iframe"></div>
-
-        <!-- iframeの外側に配置するオーバーレイ（設定モード用 stage、子は動的生成） -->
-        <div
-          id="iframe-overlay"
-          class="iframe-overlay"
-        ></div>
 
         <div class="sketch-overlay-info ui-element">
           <div class="sketch-overlay-content">
@@ -73,18 +63,6 @@ export class SketchPageView {
           aria-label="フルスクリーン"
         >
           <i class="fas fa-expand fullscreen-icon button-icon"></i>
-        </button>
-
-        <!-- ウィンドウ設定ボタン -->
-        <button
-          id="window-settings-btn"
-          class="window-settings-button top-right-button ui-element"
-          title="ウィンドウ設定"
-          aria-label="ウィンドウ設定"
-        >
-          <svg class="window-settings-icon button-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
-          </svg>
         </button>
 
         <!-- ウィンドウ開くボタン -->
@@ -111,8 +89,6 @@ export class SketchPageView {
     // DOM が完全に描画されるのを待ってから dynamic stage を取得してイベント購読
     this.domSetupTimeout = setTimeout(() => {
       this.projectionStage = document.getElementById('iframe-content-overlay') as HTMLDivElement;
-      this.settingsStage = document.getElementById('iframe-overlay') as HTMLDivElement;
-
       this.setupMappingOverlayListener();
       this.domSetupTimeout = null;
     }, 100);
@@ -123,7 +99,6 @@ export class SketchPageView {
 
   private setupEventListeners(): void {
     const fullscreenBtn = document.getElementById('fullscreen-btn') as HTMLButtonElement;
-    const windowSettingsBtn = document.getElementById('window-settings-btn') as HTMLButtonElement;
     const openWindowsBtn = document.getElementById('open-windows-btn') as HTMLButtonElement;
 
     // フルスクリーンボタンのイベント
@@ -138,11 +113,6 @@ export class SketchPageView {
           console.error('フルスクリーン化に失敗しました:', err);
         });
       }
-    });
-
-    // ウィンドウ設定ボタンのイベント
-    windowSettingsBtn.addEventListener('click', () => {
-      this.eventEmitter.emit('windowSettingsToggle');
     });
 
     // ウィンドウ開くボタンのイベント
@@ -188,10 +158,6 @@ export class SketchPageView {
     this.updateFullscreenUI(isFullscreen);
   }
 
-  toggleIframeOverlay(isVisible: boolean): void {
-    this.overlayManager.toggleOverlay(isVisible);
-  }
-
   private setupMappingOverlayListener(): void {
     window.addEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
     // ウィンドウリサイズ時の再計算（matrix3d は親の pixel size 依存）
@@ -205,9 +171,7 @@ export class SketchPageView {
   }
 
   private applyStreamToAllVideos(): void {
-    const videos = document.querySelectorAll<HTMLVideoElement>(
-      '.mapping-overlay video, .iframe-mapping-container video'
-    );
+    const videos = document.querySelectorAll<HTMLVideoElement>('.mapping-overlay video');
     videos.forEach(video => {
       if (this.currentStream) {
         if (video.srcObject !== this.currentStream) {
@@ -244,12 +208,11 @@ export class SketchPageView {
   }
 
   private updateMappingOverlay(mappings: MappingEntry[]): void {
-    if (!this.projectionStage || !this.settingsStage) return;
+    if (!this.projectionStage) return;
 
     // disabled な mapping は投影出力には出さない
     const enabled = mappings.filter(isMappingEnabled);
     this.syncMappingChildren(this.projectionStage, 'mapping-overlay', enabled);
-    this.syncMappingChildren(this.settingsStage, 'iframe-mapping-container', enabled);
   }
 
   /**
@@ -315,10 +278,6 @@ export class SketchPageView {
     this.eventEmitter.on('fullscreenToggle', callback);
   }
 
-  onWindowSettingsToggle(callback: () => void): void {
-    this.eventEmitter.on('windowSettingsToggle', callback);
-  }
-
   onOpenWindowsToggle(callback: () => void): void {
     this.eventEmitter.on('openWindowsToggle', callback);
   }
@@ -335,6 +294,5 @@ export class SketchPageView {
     window.removeEventListener('canvas-stream-ready', this.boundCanvasStreamReady);
     this.eventEmitter.removeAllListeners();
     this.cursorManager.destroy();
-    this.overlayManager.destroy();
   }
 }
