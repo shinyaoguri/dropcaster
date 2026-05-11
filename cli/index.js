@@ -55,9 +55,10 @@ program
 
 program
   .command('scan')
-  .description('Scan sketches directory and generate metadata')
+  .description('Scan sketches directory and generate metadata (preview images included by default)')
   .option('--sketch <name>', 'Scan specific sketch only')
-  .option('--force-preview', 'Force regenerate preview images')
+  .option('--no-previews', 'Skip preview image generation (metadata only, faster)')
+  .option('--force-preview', 'Regenerate preview images even if they are up to date')
   .option('--reset', 'Reset and regenerate all previews')
   .option('--fetch-userdata', 'Fetch author/title metadata via the OpenProcessing Public API')
   .option('--external-browser', 'Open sketches in the default browser instead of the API (for manual dropcaster.meta.json entry)')

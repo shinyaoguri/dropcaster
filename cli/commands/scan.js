@@ -39,10 +39,15 @@ export async function scan(options = {}) {
     args.push('--sketch', options.sketch);
   }
   
-  if (options.forcePreview) {
-    args.push('--force-preview');
+  // プレビュー GIF はデフォルトで生成（--no-previews でスキップ）
+  if (options.previews !== false) {
+    args.push('--generate-previews');
+    // --force-preview: 最新のプレビューでも再生成する
+    if (options.forcePreview) {
+      args.push('--force-regenerate');
+    }
   }
-  
+
   if (options.reset) {
     args.push('--reset');
   }

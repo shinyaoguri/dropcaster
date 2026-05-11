@@ -97,9 +97,12 @@ async function getLatestMtime(path) {
  */
 export async function ensureDirectoryExists(dirPath, description = 'directory') {
   try {
-    await mkdir(dirPath, { recursive: true });
-    console.error(`✓ Created ${description}`);
+    // mkdir(recursive) は新規作成した最上位ディレクトリのパスを返す（既存なら undefined）
+    const created = await mkdir(dirPath, { recursive: true });
+    if (created) {
+      console.error(`✓ Created ${description}`);
+    }
   } catch (error) {
-    // ディレクトリが既に存在する場合は無視
+    // 作成に失敗した場合（権限など）は呼び出し側の後続処理でエラーになるためここでは無視
   }
 }

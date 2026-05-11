@@ -41,10 +41,6 @@ export class SketchPageView {
   render(sketch: Sketch): void {
     const app = document.querySelector<HTMLDivElement>('#app')!;
 
-    // デバッグログ
-    console.log('SketchPageView: Rendering sketch:', sketch);
-    console.log('SketchPageView: userData:', sketch.userData);
-
     // パスを正しい形式に変換
     const sketchPath = publicAssetPath(sketch.path);
 
@@ -52,8 +48,6 @@ export class SketchPageView {
     const userName = sketch.userData?.userName || 'Unknown User';
     const title = escapeHtml(sketch.title);
     const escapedUserName = escapeHtml(userName);
-
-    console.log('SketchPageView: Using userName:', userName);
 
     app.innerHTML = `
       <div class="fullscreen-sketch-container">

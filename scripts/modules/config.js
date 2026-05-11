@@ -11,10 +11,10 @@ export const PREVIEW_OPTIONS = {
   scaleFilter: 'fast_bilinear' // 高速スケーリングフィルター
 };
 
-// パス関連の定数
+// パス関連の定数（sketches.json は viewer ルートからの相対パスで持つ）
 export const DEFAULT_DESCRIPTION_SUFFIX = ' スケッチ';
-export const DEFAULT_PATH_PREFIX = '../sketches/';
-export const PREVIEW_PATH_PREFIX = '../previews/';
+export const DEFAULT_PATH_PREFIX = 'sketches/';
+export const PREVIEW_PATH_PREFIX = 'previews/';
 
 // スクレイピング関連の設定
 export const SCRAPING_CONFIG = {
