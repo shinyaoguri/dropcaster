@@ -47,12 +47,16 @@ export async function scan(options = {}) {
     args.push('--reset');
   }
   
-  // ユーザーデータ取得は常に外部ブラウザ経由（puppeteer ヘッドレス取得は廃止）
+  // ユーザーデータ取得は OpenProcessing Public API がデフォルト。
+  // --external-browser を付けた場合のみ OS 既定ブラウザを開く手動フロー（dropcaster.meta.json を手書き）になる。
   if (options.fetchUserdata) {
-    args.push('--fetch-userdata', '--external-browser');
+    args.push('--fetch-userdata');
+    if (options.externalBrowser) {
+      args.push('--external-browser');
+    }
   }
 
-  if (options.externalBrowserIntervalMs) {
+  if (options.externalBrowser && options.externalBrowserIntervalMs) {
     args.push('--external-browser-interval-ms', options.externalBrowserIntervalMs);
   }
 

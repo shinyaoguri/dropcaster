@@ -59,7 +59,8 @@ program
   .option('--sketch <name>', 'Scan specific sketch only')
   .option('--force-preview', 'Force regenerate preview images')
   .option('--reset', 'Reset and regenerate all previews')
-  .option('--fetch-userdata', 'Fetch user data via the default browser (creates manual metadata templates)')
+  .option('--fetch-userdata', 'Fetch author/title metadata via the OpenProcessing Public API')
+  .option('--external-browser', 'Open sketches in the default browser instead of the API (for manual dropcaster.meta.json entry)')
   .option('--external-browser-interval-ms <ms>', 'Delay between default-browser opens, clamped to at least 1000ms', '1000')
   .option('-v, --verbose', 'Show detailed output')
   .action(scan);
@@ -67,7 +68,8 @@ program
 program
   .command('scan:reset')
   .description('Reset and regenerate all preview images')
-  .option('--fetch-userdata', 'Also fetch user data via the default browser')
+  .option('--fetch-userdata', 'Also fetch author/title metadata via the OpenProcessing Public API')
+  .option('--external-browser', 'Open sketches in the default browser instead of the API (for manual dropcaster.meta.json entry)')
   .option('--external-browser-interval-ms <ms>', 'Delay between default-browser opens, clamped to at least 1000ms', '1000')
   .action(scanReset);
 
