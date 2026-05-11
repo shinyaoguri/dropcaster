@@ -114,7 +114,7 @@ export async function init(options) {
         preview: 'dropcaster preview'
       },
       dependencies: {
-        '@dropcaster/viewer': `file:${join(__dirname, '../../..')}`
+        dropcaster: `file:${join(__dirname, '../../..')}`
       }
     };
     
@@ -196,7 +196,7 @@ git push
 Edit \`dropcaster.config.js\` to customize your gallery.
 
 ---
-Powered by [dropcaster](https://github.com/yourusername/dropcaster)
+Powered by [dropcaster](https://github.com/shinyaoguri/dropcaster)
 `;
     
     await fs.writeFile(join(projectPath, 'README.md'), readme, 'utf-8');

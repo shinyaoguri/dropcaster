@@ -41,8 +41,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview dist",
-    "scan": "node src/core/scan-sketches.js --generate-previews --fetch-user-data --write-file",
-    "scan:reset": "rm -rf public/sketches public/previews && node src/core/scan-sketches.js --generate-previews --fetch-user-data --write-file --force-regenerate",
+    "scan": "node src/core/scan-sketches.js --generate-previews --fetch-userdata --write-file",
+    "scan:reset": "node src/core/scan-sketches.js --generate-previews --fetch-userdata --write-file --reset",
     "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node src/core/scan-sketches.js --watch-mode --write-file\""
   },
   "devDependencies": {

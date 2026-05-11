@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readdir, writeFile, stat, readFile } from 'fs/promises';
+import { readdir, writeFile, stat, readFile, rm } from 'fs/promises';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { fetchUserDataForSketches } from './fetch-op-userdata.js';
@@ -40,6 +40,7 @@ async function scanSketches(options = {}) {
   const {
     generatePreviews = false,
     forceRegenerate = false,
+    reset = false,
     fetchUserData: shouldFetchUserData = false,
     targetSketch = null,
     watchMode = false,
@@ -54,11 +55,12 @@ async function scanSketches(options = {}) {
     let existingSketches = new Set();
     let existingSketchData = {};
     let existingPreviewData = {};
+    let existingSketchList = [];
     try {
       const { projectRoot } = getDirectories();
       const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
       const existingData = await readFile(sketchesJsonPath, 'utf-8');
-      const existingSketchList = JSON.parse(existingData);
+      existingSketchList = JSON.parse(existingData);
       existingSketches = new Set(existingSketchList.map(s => s.id));
       // 既存のスケッチのユーザー情報とプレビュー情報を保存
       existingSketchList.forEach(sketch => {
@@ -90,6 +92,14 @@ async function scanSketches(options = {}) {
         }
         console.error('   （メタデータのスキャンとスケッチのコピーは続行します。状態は `dropcaster doctor` で確認できます）\n');
       }
+    }
+
+    // --reset: public/sketches と public/previews を一度まるごと削除してから作り直す
+    // （userData / title を保持したいので public/sketches.json は残す。--sketch との併用時は全消ししない）
+    if (reset && !targetSketch) {
+      console.error('🧹 --reset: public/sketches と public/previews を削除して作り直します');
+      await rm(publicSketchesDir, { recursive: true, force: true });
+      await rm(previewsDir, { recursive: true, force: true });
     }
 
     // 必要なディレクトリを作成
@@ -320,13 +330,25 @@ async function scanSketches(options = {}) {
       console.error(`   スケッチ: ${newSketches.join(', ')}`);
     }
 
+    // --sketch で 1 件だけ走査したときは sketches に対象スケッチしか入っていない。
+    // そのまま書き出すと他のスケッチが消えてしまうので、既存リストにマージする。
+    let outputSketches = sketches;
+    if (targetSketch && existingSketchList.length > 0) {
+      const scannedById = new Map(sketches.map(s => [s.id, s]));
+      outputSketches = existingSketchList.map(s => scannedById.get(s.id) ?? s);
+      const knownIds = new Set(existingSketchList.map(s => s.id));
+      for (const s of sketches) {
+        if (!knownIds.has(s.id)) outputSketches.push(s);
+      }
+    }
+
     // CLI / npm scripts から呼ばれた場合（--write-file または --fetch-userdata）は
     // public/sketches.json を書き出す。それ以外（フィルタとして使う場合）は stdout に JSON を出す。
     if (fetchUserData || writeFileOutput) {
       try {
         const { projectRoot } = getDirectories();
         const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
-        await writeFile(sketchesJsonPath, JSON.stringify(sketches, null, 2), 'utf-8');
+        await writeFile(sketchesJsonPath, JSON.stringify(outputSketches, null, 2), 'utf-8');
         console.error(`💾 sketches.jsonファイルを生成: ${sketchesJsonPath}`);
 
         // ファイルの内容確認
@@ -346,10 +368,10 @@ async function scanSketches(options = {}) {
       }
     } else {
       // ファイル出力しない場合のみ stdout に JSON を出す（フィルタ用途）
-      console.log(JSON.stringify(sketches, null, 2));
+      console.log(JSON.stringify(outputSketches, null, 2));
     }
 
-    return sketches;
+    return outputSketches;
   } catch (error) {
     console.error('Error scanning sketches:', error);
     process.exit(1);
@@ -380,7 +402,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // コマンドライン引数を解析（新旧両方のオプション名をサポート）
   const options = {
     // 新しいオプション名
-    generatePreviews: args.includes('--force-preview') || args.includes('--generate-previews'),
+    generatePreviews: args.includes('--force-preview') || args.includes('--generate-previews') || args.includes('--reset'),
+    reset: args.includes('--reset'),
     forceRegenerate: args.includes('--reset') || args.includes('--force-regenerate'),
     fetchUserData: args.includes('--fetch-userdata') || args.includes('--fetch-user-data'),
     watchMode: args.includes('--watch-mode'),
