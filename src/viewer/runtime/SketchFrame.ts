@@ -43,6 +43,8 @@ export class SketchFrame {
   private loadedUrl: string | null = null;
   /** 進行中の読み込みの完了 Promise。読み込んでいなければ即 resolve 済み。 */
   private loadPromise: Promise<void> = Promise.resolve();
+  /** 進行中の load の後始末（fallback タイマー・load リスナ・resolve）。再 load / dispose で確実に畳む。 */
+  private pendingLoad: { timer: number; onLoad: () => void; resolve: () => void } | null = null;
   private disposed = false;
 
   constructor(container: HTMLElement) {
@@ -77,23 +79,39 @@ export class SketchFrame {
     if (this.disposed) return Promise.reject(new Error('SketchFrame is disposed'));
     if (this.loadedUrl === url) return this.loadPromise;
 
+    this.settlePendingLoad(); // 進行中だった別 URL のロードのタイマー・リスナを片付け、待っている呼び出しを解放する
+
     this.loadedUrl = url;
     this.loadPromise = new Promise<void>((resolve) => {
-      let settled = false;
       const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        this.iframe.removeEventListener('load', onLoad);
+        if (!this.pendingLoad) return; // すでに settle 済み
+        this.clearPendingLoad();
         this.injectViewerStyle();
         resolve();
       };
       const onLoad = () => finish();
-      const timer = window.setTimeout(finish, LOAD_TIMEOUT_MS);
+      this.pendingLoad = { timer: window.setTimeout(finish, LOAD_TIMEOUT_MS), onLoad, resolve };
       this.iframe.addEventListener('load', onLoad, { once: true });
       this.iframe.src = url;
     });
     return this.loadPromise;
+  }
+
+  /** 進行中の load のタイマー・load リスナを解除する（resolve はしない — 呼び出し側が直後に resolve する）。 */
+  private clearPendingLoad(): void {
+    const p = this.pendingLoad;
+    if (!p) return;
+    this.pendingLoad = null;
+    clearTimeout(p.timer);
+    this.iframe.removeEventListener('load', p.onLoad);
+  }
+
+  /** 進行中の load を畳む（タイマー解除＋待っている loadPromise を resolve）。再 load / dispose 用。 */
+  private settlePendingLoad(): void {
+    const p = this.pendingLoad;
+    if (!p) return;
+    this.clearPendingLoad();
+    p.resolve();
   }
 
   /** iframe 内 document（同一オリジンでアクセスできなければ null） */
@@ -201,6 +219,7 @@ export class SketchFrame {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.settlePendingLoad(); // 進行中のロードがあればタイマーを止めて畳む
     try {
       this.iframe.src = 'about:blank';
     } catch {

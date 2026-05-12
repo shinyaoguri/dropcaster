@@ -8,6 +8,7 @@ export class SlideshowView {
   private sketchIds: string[] = [];
   private sketches: Sketch[] = [];
   private intervalId: number | null = null;
+  private progressBarResetTimeout: number | null = null;
   private isPaused: boolean = false;
   private SLIDE_INTERVAL = 30000; // 30秒
   private boundHandleKeydown = this.handleKeydown.bind(this);
@@ -503,6 +504,10 @@ export class SlideshowView {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    if (this.progressBarResetTimeout) {
+      clearTimeout(this.progressBarResetTimeout);
+      this.progressBarResetTimeout = null;
+    }
 
     // プログレスバーアニメーション停止
     const progressBar = document.getElementById('progress-bar');
@@ -525,8 +530,10 @@ export class SlideshowView {
     if (progressBar) {
       progressBar.classList.remove('active');
       progressBar.style.width = '0';
-      // 少し遅延してからアニメーション開始
-      setTimeout(() => {
+      // 少し遅延してからアニメーション開始（連打時に古いタイマーが残らないよう毎回張り直す）
+      if (this.progressBarResetTimeout) clearTimeout(this.progressBarResetTimeout);
+      this.progressBarResetTimeout = window.setTimeout(() => {
+        this.progressBarResetTimeout = null;
         if (!this.isPaused) {
           progressBar.classList.add('active');
         }
