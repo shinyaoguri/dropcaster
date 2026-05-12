@@ -11,12 +11,7 @@ const __dirname = dirname(__filename);
 
 export async function scan(options = {}) {
   console.log(chalk.cyan('\n🔍 Scanning sketches...\n'));
-  
-  // デバッグ: オプションを確認
-  if (options.verbose) {
-    console.log(chalk.gray('Options received:'), options);
-  }
-  
+
   // プロジェクトルートのパスを取得
   const projectRoot = process.cwd();
   
@@ -51,18 +46,10 @@ export async function scan(options = {}) {
   if (options.reset) {
     args.push('--reset');
   }
-  
-  // ユーザーデータ取得は OpenProcessing Public API がデフォルト。
-  // --external-browser を付けた場合のみ OS 既定ブラウザを開く手動フロー（dropcaster.meta.json を手書き）になる。
+
+  // ユーザーデータ取得（タイトル・作者）は OpenProcessing Public API 経由
   if (options.fetchUserdata) {
     args.push('--fetch-userdata');
-    if (options.externalBrowser) {
-      args.push('--external-browser');
-    }
-  }
-
-  if (options.externalBrowser && options.externalBrowserIntervalMs) {
-    args.push('--external-browser-interval-ms', options.externalBrowserIntervalMs);
   }
 
   // スピナーを開始

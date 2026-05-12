@@ -2,86 +2,79 @@
 
 import { readdir, writeFile, stat, readFile, rm } from 'fs/promises';
 import { resolve } from 'path';
-import { fileURLToPath } from 'url';
-import { fetchUserDataForSketches } from './fetch-op-userdata.js';
+import { pathToFileURL } from 'url';
+import { fetchUserDataForSketches } from './modules/op-api-client.js';
 import { analyzeSketch } from './modules/sketch-analyzer.js';
 import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists } from './modules/file-manager.js';
 import { generateSketchPreview } from './modules/preview-generator.js';
 import { checkPreviewTools } from './check-env.js';
+import { MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './modules/config.js';
 
-// __filenameと__dirnameをローカルスコープで定義
+// プロジェクトルートの解決:
+//   1. DROPCASTER_PROJECT_ROOT 環境変数（dropcaster CLI から呼ばれた場合に設定される）
+//   2. それ以外（npm run scan / 直接実行）はカレントディレクトリ
+// ※スクリプト自身の位置に依存させない（src/core/ に移動しても壊れないように）
 const getDirectories = () => {
-  const currentFilename = fileURLToPath(import.meta.url);
-  const currentDirname = resolve(currentFilename, '..');
-
-  // プロジェクトルートの解決:
-  //   1. DROPCASTER_PROJECT_ROOT 環境変数（dropcaster CLI から呼ばれた場合に設定される）
-  //   2. それ以外（npm run scan / CI から直接実行）はカレントディレクトリ
-  // ※スクリプト自身の位置に依存させない（src/core/ に移動しても壊れないように）
   const projectRoot = process.env.DROPCASTER_PROJECT_ROOT || process.cwd();
-
   return {
-    __dirname: currentDirname,
     projectRoot,
     sketchesDir: resolve(projectRoot, 'sketches'),
     publicSketchesDir: resolve(projectRoot, 'public/sketches'),
-    previewsDir: resolve(projectRoot, 'public/previews')
+    previewsDir: resolve(projectRoot, 'public/previews'),
+    sketchesJsonPath: resolve(projectRoot, 'public/sketches.json'),
   };
 };
 
-const { sketchesDir, publicSketchesDir, previewsDir } = getDirectories();
-const MANUAL_METADATA_FILE = 'dropcaster.meta.json';
-const MANUAL_METADATA_TEMPLATE_FILE = 'dropcaster.meta.example.json';
+const { sketchesDir, publicSketchesDir, previewsDir, sketchesJsonPath } = getDirectories();
 
 /**
- * スケッチディレクトリをスキャンしてメタデータを生成
+ * sketches/ をスキャンして public/sketches/ にコピー、public/sketches.json を生成する。
+ * オプション:
+ *   generatePreviews   プレビュー GIF を生成する
+ *   forceRegenerate    最新でも再コピー / 再生成する
+ *   reset              public/sketches と public/previews を一度消してから作り直す
+ *   fetchUserData      OpenProcessing Public API からタイトル・ユーザー情報を取得する
+ *   targetSketch       指定したスケッチ 1 件だけ走査する（sketches.json は既存にマージ）
+ *   watchMode          新規スケッチだけ検出してプレビュー生成（nodemon から）
+ *   writeFileOutput    public/sketches.json に書き出す（指定しないと stdout に JSON）
+ *   fetchOptions       { apiToken, apiRequestIntervalMs } を op-api-client へ渡す
  */
 async function scanSketches(options = {}) {
   const {
     generatePreviews = false,
     forceRegenerate = false,
     reset = false,
-    fetchUserData: shouldFetchUserData = false,
+    fetchUserData = false,
     targetSketch = null,
     watchMode = false,
-    incremental = false,
     writeFileOutput = false,
-    fetchOptions = {}
+    fetchOptions = {},
   } = options;
-  let fetchUserData = shouldFetchUserData;
 
   try {
-    // 既存のスケッチリストを読み込む（ユーザー情報やプレビュー情報を保持するため）
-    let existingSketches = new Set();
-    let existingSketchData = {};
-    let existingPreviewData = {};
+    // 既存の sketches.json を読み込む（userData / title / previewGif を保持するため）
     let existingSketchList = [];
+    const existingSketchData = {};
+    const existingPreviewData = {};
     try {
-      const { projectRoot } = getDirectories();
-      const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
-      const existingData = await readFile(sketchesJsonPath, 'utf-8');
-      existingSketchList = JSON.parse(existingData);
-      existingSketches = new Set(existingSketchList.map(s => s.id));
-      // 既存のスケッチのユーザー情報とプレビュー情報を保存
+      existingSketchList = JSON.parse(await readFile(sketchesJsonPath, 'utf-8'));
       existingSketchList.forEach(sketch => {
         existingSketchData[sketch.id] = {
           userData: sketch.userData,
           title: sketch.title,
           sketchUrl: sketch.sketchUrl,
-          previewGif: sketch.previewGif
+          previewGif: sketch.previewGif,
         };
-        if (sketch.previewGif) {
-          existingPreviewData[sketch.id] = sketch.previewGif;
-        }
+        if (sketch.previewGif) existingPreviewData[sketch.id] = sketch.previewGif;
       });
-    } catch (error) {
-      // ファイルが存在しない場合は空のセットのまま
-      console.error(`ℹ️ sketches.jsonが存在しません。新規作成します。`);
+    } catch {
+      // 無ければ新規作成
     }
+    const existingSketches = new Set(existingSketchList.map(s => s.id));
 
     // プレビュー生成に必要なツール（FFmpeg / Chromium）が無ければスキップ（メタデータ収集は続行）
     let previewToolsOk = true;
-    if (generatePreviews || watchMode || incremental) {
+    if (generatePreviews || watchMode) {
       const { ok, missing } = await checkPreviewTools();
       if (!ok) {
         previewToolsOk = false;
@@ -102,10 +95,8 @@ async function scanSketches(options = {}) {
       await rm(previewsDir, { recursive: true, force: true });
     }
 
-    // 必要なディレクトリを作成
     await ensureDirectoryExists(sketchesDir, 'sketches directory');
     await ensureDirectoryExists(publicSketchesDir, 'public/sketches directory');
-
     if (previewToolsOk && (generatePreviews || watchMode)) {
       await ensureDirectoryExists(previewsDir, 'public/previews directory');
     }
@@ -113,261 +104,123 @@ async function scanSketches(options = {}) {
     const entries = await readdir(sketchesDir, { withFileTypes: true });
     const sketches = [];
     const currentSketchNames = new Set();
-    let sketchIds = []; // ユーザー情報取得用のスケッチIDリスト
-    const newSketches = []; // 新規検出されたスケッチ
+    const sketchIds = []; // ユーザー情報取得用の数値スケッチID
+    const newSketches = [];
 
     for (const entry of entries) {
-      if (entry.isDirectory()) {
-        // targetSketchが指定されている場合、それ以外はスキップ
-        if (targetSketch && entry.name !== targetSketch) {
-          continue;
-        }
-        currentSketchNames.add(entry.name);
-        const sketchPath = resolve(sketchesDir, entry.name);
-        const sketchInfo = await analyzeSketch(entry.name, sketchPath);
-        if (sketchInfo) {
-          // 既存の情報を復元
-          if (existingSketchData[entry.name]) {
-            const existingData = existingSketchData[entry.name];
-            const manualMetadataFields = sketchInfo.__manualMetadataFields || new Set();
-            if (existingData.userData && !manualMetadataFields.has('userData')) {
-              sketchInfo.userData = existingData.userData;
-            }
-            if (existingData.title && existingData.title !== entry.name && !manualMetadataFields.has('title')) {
-              sketchInfo.title = existingData.title;
-            }
-            if (existingData.sketchUrl && !manualMetadataFields.has('sketchUrl')) {
-              sketchInfo.sketchUrl = existingData.sketchUrl;
-            }
-            // 既存のプレビューがあれば使用
-            if (existingData.previewGif && !manualMetadataFields.has('previewGif')) {
-              sketchInfo.previewGif = existingData.previewGif;
-            }
-          }
+      if (!entry.isDirectory()) continue;
+      if (targetSketch && entry.name !== targetSketch) continue;
 
-          sketches.push(sketchInfo);
+      currentSketchNames.add(entry.name);
+      const sketchPath = resolve(sketchesDir, entry.name);
+      const sketchInfo = await analyzeSketch(entry.name, sketchPath);
+      if (!sketchInfo) continue;
 
-          // watchModeで新規スケッチを検出
-          if (watchMode && !existingSketches.has(entry.name)) {
-            newSketches.push(entry.name);
-            console.error(`🆕 新しいスケッチを検出: ${entry.name}`);
-          }
+      // 既存の情報を復元（手動メタデータで明示指定されていないフィールドのみ）
+      const existing = existingSketchData[entry.name];
+      if (existing) {
+        const manual = sketchInfo.__manualMetadataFields || new Set();
+        if (existing.userData && !manual.has('userData')) sketchInfo.userData = existing.userData;
+        if (existing.title && existing.title !== entry.name && !manual.has('title')) sketchInfo.title = existing.title;
+        if (existing.sketchUrl && !manual.has('sketchUrl')) sketchInfo.sketchUrl = existing.sketchUrl;
+        if (existing.previewGif && !manual.has('previewGif')) sketchInfo.previewGif = existing.previewGif;
+      }
 
-          // スケッチIDをリストに追加（数値の場合のみ）
-          if (/^\d+$/.test(entry.name)) {
-            sketchIds.push(entry.name);
-            console.error(`🔢 数値スケッチIDを検出: ${entry.name}`);
-          } else if (entry.name.startsWith('sketch') && /^\d+$/.test(entry.name.replace('sketch', ''))) {
-            // "sketch"プレフィックスを除去して数値部分を抽出
-            const numericId = entry.name.replace('sketch', '');
-            sketchIds.push(numericId);
-            console.error(`🔢 スケッチIDを検出: ${entry.name} -> ${numericId}`);
-          } else {
-            console.error(`ℹ️ 数値以外のスケッチ名: ${entry.name}`);
-          }
+      sketches.push(sketchInfo);
 
-          // スケッチをpublicディレクトリにコピー
-          await copySketchToPublic(entry.name, sketchPath, publicSketchesDir, forceRegenerate);
+      if (watchMode && !existingSketches.has(entry.name)) {
+        newSketches.push(entry.name);
+        console.error(`🆕 新しいスケッチを検出: ${entry.name}`);
+      }
 
-          // プレビューGIFを生成（オプション指定時、watchModeで新規、またはincrementalでプレビューがない場合）
-          // ただし FFmpeg / Chromium が無いときは previewToolsOk=false でスキップ
-          const needsPreview = incremental && !existingPreviewData[entry.name];
-          const shouldGeneratePreview = previewToolsOk && (generatePreviews || (watchMode && newSketches.includes(entry.name)) || needsPreview);
-          if (shouldGeneratePreview) {
-            try {
-              const previewPath = await generateSketchPreview(entry.name, sketchPath, previewsDir, forceRegenerate);
-              if (previewPath) {
-                sketchInfo.previewGif = previewPath;
-                console.error(`🎬 Generated preview for ${entry.name}`);
-              }
-            } catch (error) {
-              console.warn(`Warning: Failed to generate preview for ${entry.name}:`, error.message);
-            }
-          }
+      // 数値（または "sketch" + 数値）のディレクトリ名は OpenProcessing のスケッチ ID とみなす
+      if (/^\d+$/.test(entry.name)) sketchIds.push(entry.name);
+      else if (entry.name.startsWith('sketch') && /^\d+$/.test(entry.name.slice('sketch'.length))) {
+        sketchIds.push(entry.name.slice('sketch'.length));
+      }
+
+      await copySketchToPublic(entry.name, sketchPath, publicSketchesDir, forceRegenerate);
+
+      const shouldGeneratePreview = previewToolsOk && (generatePreviews || (watchMode && newSketches.includes(entry.name)));
+      if (shouldGeneratePreview) {
+        try {
+          const previewPath = await generateSketchPreview(entry.name, sketchPath, previewsDir, forceRegenerate);
+          if (previewPath) sketchInfo.previewGif = previewPath;
+        } catch (error) {
+          console.warn(`Warning: ${entry.name} のプレビュー生成に失敗: ${error.message}`);
         }
       }
     }
 
-    // 不要になった public ディレクトリのスケッチを削除する。
-    // currentSketchNames は「今回走査したスケッチ」なので、--sketch で 1 件だけ走査した
-    // ときに実行すると他のスケッチを誤って消してしまう。全件走査したときだけ実行する。
-    // （forceRegenerate でスキップしていたのは誤り。reset 時こそ整理すべき）
+    // 不要になった public ディレクトリのスケッチを削除する（全件走査したときだけ。--sketch では消さない）
     if (!targetSketch) {
       await cleanupRemovedSketches(currentSketchNames, publicSketchesDir, previewsDir);
     }
 
-    // incrementalモードでユーザー情報がないスケッチのIDを収集
-    let needsUserData = [];
-    if (incremental) {
-      needsUserData = sketchIds.filter(id => {
-        const sketchName = `sketch${id}`;
-        return !existingSketchData[sketchName] || !existingSketchData[sketchName].userData;
-      });
-      if (needsUserData.length > 0) {
-        console.error(`🆕 ユーザー情報がないスケッチ: ${needsUserData.length}件`);
-        fetchUserData = true;
-        sketchIds = needsUserData;
-      }
-    }
-
-    // スケッチ情報を取得（オプション指定時またはincrementalで必要な場合）
+    // OpenProcessing Public API からタイトル・ユーザー情報を取得して統合
     if (fetchUserData && sketchIds.length > 0) {
-      console.error(`\n🔍 スケッチIDからスケッチ情報を取得中... (${sketchIds.length}件)`);
-      console.error(`📋 検出されたスケッチID: ${JSON.stringify(sketchIds)}`);
-
+      console.error(`🔍 OpenProcessing Public API からメタデータを取得中... (${sketchIds.length}件)`);
       try {
-        console.error(`🚀 fetchUserDataForSketches関数を呼び出し中...`);
         const userDataResults = await fetchUserDataForSketches(sketchIds, fetchOptions);
-        console.error(`📊 取得結果: ${userDataResults.length}件`);
-        console.error(`📄 結果の詳細:`, JSON.stringify(userDataResults, null, 2));
-
-        // スケッチ情報にユーザーデータを統合
-        let updatedCount = 0;
-        let skippedCount = 0;
-        let errorCount = 0;
-
-        for (const [index, userData] of userDataResults.entries()) {
-          console.error(`\n🔄 [${index + 1}/${userDataResults.length}] スケッチデータ処理中: ${userData.sketchId}`);
-          console.error(`📋 スケッチデータ詳細:`, JSON.stringify(userData, null, 2));
-
-          if (!userData.error) {
-            // 数値IDとsketchプレフィックス付きIDの両方で検索
-            let sketchIndex = sketches.findIndex(s => s.id === userData.sketchId);
-            if (sketchIndex === -1) {
-              // 数値IDで見つからない場合は、sketchプレフィックス付きで検索
-              sketchIndex = sketches.findIndex(s => s.id === `sketch${userData.sketchId}`);
-            }
-
-            console.error(`🔍 スケッチ検索結果: ${userData.sketchId} -> index: ${sketchIndex}`);
-
-            if (sketchIndex !== -1) {
-              console.error(`✅ スケッチ情報を更新中: ${userData.sketchId}`);
-
-              // 更新前の状態をログ出力
-              console.error(`📝 更新前:`, JSON.stringify(sketches[sketchIndex], null, 2));
-              const manualMetadataFields = sketches[sketchIndex].__manualMetadataFields || new Set();
-
-              // スケッチのタイトルを更新（HTMLから取得したタイトルがある場合）
-              if (!manualMetadataFields.has('title') && userData.sketchTitle && userData.sketchTitle !== 'Unknown Title') {
-                sketches[sketchIndex].title = userData.sketchTitle;
-                console.error(`📝 スケッチタイトルを更新: "${userData.sketchTitle}"`);
-              }
-
-              // 重複を避けるため、authorとuserDataを統合
-              // authorフィールドは削除し、userDataのみを使用
-              delete sketches[sketchIndex].author;
-              delete sketches[sketchIndex].author_icon;
-              delete sketches[sketchIndex].author_icon_local;
-
-              // userDataオブジェクトを設定
-              if (!manualMetadataFields.has('userData')) {
-                sketches[sketchIndex].userData = {
-                  userId: userData.userId,
-                  userName: userData.userName,
-                  userUrl: userData.userUrl
-                };
-              }
-
-              // オリジナルスケッチのURLを設定
-              const sketchNumId = userData.sketchId.replace('sketch', '');
-              if (!manualMetadataFields.has('sketchUrl')) {
-                sketches[sketchIndex].sketchUrl = `https://openprocessing.org/sketch/${sketchNumId}`;
-              }
-
-              // 更新後の状態をログ出力
-              console.error(`📝 更新後:`, JSON.stringify(sketches[sketchIndex], null, 2));
-
-              updatedCount++;
-              console.error(`✅ 更新完了: ${userData.sketchId}`);
-            } else {
-              console.error(`❌ スケッチが見つかりません: ${userData.sketchId} (数値IDとsketchプレフィックス付きIDの両方で検索失敗)`);
-              console.error(`🔍 利用可能なスケッチID:`, sketches.map(s => s.id));
-              skippedCount++;
-            }
-          } else {
-            console.error(`❌ スケッチデータエラー: ${userData.sketchId} - ${userData.error}`);
+        let updated = 0;
+        let errors = 0;
+        for (const userData of userDataResults) {
+          if (userData.error) {
             await writeManualMetadataTemplate(userData.sketchId, userData.error);
-            errorCount++;
+            errors++;
+            continue;
           }
+          // 数値ID と "sketch" プレフィックス付きID の両方で照合
+          const idx = sketches.findIndex(s => s.id === userData.sketchId || s.id === `sketch${userData.sketchId}`);
+          if (idx === -1) continue;
+          const manual = sketches[idx].__manualMetadataFields || new Set();
+          if (!manual.has('title') && userData.sketchTitle && userData.sketchTitle !== 'Unknown Title') {
+            sketches[idx].title = userData.sketchTitle;
+          }
+          // 旧フィールドは廃止し userData に統一
+          delete sketches[idx].author;
+          delete sketches[idx].author_icon;
+          delete sketches[idx].author_icon_local;
+          if (!manual.has('userData')) {
+            sketches[idx].userData = { userId: userData.userId, userName: userData.userName, userUrl: userData.userUrl };
+          }
+          if (!manual.has('sketchUrl')) {
+            sketches[idx].sketchUrl = `https://openprocessing.org/sketch/${userData.sketchId.replace('sketch', '')}`;
+          }
+          updated++;
         }
-
-        console.error(`\n📊 スケッチデータ統合結果:`);
-        console.error(`   - 成功: ${updatedCount}件`);
-        console.error(`   - スキップ: ${skippedCount}件`);
-        console.error(`   - エラー: ${errorCount}件`);
-        console.error(`   - 合計: ${userDataResults.length}件`);
-
-        console.error(`✅ スケッチ情報の取得と統合が完了しました`);
-
-        // 統合後のスケッチ情報を確認
-        const sketchesWithUserData = sketches.filter(s => s.userData);
-        console.error(`🔍 スケッチデータが統合されたスケッチ: ${sketchesWithUserData.length}件`);
-        sketchesWithUserData.forEach(sketch => {
-          console.error(`   - ${sketch.id}: "${sketch.title}" by ${sketch.userData.userName} (${sketch.userData.userId})`);
-        });
-
+        console.error(`   メタデータ統合: 成功 ${updated} / 失敗 ${errors} / 合計 ${userDataResults.length}`);
       } catch (error) {
-        console.error(`❌ スケッチ情報の取得に失敗しました:`, error.message);
-        console.error(`📚 エラーの詳細:`, error.stack);
-      }
-    } else {
-      if (!fetchUserData) {
-        console.error(`ℹ️ スケッチ情報取得オプションが無効です`);
-      }
-      if (sketchIds.length === 0) {
-        console.error(`ℹ️ 数値のスケッチIDが見つかりませんでした`);
+        console.error(`❌ メタデータの取得に失敗しました: ${error.message}`);
       }
     }
 
-    // 最終的なスケッチ情報の確認
-    console.error(`\n📋 最終的なスケッチ情報確認:`);
-    console.error(`   - 総スケッチ数: ${sketches.length}件`);
-    console.error(`   - スケッチデータ統合済み: ${sketches.filter(s => s.userData).length}件`);
-
-    // watchModeの場合は新規スケッチ情報を出力
     if (watchMode && newSketches.length > 0) {
-      console.error(`\n📝 新規スケッチ ${newSketches.length} 件のプレビューを生成しました`);
-      console.error(`   スケッチ: ${newSketches.join(', ')}`);
+      console.error(`📝 新規スケッチ ${newSketches.length} 件: ${newSketches.join(', ')}`);
     }
 
-    // --sketch で 1 件だけ走査したときは sketches に対象スケッチしか入っていない。
-    // そのまま書き出すと他のスケッチが消えてしまうので、既存リストにマージする。
+    // --sketch で 1 件だけ走査したときは、その 1 件を既存リストにマージする（他のスケッチを消さない）
     let outputSketches = sketches;
     if (targetSketch && existingSketchList.length > 0) {
       const scannedById = new Map(sketches.map(s => [s.id, s]));
       outputSketches = existingSketchList.map(s => scannedById.get(s.id) ?? s);
       const knownIds = new Set(existingSketchList.map(s => s.id));
-      for (const s of sketches) {
-        if (!knownIds.has(s.id)) outputSketches.push(s);
-      }
+      for (const s of sketches) if (!knownIds.has(s.id)) outputSketches.push(s);
     }
 
-    // CLI / npm scripts から呼ばれた場合（--write-file または --fetch-userdata）は
-    // public/sketches.json を書き出す。それ以外（フィルタとして使う場合）は stdout に JSON を出す。
+    const withUserData = outputSketches.filter(s => s.userData).length;
+    console.error(`📋 ${outputSketches.length} 個のスケッチをスキャン（うち ${withUserData} 件にメタデータ）`);
+
     if (fetchUserData || writeFileOutput) {
       try {
-        const { projectRoot } = getDirectories();
-        const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
         await writeFile(sketchesJsonPath, JSON.stringify(outputSketches, null, 2), 'utf-8');
-        console.error(`💾 sketches.jsonファイルを生成: ${sketchesJsonPath}`);
-
-        // ファイルの内容確認
-        const fileStats = await stat(sketchesJsonPath);
-        console.error(`📊 ファイルサイズ: ${fileStats.size} bytes`);
-
-        // 生成されたファイルの内容を確認
-        const generatedContent = await readFile(sketchesJsonPath, 'utf-8');
-        const parsedContent = JSON.parse(generatedContent);
-        const userDataCount = parsedContent.filter(s => s.userData).length;
-        const titleCount = parsedContent.filter(s => s.title && s.title !== s.id).length;
-
-        console.error(`✅ ファイル内容確認: スケッチ${parsedContent.length}件, スケッチデータ${userDataCount}件, タイトル更新${titleCount}件`);
+        console.error(`💾 ${sketchesJsonPath} を生成`);
       } catch (error) {
-        console.error(`❌ sketches.jsonファイルの生成に失敗:`, error.message);
+        console.error(`❌ public/sketches.json の書き込みに失敗: ${error.message}`);
         process.exitCode = 1;
       }
     } else {
-      // ファイル出力しない場合のみ stdout に JSON を出す（フィルタ用途）
+      // ファイル出力しない場合は stdout に JSON（パイプ用途）
       console.log(JSON.stringify(outputSketches, null, 2));
     }
 
@@ -379,131 +232,70 @@ async function scanSketches(options = {}) {
 }
 
 // スクリプトが直接実行された場合
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
-  const headed = args.includes('--headed') || process.env.DROPCASTER_HEADED === '1';
-  const externalBrowser = args.includes('--external-browser') || process.env.DROPCASTER_EXTERNAL_BROWSER === '1';
-  const externalBrowserIntervalMs = Math.max(
-    Number(getArgValue(args, '--external-browser-interval-ms') || process.env.DROPCASTER_EXTERNAL_BROWSER_INTERVAL_MS || 1000),
-    1000
-  );
-  const apiRequestIntervalMs = Math.max(
-    Number(getArgValue(args, '--api-request-interval-ms') || process.env.DROPCASTER_API_REQUEST_INTERVAL_MS || 1500),
-    0
-  );
-  const apiToken = getArgValue(args, '--api-token') ||
-    getArgValue(args, '--openprocessing-api-token') ||
-    process.env.OPENPROCESSING_API_TOKEN ||
-    process.env.OP_API_TOKEN ||
-    process.env.DROPCASTER_OPENPROCESSING_API_TOKEN ||
-    null;
-  const browserProfile = getArgValue(args, '--browser-profile') || process.env.DROPCASTER_BROWSER_PROFILE || (headed ? '.dropcaster/browser-profile' : null);
-
-  // コマンドライン引数を解析（新旧両方のオプション名をサポート）
+  const sketchIndex = args.indexOf('--sketch');
   const options = {
-    // 新しいオプション名
     generatePreviews: args.includes('--force-preview') || args.includes('--generate-previews') || args.includes('--reset'),
     reset: args.includes('--reset'),
     forceRegenerate: args.includes('--reset') || args.includes('--force-regenerate'),
     fetchUserData: args.includes('--fetch-userdata') || args.includes('--fetch-user-data'),
     watchMode: args.includes('--watch-mode'),
-    incremental: args.includes('--incremental'),
     writeFileOutput: args.includes('--write-file'),
+    targetSketch: sketchIndex !== -1 ? (args[sketchIndex + 1] || null) : null,
     fetchOptions: {
-      headed,
-      externalBrowser,
-      externalBrowserIntervalMs,
-      apiRequestIntervalMs,
-      apiToken,
-      browserProfile,
-      manualChallenge: args.includes('--manual-challenge') || headed || process.env.DROPCASTER_MANUAL_CHALLENGE === '1',
-      challengeTimeoutMs: Number(getArgValue(args, '--challenge-timeout-ms') || process.env.DROPCASTER_CHALLENGE_TIMEOUT_MS || 180000)
+      apiToken: getArgValue(args, '--api-token') || getArgValue(args, '--openprocessing-api-token') || null,
+      apiRequestIntervalMs: Number(getArgValue(args, '--api-request-interval-ms')) || undefined,
     },
-
-    // 特定のスケッチのみ処理
-    targetSketch: null
   };
-
-  // --sketch オプションの処理
-  const sketchIndex = args.indexOf('--sketch');
-  if (sketchIndex !== -1 && args[sketchIndex + 1]) {
-    options.targetSketch = args[sketchIndex + 1];
-  }
-
   scanSketches(options);
 }
 
 function getArgValue(args, name) {
   const index = args.indexOf(name);
-  if (index === -1) return null;
-  return args[index + 1] || null;
+  return index === -1 ? null : (args[index + 1] || null);
 }
 
+// OpenProcessing API での取得に失敗したスケッチに、手で埋めるための雛形を置く（次回 scan で反映される）
 async function writeManualMetadataTemplate(sketchId, reason) {
   const sketchName = await findSketchDirectoryName(sketchId);
-  if (!sketchName) {
-    return;
-  }
+  if (!sketchName) return;
 
   const manualMetadataPath = resolve(sketchesDir, sketchName, MANUAL_METADATA_FILE);
   const templatePath = resolve(sketchesDir, sketchName, MANUAL_METADATA_TEMPLATE_FILE);
+  if (await fileExists(manualMetadataPath) || await fileExists(templatePath)) return;
 
-  if (await fileExists(manualMetadataPath) || await fileExists(templatePath)) {
-    return;
-  }
-
-  const normalizedSketchId = String(sketchId || '').replace(/^sketch/, '');
+  const numericId = String(sketchId || '').replace(/^sketch/, '');
   const template = {
     title: '',
     description: '',
-    sketchUrl: normalizedSketchId ? `https://openprocessing.org/sketch/${normalizedSketchId}` : '',
+    sketchUrl: numericId ? `https://openprocessing.org/sketch/${numericId}` : '',
     tags: [],
     interactiveElements: [],
-    userData: {
-      userId: '',
-      userName: '',
-      userUrl: ''
-    }
+    userData: { userId: '', userName: '', userUrl: '' },
   };
-
   await writeFile(templatePath, `${JSON.stringify(template, null, 2)}\n`, 'utf-8');
-  console.error(`📝 OpenProcessing取得失敗のため手動メタデータ雛形を作成: ${sketchName}/${MANUAL_METADATA_TEMPLATE_FILE}`);
-  console.error(`   ${MANUAL_METADATA_FILE} にリネームして必要な値を埋めると、次回scanで反映されます`);
-  console.error(`   取得エラー: ${reason}`);
+  console.error(`📝 OpenProcessing 取得失敗（${reason}）。手動メタデータ雛形を作成: ${sketchName}/${MANUAL_METADATA_TEMPLATE_FILE}`);
+  console.error(`   ${MANUAL_METADATA_FILE} にリネームして値を埋めると次回 scan で反映されます`);
 }
 
 async function findSketchDirectoryName(sketchId) {
-  const normalizedSketchId = String(sketchId || '').trim();
-  if (!normalizedSketchId) {
-    return null;
-  }
-
-  const numericId = normalizedSketchId.replace(/^sketch/, '');
-  const candidates = normalizedSketchId.startsWith('sketch')
-    ? [normalizedSketchId, numericId]
-    : [`sketch${normalizedSketchId}`, normalizedSketchId];
-
-  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+  const id = String(sketchId || '').trim();
+  if (!id) return null;
+  const numericId = id.replace(/^sketch/, '');
+  const candidates = id.startsWith('sketch') ? [id, numericId] : [`sketch${id}`, id];
+  for (const candidate of new Set(candidates.filter(Boolean))) {
     try {
-      const stats = await stat(resolve(sketchesDir, candidate));
-      if (stats.isDirectory()) {
-        return candidate;
-      }
-    } catch (error) {
+      if ((await stat(resolve(sketchesDir, candidate))).isDirectory()) return candidate;
+    } catch {
       // 次の候補を確認する
     }
   }
-
   return null;
 }
 
 async function fileExists(path) {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    return false;
-  }
+  try { await stat(path); return true; } catch { return false; }
 }
 
 export { scanSketches };

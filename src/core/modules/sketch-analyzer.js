@@ -1,8 +1,6 @@
 import { readFile, readdir, stat } from 'fs/promises';
 import { join } from 'path';
-import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX } from './config.js';
-
-const MANUAL_METADATA_FILE = 'dropcaster.meta.json';
+import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE } from './config.js';
 
 /**
  * 個別のスケッチを分析

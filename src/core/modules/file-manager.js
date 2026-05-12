@@ -1,10 +1,8 @@
 import { readdir, stat, cp, mkdir, rm } from 'fs/promises';
 import { basename, join } from 'path';
+import { MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './config.js';
 
-const SKETCH_COPY_EXCLUDES = new Set([
-  'dropcaster.meta.json',
-  'dropcaster.meta.example.json'
-]);
+const SKETCH_COPY_EXCLUDES = new Set([MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE]);
 
 /**
  * 削除されたスケッチのクリーンアップ
