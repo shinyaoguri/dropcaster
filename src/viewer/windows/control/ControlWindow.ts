@@ -29,7 +29,7 @@ export class ControlWindow extends BaseWindow {
   private croppedContainer: HTMLDivElement | null = null;
   private croppedVideo: HTMLVideoElement | null = null;
   // 非アクティブ mapping のプレビュー要素（active は cropped-container を流用）
-  private inactivePreviews = new Map<string, { div: HTMLDivElement; video: HTMLVideoElement }>();
+  private inactivePreviews = new Map<string, { div: HTMLDivElement; video: HTMLVideoElement; sig: string }>();
   private videoActualDimensions = {
     width: 1,
     height: 1
@@ -44,6 +44,8 @@ export class ControlWindow extends BaseWindow {
   private keyboardSelection: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null = null;
   /** state-mutation 送信を 1 フレームに 1 回へ間引くための rAF id（null = 予約なし）。 */
   private mutationRafId: number | null = null;
+  /** ウィンドウ resize 由来の再レイアウトを 1 フレームに 1 回へ間引くための rAF id。 */
+  private resizeRafId: number | null = null;
 
   // canonical state は親 (WindowController) が保持。これは mirror。
   // ローカル UI 操作では optimistic に書き換えて即座に state-mutation を送る。
@@ -81,6 +83,7 @@ export class ControlWindow extends BaseWindow {
 
   protected initialize(): void {
     this.mutationRafId = null; // 再オープン時に旧ウィンドウの stale な rAF id を持ち越さない
+    this.resizeRafId = null;
     this.render();
     this.setupControls();
     this.setupMessageListener();
@@ -1647,6 +1650,9 @@ export class ControlWindow extends BaseWindow {
     const stage = this.croppedContainer.parentElement;
     if (!stage) return;
     const doc = this.window.document;
+    // ステージのピクセルサイズ（変わると quad の px 位置が変わるので sig に含める）
+    const stageRect = stage.getBoundingClientRect();
+    const stageSig = `${Math.round(stageRect.width)}x${Math.round(stageRect.height)}`;
 
     const inactiveIds = new Set(
       this.state.mappings.filter(m => m.id !== this.state.activeId).map(m => m.id)
@@ -1683,14 +1689,19 @@ export class ControlWindow extends BaseWindow {
           this.replaceState(withActiveSet(this.state, m.id));
         });
         this.bindStreamToInactiveVideo(video);
-        entry = { div, video };
+        entry = { div, video, sig: '' };
         this.inactivePreviews.set(m.id, entry);
       }
 
-      // 色を CSS 変数に
-      entry.div.style.setProperty('--mapping-color', mappingColor(i));
-      applyQuadTransform(entry.div, m.quad);
-      applyVideoCrop(entry.video, m.source);
+      // 入力（index ＝色, quad, source, ステージサイズ）が前回と同じなら DOM を触らない。
+      // active な quad をドラッグ中、毎フレーム全 inactive preview を再 warp するのを防ぐ。
+      const sig = `${stageSig}|${i}|${m.quad.topLeft.x},${m.quad.topLeft.y},${m.quad.topRight.x},${m.quad.topRight.y},${m.quad.bottomRight.x},${m.quad.bottomRight.y},${m.quad.bottomLeft.x},${m.quad.bottomLeft.y}|${m.source.x},${m.source.y},${m.source.width},${m.source.height}`;
+      if (sig !== entry.sig) {
+        entry.sig = sig;
+        entry.div.style.setProperty('--mapping-color', mappingColor(i));
+        applyQuadTransform(entry.div, m.quad);
+        applyVideoCrop(entry.video, m.source);
+      }
     }
   }
 
@@ -1762,10 +1773,14 @@ export class ControlWindow extends BaseWindow {
       }
     });
 
-    // 操作ウィンドウのリサイズ時にアスペクト比とホモグラフィー行列を再計算
+    // 操作ウィンドウのリサイズ時にアスペクト比とホモグラフィー行列を再計算（1 フレーム 1 回に間引く）
     this.window.addEventListener('resize', () => {
-      this.updateSourceVideoAspectRatio();
-      this.updateQuadTransform();
+      if (this.resizeRafId !== null || !this.window) return;
+      this.resizeRafId = this.window.requestAnimationFrame(() => {
+        this.resizeRafId = null;
+        this.updateSourceVideoAspectRatio();
+        this.updateQuadTransform();
+      });
     });
 
     // ウィンドウが閉じられる直前に、間引き中の state 変更があれば取りこぼさず送る

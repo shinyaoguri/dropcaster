@@ -304,8 +304,12 @@ function homographyMatrix3d(quad: Quad, width: number, height: number): string {
 }
 
 /**
- * container を親要素 100% × 100% に配置したまま、その単位矩形を
+ * container（親要素 100% × 100% に配置・transform-origin: top left）の単位矩形を
  * quadPercent（親の % 座標）の四角形に写像する matrix3d を適用する。
+ * 配置系のスタイル（position/inset/width/height/transform-origin）は呼び出し側 CSS が持つ前提:
+ *  - ControlWindow: #cropped-container / .preview-mapping.inactive
+ *  - OutputWindow: .dc-out-mapping
+ * （毎フレーム同じ値を書き直すとレイアウトを汚すので transform だけ更新する）
  */
 export function applyQuadTransform(container: HTMLElement, quadPercent: Quad): void {
   const parent = container.parentElement;
@@ -322,11 +326,5 @@ export function applyQuadTransform(container: HTMLElement, quadPercent: Quad): v
     bottomLeft:  { x: quadPercent.bottomLeft.x  / 100 * W, y: quadPercent.bottomLeft.y  / 100 * H },
   };
 
-  container.style.position = 'absolute';
-  container.style.left = '0';
-  container.style.top = '0';
-  container.style.width = '100%';
-  container.style.height = '100%';
-  container.style.transformOrigin = 'top left';
   container.style.transform = homographyMatrix3d(pxQuad, W, H);
 }

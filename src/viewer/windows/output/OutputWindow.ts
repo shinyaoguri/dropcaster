@@ -25,10 +25,12 @@ export class OutputWindow extends BaseWindow {
   private mappings: MappingEntry[] = [];
   private children = new Map<string, OutputChild>();
   private boundMessage = (e: MessageEvent) => this.onMessage(e);
-  private boundResize = () => this.reapplyTransforms();
+  private boundResize = () => this.scheduleReapply();
   private boundKeydown = (e: KeyboardEvent) => this.onKeydown(e);
   private boundMouseMove = () => this.wakeUp();
   private idleTimer: number | null = null;
+  /** resize 由来の transform 再適用を 1 フレーム 1 回へ間引くための rAF id。 */
+  private reapplyRafId: number | null = null;
 
   constructor() {
     super('output_window', 'プロジェクション出力');
@@ -61,7 +63,7 @@ export class OutputWindow extends BaseWindow {
       html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
       #dc-output-stage { position: fixed; inset: 0; background: #000; }
       #dc-output-root { position: absolute; inset: 0; }
-      .dc-out-mapping { position: absolute; inset: 0; overflow: hidden; will-change: transform; }
+      .dc-out-mapping { position: absolute; inset: 0; overflow: hidden; transform-origin: 0 0; will-change: transform; }
       .dc-out-mapping > video { position: absolute; top: 0; left: 0; object-fit: fill; will-change: transform; }
       .dc-output-ui { transition: opacity 0.3s ease; }
       #dc-output-fs {
@@ -144,6 +146,15 @@ export class OutputWindow extends BaseWindow {
     return createdNew;
   }
 
+  /** resize イベントの度に同期実行せず、次フレームに 1 回だけ transform を再計算する。 */
+  private scheduleReapply(): void {
+    if (this.reapplyRafId !== null || !this.window) return;
+    this.reapplyRafId = this.window.requestAnimationFrame(() => {
+      this.reapplyRafId = null;
+      this.reapplyTransforms();
+    });
+  }
+
   private reapplyTransforms(): void {
     for (const m of this.mappings) {
       const child = this.children.get(m.id);
@@ -191,6 +202,8 @@ export class OutputWindow extends BaseWindow {
   private teardown(): void {
     if (this.idleTimer !== null && this.window) this.window.clearTimeout(this.idleTimer);
     this.idleTimer = null;
+    if (this.reapplyRafId !== null && this.window) this.window.cancelAnimationFrame(this.reapplyRafId);
+    this.reapplyRafId = null;
     this.children.clear();
   }
 }
