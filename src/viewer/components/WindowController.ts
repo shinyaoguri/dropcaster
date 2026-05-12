@@ -134,10 +134,11 @@ export class WindowController {
       // 親ウィンドウ参照を設定
       this.controlWindow.setParentWindow(window);
 
-      // 初期 state を broadcast（マッピング設定 ＋ 現在のテストパターン）
+      // 初期 state を broadcast（マッピング設定 ＋ 現在のテストパターン ＋ 出力ウィンドウ寸法）
       setTimeout(() => {
         this.broadcastStateToControl();
         this.broadcastTestPatternState();
+        this.notifyOutputDimensions();
       }, 500);
     }
   }
@@ -168,6 +169,8 @@ export class WindowController {
 
     this.outputWindow.setWindow(outputWin);
     this.outputWindow.setParentWindow(window);
+    // 出力ウィンドウのサイズ変化（ユーザのリサイズ・フルスクリーン・画面移動）を ControlWindow へ伝える
+    outputWin.addEventListener('resize', () => this.notifyOutputDimensions());
 
     void this.placeOnExternalScreen(outputWin);
 
@@ -175,6 +178,7 @@ export class WindowController {
     setTimeout(() => {
       this.broadcastStateToOutput();
       this.bindStreamToOutputWindow();
+      this.notifyOutputDimensions();
     }, 500);
     return outputWin;
   }
@@ -193,6 +197,7 @@ export class WindowController {
       if (!target || win.closed) return;
       win.moveTo(target.availLeft ?? target.left, target.availTop ?? target.top);
       win.resizeTo(target.availWidth, target.availHeight);
+      this.notifyOutputDimensions();
     } catch {
       /* 権限拒否や未対応 — 通常位置のまま（ユーザがプロジェクタへドラッグ） */
     }
@@ -372,6 +377,21 @@ export class WindowController {
         type: 'video-dimensions-update',
         data: this.videoActualDimensions,
       }, window.location.origin);
+    }
+  }
+
+  /** 出力ウィンドウのビューポート寸法を ControlWindow へ通知（quad の「出力1px」ステップの基準）。 */
+  private notifyOutputDimensions(): void {
+    const outputWin = this.windowManager.getWindow('output_window');
+    const controlWin = this.windowManager.getWindow('control_window');
+    if (!outputWin || outputWin.closed || !controlWin || controlWin.closed) return;
+    try {
+      controlWin.postMessage({
+        type: 'output-dimensions-update',
+        data: { width: outputWin.innerWidth, height: outputWin.innerHeight },
+      }, window.location.origin);
+    } catch (error) {
+      console.error('WindowController: output-dimensions-update 送信エラー', error);
     }
   }
 

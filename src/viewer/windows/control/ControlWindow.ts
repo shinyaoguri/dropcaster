@@ -34,7 +34,12 @@ export class ControlWindow extends BaseWindow {
     width: 1,
     height: 1
   };
-  
+
+  /** 出力ウィンドウのビューポート寸法（quad の「出力1px」ステップの基準）。未取得なら 0。 */
+  private outputDimensions = { width: 0, height: 0 };
+  /** 矢印キーで微調整する対象（quad の隅 / ソース矩形）。null = 未選択。 */
+  private keyboardSelection: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null = null;
+
   private windowBounds = {
     x: 0,
     y: 0,
@@ -108,6 +113,7 @@ export class ControlWindow extends BaseWindow {
 
             <div class="tool-section">
               <h3>ソース設定</h3>
+              <p class="section-hint">枠をクリックで選択 → 矢印キーで微調整（Shift+矢印で10px）</p>
               <div class="tool-item">
                 <label>選択領域</label>
                 <div class="tool-values">
@@ -147,6 +153,7 @@ export class ControlWindow extends BaseWindow {
 
             <div class="tool-section">
               <h3>マッピング設定</h3>
+              <p class="section-hint">隅のハンドルをクリックで選択 → 矢印キーで微調整（Shift+矢印で10px）</p>
               <div class="tool-item">
                 <label>4隅 (% / ホモグラフィー)</label>
                 <div class="tool-values quad-values">
@@ -621,6 +628,11 @@ export class ControlWindow extends BaseWindow {
         min-height: 20px;
       }
 
+      /* 矢印キーで微調整中の選択枠（白いリング） */
+      #selection-box.kbd-selected {
+        box-shadow: 0 0 0 2px #fff, 0 0 6px rgba(0, 0, 0, 0.8);
+      }
+
       /* マッピングカラムのスタイル */
       .mapping-container {
         flex: 1;
@@ -807,6 +819,11 @@ export class ControlWindow extends BaseWindow {
         border-color: var(--mapping-color, #ff00ff);
       }
 
+      /* 矢印キーで微調整中の選択ハンドル（白いリング） */
+      .quad-handle.kbd-selected {
+        box-shadow: 0 0 0 3px #fff, 0 0 6px rgba(0, 0, 0, 0.8);
+      }
+
       /* 非アクティブ mapping のプレビュー */
       .preview-mapping.inactive {
         position: absolute;
@@ -976,7 +993,10 @@ export class ControlWindow extends BaseWindow {
     
     // ツールボタンの設定
     this.setupToolButtons();
-    
+
+    // 矢印キーによる微調整
+    this.setupKeyboardNudge();
+
     // 初期値を更新
     this.updateToolValues();
   }
@@ -1274,6 +1294,7 @@ export class ControlWindow extends BaseWindow {
         return;
       }
 
+      this.setKeyboardSelection({ type: 'source' });
       isDragging = true;
       startX = e.clientX;
       startY = e.clientY;
@@ -1318,6 +1339,7 @@ export class ControlWindow extends BaseWindow {
       let initialData = { x: 0, y: 0, width: 0, height: 0 };
 
       const handleMouseDown = (e: MouseEvent) => {
+        this.setKeyboardSelection({ type: 'source' });
         isResizing = true;
         startX = e.clientX;
         startY = e.clientY;
@@ -1400,6 +1422,8 @@ export class ControlWindow extends BaseWindow {
       const target = e.target as HTMLElement;
       if (target.classList.contains('quad-handle')) return;
 
+      // 隅ハンドルではなく quad 本体のドラッグ — 隅の矢印キー選択は解除
+      this.clearKeyboardSelection();
       isDragging = true;
       startX = e.clientX;
       startY = e.clientY;
@@ -1450,6 +1474,7 @@ export class ControlWindow extends BaseWindow {
         startY = e.clientY;
         initialPoint = { ...this.quadData[corner] };
         handle.classList.add('dragging');
+        this.setKeyboardSelection({ type: 'quad', corner });
         e.stopPropagation();
         e.preventDefault();
       };
@@ -1479,6 +1504,91 @@ export class ControlWindow extends BaseWindow {
       this.window!.document.addEventListener('mousemove', onMouseMove);
       this.window!.document.addEventListener('mouseup', onMouseUp);
     });
+  }
+
+  // ── 矢印キーによる微調整（クリックで選択 → 矢印キーで 1px、Shift+矢印で 10px）─────────
+  private setupKeyboardNudge(): void {
+    if (!this.window) return;
+    this.window.document.addEventListener('keydown', (e) => this.handleNudgeKey(e));
+  }
+
+  private setKeyboardSelection(sel: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null): void {
+    this.keyboardSelection = sel;
+    this.updateKeyboardSelectionUI();
+  }
+
+  private clearKeyboardSelection(): void {
+    if (!this.keyboardSelection) return;
+    this.keyboardSelection = null;
+    this.updateKeyboardSelectionUI();
+  }
+
+  /** 選択中のハンドル / 枠に .kbd-selected を付け替える。 */
+  private updateKeyboardSelectionUI(): void {
+    if (!this.window) return;
+    const sel = this.keyboardSelection;
+    this.window.document
+      .querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle')
+      .forEach(h => h.classList.toggle('kbd-selected', sel?.type === 'quad' && h.dataset.corner === sel.corner));
+    this.selectionBox?.classList.toggle('kbd-selected', sel?.type === 'source');
+  }
+
+  /** quad の「出力1px」の基準サイズ。出力ウィンドウ寸法 → ソース canvas 寸法 → 1920×1080 でフォールバック。 */
+  private quadStepRefSize(): { width: number; height: number } {
+    const { width: ow, height: oh } = this.outputDimensions;
+    if (ow > 16 && oh > 16) return { width: ow, height: oh };
+    const { width: vw, height: vh } = this.videoActualDimensions;
+    if (vw > 16 && vh > 16) return { width: vw, height: vh };
+    return { width: 1920, height: 1080 };
+  }
+
+  /** source 矩形の「ソース1px」の基準サイズ（= キャプチャ canvas 寸法）。未取得なら 1920×1080。 */
+  private sourceStepRefSize(): { width: number; height: number } {
+    const { width: vw, height: vh } = this.videoActualDimensions;
+    if (vw > 16 && vh > 16) return { width: vw, height: vh };
+    return { width: 1920, height: 1080 };
+  }
+
+  private handleNudgeKey(e: KeyboardEvent): void {
+    if (!this.keyboardSelection) return;
+    // テキスト入力中は矢印キーを奪わない（マッピング名のインライン編集など）
+    const target = e.target as HTMLElement | null;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
+
+    let dirX = 0, dirY = 0;
+    switch (e.key) {
+      case 'ArrowLeft':  dirX = -1; break;
+      case 'ArrowRight': dirX =  1; break;
+      case 'ArrowUp':    dirY = -1; break;
+      case 'ArrowDown':  dirY =  1; break;
+      default: return;
+    }
+    e.preventDefault();
+    const pixels = e.shiftKey ? 10 : 1;
+
+    if (this.keyboardSelection.type === 'quad') {
+      const corner = this.keyboardSelection.corner;
+      const ref = this.quadStepRefSize();
+      const p = this.quadData[corner];
+      this.setActiveQuad({
+        ...this.quadData,
+        [corner]: {
+          x: p.x + (dirX * pixels * 100) / ref.width,
+          y: p.y + (dirY * pixels * 100) / ref.height,
+        },
+      });
+      this.updateQuadTransform();
+      this.updateToolValues();
+      this.broadcastStateMutation();
+    } else {
+      const ref = this.sourceStepRefSize();
+      const s = this.sourceSelectionData;
+      s.x = Math.max(0, Math.min(100 - s.width,  s.x + (dirX * pixels * 100) / ref.width));
+      s.y = Math.max(0, Math.min(100 - s.height, s.y + (dirY * pixels * 100) / ref.height));
+      this.updateSelectionBox();
+      this.updateToolValues();
+      this.broadcastStateMutation();
+    }
   }
 
   private updateSelectionBox(): void {
@@ -1644,6 +1754,11 @@ export class ControlWindow extends BaseWindow {
         case 'video-dimensions-update':
           this.handleVideoDimensionsUpdate(event.data.data);
           break;
+        case 'output-dimensions-update': {
+          const d = event.data.data;
+          if (d && d.width > 0 && d.height > 0) this.outputDimensions = { width: d.width, height: d.height };
+          break;
+        }
         case 'test-pattern-update':
           this.updateTestPatternUI(event.data.data?.kind ?? 'off');
           break;
@@ -1677,6 +1792,7 @@ export class ControlWindow extends BaseWindow {
     if (!state || !Array.isArray(state.mappings) || state.mappings.length === 0) return;
     this.state = state;
     this.rebindActiveAliases();
+    this.clearKeyboardSelection();
     this.updateSelectionBox();
     this.updateQuadTransform();
     this.updateToolValues();
@@ -1731,6 +1847,7 @@ export class ControlWindow extends BaseWindow {
   private replaceState(next: MappingsState): void {
     this.state = next;
     this.rebindActiveAliases();
+    this.clearKeyboardSelection();
     this.updateSelectionBox();
     this.updateQuadTransform();
     this.updateToolValues();
