@@ -138,14 +138,14 @@ npm run build
 新しいギャラリープロジェクトを作成。
 
 ### `dropcaster scan [options]`
-スケッチをスキャンしてメタデータを生成。
+スケッチをスキャンして `public/sketches/` にコピーし、`public/sketches.json` を生成（デフォルトでプレビュー GIF も生成）。
 
 オプション:
-- `--sketch <name>` - 特定のスケッチのみスキャン
-- `--force-preview` - プレビュー画像を強制再生成
-- `--reset` - すべてのプレビューをリセットして再生成
-- `--fetch-userdata` - 既定ブラウザで OpenProcessing を開き、手動記入用のメタテンプレートを作成
-- `--external-browser-interval-ms <ms>` - 既定ブラウザで開く間隔（最小1000ms）
+- `--sketch <name>` - 特定のスケッチのみスキャン（`sketches.json` は既存にマージ）
+- `--no-previews` - プレビュー GIF を生成しない（メタデータのみ、速い）
+- `--force-preview` - プレビュー GIF を強制再生成
+- `--reset` - `public/sketches` と `public/previews` を作り直して再生成
+- `--fetch-userdata` - OpenProcessing Public API からタイトル・作者などのメタデータを取得
 - `-v, --verbose` - 詳細出力を表示
 
 ### `dropcaster build [options]`
@@ -160,17 +160,19 @@ npm run build
 
 ## 設定
 
-`dropcaster.config.js` でギャラリーをカスタマイズ:
+`dropcaster.config.js`（`dropcaster init` が生成）でギャラリーをカスタマイズ。
+主に PWA manifest と `<head>` のメタ情報です（凝ったオフライン/キャッシュ設定は廃止 — Service Worker は
+「インストール可能にするだけ」の最小構成）。フルな例は [dropcaster.config.example.js](dropcaster.config.example.js) を参照。
 
 ```javascript
 export default {
-  title: 'My Gallery',
+  title: 'My Gallery',                 // ブラウザタブ・PWA 名・manifest の name
   description: 'クリエイティブコーディング作品集',
   theme_color: '#000000',
-  background_color: '#000000',
-  display: 'standalone',
-  orientation: 'portrait',
-  categories: ['generative', 'interactive', '3D', 'audio']
+  background_color: '#ffffff',
+  display: 'standalone',               // 'standalone' | 'fullscreen' | 'minimal-ui' | 'browser'
+  start_url: '/',
+  // base: '/my-gallery/',             // GitHub Pages のサブパスなど（dropcaster build --base でも可）
 }
 ```
 
@@ -196,20 +198,15 @@ my-gallery/
 - コンテンツ作者のコードを改変せずにそのまま利用可能
 
 ### ブラウザネイティブなアーキテクチャ
-- PWAの特性を活かしたインストール不要なマッピングツール
-- WebRTC DataChannelやBroadcastChannelAPIを使った低遅延な窓間通信
-- オフライン動作とクラウド同期のハイブリッド運用
-- MediaStream APIのcaptureStream()を用いた効率的なコンテンツ同期
+- PWA（インストール可能な最小 manifest）として配布できる
+- プロジェクションマッピングは `window.open()` + Window Management API でプロジェクタ画面にポップアウト、
+  同一オリジンの `window.opener` 参照経由で窓間連携
+- `canvas.captureStream()` を共有 `<video>` 群へ bind し、CSS `matrix3d` でワープ（クローンなし）
 
 ## プレビュー生成
 
-アニメーションGIFプレビューの自動生成:
-- **キャプチャサイズ**: 1000x1000px
-- **出力サイズ**: 幅400px
-- **録画時間**: 3秒間
-- **キャプチャフレームレート**: 30fps
-- **生成方法**: Playwright + FFmpeg
-
+各スケッチのアニメーション GIF プレビューを自動生成（1000×1000px / 3 秒 / 30fps、Playwright + FFmpeg）。
+FFmpeg / Chromium が無い環境ではプレビュー生成だけスキップします（`dropcaster doctor` で確認可）。
 詳細は [PREVIEW_GENERATION.md](PREVIEW_GENERATION.md) を参照。
 
 ## デプロイ
@@ -231,26 +228,8 @@ my-gallery/
 
 ## 開発
 
-### ローカルテスト
-
-```bash
-# ローカルでパッケージをリンク
-npm link
-
-# 別ディレクトリでテスト
-mkdir test-project
-cd test-project
-npm link dropcaster
-```
-
-### GitHubからテスト
-
-```bash
-# 特定のブランチから実行
-npx github:yourusername/dropcaster#feature-branch init test-gallery
-```
-
-詳細は [DEVELOPMENT.md](DEVELOPMENT.md) を参照。
+このリポジトリ自体の開発（CLI のローカルテスト、`dropcaster dev`/`build` の仕組み、配布など）は
+[DEVELOPMENT.md](DEVELOPMENT.md) を参照。
 
 ## 貢献
 

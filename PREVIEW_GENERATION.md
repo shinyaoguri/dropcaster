@@ -1,106 +1,56 @@
-# Sketch Preview Generation
+# プレビュー GIF の生成
 
-このプロジェクトでは、スケッチのアニメーションプレビューGIFを自動生成する機能を提供しています。
+各スケッチのアニメーションプレビュー GIF を自動生成する仕組みです。
 
 ## 技術仕様
 
-- **キャプチャサイズ**: 1000x1000px
-- **出力サイズ**: 幅400px
-- **録画時間**: 3秒間
-- **キャプチャフレームレート**: 30fps
-- **生成方法**: Playwright + FFmpeg
+- **キャプチャ**: 1000×1000px / 3 秒 / 30fps
+- **生成方法**: Playwright (Chromium) でフレーム撮影 → FFmpeg でパレット最適化 GIF 合成
+- **出力**: `public/previews/{sketchName}.gif`（`public/sketches.json` の各エントリに `previewGif` フィールドが追加される）
 
-## 使用方法
+設定は `src/core/modules/config.js` の `PREVIEW_OPTIONS`（`width` / `height` / `duration` / `fps` /
+`quality` / `maxColors` / `scaleFilter`）で変更できます。
 
-### ローカル環境での実行
+## 必要なツール
 
-1. 依存関係のインストール:
 ```bash
-npm install
+npx playwright install chromium   # Chromium（`npm install` の postinstall でも実行される）
+brew install ffmpeg               # macOS
+sudo apt-get install -y ffmpeg    # Ubuntu/Debian
 ```
 
-2. PlaywrightブラウザとFFmpegのインストール:
+`dropcaster doctor` で FFmpeg / Chromium / Node の有無をまとめて確認できます。
+プレビュー生成に必要なツールが無い場合は、スキャン自体は続行し、プレビュー生成だけスキップします。
+（FFmpeg が無い等で GIF 化できないときは静止画プレビューにフォールバックします。）
+
+## 実行
+
 ```bash
-# Playwright
-npx playwright install chromium
+# ギャラリープロジェクト側:
+dropcaster scan                 # スキャン＋プレビュー生成（デフォルト）
+dropcaster scan --no-previews   # メタデータのみ（速い）
+dropcaster scan --force-preview # 最新でも GIF を作り直す
+dropcaster scan:reset           # public/sketches と public/previews を作り直す
 
-# FFmpeg (macOS)
-brew install ffmpeg
-
-# FFmpeg (Ubuntu/Debian)
-sudo apt-get install ffmpeg
+# このリポジトリ自体での確認:
+node src/core/scan-sketches.js --generate-previews --write-file
 ```
 
-3. プレビュー生成付きでスケッチをスキャン:
-```bash
-node src/core/scan-sketches.js --generate-previews
-```
-
-### GitHub Actions での自動実行
-
-`sketches/` ディレクトリに変更があった場合、自動的にアニメーションプレビューGIFが生成されます。
-
-## 設定オプション
-
-`src/core/modules/config.js` の `PREVIEW_OPTIONS` で設定可能:
-
-```javascript
-const PREVIEW_OPTIONS = {
-  width: 1000,       // キャプチャの幅 (px) - Canvas全体をキャプチャ
-  height: 1000,      // キャプチャの高さ (px)
-  duration: 3000,    // 録画時間 (ms)
-  fps: 30,          // キャプチャフレームレート
-  quality: 80       // GIF品質 (1-100)
-};
-```
+> 注: このリポジトリには CI でのプレビュー自動生成ワークフローは置いていません
+> （生成物はギャラリー作者が手元で生成してコミットする方針）。
 
 ## 生成プロセス
 
-1. **フレーム取得**: Playwrightで1000x1000のスケッチを3秒間連続撮影
-2. **一時保存**: フレームを一時ディレクトリにPNG形式で保存
-3. **パレット生成**: FFmpegで最適カラーパレット生成
-4. **GIF合成**: パレットを使用して高品質なアニメーションGIF作成
-5. **クリーンアップ**: 一時ファイルの自動削除
-
-## 出力ファイル
-
-- プレビューGIF: `public/previews/{sketchName}.gif`
-- メタデータ: スキャン結果JSONに `previewGif` フィールドが追加
-
-## フォールバック機能
-
-FFmpegが利用できない環境では、自動的に静止画プレビューにフォールバックします。
-
-## システム要件
-
-### ローカル環境
-- Node.js 18+
-- FFmpeg
-- Chromiumブラウザ（Playwright経由）
-
-### GitHub Actions
-- ubuntu-latest runner
-- FFmpegとPlaywright Chromiumを自動インストール
+1. Playwright でスケッチを開き、1000×1000 のフレームを連続撮影
+2. フレームを一時ディレクトリへ PNG で保存
+3. FFmpeg で最適カラーパレットを生成
+4. パレットを使って GIF を合成
+5. 一時ファイルを削除
 
 ## トラブルシューティング
 
-### FFmpegエラー
-```bash
-# FFmpegの確認
-ffmpeg -version
-
-# macOSでの再インストール
-brew reinstall ffmpeg
-
-# Ubuntuでの再インストール
-sudo apt-get update && sudo apt-get install --reinstall ffmpeg
-```
-
-### メモリ不足エラー
-大量のスケッチがある場合、Node.jsのヒープサイズを増加:
-```bash
-node --max-old-space-size=4096 src/core/scan-sketches.js --generate-previews
-```
-
-### 権限エラー（GitHub Actions）
-ワークフローファイルに `--no-sandbox` フラグが設定済みです。
+- **FFmpeg エラー**: `ffmpeg -version` で確認。macOS は `brew reinstall ffmpeg`、Ubuntu は
+  `sudo apt-get install --reinstall ffmpeg`。
+- **メモリ不足**: スケッチが大量にある場合は `node --max-old-space-size=4096 src/core/scan-sketches.js --generate-previews --write-file`。
+- **Chromium / sandbox 関連**: Playwright の起動引数（`--no-sandbox` 等）は `src/core/modules/webgpu-detector.js`
+  の `getBrowserArgs()` で設定しています。
