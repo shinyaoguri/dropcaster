@@ -81,37 +81,3 @@ async function scrapeMultipleSketches(sketchIds, scraper) {
   return results;
 }
 
-// 使用例
-async function main() {
-  const scraper = new OpenProcessingScraper();
-  
-  try {
-    await scraper.init();
-    
-    // 単一のスケッチを処理
-    const sketchId = '123456'; // 実際のスケッチIDに変更してください
-    const sketchInfo = await scraper.getSketchUserInfo(sketchId);
-    
-    if (!sketchInfo.error) {
-      console.log('取得した情報:');
-      console.log('- スケッチタイトル:', sketchInfo.sketchTitle);
-      console.log('- ユーザーID:', sketchInfo.userId);
-      console.log('- ユーザー名:', sketchInfo.userName);
-      console.log('- ユーザーURL:', sketchInfo.userUrl);
-    } else {
-      console.error('エラー:', sketchInfo.error);
-    }
-    
-  } catch (error) {
-    console.error('メインエラー:', error);
-  } finally {
-    await scraper.close();
-  }
-}
-
-// スクリプトが直接実行された場合
-if (process.argv[1] === new URL(import.meta.url).pathname) {
-  main();
-}
-
-export default { fetchUserDataForSketches };
