@@ -106,16 +106,9 @@ export class SketchPageView {
   }
 
   private updateFullscreenUI(isFullscreen: boolean): void {
-    console.log(`🔄 フルスクリーン状態更新: ${isFullscreen ? '開始' : '終了'}`);
-
-    // UI要素の状態を更新
     this.uiController.setFullscreenActiveState(isFullscreen);
     this.uiController.updateFullscreenButtonIcon(isFullscreen);
-
-    // UI要素の表示/非表示を統一的に管理
-    const shouldShowUI = !isFullscreen;
-    console.log(`👁️ UI要素の表示状態: ${shouldShowUI ? '表示' : '非表示'}`);
-    this.uiController.toggleElements(shouldShowUI);
+    this.uiController.toggleElements(!isFullscreen); // フルスクリーン中は UI ボタン等を隠す
   }
 
   updateFullscreenState(isFullscreen: boolean): void {

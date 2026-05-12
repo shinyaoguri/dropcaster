@@ -24,7 +24,6 @@ export class SketchPageController {
 
   async renderSketch(sketch: Sketch): Promise<void> {
     this.isDestroyed = false;
-    console.log('SketchPageController: スケッチのレンダリング開始:', sketch.title);
 
     // ビューのレンダリング（#sketch-stage を含む空のステージを描画）
     this.view.render(sketch);
@@ -49,8 +48,6 @@ export class SketchPageController {
 
     // イベントリスナーの設定
     this.setupEventListeners();
-
-    console.log('SketchPageController: スケッチのレンダリング完了');
   }
 
   private setupEventListeners(): void {
@@ -65,7 +62,6 @@ export class SketchPageController {
   }
 
   private openWindows(): void {
-    console.log('SketchPageController: ウィンドウコントローラーを使用してウィンドウを開きます');
     // クリックの user gesture 内で コントロール／出力ウィンドウを開く（スライドショーと同様）
     this.windowController.openBothWindows();
     this.windowController.openOutputWindow();
@@ -79,21 +75,15 @@ export class SketchPageController {
   }
 
   private async startCanvasStreamingToWindows(): Promise<void> {
-    console.log('SketchPageController: Canvasストリーミング開始');
-
     const frame = this.sketchFrame;
-    if (!frame) {
-      console.warn('SketchPageController: SketchFrame がありません');
-      return;
-    }
+    if (!frame) return;
     // iframe内のcanvasが読み込まれる（p5 の setup() で生成される）のを待ってから開始
     const canvas = await frame.whenCanvasReady();
     if (this.isDestroyed) return;
     if (canvas) {
-      console.log('SketchPageController: Canvas要素が見つかりました。ストリーミング開始します');
       this.windowController.startCanvasStreaming(frame.iframe);
     } else {
-      console.error('SketchPageController: Canvas要素が見つからないため、ストリーミングを開始できません');
+      console.error('SketchPageController: Canvas が見つからないため、プロジェクションを開始できません');
     }
   }
 
@@ -111,8 +101,6 @@ export class SketchPageController {
     // 標準的なブラウザの離脱警告を表示
     event.preventDefault();
     event.returnValue = message;
-
-    console.log('SketchPageController: ページ離脱警告を表示');
     return message;
   };
 
@@ -133,13 +121,9 @@ export class SketchPageController {
   }
 
   destroy(): void {
-    console.log('SketchPageController: 破棄処理開始');
     this.isDestroyed = true;
+    this.isInternalNavigation = true; // 内部ナビゲーション扱いで離脱警告を出さない
 
-    // 内部ナビゲーションフラグを設定
-    this.isInternalNavigation = true;
-
-    // イベントリスナーを削除
     window.removeEventListener('beforeunload', this.beforeUnloadHandler);
     window.removeEventListener('pagehide', this.pagehideHandler);
 
@@ -148,14 +132,11 @@ export class SketchPageController {
       this.openWindowsTimeout = null;
     }
 
-    // 各マネージャーの破棄
     this.fullscreenManager.destroy();
     this.sketchFrame?.dispose();
     this.sketchFrame = null;
     this.cursorManager.destroy();
     this.view.destroy();
     this.windowController.destroy();
-
-    console.log('SketchPageController: 破棄処理完了');
   }
 }

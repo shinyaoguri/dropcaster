@@ -1,5 +1,6 @@
 import { MouseEventHandler } from '../ui/services/MouseEventHandler';
 
+// フルスクリーン中、マウスが一定時間動かなかったらカーソルを隠す（スケッチ iframe 内も含む）。
 export class CursorManager {
   private cursorHideTimeout: ReturnType<typeof setTimeout> | null = null;
   private isFullscreenMode = false;
@@ -11,17 +12,12 @@ export class CursorManager {
   }
 
   initialize(): void {
-    // 初期状態ではカーソルを表示
     this.showCursor();
-    
-    // マウスイベントハンドラーを初期化
     this.mouseHandler.initialize(this.handleMouseActivity);
   }
 
   setFullscreenMode(isFullscreen: boolean): void {
-    console.log('CursorManager: フルスクリーンモード設定:', isFullscreen);
     this.isFullscreenMode = isFullscreen;
-    
     if (isFullscreen) {
       this.enableAutoHide();
     } else {
@@ -31,76 +27,40 @@ export class CursorManager {
   }
 
   private enableAutoHide(): void {
-    console.log('CursorManager: カーソル自動非表示を有効化');
-    // マウス操作のイベントリスナーを追加
     this.mouseHandler.startListening();
-    
-    // 初期タイマーを開始
     this.resetCursorTimer();
   }
 
   private disableAutoHide(): void {
-    console.log('CursorManager: カーソル自動非表示を無効化');
-    // マウス操作のイベントリスナーを削除
     this.mouseHandler.stopListening();
-    
-    // タイマーをクリア
     if (this.cursorHideTimeout) {
       clearTimeout(this.cursorHideTimeout);
       this.cursorHideTimeout = null;
     }
   }
 
-
-  private handleMouseActivity = (event: Event): void => {
-    if (this.isFullscreenMode) {
-      console.log('CursorManager: マウス操作を検知:', event.type, 'カーソルタイマーをリセット');
-      this.resetCursorTimer();
-    }
+  private handleMouseActivity = (): void => {
+    if (this.isFullscreenMode) this.resetCursorTimer();
   };
 
   private resetCursorTimer(): void {
-    if (this.cursorHideTimeout) {
-      clearTimeout(this.cursorHideTimeout);
-    }
-    
+    if (this.cursorHideTimeout) clearTimeout(this.cursorHideTimeout);
     this.showCursor();
-    this.cursorHideTimeout = setTimeout(() => {
-      this.hideCursor();
-    }, this.CURSOR_HIDE_DELAY);
-    
-    console.log('CursorManager: カーソルタイマーをリセット:', this.CURSOR_HIDE_DELAY + 'ms');
+    this.cursorHideTimeout = setTimeout(() => this.hideCursor(), this.CURSOR_HIDE_DELAY);
   }
 
-  private hideCursor(): void {
-    console.log('CursorManager: カーソルを非表示にします');
-    document.body.style.cursor = 'none';
-    
-    // iframe内のカーソルも非表示にする
-    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
-    if (iframe && iframe.contentDocument) {
-      try {
-        iframe.contentDocument.body.style.cursor = 'none';
-      } catch (e) {
-        // CORSエラーの場合は無視
-      }
+  private setCursor(value: 'none' | 'auto'): void {
+    document.body.style.cursor = value;
+    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement | null;
+    try {
+      if (iframe?.contentDocument?.body) iframe.contentDocument.body.style.cursor = value;
+    } catch {
+      /* cross-origin など。無視 */
     }
   }
 
-  private showCursor(): void {
-    console.log('CursorManager: カーソルを表示します');
-    document.body.style.cursor = 'auto';
-
-    // iframe内のカーソルも表示する
-    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
-    if (iframe && iframe.contentDocument) {
-      try {
-        iframe.contentDocument.body.style.cursor = 'auto';
-      } catch (e) {
-        // CORSエラーの場合は無視
-      }
-    }
-  }
+  private hideCursor(): void { this.setCursor('none'); }
+  private showCursor(): void { this.setCursor('auto'); }
 
   destroy(): void {
     this.disableAutoHide();

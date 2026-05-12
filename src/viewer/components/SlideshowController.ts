@@ -13,22 +13,11 @@ export class SlideshowController {
    * スライドショーを開始
    */
   public start(sketches: Sketch[]): void {
-    console.log('SlideshowController: スライドショー開始', {
-      sketchCount: sketches.length
-    });
-
-    
     if (sketches.length === 0) {
-      console.warn('SlideshowController: スケッチがありません');
       this.showEmptyState();
       return;
     }
-
-    // スケッチIDの配列を作成
-    const sketchIds = sketches.map(sketch => sketch.id);
-    
-    // ビューをレンダリング（スケッチ情報も渡す）
-    this.view.render(sketchIds, sketches);
+    this.view.render(sketches.map(s => s.id), sketches);
   }
 
   /**
@@ -66,11 +55,7 @@ export class SlideshowController {
     `;
   }
 
-  /**
-   * クリーンアップ
-   */
   public destroy(): void {
-    console.log('SlideshowController: クリーンアップ');
     this.view.destroy();
   }
 }

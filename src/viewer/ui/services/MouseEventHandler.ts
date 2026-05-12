@@ -1,3 +1,5 @@
+// フルスクリーン中のマウス操作検知用。document と（同一オリジンの）スケッチ iframe 内の document の
+// 両方にユーザー操作イベントを張り、コールバックへ転送する。
 export class MouseEventHandler {
   private readonly events = ['mousemove', 'mousedown', 'wheel', 'mouseenter', 'keydown', 'keyup'];
   private boundCallback: ((event: Event) => void) | null = null;
@@ -9,27 +11,19 @@ export class MouseEventHandler {
 
   startListening(): void {
     if (!this.boundCallback || this.isActive) return;
-    
-    console.log('マウス操作リスナーを追加');
     this.isActive = true;
-    
     this.events.forEach(eventType => {
       document.addEventListener(eventType, this.boundCallback!, { passive: true });
     });
-
     this.addIframeEventListeners();
   }
 
   stopListening(): void {
     if (!this.boundCallback || !this.isActive) return;
-    
-    console.log('マウス操作リスナーを削除');
     this.isActive = false;
-    
     this.events.forEach(eventType => {
       document.removeEventListener(eventType, this.boundCallback!);
     });
-
     this.removeIframeEventListeners();
   }
 
@@ -37,8 +31,6 @@ export class MouseEventHandler {
     const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
     if (!iframe || !this.boundCallback) return;
 
-    console.log('iframe内のイベントリスナーを追加');
-    
     const setupIframeEvents = () => {
       try {
         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
@@ -46,10 +38,9 @@ export class MouseEventHandler {
           this.events.forEach(eventType => {
             iframeDoc.addEventListener(eventType, this.boundCallback!, { passive: true });
           });
-          console.log('iframe内のイベントリスナー設定完了');
         }
-      } catch (e) {
-        console.log('iframe内のイベントリスナー設定に失敗:', e);
+      } catch {
+        /* cross-origin など。無視 */
       }
     };
 
@@ -63,17 +54,15 @@ export class MouseEventHandler {
   private removeIframeEventListeners(): void {
     const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
     if (!iframe || !this.boundCallback) return;
-
     try {
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
       if (iframeDoc) {
         this.events.forEach(eventType => {
           iframeDoc.removeEventListener(eventType, this.boundCallback!);
         });
-        console.log('iframe内のイベントリスナー削除完了');
       }
-    } catch (e) {
-      console.log('iframe内のイベントリスナー解除に失敗:', e);
+    } catch {
+      /* cross-origin など。無視 */
     }
   }
 

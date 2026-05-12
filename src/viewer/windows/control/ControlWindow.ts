@@ -1876,13 +1876,6 @@ export class ControlWindow extends BaseWindow {
         windowFrame.style.top = '50%';
         windowFrame.style.transform = 'translate(-50%, -50%)';
       }
-      
-      console.log('ControlWindow: ウィンドウフレーム更新', {
-        relativeWidth: `${relativeWidth}%`,
-        relativeHeight: `${relativeHeight}%`,
-        isFullscreen,
-        windowBounds: this.windowBounds
-      });
     }
   }
   
@@ -1903,12 +1896,6 @@ export class ControlWindow extends BaseWindow {
       
       // display-frameのアスペクト比を物理ディスプレイに合わせる
       displayFrame.style.aspectRatio = `${screenAspectRatio}`;
-      
-      console.log('ControlWindow: display-frameのアスペクト比を更新', {
-        screenSize: `${screenWidth}x${screenHeight}`,
-        screenAspectRatio: screenAspectRatio.toFixed(3),
-        method: '物理ディスプレイのアスペクト比'
-      });
     }
   }
   
@@ -1954,14 +1941,6 @@ export class ControlWindow extends BaseWindow {
       canvasFrame.style.height = `${frameHeight}px`;
       canvasFrame.style.maxWidth = '100%';
       canvasFrame.style.maxHeight = '100%';
-      
-      console.log('ControlWindow: Canvas同期 - ソースビデオ更新', {
-        canvasSize: `${canvasWidth}x${canvasHeight}`,
-        canvasAspectRatio: canvasAspectRatio.toFixed(3),
-        wrapperSize: `${wrapperWidth.toFixed(0)}x${wrapperHeight.toFixed(0)}`,
-        frameSize: `${frameWidth.toFixed(0)}x${frameHeight.toFixed(0)}`,
-        fitMethod: canvasAspectRatio > wrapperAspectRatio ? '幅基準' : '高さ基準'
-      });
     }
   }
 }

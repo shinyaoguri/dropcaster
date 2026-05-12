@@ -6,17 +6,14 @@ export class UIElementController {
   };
 
   showElements(): void {
-    console.log('UI要素を表示します');
     this.setElementsVisibility(true);
   }
 
   hideElements(): void {
-    console.log('UI要素を非表示にします');
     this.setElementsVisibility(false);
   }
 
   toggleElements(isVisible: boolean): void {
-    console.log(`UI要素を${isVisible ? '表示' : '非表示'}にします`);
     this.setElementsVisibility(isVisible);
   }
 
@@ -35,25 +32,17 @@ export class UIElementController {
 
   updateFullscreenButtonIcon(isFullscreen: boolean): void {
     const fullscreenBtn = this.elements.fullscreenBtn();
-    if (fullscreenBtn) {
-      const icon = fullscreenBtn.querySelector('.fullscreen-icon') as HTMLElement;
-      if (icon) {
-        icon.className = isFullscreen 
-          ? 'fas fa-compress fullscreen-icon button-icon'
-          : 'fas fa-expand fullscreen-icon button-icon';
-        console.log(isFullscreen ? '🔴 フルスクリーン終了アイコンに変更' : '🟢 フルスクリーン開始アイコンに変更');
-      }
+    const icon = fullscreenBtn?.querySelector('.fullscreen-icon') as HTMLElement | null;
+    if (icon) {
+      icon.className = isFullscreen
+        ? 'fas fa-compress fullscreen-icon button-icon'
+        : 'fas fa-expand fullscreen-icon button-icon';
     }
   }
 
   setFullscreenActiveState(isFullscreen: boolean): void {
-    const fullscreenBtn = this.elements.fullscreenBtn();
-    const openWindowsBtn = this.elements.openWindowsBtn();
-
-    [fullscreenBtn, openWindowsBtn].forEach(btn => {
-      if (btn) {
-        btn.classList.toggle('fullscreen-active', isFullscreen);
-      }
+    [this.elements.fullscreenBtn(), this.elements.openWindowsBtn()].forEach(btn => {
+      btn?.classList.toggle('fullscreen-active', isFullscreen);
     });
   }
 }

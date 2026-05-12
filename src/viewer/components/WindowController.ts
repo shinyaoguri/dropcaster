@@ -426,82 +426,22 @@ export class WindowController {
     }));
   }
 
+  /** ソース canvas の描画バッファサイズ（width/height 属性）の変化を監視し、変わったら各所へ通知する。 */
   private monitorCanvasResize(canvas: HTMLCanvasElement): void {
     this.canvasResizeObserver?.disconnect();
     this.canvasMutationObserver?.disconnect();
 
-    // ResizeObserverを使用してCanvasのサイズ変更を監視
-    const resizeObserver = new ResizeObserver(() => {
-      // Canvasの実際の描画サイズを取得
-      const actualWidth = canvas.width;
-      const actualHeight = canvas.height;
-      
-      if (actualWidth !== this.videoActualDimensions.width || 
-          actualHeight !== this.videoActualDimensions.height) {
-        
-        this.videoActualDimensions = {
-          width: actualWidth,
-          height: actualHeight
-        };
-        
-        console.log('WindowController: Canvasサイズ変更を検出', {
-          width: actualWidth,
-          height: actualHeight
-        });
-        
-        // コントロールウィンドウにサイズ変更を通知
-        const controlWindow = this.windowManager.getWindow('control_window');
-        if (controlWindow && !controlWindow.closed) {
-          controlWindow.postMessage({
-            type: 'video-dimensions-update',
-            data: this.videoActualDimensions
-          }, window.location.origin);
-        }
-      }
-    });
-    
-    resizeObserver.observe(canvas);
-    this.canvasResizeObserver = resizeObserver;
-    
-    // Canvasの属性変更も監視
-    const mutationObserver = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type === 'attributes' && 
-            (mutation.attributeName === 'width' || mutation.attributeName === 'height')) {
-          
-          const actualWidth = canvas.width;
-          const actualHeight = canvas.height;
-          
-          if (actualWidth !== this.videoActualDimensions.width || 
-              actualHeight !== this.videoActualDimensions.height) {
-            
-            this.videoActualDimensions = {
-              width: actualWidth,
-              height: actualHeight
-            };
-            
-            console.log('WindowController: Canvas属性変更を検出', {
-              width: actualWidth,
-              height: actualHeight
-            });
-            
-            const controlWindow = this.windowManager.getWindow('control_window');
-            if (controlWindow && !controlWindow.closed) {
-              controlWindow.postMessage({
-                type: 'video-dimensions-update',
-                data: this.videoActualDimensions
-              }, window.location.origin);
-            }
-          }
-        }
-      }
-    });
-    
-    mutationObserver.observe(canvas, {
-      attributes: true,
-      attributeFilter: ['width', 'height']
-    });
-    this.canvasMutationObserver = mutationObserver;
+    const onMaybeResized = () => {
+      if (canvas.width === this.videoActualDimensions.width && canvas.height === this.videoActualDimensions.height) return;
+      this.videoActualDimensions = { width: canvas.width, height: canvas.height };
+      this.notifyVideoDimensions();
+    };
+
+    this.canvasResizeObserver = new ResizeObserver(onMaybeResized);
+    this.canvasResizeObserver.observe(canvas);
+
+    this.canvasMutationObserver = new MutationObserver(onMaybeResized);
+    this.canvasMutationObserver.observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] });
   }
 
   private getCanvasFromIframe(iframeElement: HTMLIFrameElement): HTMLCanvasElement | null {

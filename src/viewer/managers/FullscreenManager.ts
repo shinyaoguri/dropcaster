@@ -2,6 +2,8 @@ import { EventEmitter } from '../events/EventEmitter';
 import { UIElementController } from '../ui/services/UIElementController';
 import { MouseEventHandler } from '../ui/services/MouseEventHandler';
 
+// fullscreenchange を監視し、フルスクリーン中は一定時間操作が無ければ UI 要素（ボタン等）を隠す。
+// フルスクリーン状態の変化は onFullscreenChange で通知する。
 export class FullscreenManager {
   private eventEmitter: EventEmitter;
   private isFullscreen = false;
@@ -18,57 +20,42 @@ export class FullscreenManager {
   }
 
   initialize(): void {
-    // フルスクリーン状態の変更を監視
     document.addEventListener('fullscreenchange', this.boundFullscreenChange);
-    
-    // マウスイベントハンドラーを初期化
     this.mouseHandler.initialize(this.handleMouseActivity);
   }
 
   private handleFullscreenChange(): void {
     const wasFullscreen = this.isFullscreen;
     this.isFullscreen = !!document.fullscreenElement;
-    
-    console.log('フルスクリーン状態変更:', this.isFullscreen);
-    
+
     if (this.isFullscreen && !wasFullscreen) {
-      // フルスクリーン開始時
-      console.log('フルスクリーン開始: UI非表示タイマーを開始');
       this.startUIHideTimer();
       this.mouseHandler.startListening();
     } else if (!this.isFullscreen && wasFullscreen) {
-      // フルスクリーン終了時
-      console.log('フルスクリーン終了: UI要素を表示状態に戻す');
       this.stopUIHideTimer();
       this.mouseHandler.stopListening();
       this.uiController.showElements();
     }
-    
+
     this.eventEmitter.emit('fullscreenChange', this.isFullscreen);
   }
 
   private startUIHideTimer(): void {
-    this.stopUIHideTimer(); // 既存のタイマーをクリア
-    console.log('UI非表示タイマー開始:', this.UI_HIDE_DELAY + 'ms');
-    this.uiHideTimeout = setTimeout(() => {
-      console.log('UI非表示タイマー完了: UI要素を非表示');
-      this.uiController.hideElements();
-    }, this.UI_HIDE_DELAY);
+    this.stopUIHideTimer();
+    this.uiHideTimeout = setTimeout(() => this.uiController.hideElements(), this.UI_HIDE_DELAY);
   }
 
   private stopUIHideTimer(): void {
     if (this.uiHideTimeout) {
-      console.log('UI非表示タイマーを停止');
       clearTimeout(this.uiHideTimeout);
       this.uiHideTimeout = null;
     }
   }
 
-  private handleMouseActivity = (event: Event): void => {
+  private handleMouseActivity = (): void => {
     if (this.isFullscreen) {
-      console.log('マウス操作を検知:', event.type, 'UI要素を表示');
       this.uiController.showElements();
-      this.startUIHideTimer(); // タイマーをリセット
+      this.startUIHideTimer();
     }
   };
 
