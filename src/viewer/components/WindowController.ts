@@ -283,17 +283,6 @@ export class WindowController {
   }
 
   /**
-   * canvas captureStream の参照を SketchPageView へ通知。
-   * 同一ウィンドウ内なので CustomEvent.detail にそのまま MediaStream を載せて渡せる。
-   * stream が null なら停止通知。
-   */
-  private dispatchCanvasStream(stream: MediaStream | null): void {
-    window.dispatchEvent(new CustomEvent('canvas-stream-ready', {
-      detail: { stream }
-    }));
-  }
-
-  /**
    * 同一の MediaStream を統合ウィンドウ内の各 video 要素に共有 bind する。
    * clone は作らない —— 全 video が同じ stream を参照するだけで同期再生されるため、
    * GPU/CPU のデコーダ・コンポジット負荷を最小化できる。
@@ -366,13 +355,12 @@ export class WindowController {
   }
 
   /**
-   * いまの「カレント MediaStream」を、見える場所すべて（in-page overlay / control window /
-   * output window）に bind し直す。captureFromSource とテストパターン両方の共通経路。
+   * いまの「カレント MediaStream」を、stream を消費するすべての場所
+   * （control window のプレビュー / output window の各 mapping video）に bind し直す。
+   * captureFromSource とテストパターン両方の共通経路。
+   * （メインウィンドウはソース矩形の枠を出すだけなので stream は不要 → mapping-overlay-update だけ送る）
    */
   private broadcastStream(stream: MediaStream): void {
-    // in-page オーバーレイ（SketchPageView 等）へ stream を broadcast
-    this.dispatchCanvasStream(stream);
-
     // コントロールウィンドウの video 群（clone せず共有）
     const controlWindow = this.windowManager.getWindow('control_window');
     if (controlWindow && !controlWindow.closed) {
@@ -409,11 +397,7 @@ export class WindowController {
       // テスト → 通常ソース。テスト stream を止めて、source iframe から再キャプチャする
       this.testPattern?.stop();
       this.stopCanvasCapture();
-      if (this.currentSourceIframe) {
-        this.captureFromSource();
-      } else {
-        this.dispatchCanvasStream(null);
-      }
+      if (this.currentSourceIframe) this.captureFromSource();
     } else if (prev === 'off') {
       // 通常 → テスト。source の tracks は止めるが iframe 参照は残しておく（'off' で復帰するため）
       this.stopCanvasCapture();
@@ -588,9 +572,6 @@ export class WindowController {
     // テストパターンも止めて 'off' に戻す（次回 start 時のクリーンな状態のため）
     this.testPattern?.stop();
     this.testPatternKind = 'off';
-
-    // SketchPageView に stream 停止を通知（dynamic video 要素は SketchPageView 側でクリア）
-    this.dispatchCanvasStream(null);
 
     // ウィンドウ監視を停止
     if (this.windowMonitoringInterval !== null) {

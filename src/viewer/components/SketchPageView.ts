@@ -4,9 +4,8 @@ import { CursorManager } from '../managers/CursorManager';
 import { UIElementController } from '../ui/services/UIElementController';
 import { escapeHtml } from '../utils/html.js';
 import {
-  applyVideoCrop,
-  applyQuadTransform,
   isMappingEnabled,
+  mappingColor,
   type MappingEntry,
 } from '../utils/mappingTransform.js';
 
@@ -14,17 +13,17 @@ export class SketchPageView {
   private eventEmitter: EventEmitter;
   private cursorManager: CursorManager;
   private uiController: UIElementController;
-  // 投影中、ワープした映像の overlay 要素（.mapping-overlay）はここに生成される
+  // 投影中、各マッピングのソース切り抜き範囲を示すワイヤーフレーム枠（.dc-source-crop-box）はここに生成される
   private projectionStage: HTMLDivElement | null = null;
-  // canvas captureStream の現在値（WindowController から canvas-stream-ready で渡される）
-  private currentStream: MediaStream | null = null;
-  // 直近の mapping-overlay-update の payload を保持（resize 時の再描画に使う）
+  // 直近の mapping-overlay-update の payload を保持（resize / 投影開始時の再描画に使う）
   private lastMappings: MappingEntry[] = [];
+  private lastActiveId: string | null = null;
+  private isProjecting = false;
+  private cropRefreshInterval: ReturnType<typeof setInterval> | null = null;
   private boundFullscreenChange = this.handleFullscreenChange.bind(this);
   private boundMappingOverlayUpdate = this.handleMappingOverlayUpdate.bind(this);
   private boundResize = this.handleResize.bind(this);
   private boundProjectionModeChange = this.handleProjectionModeChange.bind(this);
-  private boundCanvasStreamReady = this.handleCanvasStreamReady.bind(this);
   private domSetupTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
@@ -75,16 +74,15 @@ export class SketchPageView {
           <i class="fas fa-external-link-alt button-icon"></i>
         </button>
 
-        <!-- 投影 stage（projecting 時に黒背景で前面化、子の mapping-overlay は動的生成） -->
+        <!-- 投影中のソース可視化レイヤ（前面化して、各マッピングのソース矩形を枠で描く。子は動的生成） -->
         <div id="iframe-content-overlay" class="iframe-content-overlay"></div>
       </div>
     `;
 
     this.setupEventListeners();
 
-    // プロジェクションモード／canvas stream の通知を購読
+    // プロジェクションモードの通知を購読
     window.addEventListener('projection-mode-change', this.boundProjectionModeChange);
-    window.addEventListener('canvas-stream-ready', this.boundCanvasStreamReady);
 
     // DOM が完全に描画されるのを待ってから dynamic stage を取得してイベント購読
     this.domSetupTimeout = setTimeout(() => {
@@ -164,114 +162,133 @@ export class SketchPageView {
     window.addEventListener('resize', this.boundResize);
   }
 
-  private handleCanvasStreamReady(event: Event): void {
-    const detail = (event as CustomEvent).detail;
-    this.currentStream = (detail?.stream as MediaStream | null) ?? null;
-    this.applyStreamToAllVideos();
-  }
-
-  private applyStreamToAllVideos(): void {
-    const videos = document.querySelectorAll<HTMLVideoElement>('.mapping-overlay video');
-    videos.forEach(video => {
-      if (this.currentStream) {
-        if (video.srcObject !== this.currentStream) {
-          video.srcObject = this.currentStream;
-          video.play().catch(error => {
-            console.warn('SketchPageView: video.play 失敗', error);
-          });
-        }
-      } else {
-        video.srcObject = null;
-      }
-    });
-  }
-
   private handleMappingOverlayUpdate(event: Event): void {
     const detail = (event as CustomEvent).detail;
-    const mappings = (detail?.mappings as MappingEntry[]) ?? [];
-    this.lastMappings = mappings;
-    this.updateMappingOverlay(mappings);
+    this.lastMappings = (detail?.mappings as MappingEntry[]) ?? [];
+    this.lastActiveId = (detail?.activeId as string | undefined) ?? null;
+    this.renderSourceCropBoxes();
   }
 
   private handleResize(): void {
-    if (this.lastMappings.length > 0) {
-      this.updateMappingOverlay(this.lastMappings);
-    }
+    this.renderSourceCropBoxes();
   }
 
   private handleProjectionModeChange(event: Event): void {
     const detail = (event as CustomEvent).detail;
-    const container = document.querySelector('.fullscreen-sketch-container');
-    if (container) {
-      container.classList.toggle('projecting', !!detail?.active);
+    const active = !!detail?.active;
+    this.isProjecting = active;
+    document.querySelector('.fullscreen-sketch-container')?.classList.toggle('projecting', active);
+
+    if (active) {
+      this.renderSourceCropBoxes();
+      // canvas のリサイズや投影開始直後のレイアウト確定に追従するため、ゆるく再計算する
+      if (this.cropRefreshInterval === null) {
+        this.cropRefreshInterval = setInterval(() => this.renderSourceCropBoxes(), 250);
+      }
+    } else {
+      if (this.cropRefreshInterval !== null) {
+        clearInterval(this.cropRefreshInterval);
+        this.cropRefreshInterval = null;
+      }
+      this.clearSourceCropBoxes();
     }
   }
 
-  private updateMappingOverlay(mappings: MappingEntry[]): void {
-    if (!this.projectionStage) return;
-
-    // disabled な mapping は投影出力には出さない
-    const enabled = mappings.filter(isMappingEnabled);
-    this.syncMappingChildren(this.projectionStage, 'mapping-overlay', enabled);
-  }
-
   /**
-   * parent の中に mappings 件分の `<div class="${baseClass}" data-mapping-id>`
-   * を生成・更新・削除する。各 div は内部に `<video>` を持ち、自分の quad を
-   * matrix3d で適用、source rect を video の crop で適用する。
+   * 投影中のメインウィンドウに、各（有効な）マッピングのソース切り抜き範囲を
+   * マッピング色のラベル付きワイヤーフレーム枠として、走っているスケッチ canvas の上に重ねる。
+   * ワープ後の映像は出力ウィンドウ（プロジェクタ）と操作ウィンドウのプレビューに任せる。
    */
-  private syncMappingChildren(parent: HTMLElement, baseClass: string, mappings: MappingEntry[]): void {
-    // 親の position は明示しておく（matrix3d は親の rect に対する相対 % を使う）
-    parent.style.position = 'absolute';
-    parent.style.top = '0';
-    parent.style.left = '0';
-    parent.style.width = '100%';
-    parent.style.height = '100%';
+  private renderSourceCropBoxes(): void {
+    const stage = this.projectionStage;
+    if (!stage) return;
+    if (!this.isProjecting) { this.clearSourceCropBoxes(); return; }
 
+    const canvasRect = this.getCanvasRectInStage(stage);
     const existing = new Map<string, HTMLDivElement>();
-    parent.querySelectorAll<HTMLDivElement>(`:scope > .${baseClass}`).forEach(el => {
+    stage.querySelectorAll<HTMLDivElement>(':scope > .dc-source-crop-box').forEach(el => {
       const id = el.dataset.mappingId;
       if (id) existing.set(id, el);
     });
 
-    // 不要になった entry を削除
-    const validIds = new Set(mappings.map(m => m.id));
-    existing.forEach((el, id) => {
-      if (!validIds.has(id)) {
-        el.remove();
-        existing.delete(id);
+    const seen = new Set<string>();
+    this.lastMappings.forEach((mapping, idx) => {
+      if (!isMappingEnabled(mapping)) return;
+      seen.add(mapping.id);
+      const color = mappingColor(idx);
+
+      let box = existing.get(mapping.id);
+      if (!box) {
+        box = stage.ownerDocument.createElement('div');
+        box.className = 'dc-source-crop-box';
+        box.dataset.mappingId = mapping.id;
+        const label = stage.ownerDocument.createElement('span');
+        label.className = 'dc-source-crop-label';
+        box.appendChild(label);
+        stage.appendChild(box);
       }
+
+      const label = box.querySelector('.dc-source-crop-label') as HTMLSpanElement;
+      label.textContent = mapping.name ?? `Mapping ${idx + 1}`;
+      box.style.color = color;
+      box.style.borderColor = color;
+      box.classList.toggle('dc-active', mapping.id === this.lastActiveId);
+
+      const src = mapping.source;
+      box.style.left = `${canvasRect.left + (src.x / 100) * canvasRect.width}px`;
+      box.style.top = `${canvasRect.top + (src.y / 100) * canvasRect.height}px`;
+      box.style.width = `${(src.width / 100) * canvasRect.width}px`;
+      box.style.height = `${(src.height / 100) * canvasRect.height}px`;
     });
 
-    // 各 mapping を反映（新規なら生成）
-    for (const mapping of mappings) {
-      let el = existing.get(mapping.id);
-      if (!el) {
-        el = parent.ownerDocument.createElement('div');
-        el.className = baseClass;
-        el.dataset.mappingId = mapping.id;
-        const video = parent.ownerDocument.createElement('video');
-        video.autoplay = true;
-        video.muted = true;
-        video.playsInline = true;
-        el.appendChild(video);
-        parent.appendChild(el);
-
-        // 現在 stream がある場合は即座に bind
-        if (this.currentStream) {
-          video.srcObject = this.currentStream;
-          video.play().catch(error => {
-            console.warn(`SketchPageView: video.play 失敗 (${mapping.id})`, error);
-          });
-        }
-      }
-
-      const video = el.querySelector('video') as HTMLVideoElement | null;
-      if (video) applyVideoCrop(video, mapping.source);
-      applyQuadTransform(el, mapping.quad);
-    }
+    existing.forEach((el, id) => {
+      if (!seen.has(id)) el.remove();
+    });
   }
 
+  private clearSourceCropBoxes(): void {
+    this.projectionStage?.querySelectorAll(':scope > .dc-source-crop-box').forEach(el => el.remove());
+  }
+
+  /**
+   * iframe 内の <canvas> が「実際に描画されている矩形」を projectionStage 相対の px で返す。
+   * canvas 要素のボックスと描画バッファ（canvas.width × canvas.height）のアスペクト比が違うと
+   * object-fit:contain でレターボックスが入るので、その分を差し引いた内側の矩形を返す。
+   * canvas が取れない（読み込み前・cross-origin 等）場合は stage 全体を返す。
+   */
+  private getCanvasRectInStage(stage: HTMLElement): { left: number; top: number; width: number; height: number } {
+    const stageRect = stage.getBoundingClientRect();
+    const fallback = { left: 0, top: 0, width: stageRect.width, height: stageRect.height };
+    const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement | null;
+    if (!iframe) return fallback;
+    let canvas: HTMLCanvasElement | null = null;
+    try {
+      canvas = (iframe.contentDocument ?? iframe.contentWindow?.document)?.querySelector('canvas') ?? null;
+    } catch {
+      return fallback;
+    }
+    if (!canvas) return fallback;
+
+    const iframeRect = iframe.getBoundingClientRect();
+    const cRect = canvas.getBoundingClientRect(); // canvas 要素ボックス（iframe ビューポート相対）
+    if (cRect.width < 1 || cRect.height < 1) return fallback;
+
+    // object-fit:contain の内側矩形（描画バッファのアスペクト比に合わせてレターボックス）
+    const bufW = canvas.width || cRect.width;
+    const bufH = canvas.height || cRect.height;
+    const scale = Math.min(cRect.width / bufW, cRect.height / bufH);
+    const drawW = bufW * scale;
+    const drawH = bufH * scale;
+    const drawX = cRect.left + (cRect.width - drawW) / 2;
+    const drawY = cRect.top + (cRect.height - drawH) / 2;
+
+    return {
+      left: iframeRect.left + drawX - stageRect.left,
+      top: iframeRect.top + drawY - stageRect.top,
+      width: drawW,
+      height: drawH,
+    };
+  }
 
 
   onFullscreenToggle(callback: (container: HTMLElement) => void): void {
@@ -287,11 +304,14 @@ export class SketchPageView {
       clearTimeout(this.domSetupTimeout);
       this.domSetupTimeout = null;
     }
+    if (this.cropRefreshInterval !== null) {
+      clearInterval(this.cropRefreshInterval);
+      this.cropRefreshInterval = null;
+    }
     document.removeEventListener('fullscreenchange', this.boundFullscreenChange);
     window.removeEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
     window.removeEventListener('resize', this.boundResize);
     window.removeEventListener('projection-mode-change', this.boundProjectionModeChange);
-    window.removeEventListener('canvas-stream-ready', this.boundCanvasStreamReady);
     this.eventEmitter.removeAllListeners();
     this.cursorManager.destroy();
   }
