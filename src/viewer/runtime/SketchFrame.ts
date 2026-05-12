@@ -28,6 +28,15 @@ const VIEWER_FRAME_STYLE = `
 // load イベントが（CSP やリダイレクトなどで）発火しなかった場合に備えたフォールバック時間
 const LOAD_TIMEOUT_MS = 15000;
 
+/** スケッチ iframe の window（p5 のグローバルや、pause/resume 用に差し替える rAF 退避フィールドを含む）。 */
+type DcSketchWindow = Window & {
+  noLoop?: () => void;
+  loop?: () => void;
+  redraw?: () => void;
+  __dcOrigRaf?: ((cb: FrameRequestCallback) => number) | undefined;
+  __dcRafQueue?: FrameRequestCallback[] | undefined;
+};
+
 export class SketchFrame {
   readonly iframe: HTMLIFrameElement;
   /** いま読み込んでいる（または読み込み中の）URL。about:blank のときは null。 */
@@ -130,21 +139,45 @@ export class SketchFrame {
     this.iframe.classList.toggle('dc-visible', visible);
   }
 
-  /** ベストエフォートの一時停止（p5 グローバルモードの noLoop。他のライブラリでは無視される） */
+  /**
+   * 一時停止: iframe の requestAnimationFrame を「呼ばれたら退避キューに積むだけ」に差し替えて、
+   * 表示されていない間スケッチの描画ループ（p5 instance / three.js / 生 rAF いずれも）を凍結する。
+   * p5 グローバルモードでは noLoop() も呼んでクリーンに止める。差し替えは Window プロパティ
+   * （__dc*）に保持するので、navigation で新しい Document になれば自然に消える。冪等。
+   */
   pause(): void {
     try {
-      (this.window as (Window & { noLoop?: () => void }) | null)?.noLoop?.();
+      const w = this.window as DcSketchWindow | null;
+      if (!w) return;
+      w.noLoop?.(); // p5 グローバルモード（reads window.rAF each frame なので下の差し替えでも止まるが、これが正攻法）
+      if (!w.__dcOrigRaf) {
+        w.__dcOrigRaf = w.requestAnimationFrame.bind(w);
+        w.__dcRafQueue = [];
+        w.requestAnimationFrame = (cb: FrameRequestCallback): number => {
+          w.__dcRafQueue!.push(cb);
+          return -1;
+        };
+      }
     } catch {
       /* ignore */
     }
   }
 
-  /** ベストエフォートの再開（p5 の loop + 1 フレーム再描画） */
+  /** 再開: requestAnimationFrame を元に戻し、停止中に積まれた rAF コールバックを再投入する。p5 は loop()+redraw()。冪等。 */
   resume(): void {
     try {
-      const w = this.window as (Window & { loop?: () => void; redraw?: () => void }) | null;
-      w?.loop?.();
-      w?.redraw?.();
+      const w = this.window as DcSketchWindow | null;
+      if (!w) return;
+      if (w.__dcOrigRaf) {
+        const orig = w.__dcOrigRaf;
+        const queue = w.__dcRafQueue ?? [];
+        w.requestAnimationFrame = orig;
+        w.__dcOrigRaf = undefined;
+        w.__dcRafQueue = undefined;
+        for (const cb of queue) orig(cb);
+      }
+      w.loop?.();
+      w.redraw?.();
     } catch {
       /* ignore */
     }
