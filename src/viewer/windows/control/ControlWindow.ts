@@ -1697,10 +1697,12 @@ export class ControlWindow extends BaseWindow {
     const targetWindow = this.getParentWindow();
     if (!targetWindow) return;
     try {
+      // targetOrigin は '*'：このウィンドウは about:blank で origin が 'null' になり得る。
+      // 受信側（WindowController.messageHandler）が event.origin を検証している。
       targetWindow.postMessage({
         type: 'test-pattern-set',
         data: { kind },
-      }, targetWindow.location.origin);
+      }, '*');
     } catch (error) {
       console.error('ControlWindow: test-pattern-set 送信エラー', error);
     }
@@ -1710,6 +1712,7 @@ export class ControlWindow extends BaseWindow {
    * ローカル mutation 後に呼ぶ。alias 経由で source/quad オブジェクトを直接書き換えると
    * active な entry の同じ参照が更新される（state は同じインスタンス）。
    * postMessage は structured clone でコピーされて親に届くので、双方向の流入はない。
+   * targetOrigin は '*'（受信側で origin 検証。OutputWindow の requestStream と同じ理由）。
    */
   private broadcastStateMutation(): void {
     const targetWindow = this.getParentWindow();
@@ -1718,7 +1721,7 @@ export class ControlWindow extends BaseWindow {
       targetWindow.postMessage({
         type: 'state-mutation',
         data: this.state satisfies MappingsState,
-      }, targetWindow.location.origin);
+      }, '*');
     } catch (error) {
       console.error('ControlWindow: state-mutation 送信エラー', error);
     }

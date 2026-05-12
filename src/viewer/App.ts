@@ -42,10 +42,7 @@ export class App {
           this.sketchPageController.destroy();
           this.sketchPageController = null;
         }
-        
-        // 少し待機してから新しいコントローラーを作成
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
+
         // 新しいコントローラーを作成してスケッチを表示
         this.sketchPageController = new SketchPageController();
         await this.sketchPageController.renderSketch(sketch);

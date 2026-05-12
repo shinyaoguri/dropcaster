@@ -33,5 +33,4 @@ sketches/*
 public/*
 !public/manifest.json
 !public/sw.js
-!public/vite.svg
 !public/.gitkeep

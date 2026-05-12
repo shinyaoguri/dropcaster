@@ -116,27 +116,16 @@ export class SketchPageController {
     return message;
   };
 
-  private unloadHandler = () => {
-    console.log('SketchPageController: ページアンロード - 開いているウィンドウを全て閉じます');
-    this.windowController.closeAllWindows();
-  };
-
   private pagehideHandler = () => {
-    console.log('SketchPageController: ページ非表示 - 開いているウィンドウを全て閉じます');
     this.windowController.closeAllWindows();
   };
 
   private setupBeforeUnloadWarning(): void {
     // ページ離脱時に常に警告を表示
     window.addEventListener('beforeunload', this.beforeUnloadHandler);
-
-    // ページが実際にアンロードされる時に開いているウィンドウを全て閉じる
-    window.addEventListener('unload', this.unloadHandler);
-
-    // ページが非表示になる時にもウィンドウを閉じる（ブラウザタブが閉じられた場合）
+    // ページが破棄／非表示になる時に開いているウィンドウを全て閉じる
+    // （unload は非推奨で bfcache も阻害するので pagehide のみ）
     window.addEventListener('pagehide', this.pagehideHandler);
-
-    console.log('SketchPageController: ページ離脱警告とクリーンアップを設定しました');
   }
 
   setInternalNavigation(value: boolean): void {
@@ -152,7 +141,6 @@ export class SketchPageController {
 
     // イベントリスナーを削除
     window.removeEventListener('beforeunload', this.beforeUnloadHandler);
-    window.removeEventListener('unload', this.unloadHandler);
     window.removeEventListener('pagehide', this.pagehideHandler);
 
     if (this.openWindowsTimeout) {

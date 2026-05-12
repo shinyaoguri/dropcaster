@@ -30,7 +30,6 @@
   },
   "files": [
     "src",
-    "public/assets",
     "index.html",
     "vite.config.ts",
     "tsconfig.json"

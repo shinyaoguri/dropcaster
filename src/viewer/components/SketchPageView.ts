@@ -1,6 +1,5 @@
 import type { Sketch } from '../types/sketch.js';
 import { EventEmitter } from '../events/EventEmitter';
-import { CursorManager } from '../managers/CursorManager';
 import { UIElementController } from '../ui/services/UIElementController';
 import { escapeHtml } from '../utils/html.js';
 import {
@@ -11,7 +10,6 @@ import {
 
 export class SketchPageView {
   private eventEmitter: EventEmitter;
-  private cursorManager: CursorManager;
   private uiController: UIElementController;
   // 投影中、各マッピングのソース切り抜き範囲を示すワイヤーフレーム枠（.dc-source-crop-box）はここに生成される
   private projectionStage: HTMLDivElement | null = null;
@@ -20,15 +18,12 @@ export class SketchPageView {
   private lastActiveId: string | null = null;
   private isProjecting = false;
   private cropRefreshInterval: ReturnType<typeof setInterval> | null = null;
-  private boundFullscreenChange = this.handleFullscreenChange.bind(this);
   private boundMappingOverlayUpdate = this.handleMappingOverlayUpdate.bind(this);
   private boundResize = this.handleResize.bind(this);
   private boundProjectionModeChange = this.handleProjectionModeChange.bind(this);
-  private domSetupTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     this.eventEmitter = new EventEmitter();
-    this.cursorManager = new CursorManager();
     this.uiController = new UIElementController();
   }
 
@@ -81,32 +76,23 @@ export class SketchPageView {
 
     this.setupEventListeners();
 
-    // プロジェクションモードの通知を購読
+    // 投影モード／マッピング更新／リサイズの購読（innerHTML は同期なので #iframe-content-overlay は既に存在）
     window.addEventListener('projection-mode-change', this.boundProjectionModeChange);
-
-    // DOM が完全に描画されるのを待ってから dynamic stage を取得してイベント購読
-    this.domSetupTimeout = setTimeout(() => {
-      this.projectionStage = document.getElementById('iframe-content-overlay') as HTMLDivElement;
-      this.setupMappingOverlayListener();
-      this.domSetupTimeout = null;
-    }, 100);
-
-    // CursorManagerを初期化
-    this.cursorManager.initialize();
+    this.projectionStage = document.getElementById('iframe-content-overlay') as HTMLDivElement;
+    this.setupMappingOverlayListener();
   }
 
   private setupEventListeners(): void {
     const fullscreenBtn = document.getElementById('fullscreen-btn') as HTMLButtonElement;
     const openWindowsBtn = document.getElementById('open-windows-btn') as HTMLButtonElement;
 
-    // フルスクリーンボタンのイベント
+    // フルスクリーンボタン（fullscreenchange は SketchPageController の FullscreenManager が拾い、
+    // updateFullscreenState() を呼んでくる ＝ この View 自身は fullscreenchange を購読しない）
     fullscreenBtn.addEventListener('click', () => {
       const container = document.querySelector('.fullscreen-sketch-container') as HTMLDivElement;
       if (document.fullscreenElement) {
-        // フルスクリーンを終了
         document.exitFullscreen();
       } else {
-        // フルスクリーンを開始
         container.requestFullscreen().catch(err => {
           console.error('フルスクリーン化に失敗しました:', err);
         });
@@ -117,17 +103,6 @@ export class SketchPageView {
     openWindowsBtn.addEventListener('click', () => {
       this.eventEmitter.emit('openWindowsToggle');
     });
-
-    // フルスクリーン状態の変更を監視
-    document.addEventListener('fullscreenchange', this.boundFullscreenChange);
-  }
-
-  private handleFullscreenChange(): void {
-    const isFullscreen = !!document.fullscreenElement;
-    this.updateFullscreenUI(isFullscreen);
-
-    // CursorManagerにフルスクリーン状態を通知
-    this.cursorManager.setFullscreenMode(isFullscreen);
   }
 
   private updateFullscreenUI(isFullscreen: boolean): void {
@@ -296,19 +271,13 @@ export class SketchPageView {
   }
 
   destroy(): void {
-    if (this.domSetupTimeout) {
-      clearTimeout(this.domSetupTimeout);
-      this.domSetupTimeout = null;
-    }
     if (this.cropRefreshInterval !== null) {
       clearInterval(this.cropRefreshInterval);
       this.cropRefreshInterval = null;
     }
-    document.removeEventListener('fullscreenchange', this.boundFullscreenChange);
     window.removeEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
     window.removeEventListener('resize', this.boundResize);
     window.removeEventListener('projection-mode-change', this.boundProjectionModeChange);
     this.eventEmitter.removeAllListeners();
-    this.cursorManager.destroy();
   }
 }
