@@ -103,15 +103,18 @@ export class OutputWindow extends BaseWindow {
   /** マッピング設定を受け取り、有効なものだけレンダリングする。 */
   setMappings(state: MappingsState | null | undefined): void {
     this.mappings = (state?.mappings ?? []).filter(isMappingEnabled);
-    this.sync();
-    this.requestStream();
+    // 新しい <video> を作ったときだけ親へ stream を要求する（既存の video は bind 済み）。
+    // quad/source の微調整だけのときは要求しない（毎フレーム postMessage 往復を避ける）。
+    if (this.sync()) this.requestStream();
   }
 
-  private sync(): void {
-    if (!this.window) return;
+  /** 子要素を mappings に同期する。新規に <video> を生成したら true（＝ stream の再 bind が必要）。 */
+  private sync(): boolean {
+    if (!this.window) return false;
     const root = this.window.document.getElementById('dc-output-root');
-    if (!root) return;
+    if (!root) return false;
 
+    let createdNew = false;
     const seen = new Set<string>();
     for (const m of this.mappings) {
       seen.add(m.id);
@@ -127,6 +130,7 @@ export class OutputWindow extends BaseWindow {
         root.appendChild(div);
         child = { div, video };
         this.children.set(m.id, child);
+        createdNew = true;
       }
       applyVideoCrop(child.video, m.source);
       applyQuadTransform(child.div, m.quad);
@@ -137,6 +141,7 @@ export class OutputWindow extends BaseWindow {
         this.children.delete(id);
       }
     }
+    return createdNew;
   }
 
   private reapplyTransforms(): void {

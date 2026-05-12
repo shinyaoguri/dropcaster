@@ -9,6 +9,7 @@ import {
 } from '../utils/mappingTransform';
 
 const STATE_STORAGE_KEY = 'dropcaster.mappings.v1';
+const SAVE_DEBOUNCE_MS = 250;
 
 // Window Management API（Chrome/Edge 系のみ）の最小型定義
 interface ScreenDetailed {
@@ -32,6 +33,7 @@ export class WindowController {
   private outputWindow: OutputWindow;
   private activeStreams: MediaStream[] = [];
   private windowMonitoringInterval: number | null = null;
+  private saveTimer: number | null = null;
   private canvasResizeObserver: ResizeObserver | null = null;
   private canvasMutationObserver: MutationObserver | null = null;
   /** いまマッピングのソースにしているスケッチ iframe（差し替え可能）。 */
@@ -90,7 +92,17 @@ export class WindowController {
     }
   }
 
-  private saveToStorage(): void {
+  /**
+   * localStorage への保存はトレーリングデバウンス（ドラッグ中は毎フレーム state が変わるので、
+   * JSON.stringify + 同期 setItem を 60Hz で叩かない）。pagehide / destroy で確実にフラッシュする。
+   */
+  private scheduleSave(): void {
+    if (this.saveTimer !== null) return;
+    this.saveTimer = window.setTimeout(() => { this.saveTimer = null; this.flushSave(); }, SAVE_DEBOUNCE_MS);
+  }
+
+  private flushSave(): void {
+    if (this.saveTimer !== null) { clearTimeout(this.saveTimer); this.saveTimer = null; }
     try {
       localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(this.state));
     } catch (error) {
@@ -231,8 +243,12 @@ export class WindowController {
     this.windowManager.closeAllWindows();
   }
 
+  private flushSaveHandler = () => this.flushSave();
+
   private setupWindowCommunication(): void {
     window.addEventListener('message', this.messageHandler);
+    // タブを閉じる/離脱する直前にデバウンス中の保存を確定する
+    window.addEventListener('pagehide', this.flushSaveHandler);
   }
 
   /**
@@ -245,7 +261,7 @@ export class WindowController {
     options: { broadcastToControl?: boolean } = {}
   ): void {
     this.state = next;
-    this.saveToStorage();
+    this.scheduleSave();
     this.dispatchOverlayUpdate();
     this.broadcastStateToOutput();
     if (options.broadcastToControl !== false) {
@@ -559,6 +575,8 @@ export class WindowController {
 
   destroy(): void {
     window.removeEventListener('message', this.messageHandler);
+    window.removeEventListener('pagehide', this.flushSaveHandler);
+    this.flushSave(); // デバウンス中の保存があれば確定
     this.closeAllWindows();
     this.testPattern?.dispose();
     this.testPattern = null;

@@ -42,6 +42,8 @@ export class ControlWindow extends BaseWindow {
   private outputBounds = { innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false };
   /** 矢印キーで微調整する対象（quad の隅 / ソース矩形）。null = 未選択。 */
   private keyboardSelection: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null = null;
+  /** state-mutation 送信を 1 フレームに 1 回へ間引くための rAF id（null = 予約なし）。 */
+  private mutationRafId: number | null = null;
 
   // canonical state は親 (WindowController) が保持。これは mirror。
   // ローカル UI 操作では optimistic に書き換えて即座に state-mutation を送る。
@@ -78,6 +80,7 @@ export class ControlWindow extends BaseWindow {
   }
 
   protected initialize(): void {
+    this.mutationRafId = null; // 再オープン時に旧ウィンドウの stale な rAF id を持ち越さない
     this.render();
     this.setupControls();
     this.setupMessageListener();
@@ -1764,6 +1767,9 @@ export class ControlWindow extends BaseWindow {
       this.updateSourceVideoAspectRatio();
       this.updateQuadTransform();
     });
+
+    // ウィンドウが閉じられる直前に、間引き中の state 変更があれば取りこぼさず送る
+    this.window.addEventListener('pagehide', () => this.flushStateMutation());
   }
 
   /** WindowController から push される「出力ウィンドウ＋ディスプレイ寸法／全画面状態」を反映。 */
@@ -1830,12 +1836,22 @@ export class ControlWindow extends BaseWindow {
    * ローカル mutation 後に呼ぶ。alias 経由で source/quad オブジェクトを直接書き換えると
    * active な entry の同じ参照が更新される（state は同じインスタンス）。
    * postMessage は structured clone でコピーされて親に届くので、双方向の流入はない。
-   * targetOrigin は '*'（受信側で origin 検証。OutputWindow の requestStream と同じ理由）。
+   * ドラッグ移動や矢印キー連打で連続して呼ばれるので 1 フレームに 1 回へ間引く
+   * （親は最新の state さえ受け取れば足りる。中間状態を毎 mousemove 送らない）。
    */
   private broadcastStateMutation(): void {
+    if (this.mutationRafId !== null || !this.window) return;
+    this.mutationRafId = this.window.requestAnimationFrame(() => {
+      this.mutationRafId = null;
+      this.flushStateMutation();
+    });
+  }
+
+  private flushStateMutation(): void {
     const targetWindow = this.getParentWindow();
     if (!targetWindow) return;
     try {
+      // targetOrigin は '*'（受信側で origin 検証。OutputWindow の requestStream と同じ理由）
       targetWindow.postMessage({
         type: 'state-mutation',
         data: this.state satisfies MappingsState,
