@@ -138,7 +138,7 @@ export class WindowController {
       setTimeout(() => {
         this.broadcastStateToControl();
         this.broadcastTestPatternState();
-        this.notifyOutputDimensions();
+        this.notifyOutputBounds();
       }, 500);
     }
   }
@@ -169,8 +169,13 @@ export class WindowController {
 
     this.outputWindow.setWindow(outputWin);
     this.outputWindow.setParentWindow(window);
-    // 出力ウィンドウのサイズ変化（ユーザのリサイズ・フルスクリーン・画面移動）を ControlWindow へ伝える
-    outputWin.addEventListener('resize', () => this.notifyOutputDimensions());
+    // 出力ウィンドウのサイズ・全画面状態の変化を ControlWindow の可視化へ伝える
+    outputWin.addEventListener('resize', () => this.notifyOutputBounds());
+    outputWin.document.addEventListener('fullscreenchange', () => {
+      this.notifyOutputBounds();
+      // 全画面の出入りでビューポートが落ち着くのが遅れることがあるので追い通知
+      window.setTimeout(() => this.notifyOutputBounds(), 350);
+    });
 
     void this.placeOnExternalScreen(outputWin);
 
@@ -178,7 +183,7 @@ export class WindowController {
     setTimeout(() => {
       this.broadcastStateToOutput();
       this.bindStreamToOutputWindow();
-      this.notifyOutputDimensions();
+      this.notifyOutputBounds();
     }, 500);
     return outputWin;
   }
@@ -197,7 +202,7 @@ export class WindowController {
       if (!target || win.closed) return;
       win.moveTo(target.availLeft ?? target.left, target.availTop ?? target.top);
       win.resizeTo(target.availWidth, target.availHeight);
-      this.notifyOutputDimensions();
+      this.notifyOutputBounds();
     } catch {
       /* 権限拒否や未対応 — 通常位置のまま（ユーザがプロジェクタへドラッグ） */
     }
@@ -380,15 +385,24 @@ export class WindowController {
     }
   }
 
-  /** 出力ウィンドウのビューポート寸法を ControlWindow へ通知（quad の「出力1px」ステップの基準）。 */
-  private notifyOutputDimensions(): void {
+  /**
+   * 出力ウィンドウのビューポート／載っているディスプレイの寸法・全画面状態を ControlWindow へ通知。
+   * ControlWindow の「ディスプレイに対する出力ウィンドウの大きさ」可視化と、quad の「出力1px」ステップに使う。
+   */
+  private notifyOutputBounds(): void {
     const outputWin = this.windowManager.getWindow('output_window');
     const controlWin = this.windowManager.getWindow('control_window');
     if (!outputWin || outputWin.closed || !controlWin || controlWin.closed) return;
     try {
       controlWin.postMessage({
         type: 'output-dimensions-update',
-        data: { width: outputWin.innerWidth, height: outputWin.innerHeight },
+        data: {
+          innerWidth: outputWin.innerWidth,
+          innerHeight: outputWin.innerHeight,
+          screenWidth: outputWin.screen.width,
+          screenHeight: outputWin.screen.height,
+          isFullscreen: outputWin.document.fullscreenElement !== null,
+        },
       }, window.location.origin);
     } catch (error) {
       console.error('WindowController: output-dimensions-update 送信エラー', error);
@@ -491,7 +505,10 @@ export class WindowController {
     this.windowMonitoringInterval = window.setInterval(() => {
       if (!this.hasActiveWindows()) {
         this.stopCanvasStreaming();
+        return;
       }
+      // 出力ウィンドウのリフレッシュ（別ディスプレイへ手動移動した場合などイベントが飛ばないケースの保険）
+      this.notifyOutputBounds();
     }, 1000);
   }
 

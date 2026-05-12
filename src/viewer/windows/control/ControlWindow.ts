@@ -35,18 +35,14 @@ export class ControlWindow extends BaseWindow {
     height: 1
   };
 
-  /** 出力ウィンドウのビューポート寸法（quad の「出力1px」ステップの基準）。未取得なら 0。 */
-  private outputDimensions = { width: 0, height: 0 };
+  /**
+   * 出力ウィンドウ（プロジェクション出力用ポップアウト）と、それが載っているディスプレイの寸法・全画面状態。
+   * WindowController から output-dimensions-update で push される。innerWidth/Height は quad の「出力1px」ステップにも使う。
+   */
+  private outputBounds = { innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false };
   /** 矢印キーで微調整する対象（quad の隅 / ソース矩形）。null = 未選択。 */
   private keyboardSelection: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null = null;
 
-  private windowBounds = {
-    x: 0,
-    y: 0,
-    width: 100,
-    height: 100
-  };
-  
   // canonical state は親 (WindowController) が保持。これは mirror。
   // ローカル UI 操作では optimistic に書き換えて即座に state-mutation を送る。
   // state-update で親から再同期。
@@ -85,10 +81,10 @@ export class ControlWindow extends BaseWindow {
     this.render();
     this.setupControls();
     this.setupMessageListener();
-    // 初期化時にアスペクト比を設定
+    // 初期化時にアスペクト比を設定（出力ウィンドウの寸法は WindowController から後で push される）
     setTimeout(() => {
       this.updateSourceVideoAspectRatio();
-      this.updateDisplayFrameAspectRatio(); // 物理ディスプレイのアスペクト比を設定
+      this.updateOutputViz();
     }, 100);
   }
 
@@ -238,10 +234,10 @@ export class ControlWindow extends BaseWindow {
               </div>
               <div class="display-size-info">
                 <span class="size-label">ディスプレイ:</span>
-                <span id="display-size">1920x1080</span>
+                <span id="display-size">—</span>
                 <span class="separator">|</span>
-                <span class="size-label">ウィンドウ:</span>
-                <span id="window-size">1200x700</span>
+                <span class="size-label">出力ウィンドウ:</span>
+                <span id="window-size">—</span>
               </div>
             </div>
           </div>
@@ -1093,7 +1089,7 @@ export class ControlWindow extends BaseWindow {
     this.renderMappingsList();
 
     // ディスプレイサイズを更新
-    this.updateDisplayInfo();
+    this.updateOutputViz();
   }
 
   /** マッピング一覧の HTML を再生成し、クリック・削除ハンドラを貼り直す。 */
@@ -1533,9 +1529,9 @@ export class ControlWindow extends BaseWindow {
     this.selectionBox?.classList.toggle('kbd-selected', sel?.type === 'source');
   }
 
-  /** quad の「出力1px」の基準サイズ。出力ウィンドウ寸法 → ソース canvas 寸法 → 1920×1080 でフォールバック。 */
+  /** quad の「出力1px」の基準サイズ。出力ウィンドウのビューポート → ソース canvas 寸法 → 1920×1080 でフォールバック。 */
   private quadStepRefSize(): { width: number; height: number } {
-    const { width: ow, height: oh } = this.outputDimensions;
+    const { innerWidth: ow, innerHeight: oh } = this.outputBounds;
     if (ow > 16 && oh > 16) return { width: ow, height: oh };
     const { width: vw, height: vh } = this.videoActualDimensions;
     if (vw > 16 && vh > 16) return { width: vw, height: vh };
@@ -1754,27 +1750,33 @@ export class ControlWindow extends BaseWindow {
         case 'video-dimensions-update':
           this.handleVideoDimensionsUpdate(event.data.data);
           break;
-        case 'output-dimensions-update': {
-          const d = event.data.data;
-          if (d && d.width > 0 && d.height > 0) this.outputDimensions = { width: d.width, height: d.height };
+        case 'output-dimensions-update':
+          this.handleOutputBoundsUpdate(event.data.data);
           break;
-        }
         case 'test-pattern-update':
           this.updateTestPatternUI(event.data.data?.kind ?? 'off');
           break;
       }
     });
-    
-    // ウィンドウリサイズ時にアスペクト比とホモグラフィー行列を再計算
+
+    // 操作ウィンドウのリサイズ時にアスペクト比とホモグラフィー行列を再計算
     this.window.addEventListener('resize', () => {
       this.updateSourceVideoAspectRatio();
       this.updateQuadTransform();
-      // display-frameは物理ディスプレイのアスペクト比を維持
-      this.updateWindowBounds();
     });
-    
-    // 親ウィンドウの情報を取得
-    this.updateWindowBounds();
+  }
+
+  /** WindowController から push される「出力ウィンドウ＋ディスプレイ寸法／全画面状態」を反映。 */
+  private handleOutputBoundsUpdate(d: any): void {
+    if (!d) return;
+    this.outputBounds = {
+      innerWidth:  Number(d.innerWidth)  || 0,
+      innerHeight: Number(d.innerHeight) || 0,
+      screenWidth:  Number(d.screenWidth)  || 0,
+      screenHeight: Number(d.screenHeight) || 0,
+      isFullscreen: !!d.isFullscreen,
+    };
+    this.updateOutputViz();
   }
 
   private handleVideoDimensionsUpdate(dimensions: any): void {
@@ -1855,167 +1857,53 @@ export class ControlWindow extends BaseWindow {
     this.broadcastStateMutation();
   }
   
-  private updateDisplayInfo(): void {
+  /**
+   * 「ディスプレイに対する出力ウィンドウの大きさ」と全画面状態を可視化する。
+   * 表示するのはプロジェクション出力に使う出力ウィンドウ（メインの操作ウィンドウではない）。
+   * 寸法・全画面状態は WindowController から output-dimensions-update で push される。
+   */
+  private updateOutputViz(): void {
     if (!this.window) return;
     const doc = this.window.document;
-    
-    // ディスプレイサイズを表示
-    const displaySize = doc.getElementById('display-size');
-    if (displaySize) {
-      const width = window.screen.width;
-      const height = window.screen.height;
-      displaySize.textContent = `${width}x${height}`;
-    }
-    
-    // ウィンドウサイズを更新
-    this.updateWindowBounds();
-    
-    // フルスクリーン状態を監視
-    const targetWindow = this.getParentWindow();
-    if (targetWindow) {
-      // 親ウィンドウのフルスクリーン状態を確認
-      const checkFullscreen = () => {
-        const isFullscreen = targetWindow.document.fullscreenElement !== null;
-        this.updateFullscreenUI(isFullscreen);
-      };
-      
-      // 初回チェック
-      setTimeout(checkFullscreen, 500);
-      
-      // フルスクリーン変更を監視
-      targetWindow.addEventListener('fullscreenchange', () => {
-        checkFullscreen();
-      });
-      
-      // ウィンドウリサイズを監視
-      targetWindow.addEventListener('resize', () => {
-        this.updateWindowBounds();
-      });
-    }
-  }
-  
-  private updateFullscreenUI(isFullscreen: boolean): void {
-    if (!this.window) return;
-    const doc = this.window.document;
-    
+    const { innerWidth: w, innerHeight: h, screenWidth: sw, screenHeight: sh, isFullscreen } = this.outputBounds;
+
+    // ステータスバッジ（ウィンドウ／フルスクリーン）はデータが無くても更新できる
     const displayMode = doc.getElementById('display-mode');
+    if (displayMode) displayMode.textContent = isFullscreen ? 'フルスクリーン' : 'ウィンドウ';
     const displayStatus = doc.querySelector('.display-status');
-    const displayFrame = doc.getElementById('display-frame');
-    const windowFrame = doc.getElementById('window-frame');
-    
-    if (displayMode) {
-      displayMode.textContent = isFullscreen ? 'フルスクリーン' : 'ウィンドウ';
-    }
-    
     if (displayStatus) {
       displayStatus.classList.remove('fullscreen', 'window');
       displayStatus.classList.add(isFullscreen ? 'fullscreen' : 'window');
     }
-    
-    // ウィンドウフレームのスタイルを調整
+
+    // 出力ウィンドウがまだ開いていない等で寸法が無いときはプレースホルダのまま
+    if (sw <= 0 || sh <= 0) return;
+
+    const displaySize = doc.getElementById('display-size');
+    if (displaySize) displaySize.textContent = `${sw}x${sh}`;
+    const displayFrame = doc.getElementById('display-frame') as HTMLDivElement | null;
+    if (displayFrame) displayFrame.style.aspectRatio = `${sw / sh}`;
+
+    const windowSize = doc.getElementById('window-size');
+    if (windowSize) windowSize.textContent = w > 0 && h > 0 ? `${w}x${h}` : '—';
+
+    const windowFrame = doc.getElementById('window-frame') as HTMLDivElement | null;
     if (windowFrame) {
-      if (isFullscreen) {
-        windowFrame.classList.add('fullscreen');
-      } else {
-        windowFrame.classList.remove('fullscreen');
-      }
+      const wPct = w > 0 ? Math.min(100, (w / sw) * 100) : 100;
+      const hPct = h > 0 ? Math.min(100, (h / sh) * 100) : 100;
+      windowFrame.style.position = 'absolute';
+      windowFrame.style.left = '50%';
+      windowFrame.style.top = '50%';
+      windowFrame.style.transform = 'translate(-50%, -50%)';
+      windowFrame.style.width = `${wPct}%`;
+      windowFrame.style.height = `${hPct}%`;
+      windowFrame.classList.toggle('fullscreen', isFullscreen);
     }
-    
-    // ディスプレイフレームのスタイルを調整
-    // フルスクリーン時も通常時も最大サイズを使用
-    if (displayFrame) {
-      displayFrame.style.width = '100%';
-      displayFrame.style.maxWidth = '100%';
-    }
+
+    // #window-frame（= #mapping-area の祖先）のサイズが変わったので quad の matrix3d を再計算
+    this.updateQuadTransform();
   }
-  
-  private updateWindowBounds(): void {
-    const targetWindow = this.getParentWindow();
-    if (!targetWindow) return;
-    
-    // ウィンドウのサイズと位置を取得
-    const screenWidth = targetWindow.screen.width;
-    const screenHeight = targetWindow.screen.height;
-    const windowWidth = targetWindow.innerWidth;  // innerWidthを使用
-    const windowHeight = targetWindow.innerHeight;  // innerHeightを使用
-    const windowX = targetWindow.screenX;
-    const windowY = targetWindow.screenY;
-    
-    // パーセンテージで保存
-    this.windowBounds = {
-      x: (windowX / screenWidth) * 100,
-      y: (windowY / screenHeight) * 100,
-      width: (windowWidth / screenWidth) * 100,
-      height: (windowHeight / screenHeight) * 100
-    };
-    
-    // ウィンドウサイズ表示を更新
-    if (this.window) {
-      const doc = this.window.document;
-      const windowSize = doc.getElementById('window-size');
-      if (windowSize) {
-        windowSize.textContent = `${windowWidth}x${windowHeight}`;
-      }
-      
-      // ウィンドウフレームの位置を更新
-      this.updateWindowFramePosition();
-    }
-  }
-  
-  private updateWindowFramePosition(): void {
-    if (!this.window) return;
-    const doc = this.window.document;
-    const windowFrame = doc.getElementById('window-frame');
-    const displayFrame = doc.getElementById('display-frame');
-    
-    if (windowFrame && displayFrame) {
-      // ディスプレイ内でのウィンドウの相対サイズを計算
-      const relativeWidth = Math.min(this.windowBounds.width, 100);
-      const relativeHeight = Math.min(this.windowBounds.height, 100);
-      
-      // フルスクリーンでない場合のみサイズを調整
-      const targetWindow = this.getParentWindow();
-      const isFullscreen = targetWindow && targetWindow.document.fullscreenElement !== null;
-      
-      if (isFullscreen) {
-        // フルスクリーン時は100%
-        windowFrame.style.width = '100%';
-        windowFrame.style.height = '100%';
-        windowFrame.style.left = '50%';
-        windowFrame.style.top = '50%';
-        windowFrame.style.transform = 'translate(-50%, -50%)';
-      } else {
-        // 通常時は相対サイズを反映
-        windowFrame.style.width = `${relativeWidth}%`;
-        windowFrame.style.height = `${relativeHeight}%`;
-        windowFrame.style.position = 'absolute';
-        windowFrame.style.left = '50%';
-        windowFrame.style.top = '50%';
-        windowFrame.style.transform = 'translate(-50%, -50%)';
-      }
-    }
-  }
-  
-  private updateDisplayFrameAspectRatio(): void {
-    if (!this.window) return;
-    
-    const doc = this.window.document;
-    const displayFrame = doc.getElementById('display-frame') as HTMLDivElement;
-    
-    if (!displayFrame) return;
-    
-    // 物理的なディスプレイのアスペクト比を取得
-    const screenWidth = window.screen.width;
-    const screenHeight = window.screen.height;
-    
-    if (screenWidth && screenHeight) {
-      const screenAspectRatio = screenWidth / screenHeight;
-      
-      // display-frameのアスペクト比を物理ディスプレイに合わせる
-      displayFrame.style.aspectRatio = `${screenAspectRatio}`;
-    }
-  }
-  
+
   private updateSourceVideoAspectRatio(): void {
     if (!this.window) return;
     
