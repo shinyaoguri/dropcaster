@@ -18,6 +18,8 @@ export class SketchPageView {
   private lastActiveId: string | null = null;
   private isProjecting = false;
   private cropRefreshInterval: ReturnType<typeof setInterval> | null = null;
+  /** 直近に描画したクロップ枠の入力シグネチャ（canvas 矩形＋有効マッピング）。変化が無ければ再描画をスキップ。 */
+  private lastCropSignature: string | null = null;
   private boundMappingOverlayUpdate = this.handleMappingOverlayUpdate.bind(this);
   private boundResize = this.handleResize.bind(this);
   private boundProjectionModeChange = this.handleProjectionModeChange.bind(this);
@@ -173,6 +175,19 @@ export class SketchPageView {
     if (!this.isProjecting) { this.clearSourceCropBoxes(); return; }
 
     const canvasRect = this.getCanvasRectInStage(stage);
+
+    // 入力が前回と同じ（canvas が動いていない・マッピングも変わっていない）なら DOM を触らない。
+    // 250ms 間隔のリフレッシュが、変化が無いときに毎回スタイルを書き直してリレイアウトを誘発するのを防ぐ。
+    const r = (n: number) => Math.round(n * 100) / 100;
+    const parts: string[] = [];
+    this.lastMappings.forEach((m, idx) => {
+      if (!isMappingEnabled(m)) return; // 色は配列内 index に依存するので idx も含める
+      parts.push(`${idx}:${m.id}:${r(m.source.x)},${r(m.source.y)},${r(m.source.width)},${r(m.source.height)}:${m.name ?? ''}`);
+    });
+    const signature = `${r(canvasRect.left)},${r(canvasRect.top)},${r(canvasRect.width)},${r(canvasRect.height)}|${this.lastActiveId ?? ''}|${parts.join(';')}`;
+    if (signature === this.lastCropSignature) return;
+    this.lastCropSignature = signature;
+
     const existing = new Map<string, HTMLDivElement>();
     stage.querySelectorAll<HTMLDivElement>(':scope > .dc-source-crop-box').forEach(el => {
       const id = el.dataset.mappingId;
@@ -216,6 +231,7 @@ export class SketchPageView {
 
   private clearSourceCropBoxes(): void {
     this.projectionStage?.querySelectorAll(':scope > .dc-source-crop-box').forEach(el => el.remove());
+    this.lastCropSignature = null;
   }
 
   /**
