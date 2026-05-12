@@ -149,10 +149,6 @@ export class WindowController {
     }, 1000);
   }
 
-  closeControlWindow(): void {
-    this.windowManager.closeWindow('control_window');
-  }
-
   /**
    * プロジェクション出力専用のポップアウトウィンドウを開く（プロジェクタの画面に置く想定）。
    * まず通常位置で開いてから、画面が複数あれば内蔵でない画面へ移動・最大化する
@@ -181,10 +177,6 @@ export class WindowController {
       this.bindStreamToOutputWindow();
     }, 500);
     return outputWin;
-  }
-
-  closeOutputWindow(): void {
-    this.windowManager.closeWindow('output_window');
   }
 
   /** Window Management API が使えれば、内蔵でない（＝プロジェクタの）画面へウィンドウを移動・最大化する。 */
@@ -593,31 +585,5 @@ export class WindowController {
     this.closeAllWindows();
     this.testPattern?.dispose();
     this.testPattern = null;
-  }
-
-  // ウィンドウの状態確認
-  getWindowStatus(): { control: boolean } {
-    return {
-      control: this.windowManager.isWindowOpen('control_window')
-    };
-  }
-
-  // 外部からウィンドウインスタンスにアクセス
-  getControlWindow(): ControlWindow {
-    return this.controlWindow;
-  }
-
-  getWindowManager(): WindowManager {
-    return this.windowManager;
-  }
-
-  logWindowStatus(): void {
-    const status = this.getWindowStatus();
-    const allWindows = this.windowManager.getAllOpenWindows();
-    
-    console.log('=== ウィンドウ状態 ===');
-    console.log('統合操作ウィンドウ:', status.control ? '開いている' : '閉じている');
-    console.log('開いているウィンドウ一覧:', allWindows);
-    console.log('==================');
   }
 }

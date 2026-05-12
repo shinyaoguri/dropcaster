@@ -1644,9 +1644,6 @@ export class ControlWindow extends BaseWindow {
         case 'video-dimensions-update':
           this.handleVideoDimensionsUpdate(event.data.data);
           break;
-        case 'window-bounds-update':
-          this.handleWindowBoundsUpdate(event.data.data);
-          break;
         case 'test-pattern-update':
           this.updateTestPatternUI(event.data.data?.kind ?? 'off');
           break;
@@ -1884,11 +1881,6 @@ export class ControlWindow extends BaseWindow {
         windowBounds: this.windowBounds
       });
     }
-  }
-  
-  private handleWindowBoundsUpdate(bounds: any): void {
-    this.windowBounds = bounds;
-    this.updateWindowFramePosition();
   }
   
   private updateDisplayFrameAspectRatio(): void {

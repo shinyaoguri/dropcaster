@@ -291,10 +291,6 @@ export class SketchPageView {
   }
 
 
-  onFullscreenToggle(callback: (container: HTMLElement) => void): void {
-    this.eventEmitter.on('fullscreenToggle', callback);
-  }
-
   onOpenWindowsToggle(callback: () => void): void {
     this.eventEmitter.on('openWindowsToggle', callback);
   }

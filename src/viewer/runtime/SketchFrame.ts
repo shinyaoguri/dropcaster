@@ -1,9 +1,10 @@
-// 1 枚のスケッチ iframe をラップする。読み込み・準備完了の検出・センタリング用スタイル注入・
-// ベストエフォートの一時停止/再開・canvas の captureStream・破棄を担当する。
+// 1 枚のスケッチ iframe をラップする。読み込み・準備完了（canvas 出現）の検出・センタリング用
+// スタイル注入・ベストエフォートの一時停止/再開・表示トグル・破棄を担当する。
 // 複数枚は SketchPool が束ねて管理する。
 //
 // 前提: スケッチは同一オリジン（dist/sketches/ または dev サーバの /sketches/）から配信されるので
-//       contentDocument / contentWindow にアクセスできる（canvas キャプチャ・スタイル注入のため）。
+//       contentDocument / contentWindow にアクセスできる（canvas 検出・スタイル注入のため）。
+//       マッピングの captureStream は WindowController が iframe.contentDocument の <canvas> から直接行う。
 
 // iframe 内の body / canvas を中央寄せし、ビューポートからはみ出さないようにするスタイル。
 // （IframeManager と旧 SlideshowView にそれぞれ重複していたものをここに集約）
@@ -124,24 +125,9 @@ export class SketchFrame {
     return this.canvas;
   }
 
-  /** canvas の描画を MediaStream として取得する（プロジェクションマッピング用）。取れなければ null。 */
-  captureStream(fps = 30): MediaStream | null {
-    const canvas = this.canvas as (HTMLCanvasElement & { captureStream?(frameRate?: number): MediaStream }) | null;
-    if (!canvas?.captureStream) return null;
-    try {
-      return canvas.captureStream(fps);
-    } catch {
-      return null;
-    }
-  }
-
   /** 表示/非表示の切り替え（CSS クラスのトグルのみ。実際のフェードは SketchPool 側の CSS） */
   setVisible(visible: boolean): void {
     this.iframe.classList.toggle('dc-visible', visible);
-  }
-
-  get visible(): boolean {
-    return this.iframe.classList.contains('dc-visible');
   }
 
   /** ベストエフォートの一時停止（p5 グローバルモードの noLoop。他のライブラリでは無視される） */

@@ -243,25 +243,6 @@ export function defaultQuad(): Quad {
   };
 }
 
-export function rectToQuad(rect: SourceRect): Quad {
-  return {
-    topLeft:     { x: rect.x,              y: rect.y },
-    topRight:    { x: rect.x + rect.width, y: rect.y },
-    bottomRight: { x: rect.x + rect.width, y: rect.y + rect.height },
-    bottomLeft:  { x: rect.x,              y: rect.y + rect.height },
-  };
-}
-
-export function quadBoundingRect(quad: Quad): SourceRect {
-  const xs = [quad.topLeft.x, quad.topRight.x, quad.bottomRight.x, quad.bottomLeft.x];
-  const ys = [quad.topLeft.y, quad.topRight.y, quad.bottomRight.y, quad.bottomLeft.y];
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-}
-
 export function translateQuad(quad: Quad, dx: number, dy: number): Quad {
   return {
     topLeft:     { x: quad.topLeft.x + dx,     y: quad.topLeft.y + dy },

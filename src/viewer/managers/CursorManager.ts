@@ -1,15 +1,12 @@
-import { EventEmitter } from '../events/EventEmitter';
 import { MouseEventHandler } from '../ui/services/MouseEventHandler';
 
 export class CursorManager {
-  private eventEmitter: EventEmitter;
   private cursorHideTimeout: ReturnType<typeof setTimeout> | null = null;
   private isFullscreenMode = false;
   private readonly CURSOR_HIDE_DELAY = 3000; // 3秒後にカーソルを非表示
   private mouseHandler: MouseEventHandler;
 
   constructor() {
-    this.eventEmitter = new EventEmitter();
     this.mouseHandler = new MouseEventHandler();
   }
 
@@ -88,14 +85,12 @@ export class CursorManager {
         // CORSエラーの場合は無視
       }
     }
-    
-    this.eventEmitter.emit('cursorHidden');
   }
 
   private showCursor(): void {
     console.log('CursorManager: カーソルを表示します');
     document.body.style.cursor = 'auto';
-    
+
     // iframe内のカーソルも表示する
     const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
     if (iframe && iframe.contentDocument) {
@@ -105,21 +100,10 @@ export class CursorManager {
         // CORSエラーの場合は無視
       }
     }
-    
-    this.eventEmitter.emit('cursorShown');
-  }
-
-  onCursorHidden(callback: () => void): void {
-    this.eventEmitter.on('cursorHidden', callback);
-  }
-
-  onCursorShown(callback: () => void): void {
-    this.eventEmitter.on('cursorShown', callback);
   }
 
   destroy(): void {
     this.disableAutoHide();
     this.mouseHandler.destroy();
-    this.eventEmitter.removeAllListeners();
   }
 }

@@ -25,16 +25,6 @@ export class FullscreenManager {
     this.mouseHandler.initialize(this.handleMouseActivity);
   }
 
-  toggleFullscreen(container: HTMLElement): void {
-    if (this.isFullscreen) {
-      document.exitFullscreen();
-    } else {
-      container.requestFullscreen().catch(err => {
-        console.error('フルスクリーン化に失敗しました:', err);
-      });
-    }
-  }
-
   private handleFullscreenChange(): void {
     const wasFullscreen = this.isFullscreen;
     this.isFullscreen = !!document.fullscreenElement;
@@ -84,18 +74,6 @@ export class FullscreenManager {
 
   onFullscreenChange(callback: (isFullscreen: boolean) => void): void {
     this.eventEmitter.on('fullscreenChange', callback);
-  }
-
-  onUIHidden(callback: () => void): void {
-    this.eventEmitter.on('uiHidden', callback);
-  }
-
-  onUIShown(callback: () => void): void {
-    this.eventEmitter.on('uiShown', callback);
-  }
-
-  getFullscreenState(): boolean {
-    return this.isFullscreen;
   }
 
   destroy(): void {

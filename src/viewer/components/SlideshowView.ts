@@ -356,24 +356,6 @@ export class SlideshowView {
       .slideshow-container .author-name {
         color: rgba(255, 255, 255, 0.9);
       }
-
-      /* キーボードショートカットのヒント */
-      .keyboard-hint {
-        position: absolute;
-        bottom: 20px;
-        right: 20px;
-        color: rgba(255, 255, 255, 0.6);
-        font-size: 12px;
-        background: rgba(0, 0, 0, 0.5);
-        padding: 10px;
-        border-radius: 5px;
-        backdrop-filter: blur(10px);
-        transition: opacity 0.3s ease;
-      }
-
-      .slideshow-container:not(:hover) .keyboard-hint {
-        opacity: 0;
-      }
     `;
     document.head.appendChild(style);
   }

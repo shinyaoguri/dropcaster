@@ -99,40 +99,4 @@ export class WindowManager {
     this.openWindows.clear();
   }
 
-  isWindowOpen(name: string): boolean {
-    const window = this.openWindows.get(name);
-    return window ? !window.closed : false;
-  }
-
-  getAllOpenWindows(): string[] {
-    const openWindows: string[] = [];
-    for (const [windowName, window] of this.openWindows) {
-      if (!window.closed) {
-        openWindows.push(windowName);
-      } else {
-        this.openWindows.delete(windowName);
-      }
-    }
-    return openWindows;
-  }
-
-  hasOpenWindows(): boolean {
-    // 開いているウィンドウがあるかチェック
-    for (const [, window] of this.openWindows) {
-      if (!window.closed) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  getOpenWindowCount(): number {
-    let count = 0;
-    for (const [, window] of this.openWindows) {
-      if (!window.closed) {
-        count++;
-      }
-    }
-    return count;
-  }
 }

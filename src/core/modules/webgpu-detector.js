@@ -99,16 +99,6 @@ export async function detectGraphicsMode(sketchPath) {
 }
 
 /**
- * スケッチがWebGPUを使用しているかチェック（後方互換性のため維持）
- * @param {string} sketchPath - スケッチのディレクトリパス
- * @returns {Promise<boolean>} WebGPUを使用している場合true
- */
-export async function usesWebGPU(sketchPath) {
-  const mode = await detectGraphicsMode(sketchPath);
-  return mode === 'webgpu';
-}
-
-/**
  * グラフィックスモードに応じたブラウザ起動設定を取得
  * @param {string} graphicsMode - 'webgpu', 'webgl', または 'standard'
  * @returns {string[]} Chromiumの起動引数

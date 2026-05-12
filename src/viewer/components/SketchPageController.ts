@@ -14,17 +14,6 @@ export class SketchPageController {
   private windowController: WindowController;
   private openWindowsTimeout: ReturnType<typeof setTimeout> | null = null;
   private isDestroyed = false;
-  private messageHandler = (event: MessageEvent) => {
-    if (event.origin !== window.location.origin) return;
-
-    if (event.data?.type === 'toggle-fullscreen-request') {
-      console.log('SketchPageController: フルスクリーン切り替えリクエストを受信');
-      const container = document.querySelector('.fullscreen-sketch-container') as HTMLElement;
-      if (container) {
-        this.fullscreenManager.toggleFullscreen(container);
-      }
-    }
-  };
 
   constructor() {
     this.fullscreenManager = new FullscreenManager();
@@ -65,49 +54,14 @@ export class SketchPageController {
   }
 
   private setupEventListeners(): void {
-    console.log('SketchPageController: イベントリスナーの設定開始');
-
-    // フルスクリーンボタンのイベント
-    this.view.onFullscreenToggle((container: HTMLElement) => {
-      console.log('SketchPageController: フルスクリーンボタンクリック');
-      this.fullscreenManager.toggleFullscreen(container);
-    });
-
     // フルスクリーン状態の変更を監視
     this.fullscreenManager.onFullscreenChange((isFullscreen: boolean) => {
-      console.log('SketchPageController: フルスクリーン状態変更を受信:', isFullscreen);
       this.cursorManager.setFullscreenMode(isFullscreen);
       this.view.updateFullscreenState(isFullscreen);
     });
 
-    // UI要素の表示/非表示イベントを監視（デバッグ用）
-    this.fullscreenManager.onUIHidden(() => {
-      console.log('SketchPageController: UI要素非表示イベントを受信');
-    });
-
-    this.fullscreenManager.onUIShown(() => {
-      console.log('SketchPageController: UI要素表示イベントを受信');
-    });
-
-    // カーソルの表示/非表示イベントを監視（デバッグ用）
-    this.cursorManager.onCursorHidden(() => {
-      console.log('SketchPageController: カーソル非表示イベントを受信');
-    });
-
-    this.cursorManager.onCursorShown(() => {
-      console.log('SketchPageController: カーソル表示イベントを受信');
-    });
-
-    // フルスクリーン制御リクエストを監視
-    window.addEventListener('message', this.messageHandler);
-
     // ウィンドウ開くボタンのイベント
-    this.view.onOpenWindowsToggle(() => {
-      console.log('SketchPageController: ウィンドウ開くボタンクリック');
-      this.openWindows();
-    });
-
-    console.log('SketchPageController: イベントリスナーの設定完了');
+    this.view.onOpenWindowsToggle(() => this.openWindows());
   }
 
   private openWindows(): void {
@@ -121,7 +75,6 @@ export class SketchPageController {
       this.openWindowsTimeout = null;
       if (this.isDestroyed) return;
       void this.startCanvasStreamingToWindows();
-      this.windowController.logWindowStatus();
     }, 2000); // 2秒後に実行
   }
 
@@ -201,7 +154,6 @@ export class SketchPageController {
     window.removeEventListener('beforeunload', this.beforeUnloadHandler);
     window.removeEventListener('unload', this.unloadHandler);
     window.removeEventListener('pagehide', this.pagehideHandler);
-    window.removeEventListener('message', this.messageHandler);
 
     if (this.openWindowsTimeout) {
       clearTimeout(this.openWindowsTimeout);
