@@ -34,6 +34,8 @@ export class WindowController {
   private activeStreams: MediaStream[] = [];
   private windowMonitoringInterval: number | null = null;
   private saveTimer: number | null = null;
+  /** 直近に ControlWindow へ送った出力ウィンドウ寸法（JSON）。同じなら再送しない。 */
+  private lastOutputBoundsJson: string | null = null;
   private canvasResizeObserver: ResizeObserver | null = null;
   private canvasMutationObserver: MutationObserver | null = null;
   /** いまマッピングのソースにしているスケッチ iframe（差し替え可能）。 */
@@ -142,6 +144,7 @@ export class WindowController {
     const position = this.calculateWindowPosition();
     const controlWin = this.windowManager.openWindow(position);
     if (controlWin) {
+      this.lastOutputBoundsJson = null; // 新しい ControlWindow には dedup を効かせず最新値を必ず送る
       this.controlWindow.setWindow(controlWin);
       // 親ウィンドウ参照を設定
       this.controlWindow.setParentWindow(window);
@@ -404,22 +407,25 @@ export class WindowController {
   /**
    * 出力ウィンドウのビューポート／載っているディスプレイの寸法・全画面状態を ControlWindow へ通知。
    * ControlWindow の「ディスプレイに対する出力ウィンドウの大きさ」可視化と、quad の「出力1px」ステップに使う。
+   * 1 秒間隔の監視 interval からも呼ばれるので、前回送ったものと同じなら postMessage しない
+   * （ControlWindow が再オープンされたときは openControlWindow() で lastOutputBoundsJson を null に戻す）。
    */
   private notifyOutputBounds(): void {
     const outputWin = this.windowManager.getWindow('output_window');
     const controlWin = this.windowManager.getWindow('control_window');
     if (!outputWin || outputWin.closed || !controlWin || controlWin.closed) return;
     try {
-      controlWin.postMessage({
-        type: 'output-dimensions-update',
-        data: {
-          innerWidth: outputWin.innerWidth,
-          innerHeight: outputWin.innerHeight,
-          screenWidth: outputWin.screen.width,
-          screenHeight: outputWin.screen.height,
-          isFullscreen: outputWin.document.fullscreenElement !== null,
-        },
-      }, window.location.origin);
+      const data = {
+        innerWidth: outputWin.innerWidth,
+        innerHeight: outputWin.innerHeight,
+        screenWidth: outputWin.screen.width,
+        screenHeight: outputWin.screen.height,
+        isFullscreen: outputWin.document.fullscreenElement !== null,
+      };
+      const json = JSON.stringify(data);
+      if (json === this.lastOutputBoundsJson) return;
+      this.lastOutputBoundsJson = json;
+      controlWin.postMessage({ type: 'output-dimensions-update', data }, window.location.origin);
     } catch (error) {
       console.error('WindowController: output-dimensions-update 送信エラー', error);
     }
