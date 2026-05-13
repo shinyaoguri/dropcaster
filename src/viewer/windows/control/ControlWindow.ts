@@ -21,6 +21,15 @@ import {
   type MappingsState,
   type SourceRect,
 } from '../../utils/mappingTransform';
+import type {
+  ControlHost,
+  OutputBoundsSnapshot,
+  TestPatternKindOrOff,
+  Unsubscribe,
+  VideoDimensions,
+  WebglContextStatus,
+} from './ControlHost';
+import { PopoutControlHost } from './PopoutControlHost';
 
 export class ControlWindow extends BaseWindow {
   private sourceVideo: HTMLVideoElement | null = null;
@@ -42,10 +51,12 @@ export class ControlWindow extends BaseWindow {
   private outputBounds = { innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false };
   /** 矢印キーで微調整する対象（quad の隅 / ソース矩形）。null = 未選択。 */
   private keyboardSelection: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null = null;
-  /** state-mutation 送信を 1 フレームに 1 回へ間引くための rAF id（null = 予約なし）。 */
-  private mutationRafId: number | null = null;
   /** ウィンドウ resize 由来の再レイアウトを 1 フレームに 1 回へ間引くための rAF id。 */
   private resizeRafId: number | null = null;
+  /** 環境（popout / 将来的に main 内ペイン）依存の I/O を集約した seam。null = 未初期化。 */
+  private controlHost: ControlHost | null = null;
+  /** host のイベント購読解除関数。dispose で全部呼ぶ。 */
+  private hostUnsubs: Unsubscribe[] = [];
 
   // canonical state は親 (WindowController) が保持。これは mirror。
   // ローカル UI 操作では optimistic に書き換えて即座に state-mutation を送る。
@@ -82,9 +93,19 @@ export class ControlWindow extends BaseWindow {
   }
 
   protected initialize(): void {
-    this.mutationRafId = null; // 再オープン時に旧ウィンドウの stale な rAF id を持ち越さない
     this.resizeRafId = null;
     this.render();
+    // ControlHost を構築（環境依存 I/O をここに閉じ込める）。BaseWindow.getParentWindow() は
+    // window.opener が生きていればそれを返すので、popout 起動直後でも親窓を渡せる。
+    if (this.window) {
+      this.disposeHost(); // 再オープン時の前回 host を確実に剥がす
+      this.controlHost = new PopoutControlHost(
+        this.window,
+        this.window.document.body,
+        this.getParentWindow(),
+      );
+      this.setupHostSubscriptions();
+    }
     this.setupControls();
     this.setupMessageListener();
     // 初期化時にアスペクト比を設定（出力ウィンドウの寸法は WindowController から後で push される）
@@ -92,6 +113,30 @@ export class ControlWindow extends BaseWindow {
       this.updateSourceVideoAspectRatio();
       this.updateOutputViz();
     }, 100);
+  }
+
+  /** ControlHost の各イベントを購読し、対応する UI 更新メソッドへ転送する。 */
+  private setupHostSubscriptions(): void {
+    const h = this.controlHost;
+    if (!h) return;
+    this.hostUnsubs.push(
+      h.onStateChange((s: MappingsState) => this.handleStateUpdate(s)),
+      h.onVideoDimensionsChange((d: VideoDimensions) => this.handleVideoDimensionsUpdate(d)),
+      h.onOutputBoundsChange((b: OutputBoundsSnapshot) => this.handleOutputBoundsUpdate(b)),
+      h.onTestPatternChange((k: TestPatternKindOrOff) => this.updateTestPatternUI(k)),
+      h.onSourceVisibilityChange((hidden: boolean) => this.updateSourceVisibilityBanner(hidden)),
+      h.onWebglContextChange((status: WebglContextStatus) => this.updateWebglContextBanner(status)),
+    );
+  }
+
+  /** 購読を全部外して host 自体も dispose する。再オープン時／pagehide で呼ぶ。 */
+  private disposeHost(): void {
+    this.hostUnsubs.forEach(u => { try { u(); } catch { /* ignore */ } });
+    this.hostUnsubs = [];
+    // host は自身の dispose で window listener も外し、保留中 mutation を flush する
+    const h = this.controlHost as PopoutControlHost | null;
+    h?.dispose();
+    this.controlHost = null;
   }
 
   protected getContent(): string {
@@ -1098,11 +1143,12 @@ export class ControlWindow extends BaseWindow {
     const testPatternBtns = doc.querySelectorAll('.test-pattern-btn');
     testPatternBtns.forEach(btn => {
       btn.addEventListener('click', (e) => {
-        const kind = (e.currentTarget as HTMLElement).dataset.pattern;
+        const kind = (e.currentTarget as HTMLElement).dataset.pattern as
+          TestPatternKindOrOff | undefined;
         if (!kind) return;
         // optimistic に active 表示を切り替え（parent から test-pattern-update が返って確定）
         this.updateTestPatternUI(kind);
-        this.sendTestPatternRequest(kind);
+        this.controlHost?.requestTestPattern(kind);
       });
     });
 
@@ -1784,35 +1830,13 @@ export class ControlWindow extends BaseWindow {
     applyVideoCrop(this.croppedVideo, this.sourceSelectionData);
   }
 
+  /**
+   * window スコープのイベント（resize / pagehide）だけを張る。
+   * 親からの postMessage 系の購読は controlHost が引き受け、setupHostSubscriptions() で
+   * イベントハンドラへ橋渡しする。
+   */
   private setupMessageListener(): void {
     if (!this.window) return;
-
-    this.window.addEventListener('message', (event) => {
-      const parentWindow = this.getParentWindow();
-      if (parentWindow && event.source !== parentWindow) return;
-      if (parentWindow && event.origin !== parentWindow.location.origin) return;
-
-      switch (event.data.type) {
-        case 'state-update':
-          this.handleStateUpdate(event.data.data);
-          break;
-        case 'video-dimensions-update':
-          this.handleVideoDimensionsUpdate(event.data.data);
-          break;
-        case 'output-dimensions-update':
-          this.handleOutputBoundsUpdate(event.data.data);
-          break;
-        case 'test-pattern-update':
-          this.updateTestPatternUI(event.data.data?.kind ?? 'off');
-          break;
-        case 'source-visibility-update':
-          this.updateSourceVisibilityBanner(!!event.data.data?.hidden);
-          break;
-        case 'webgl-context-update':
-          this.updateWebglContextBanner(event.data.data?.status);
-          break;
-      }
-    });
 
     // 操作ウィンドウのリサイズ時にアスペクト比とホモグラフィー行列を再計算（1 フレーム 1 回に間引く）
     this.window.addEventListener('resize', () => {
@@ -1824,24 +1848,19 @@ export class ControlWindow extends BaseWindow {
       });
     });
 
-    // ウィンドウが閉じられる直前に、間引き中の state 変更があれば取りこぼさず送る
-    this.window.addEventListener('pagehide', () => this.flushStateMutation());
+    // ウィンドウが閉じられる直前に、host の保留中 mutation を確実に flush する。
+    // PopoutControlHost も自分で pagehide を捕まえているが、ここでも明示 dispose して
+    // 二重に Listener を残さないようにする（ControlWindow 再オープン時の保険）。
+    this.window.addEventListener('pagehide', () => this.disposeHost());
   }
 
-  /** WindowController から push される「出力ウィンドウ＋ディスプレイ寸法／全画面状態」を反映。 */
-  private handleOutputBoundsUpdate(d: any): void {
-    if (!d) return;
-    this.outputBounds = {
-      innerWidth:  Number(d.innerWidth)  || 0,
-      innerHeight: Number(d.innerHeight) || 0,
-      screenWidth:  Number(d.screenWidth)  || 0,
-      screenHeight: Number(d.screenHeight) || 0,
-      isFullscreen: !!d.isFullscreen,
-    };
+  /** ControlHost から push される「出力ウィンドウ＋ディスプレイ寸法／全画面状態」を反映。 */
+  private handleOutputBoundsUpdate(b: OutputBoundsSnapshot): void {
+    this.outputBounds = { ...b };
     this.updateOutputViz();
   }
 
-  private handleVideoDimensionsUpdate(dimensions: any): void {
+  private handleVideoDimensionsUpdate(dimensions: VideoDimensions): void {
     this.videoActualDimensions = dimensions;
     this.updateVideoCrop();
     this.updateSourceVideoAspectRatio();
@@ -1875,7 +1894,7 @@ export class ControlWindow extends BaseWindow {
   }
 
   /** WebGL コンテキストの ロスト／復帰 を受けてバナーを切り替える。 */
-  private updateWebglContextBanner(status: unknown): void {
+  private updateWebglContextBanner(status: WebglContextStatus): void {
     const el = this.window?.document.getElementById('dc-webgl-lost-banner');
     if (!el) return;
     if (status === 'lost') el.removeAttribute('hidden');
@@ -1883,7 +1902,7 @@ export class ControlWindow extends BaseWindow {
   }
 
   /** テストパターンボタンの active 表示を kind に合わせて切り替える（state は親が持っている）。 */
-  private updateTestPatternUI(kind: string): void {
+  private updateTestPatternUI(kind: TestPatternKindOrOff): void {
     if (!this.window) return;
     this.window.document.querySelectorAll('.test-pattern-btn').forEach(el => {
       const btn = el as HTMLElement;
@@ -1891,49 +1910,13 @@ export class ControlWindow extends BaseWindow {
     });
   }
 
-  /** ユーザーがテストパターン切り替えボタンを押したことを親に伝える。 */
-  private sendTestPatternRequest(kind: string): void {
-    const targetWindow = this.getParentWindow();
-    if (!targetWindow) return;
-    try {
-      // targetOrigin は '*'：このウィンドウは about:blank で origin が 'null' になり得る。
-      // 受信側（WindowController.messageHandler）が event.origin を検証している。
-      targetWindow.postMessage({
-        type: 'test-pattern-set',
-        data: { kind },
-      }, '*');
-    } catch (error) {
-      console.error('ControlWindow: test-pattern-set 送信エラー', error);
-    }
-  }
-
   /**
    * ローカル mutation 後に呼ぶ。alias 経由で source/quad オブジェクトを直接書き換えると
    * active な entry の同じ参照が更新される（state は同じインスタンス）。
-   * postMessage は structured clone でコピーされて親に届くので、双方向の流入はない。
-   * ドラッグ移動や矢印キー連打で連続して呼ばれるので 1 フレームに 1 回へ間引く
-   * （親は最新の state さえ受け取れば足りる。中間状態を毎 mousemove 送らない）。
+   * 連続発火（ドラッグ移動・矢印キー連打）の間引きや親への送信は ControlHost が責任を持つ。
    */
   private broadcastStateMutation(): void {
-    if (this.mutationRafId !== null || !this.window) return;
-    this.mutationRafId = this.window.requestAnimationFrame(() => {
-      this.mutationRafId = null;
-      this.flushStateMutation();
-    });
-  }
-
-  private flushStateMutation(): void {
-    const targetWindow = this.getParentWindow();
-    if (!targetWindow) return;
-    try {
-      // targetOrigin は '*'（受信側で origin 検証。OutputWindow の requestStream と同じ理由）
-      targetWindow.postMessage({
-        type: 'state-mutation',
-        data: this.state satisfies MappingsState,
-      }, '*');
-    } catch (error) {
-      console.error('ControlWindow: state-mutation 送信エラー', error);
-    }
+    this.controlHost?.emitStateMutation(this.state);
   }
 
   /** プログラム的に state を差し替える時に使う（active 切替・追加・削除など）。 */
