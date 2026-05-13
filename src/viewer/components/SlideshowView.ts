@@ -2,6 +2,8 @@ import type { Sketch } from '../types/sketch.js';
 import { publicAssetPath } from '../utils/paths.js';
 import { SketchPool } from '../runtime/SketchPool.js';
 import { WindowController } from './WindowController';
+import { ControlWindow } from '../windows/control/ControlWindow';
+import { InlineControlHost } from '../windows/control/InlineControlHost';
 
 export class SlideshowView {
   private currentIndex: number = 0;
@@ -18,6 +20,8 @@ export class SlideshowView {
   private mappingActive = false;
   private mappingStartTimeout: number | null = null;
   private boundClosePopouts = () => this.windowController?.closeAllWindows();
+  /** projection 中だけ #dc-inline-editor 内にマウントする ControlWindow（inline 経路）。 */
+  private inlinePanel: ControlWindow | null = null;
 
   render(sketchIds: string[], sketches: Sketch[]): void {
     this.sketchIds = sketchIds;
@@ -86,6 +90,8 @@ export class SlideshowView {
               <p id="sketch-author" class="sketch-author"><span class="author-by">by</span> <span class="author-name"></span></p>
             </div>
           </div>
+          <!-- inline マウントされた ControlPanel のシェル。投影モード中だけ表示 -->
+          <aside id="dc-inline-editor" class="dc-inline-editor" hidden></aside>
         </div>
       </div>
     `;
@@ -583,6 +589,8 @@ export class SlideshowView {
     this.windowController.openOutputWindow();
     this.mappingActive = true;
     this.updateMappingButton();
+    // inline ペインも同時にマウント（popout と並走）
+    this.mountInlineEditor();
     // ウィンドウが開いてから（SketchPageController と同じく）少し待ってストリーミング開始
     this.mappingStartTimeout = window.setTimeout(() => {
       this.mappingStartTimeout = null;
@@ -595,10 +603,34 @@ export class SlideshowView {
       clearTimeout(this.mappingStartTimeout);
       this.mappingStartTimeout = null;
     }
+    this.unmountInlineEditor();
     // closeAllWindows() が stopCanvasStreaming() ＋ コントロール／出力ウィンドウのクローズを行う
     this.windowController?.closeAllWindows();
     this.mappingActive = false;
     this.updateMappingButton();
+  }
+
+  private mountInlineEditor(): void {
+    if (this.inlinePanel || !this.windowController) return;
+    const aside = document.getElementById('dc-inline-editor');
+    if (!aside) return;
+    aside.removeAttribute('hidden');
+    const wc = this.windowController;
+    this.inlinePanel = new ControlWindow();
+    this.inlinePanel.mountInline(aside, (shell) =>
+      new InlineControlHost(window, shell, wc),
+    );
+  }
+
+  private unmountInlineEditor(): void {
+    if (!this.inlinePanel) return;
+    this.inlinePanel.destroy();
+    this.inlinePanel = null;
+    const aside = document.getElementById('dc-inline-editor');
+    if (aside) {
+      aside.setAttribute('hidden', '');
+      aside.innerHTML = '';
+    }
   }
 
   /** いま表示中のスケッチをマッピングのソースにする。canvas が出来るのを待ってから差し替える。 */
@@ -627,6 +659,7 @@ export class SlideshowView {
       clearTimeout(this.mappingStartTimeout);
       this.mappingStartTimeout = null;
     }
+    this.unmountInlineEditor();
     this.windowController?.stopCanvasStreaming();
     this.windowController?.destroy();
     this.windowController = null;
