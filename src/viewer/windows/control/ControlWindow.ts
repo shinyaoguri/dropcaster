@@ -96,6 +96,13 @@ export class ControlWindow extends BaseWindow {
 
   protected getContent(): string {
     return `
+      <div id="dc-source-hidden-banner" class="dc-banner" hidden role="status">
+        <span class="dc-banner-icon">⚠</span>
+        <span class="dc-banner-text">
+          ソースウィンドウ（dropcaster 本体タブ）が隠れています。<br>
+          このままだとスケッチが止まり、プロジェクションがフリーズします。前面に戻してください。
+        </span>
+      </div>
       <div class="control-container">
         <!-- ツールカラム -->
         <div class="column tool-column">
@@ -259,6 +266,25 @@ export class ControlWindow extends BaseWindow {
         padding: 0;
         overflow: hidden;
       }
+
+      /* ソースウィンドウが hidden になったときの警告バナー（B 対応） */
+      .dc-banner {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px;
+        background: #b91c1c;
+        color: #fff;
+        font-size: 13px;
+        line-height: 1.4;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      }
+      .dc-banner[hidden] { display: none; }
+      .dc-banner .dc-banner-icon { font-size: 18px; flex: 0 0 auto; }
+      .dc-banner .dc-banner-text { flex: 1 1 auto; }
 
       .control-container {
         display: flex;
@@ -1770,6 +1796,9 @@ export class ControlWindow extends BaseWindow {
         case 'test-pattern-update':
           this.updateTestPatternUI(event.data.data?.kind ?? 'off');
           break;
+        case 'source-visibility-update':
+          this.updateSourceVisibilityBanner(!!event.data.data?.hidden);
+          break;
       }
     });
 
@@ -1820,6 +1849,17 @@ export class ControlWindow extends BaseWindow {
     this.updateQuadTransform();
     this.updateToolValues();
     this.renderMappingsList();
+  }
+
+  /**
+   * メイン（ソース）ウィンドウが hidden（最小化／背面）になったら警告バナーを表示。
+   * hidden 中は中で動いているスケッチの rAF が止まり、captureStream がフリーズするため。
+   */
+  private updateSourceVisibilityBanner(hidden: boolean): void {
+    const el = this.window?.document.getElementById('dc-source-hidden-banner');
+    if (!el) return;
+    if (hidden) el.removeAttribute('hidden');
+    else el.setAttribute('hidden', '');
   }
 
   /** テストパターンボタンの active 表示を kind に合わせて切り替える（state は親が持っている）。 */

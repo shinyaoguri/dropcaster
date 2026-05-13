@@ -46,6 +46,9 @@ export class WindowController {
   private testPatternKind: TestPatternKind | 'off' = 'off';
   /** メインウィンドウ側の Screen Wake Lock（プロジェクション中はディスプレイをスリープさせない）。 */
   private wakeLock: ScreenWakeLock = new ScreenWakeLock(window);
+  /** プロジェクション中の「ソースウィンドウ（このメインウィンドウ）が hidden」を ControlWindow に通知中か。 */
+  private visibilityWatchActive = false;
+  private boundVisibilityChange = () => this.notifySourceVisibility();
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
 
@@ -152,11 +155,12 @@ export class WindowController {
       // 親ウィンドウ参照を設定
       this.controlWindow.setParentWindow(window);
 
-      // 初期 state を broadcast（マッピング設定 ＋ 現在のテストパターン ＋ 出力ウィンドウ寸法）
+      // 初期 state を broadcast（マッピング設定 ＋ 現在のテストパターン ＋ 出力ウィンドウ寸法 ＋ 可視性）
       setTimeout(() => {
         this.broadcastStateToControl();
         this.broadcastTestPatternState();
         this.notifyOutputBounds();
+        if (this.visibilityWatchActive) this.notifySourceVisibility();
       }, 500);
     }
   }
@@ -486,6 +490,43 @@ export class WindowController {
     window.dispatchEvent(new CustomEvent('projection-mode-change', {
       detail: { active }
     }));
+    this.setVisibilityWatch(active);
+  }
+
+  /**
+   * プロジェクション中だけメインウィンドウの可視性を見張り、hidden になったら ControlWindow に通知する。
+   * メインウィンドウが最小化／完全に隠れると、その中で動いているスケッチの rAF が止まり captureStream が
+   * フリーズするので、運用者に「ソースウィンドウが隠れています」と知らせて前面に戻してもらうため。
+   */
+  private setVisibilityWatch(active: boolean): void {
+    if (active === this.visibilityWatchActive) return;
+    this.visibilityWatchActive = active;
+    if (active) {
+      document.addEventListener('visibilitychange', this.boundVisibilityChange);
+      // 開始時点の状態を一度送る（既に hidden で始まっている場合に備えて）
+      this.notifySourceVisibility();
+    } else {
+      document.removeEventListener('visibilitychange', this.boundVisibilityChange);
+      // 念のため「可視に戻った」状態を送って ControlWindow 側のバナーを消しておく
+      this.broadcastSourceVisibility(false);
+    }
+  }
+
+  private notifySourceVisibility(): void {
+    this.broadcastSourceVisibility(document.visibilityState !== 'visible');
+  }
+
+  private broadcastSourceVisibility(hidden: boolean): void {
+    const controlWin = this.windowManager.getWindow('control_window');
+    if (!controlWin || controlWin.closed) return;
+    try {
+      controlWin.postMessage(
+        { type: 'source-visibility-update', data: { hidden } },
+        window.location.origin,
+      );
+    } catch {
+      /* ignore */
+    }
   }
 
   /** ソース canvas の描画バッファサイズ（width/height 属性）の変化を監視し、変わったら各所へ通知する。 */
