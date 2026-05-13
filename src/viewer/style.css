@@ -346,11 +346,6 @@ body {
 .dc-inline-editor[hidden] { display: none; }
 /* メインウィンドウ自体をフルスクリーン化したときはエディタは出さない（投影確認モード） */
 .fullscreen-sketch-container.fullscreen .dc-inline-editor { display: none; }
-/* エディタ表示中はメインのクロップ枠オーバーレイは重複なので隠す（編集はエディタ内で行う） */
-.fullscreen-sketch-container .dc-inline-editor:not([hidden]) ~ .iframe-content-overlay,
-.fullscreen-sketch-container:has(.dc-inline-editor:not([hidden])) .iframe-content-overlay {
-  display: none;
-}
 /* シェル内の dc-control-shell は inline 用に 100% に追従させる（popout の 100vh 前提を上書き） */
 .dc-inline-editor .dc-control-shell { width: 100%; height: 100%; }
 .dc-inline-editor .dc-control-shell .control-container { height: 100%; }
@@ -647,13 +642,29 @@ body {
   pointer-events: none;
 }
 
-/* プロジェクションモード: スケッチを見せたまま、ソース可視化レイヤを前面へ */
+/*
+ * プロジェクションモード時のメインウィンドウの見せ方:
+ *
+ *   スケッチ iframe は DOM 上は通常どおり動かしておく（canvas.captureStream の
+ *   ソースなので描画は止めない）が、視覚的には inline 編集ペインで全面を覆い、
+ *   かつ iframe 自体も visibility:hidden で合成パスから外す。
+ *   operator はスケッチの絵を編集ペイン中央の #source-video（captureStream の
+ *   受信側）で見る。
+ *
+ *   visibility:hidden を選んでいる理由:
+ *     - display:none だと iframe document がレンダリング対象外と判定されて、
+ *       ブラウザによっては rAF が抑制される可能性がある（captureStream が止まる）。
+ *     - visibility:hidden なら DOM の文脈は維持されつつ paint だけスキップされる
+ *       ので、canvas は通常どおり描画され続ける。
+ */
 .fullscreen-sketch-container.projecting .fullscreen-iframe {
   pointer-events: none;
+  visibility: hidden;
 }
 
+/* 編集ペインを開いている間はメインのクロップ可視化レイヤは要らない（編集はペイン側で行う） */
 .fullscreen-sketch-container.projecting .iframe-content-overlay {
-  z-index: 1100;
+  display: none;
 }
 
 /* 操作系UIはステージより前面へ */
