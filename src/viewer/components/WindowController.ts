@@ -51,9 +51,6 @@ export class WindowController {
   private testPatternKind: TestPatternKind | 'off' = 'off';
   /** メインウィンドウ側の Screen Wake Lock（プロジェクション中はディスプレイをスリープさせない）。 */
   private wakeLock: ScreenWakeLock = new ScreenWakeLock(window);
-  /** プロジェクション中の「ソースウィンドウ（このメインウィンドウ）が hidden」を inline panel に通知中か。 */
-  private visibilityWatchActive = false;
-  private boundVisibilityChange = () => this.notifySourceVisibility();
 
   /**
    * inline マウントされた ControlPanel（InlineControlHost）が購読する in-process イベント。
@@ -67,7 +64,6 @@ export class WindowController {
       innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false,
     }),
     videoDimensions: new Emitter<VideoDimensions>({ width: 1, height: 1 }),
-    sourceVisibility: new Emitter<boolean>(false),
     webglContext: new Emitter<WebglContextStatus>('ok'),
   };
   private messageHandler = (event: MessageEvent) => {
@@ -455,34 +451,6 @@ export class WindowController {
     window.dispatchEvent(new CustomEvent('projection-mode-change', {
       detail: { active }
     }));
-    this.setVisibilityWatch(active);
-  }
-
-  /**
-   * プロジェクション中だけメインウィンドウの可視性を見張り、hidden になったら inline panel に通知する。
-   * メインウィンドウが最小化／完全に隠れると、その中で動いているスケッチの rAF が止まり captureStream が
-   * フリーズするので、運用者に「ソースウィンドウが隠れています」と知らせて前面に戻してもらうため。
-   */
-  private setVisibilityWatch(active: boolean): void {
-    if (active === this.visibilityWatchActive) return;
-    this.visibilityWatchActive = active;
-    if (active) {
-      document.addEventListener('visibilitychange', this.boundVisibilityChange);
-      // 開始時点の状態を一度送る（既に hidden で始まっている場合に備えて）
-      this.notifySourceVisibility();
-    } else {
-      document.removeEventListener('visibilitychange', this.boundVisibilityChange);
-      // 念のため「可視に戻った」状態を送って inline panel 側のバナーを消しておく
-      this.broadcastSourceVisibility(false);
-    }
-  }
-
-  private notifySourceVisibility(): void {
-    this.broadcastSourceVisibility(document.visibilityState !== 'visible');
-  }
-
-  private broadcastSourceVisibility(hidden: boolean): void {
-    this.events.sourceVisibility.set(hidden);
   }
 
   /** ソース canvas の描画バッファサイズ（width/height 属性）の変化を監視し、変わったら各所へ通知する。 */

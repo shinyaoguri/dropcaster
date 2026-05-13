@@ -68,11 +68,8 @@ export class InlineControlHost implements ControlHost {
     return this.wc.events.videoDimensions.subscribe(handler);
   }
 
-  // --- warnings (B / E) ---
+  // --- warnings (WebGL context lost) ---
 
-  onSourceVisibilityChange(handler: Listener<boolean>): Unsubscribe {
-    return this.wc.events.sourceVisibility.subscribe(handler);
-  }
   onWebglContextChange(handler: Listener<WebglContextStatus>): Unsubscribe {
     return this.wc.events.webglContext.subscribe(handler);
   }

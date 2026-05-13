@@ -72,9 +72,8 @@ export interface ControlHost {
   getVideoDimensions(): VideoDimensions;
   onVideoDimensionsChange(handler: (dim: VideoDimensions) => void): Unsubscribe;
 
-  // --- 一時的な警告（B: ソース可視性 / E: WebGL context lost） ---
+  // --- 一時的な警告（WebGL context lost） ---
 
-  onSourceVisibilityChange(handler: (hidden: boolean) => void): Unsubscribe;
   onWebglContextChange(handler: (status: WebglContextStatus) => void): Unsubscribe;
 
   /**

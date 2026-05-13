@@ -156,7 +156,6 @@ export class ControlWindow extends BaseWindow {
       h.onVideoDimensionsChange((d: VideoDimensions) => this.handleVideoDimensionsUpdate(d)),
       h.onOutputBoundsChange((b: OutputBoundsSnapshot) => this.handleOutputBoundsUpdate(b)),
       h.onTestPatternChange((k: TestPatternKindOrOff) => this.updateTestPatternUI(k)),
-      h.onSourceVisibilityChange((hidden: boolean) => this.updateSourceVisibilityBanner(hidden)),
       h.onWebglContextChange((status: WebglContextStatus) => this.updateWebglContextBanner(status)),
     );
   }
@@ -182,13 +181,6 @@ export class ControlWindow extends BaseWindow {
     // Step 1 では wrapper だけ用意し、CSS 本体の prefix は Step 2 で必要に応じて行う。
     return `
       <div class="dc-control-shell">
-      <div id="dc-source-hidden-banner" class="dc-banner" hidden role="status">
-        <span class="dc-banner-icon">⚠</span>
-        <span class="dc-banner-text">
-          ソースウィンドウ（dropcaster 本体タブ）が隠れています。<br>
-          このままだとスケッチが止まり、プロジェクションがフリーズします。前面に戻してください。
-        </span>
-      </div>
       <div id="dc-webgl-lost-banner" class="dc-banner dc-banner-warn" hidden role="status">
         <span class="dc-banner-icon">⚠</span>
         <span class="dc-banner-text">
@@ -382,8 +374,7 @@ export class ControlWindow extends BaseWindow {
       .dc-banner[hidden] { display: none; }
       .dc-banner .dc-banner-icon { font-size: 18px; flex: 0 0 auto; }
       .dc-banner .dc-banner-text { flex: 1 1 auto; }
-      /* もう片方の警告（WebGL ロスト等）が同時に出たときに重ねず縦に並べるためのオフセット */
-      #dc-webgl-lost-banner { top: 44px; background: #ca8a04; }
+      #dc-webgl-lost-banner { background: #ca8a04; }
 
       .control-container {
         display: flex;
@@ -1941,17 +1932,6 @@ export class ControlWindow extends BaseWindow {
     this.updateQuadTransform();
     this.updateToolValues();
     this.renderMappingsList();
-  }
-
-  /**
-   * メイン（ソース）ウィンドウが hidden（最小化／背面）になったら警告バナーを表示。
-   * hidden 中は中で動いているスケッチの rAF が止まり、captureStream がフリーズするため。
-   */
-  private updateSourceVisibilityBanner(hidden: boolean): void {
-    const el = this.scopeEl?.querySelector('#dc-source-hidden-banner');
-    if (!el) return;
-    if (hidden) el.removeAttribute('hidden');
-    else el.setAttribute('hidden', '');
   }
 
   /** WebGL コンテキストの ロスト／復帰 を受けてバナーを切り替える。 */
