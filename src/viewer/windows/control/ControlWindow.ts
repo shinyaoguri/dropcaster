@@ -50,6 +50,10 @@ export class ControlWindow extends BaseWindow {
   private outputBounds = { innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false };
   /** 矢印キーで微調整する対象（quad の隅 / ソース矩形）。null = 未選択。 */
   private keyboardSelection: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null = null;
+  /** マッピング領域（#mapping-area）の寸法変化を見張る observer。カラムリサイザのドラッグや
+   *  ウィンドウサイズ変更に応じて matrix3d を再計算するために使う。 */
+  private mappingAreaObserver: ResizeObserver | null = null;
+  private mappingAreaResizeRafId: number | null = null;
   /** ウィンドウ resize 由来の再レイアウトを 1 フレームに 1 回へ間引くための rAF id。 */
   private resizeRafId: number | null = null;
   /** 環境（popout / 将来的に main 内ペイン）依存の I/O を集約した seam。null = 未初期化。 */
@@ -167,6 +171,13 @@ export class ControlWindow extends BaseWindow {
     // host 実装が listener を抱えていれば外す（InlineControlHost は no-op）
     this.controlHost?.dispose?.();
     this.controlHost = null;
+    // マッピング領域の ResizeObserver も解除
+    this.mappingAreaObserver?.disconnect();
+    this.mappingAreaObserver = null;
+    if (this.mappingAreaResizeRafId !== null) {
+      cancelAnimationFrame(this.mappingAreaResizeRafId);
+      this.mappingAreaResizeRafId = null;
+    }
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
@@ -1285,10 +1296,36 @@ export class ControlWindow extends BaseWindow {
     // 初期位置を設定
     this.updateQuadTransform();
 
+    // #mapping-area の寸法変化を監視して matrix3d を再計算する。カラム間ドラッグリサイザでの
+    // 幅変更に追従させるため。matrix3d は親の getBoundingClientRect ベースで毎回計算するので、
+    // ピクセル寸法が変わったらやり直さないと warp が静止したまま %ベースのハンドル位置だけ
+    // ずれて見える（user 報告: ハンドル位置が同期されない）。
+    this.observeMappingAreaResize();
+
     // ストリームが設定されるのを待つ
     setTimeout(() => {
       this.updateCroppedVideo();
     }, 1000);
+  }
+
+  private observeMappingAreaResize(): void {
+    // 旧 observer があれば disconnect（再 mount 時の保険）
+    this.mappingAreaObserver?.disconnect();
+    this.mappingAreaObserver = null;
+
+    const target = this.scopeEl?.querySelector('#mapping-area') as HTMLElement | null;
+    if (!target) return;
+
+    const win = this.controlHost?.window ?? window;
+    this.mappingAreaObserver = new ResizeObserver(() => {
+      // 1 frame に 1 回へコアレス（ドラッグ中は連続発火するので毎回 matrix3d を更新しない）
+      if (this.mappingAreaResizeRafId !== null) return;
+      this.mappingAreaResizeRafId = win.requestAnimationFrame(() => {
+        this.mappingAreaResizeRafId = null;
+        this.updateQuadTransform();
+      });
+    });
+    this.mappingAreaObserver.observe(target);
   }
 
   private setupToolButtons(): void {
