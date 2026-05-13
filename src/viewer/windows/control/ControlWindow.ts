@@ -103,6 +103,13 @@ export class ControlWindow extends BaseWindow {
           このままだとスケッチが止まり、プロジェクションがフリーズします。前面に戻してください。
         </span>
       </div>
+      <div id="dc-webgl-lost-banner" class="dc-banner dc-banner-warn" hidden role="status">
+        <span class="dc-banner-icon">⚠</span>
+        <span class="dc-banner-text">
+          WebGL コンテキストが失われました（GPU プロセスのクラッシュ等）。<br>
+          2 秒以内に復帰しなければソースを自動リロードします。
+        </span>
+      </div>
       <div class="control-container">
         <!-- ツールカラム -->
         <div class="column tool-column">
@@ -285,6 +292,8 @@ export class ControlWindow extends BaseWindow {
       .dc-banner[hidden] { display: none; }
       .dc-banner .dc-banner-icon { font-size: 18px; flex: 0 0 auto; }
       .dc-banner .dc-banner-text { flex: 1 1 auto; }
+      /* もう片方の警告（WebGL ロスト等）が同時に出たときに重ねず縦に並べるためのオフセット */
+      #dc-webgl-lost-banner { top: 44px; background: #ca8a04; }
 
       .control-container {
         display: flex;
@@ -1799,6 +1808,9 @@ export class ControlWindow extends BaseWindow {
         case 'source-visibility-update':
           this.updateSourceVisibilityBanner(!!event.data.data?.hidden);
           break;
+        case 'webgl-context-update':
+          this.updateWebglContextBanner(event.data.data?.status);
+          break;
       }
     });
 
@@ -1859,6 +1871,14 @@ export class ControlWindow extends BaseWindow {
     const el = this.window?.document.getElementById('dc-source-hidden-banner');
     if (!el) return;
     if (hidden) el.removeAttribute('hidden');
+    else el.setAttribute('hidden', '');
+  }
+
+  /** WebGL コンテキストの ロスト／復帰 を受けてバナーを切り替える。 */
+  private updateWebglContextBanner(status: unknown): void {
+    const el = this.window?.document.getElementById('dc-webgl-lost-banner');
+    if (!el) return;
+    if (status === 'lost') el.removeAttribute('hidden');
     else el.setAttribute('hidden', '');
   }
 

@@ -604,11 +604,74 @@ export class WindowController {
       console.error('WindowController: Canvas要素が見つかりません');
       return null;
     }
-    
+
     // Canvasのサイズ変更を監視
     this.monitorCanvasResize(canvas);
-    
+    // GPU プロセスクラッシュ等で WebGL コンテキストが失われたら検知（2D canvas では発火しない）
+    this.monitorCanvasContext(canvas, iframeElement);
+
     return canvas;
+  }
+
+  /** 直近 monitorCanvasContext で wire した解除関数（重複登録防止＋意図的停止時の cleanup）。 */
+  private detachCanvasContextMonitor: (() => void) | null = null;
+  private contextLostReloadTimer: number | null = null;
+
+  /**
+   * WebGL コンテキストロスト／復帰を見張る。長時間 WebGL を回すと Chrome の GPU プロセスが
+   * クラッシュ・リカバリすることがあり、そのとき canvas は無音で死ぬ。
+   * 検知したら ControlWindow に警告を出し、preventDefault で復帰を許可する。
+   * 2 秒待っても restored が来なければ source iframe を強制リロードして映像を復活させる。
+   */
+  private monitorCanvasContext(canvas: HTMLCanvasElement, iframe: HTMLIFrameElement): void {
+    this.detachCanvasContextMonitor?.();
+
+    const onLost = (e: Event) => {
+      e.preventDefault(); // これで初めて webglcontextrestored の発火が許可される
+      console.warn('WindowController: WebGL context lost — 復帰を待機して、ダメなら iframe をリロードします');
+      this.broadcastWebglContextStatus('lost');
+      if (this.contextLostReloadTimer !== null) clearTimeout(this.contextLostReloadTimer);
+      this.contextLostReloadTimer = window.setTimeout(() => {
+        this.contextLostReloadTimer = null;
+        // 復帰してなければ強制リロード（state は失われるが、フリーズしっぱなしよりまし）
+        if (this.currentSourceIframe === iframe) {
+          console.warn('WindowController: WebGL context が復帰しないため iframe をリロード');
+          try { iframe.src = iframe.src; } catch { /* ignore */ }
+        }
+      }, 2000);
+    };
+    const onRestored = () => {
+      console.info('WindowController: WebGL context restored');
+      if (this.contextLostReloadTimer !== null) {
+        clearTimeout(this.contextLostReloadTimer);
+        this.contextLostReloadTimer = null;
+      }
+      this.broadcastWebglContextStatus('ok');
+    };
+    canvas.addEventListener('webglcontextlost', onLost as EventListener);
+    canvas.addEventListener('webglcontextrestored', onRestored);
+
+    this.detachCanvasContextMonitor = () => {
+      canvas.removeEventListener('webglcontextlost', onLost as EventListener);
+      canvas.removeEventListener('webglcontextrestored', onRestored);
+      if (this.contextLostReloadTimer !== null) {
+        clearTimeout(this.contextLostReloadTimer);
+        this.contextLostReloadTimer = null;
+      }
+    };
+  }
+
+  private broadcastWebglContextStatus(status: 'lost' | 'ok'): void {
+    const controlWin = this.windowManager.getWindow('control_window');
+    if (!controlWin || controlWin.closed) return;
+    try {
+      controlWin.postMessage(
+        { type: 'webgl-context-update', data: { status } },
+        window.location.origin,
+      );
+    } catch {
+      /* ignore */
+    }
   }
 
   private startWindowMonitoring(): void {
@@ -640,6 +703,8 @@ export class WindowController {
     this.canvasResizeObserver = null;
     this.canvasMutationObserver?.disconnect();
     this.canvasMutationObserver = null;
+    this.detachCanvasContextMonitor?.();
+    this.detachCanvasContextMonitor = null;
     // 自動再キャプチャの予約は意図的停止で確実にキャンセル（再開ループの防止）
     if (this.recaptureTimer !== null) {
       clearTimeout(this.recaptureTimer);
