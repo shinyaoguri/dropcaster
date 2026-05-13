@@ -7,6 +7,7 @@ import {
   parseMappingsState,
   type MappingsState,
 } from '../utils/mappingTransform';
+import { ScreenWakeLock } from '../utils/wakeLock';
 
 const STATE_STORAGE_KEY = 'dropcaster.mappings.v1';
 const SAVE_DEBOUNCE_MS = 250;
@@ -43,6 +44,8 @@ export class WindowController {
   /** テストパターン用のソース。校正中だけ生成し、'off' に戻すと破棄せず stop する（再利用）。 */
   private testPattern: TestPatternSource | null = null;
   private testPatternKind: TestPatternKind | 'off' = 'off';
+  /** メインウィンドウ側の Screen Wake Lock（プロジェクション中はディスプレイをスリープさせない）。 */
+  private wakeLock: ScreenWakeLock = new ScreenWakeLock(window);
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
 
@@ -331,6 +334,9 @@ export class WindowController {
     this.stopCanvasCapture(); // 既存のキャプチャがあれば一旦止める（ウィンドウは閉じない）
     if (!this.captureFromSource()) return;
     this.startWindowMonitoring();
+    // プロジェクション中はメインウィンドウ側のディスプレイをスリープさせない。
+    // 出力ウィンドウ側は OutputWindow が自分で wake lock を取る。
+    void this.wakeLock.acquire();
     this.setProjectionMode(true);
   }
 
@@ -571,6 +577,7 @@ export class WindowController {
     }
 
     // プロジェクションモードを解除
+    this.wakeLock.release();
     this.setProjectionMode(false);
   }
 
@@ -583,6 +590,7 @@ export class WindowController {
     window.removeEventListener('message', this.messageHandler);
     window.removeEventListener('pagehide', this.flushSaveHandler);
     this.flushSave(); // デバウンス中の保存があれば確定
+    this.wakeLock.release();
     this.closeAllWindows();
     this.testPattern?.dispose();
     this.testPattern = null;

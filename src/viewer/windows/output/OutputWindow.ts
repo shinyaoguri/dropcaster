@@ -6,6 +6,7 @@ import {
   type MappingEntry,
   type MappingsState,
 } from '../../utils/mappingTransform';
+import { ScreenWakeLock } from '../../utils/wakeLock';
 
 interface OutputChild {
   div: HTMLElement;
@@ -31,6 +32,8 @@ export class OutputWindow extends BaseWindow {
   private idleTimer: number | null = null;
   /** resize 由来の transform 再適用を 1 フレーム 1 回へ間引くための rAF id。 */
   private reapplyRafId: number | null = null;
+  /** 出力ウィンドウのディスプレイ（＝プロジェクタ）をスリープさせないための Screen Wake Lock。 */
+  private wakeLock: ScreenWakeLock | null = null;
 
   constructor() {
     super('output_window', 'プロジェクション出力');
@@ -44,6 +47,10 @@ export class OutputWindow extends BaseWindow {
     this.window.addEventListener('resize', this.boundResize);
     this.window.addEventListener('keydown', this.boundKeydown);
     this.window.addEventListener('beforeunload', () => this.teardown());
+    // この出力ウィンドウが載っているディスプレイ（通常はプロジェクタ）をスリープさせない。
+    // 不可視時は自動 release され、再可視で自動再取得される（ScreenWakeLock が面倒を見る）。
+    this.wakeLock = new ScreenWakeLock(this.window);
+    void this.wakeLock.acquire();
     this.requestStream();
     this.scheduleIdle();
   }
@@ -205,6 +212,8 @@ export class OutputWindow extends BaseWindow {
     this.idleTimer = null;
     if (this.reapplyRafId !== null && this.window) this.window.cancelAnimationFrame(this.reapplyRafId);
     this.reapplyRafId = null;
+    this.wakeLock?.release();
+    this.wakeLock = null;
     this.children.clear();
   }
 }
