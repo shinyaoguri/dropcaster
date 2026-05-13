@@ -108,6 +108,11 @@ export class ControlWindow extends BaseWindow {
     this.resizeRafId = null;
     this.render(); // BaseWindow: body.innerHTML = getContent(); setupStyles()
     if (!this.window) return;
+    // popout の body 自身に最低限のレイアウト指定を inline で入れる。
+    // CSS 側は @scope (.dc-control-shell) で囲っているため body セレクタは
+    // どちらの環境でも発火しない（inline マウント時に main の body へ漏れない代わりに、
+    // popout でも body にスタイルが効かない）。ここで明示的に上書きしてバランスを取る。
+    this.window.document.body.style.cssText = 'margin:0;padding:0;overflow:hidden;background:#1a1a1a;';
     const shell = this.window.document.querySelector('.dc-control-shell') as HTMLElement | null;
     if (!shell) return;
     this.mount(new PopoutControlHost(this.window, shell, this.getParentWindow()));
@@ -360,12 +365,15 @@ export class ControlWindow extends BaseWindow {
   }
 
   protected getStyles(): string {
-    return super.getStyles() + `
-      body {
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-      }
+    // すべてのスタイルを @scope (.dc-control-shell) で囲って、main にインライン
+    // マウントしたときに main 側 DOM へスタイルが漏れないようにする。@scope 内では
+    // body セレクタは（body が shell の祖先なので）マッチしない。popout の body
+    // レイアウトは initialize() で inline style として直接当てる。
+    //
+    // BaseWindow.getStyles() の generic ルール（h1, button, .window-container 等）も
+    // @scope 配下に閉じ込められるので main の同名要素には影響しない。
+    return `@scope (.dc-control-shell) {
+      ${super.getStyles()}
 
       /* ソースウィンドウが hidden になったときの警告バナー（B 対応） */
       .dc-banner {
@@ -1083,7 +1091,7 @@ export class ControlWindow extends BaseWindow {
           min-width: 150px;
         }
       }
-    `;
+    }`;
   }
 
   protected setupEventListeners(): void {
