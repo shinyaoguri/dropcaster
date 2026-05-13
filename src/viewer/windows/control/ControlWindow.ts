@@ -100,25 +100,39 @@ export class ControlWindow extends BaseWindow {
     super('control_window', '統合操作ウィンドウ');
   }
 
+  // -- 起動経路は2つ：popout (initialize 経由)、inline (mountInline 経由)。
+  //    どちらも最終的に mount(host) に集約する。
+
+  /** popout 起動：BaseWindow.setWindow() から呼ばれる。 */
   protected initialize(): void {
     this.resizeRafId = null;
-    this.render();
-    // ControlHost を構築（環境依存 I/O をここに閉じ込める）。BaseWindow.getParentWindow() は
-    // window.opener が生きていればそれを返すので、popout 起動直後でも親窓を渡せる。
-    // host は render() が生成した .dc-control-shell（body 直下の wrapper）。これにスコープを
-    // 閉じ込めることで、後で main にマウントしたとき main 側 DOM と id 衝突しないようにする。
-    if (this.window) {
-      this.disposeHost(); // 再オープン時の前回 host を確実に剥がす
-      const shell = this.window.document.querySelector('.dc-control-shell') as HTMLElement | null;
-      if (shell) {
-        this.controlHost = new PopoutControlHost(
-          this.window,
-          shell,
-          this.getParentWindow(),
-        );
-        this.setupHostSubscriptions();
-      }
-    }
+    this.render(); // BaseWindow: body.innerHTML = getContent(); setupStyles()
+    if (!this.window) return;
+    const shell = this.window.document.querySelector('.dc-control-shell') as HTMLElement | null;
+    if (!shell) return;
+    this.mount(new PopoutControlHost(this.window, shell, this.getParentWindow()));
+  }
+
+  /**
+   * inline 起動：main 内ペインとしてマウントする。
+   * outer は <aside> 等のマウント先要素。中身は getContent() で差し替えられ、
+   * ControlHost は呼び出し側が hostBuilder で組み立てる（InlineControlHost を渡す想定）。
+   * outer の ownerDocument の head に CSS を 1 度だけ注入する。
+   */
+  mountInline(outer: HTMLElement, hostBuilder: (shell: HTMLElement) => ControlHost): void {
+    this.resizeRafId = null;
+    outer.innerHTML = this.getContent();
+    this.injectStylesInto(outer.ownerDocument);
+    const shell = outer.querySelector('.dc-control-shell') as HTMLElement | null;
+    if (!shell) return;
+    this.mount(hostBuilder(shell));
+  }
+
+  /** popout / inline 共通：host 確定後のセットアップを行う。 */
+  private mount(host: ControlHost): void {
+    this.disposeHost(); // 既存 host があれば確実に剥がす
+    this.controlHost = host;
+    this.setupHostSubscriptions();
     this.setupControls();
     this.setupMessageListener();
     // 初期化時にアスペクト比を設定（出力ウィンドウの寸法は WindowController から後で push される）
@@ -126,6 +140,17 @@ export class ControlWindow extends BaseWindow {
       this.updateSourceVideoAspectRatio();
       this.updateOutputViz();
     }, 100);
+  }
+
+  /** CSS を host の owner document へ 1 度だけ注入する（inline 起動用）。重複注入を防ぐ。 */
+  private static injectedDocs = new WeakSet<Document>();
+  private injectStylesInto(doc: Document): void {
+    if (ControlWindow.injectedDocs.has(doc)) return;
+    ControlWindow.injectedDocs.add(doc);
+    const style = doc.createElement('style');
+    style.textContent = this.getStyles();
+    style.setAttribute('data-dropcaster', 'control-panel');
+    doc.head.appendChild(style);
   }
 
   /** ControlHost の各イベントを購読し、対応する UI 更新メソッドへ転送する。 */
