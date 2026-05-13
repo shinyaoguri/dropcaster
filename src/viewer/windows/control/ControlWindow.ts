@@ -58,6 +58,14 @@ export class ControlWindow extends BaseWindow {
   /** host のイベント購読解除関数。dispose で全部呼ぶ。 */
   private hostUnsubs: Unsubscribe[] = [];
 
+  /**
+   * id / class ベースの DOM 探索はすべてこの要素配下で行う（popout: body、inline: 指定要素）。
+   * main 内に持っていったとき main 側の id と衝突しないようにするための seam。null = 未初期化。
+   */
+  private get scopeEl(): HTMLElement | null {
+    return this.controlHost?.host ?? null;
+  }
+
   // canonical state は親 (WindowController) が保持。これは mirror。
   // ローカル UI 操作では optimistic に書き換えて即座に state-mutation を送る。
   // state-update で親から再同期。
@@ -1043,16 +1051,15 @@ export class ControlWindow extends BaseWindow {
   }
 
   private setupControls(): void {
-    if (!this.window) return;
+    const scope = this.scopeEl;
+    if (!scope) return;
 
-    const doc = this.window.document;
-    
-    // ビデオ要素を取得
-    this.sourceVideo = doc.getElementById('source-video') as HTMLVideoElement;
-    this.mappingVideo = doc.getElementById('mapping-video') as HTMLVideoElement;
-    this.croppedContainer = doc.getElementById('cropped-container') as HTMLDivElement;
-    this.croppedVideo = doc.getElementById('cropped-video') as HTMLVideoElement;
-    this.selectionBox = doc.getElementById('selection-box') as HTMLDivElement;
+    // ビデオ要素を取得（scope は ControlHost.host：popout body もしくは inline マウント先要素）
+    this.sourceVideo = scope.querySelector('#source-video') as HTMLVideoElement;
+    this.mappingVideo = scope.querySelector('#mapping-video') as HTMLVideoElement;
+    this.croppedContainer = scope.querySelector('#cropped-container') as HTMLDivElement;
+    this.croppedVideo = scope.querySelector('#cropped-video') as HTMLVideoElement;
+    this.selectionBox = scope.querySelector('#selection-box') as HTMLDivElement;
 
     // sourceVideoのメタデータ読み込み時にアスペクト比を更新し、
     // すでに作成済みの非アクティブプレビュー video にも stream を bind する
@@ -1115,11 +1122,11 @@ export class ControlWindow extends BaseWindow {
   }
 
   private setupToolButtons(): void {
-    if (!this.window) return;
-    const doc = this.window.document;
+    const scope = this.scopeEl;
+    if (!scope) return;
 
     // リセットボタン
-    const resetSourceBtn = doc.getElementById('reset-source-btn');
+    const resetSourceBtn = scope.querySelector('#reset-source-btn');
     if (resetSourceBtn) {
       resetSourceBtn.addEventListener('click', () => {
         this.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
@@ -1129,7 +1136,7 @@ export class ControlWindow extends BaseWindow {
       });
     }
 
-    const resetMappingBtn = doc.getElementById('reset-mapping-btn');
+    const resetMappingBtn = scope.querySelector('#reset-mapping-btn');
     if (resetMappingBtn) {
       resetMappingBtn.addEventListener('click', () => {
         this.setActiveQuad(defaultQuad());
@@ -1140,7 +1147,7 @@ export class ControlWindow extends BaseWindow {
     }
 
     // テストパターンボタン（off / white / grid / smpte）
-    const testPatternBtns = doc.querySelectorAll('.test-pattern-btn');
+    const testPatternBtns = scope.querySelectorAll('.test-pattern-btn');
     testPatternBtns.forEach(btn => {
       btn.addEventListener('click', (e) => {
         const kind = (e.currentTarget as HTMLElement).dataset.pattern as
@@ -1153,7 +1160,7 @@ export class ControlWindow extends BaseWindow {
     });
 
     // マッピング追加ボタン
-    const addMappingBtn = doc.getElementById('add-mapping-btn');
+    const addMappingBtn = scope.querySelector('#add-mapping-btn');
     if (addMappingBtn) {
       addMappingBtn.addEventListener('click', () => {
         this.replaceState(withAddedMapping(this.state));
@@ -1161,13 +1168,13 @@ export class ControlWindow extends BaseWindow {
     }
 
     // 保存（JSON ダウンロード）
-    const exportBtn = doc.getElementById('export-mappings-btn');
+    const exportBtn = scope.querySelector('#export-mappings-btn');
     if (exportBtn) {
       exportBtn.addEventListener('click', () => this.exportMappingsToFile());
     }
 
     // 読み込み（JSON ファイルピッカー）
-    const importBtn = doc.getElementById('import-mappings-btn');
+    const importBtn = scope.querySelector('#import-mappings-btn');
     if (importBtn) {
       importBtn.addEventListener('click', () => this.importMappingsFromFile());
     }
@@ -1181,8 +1188,7 @@ export class ControlWindow extends BaseWindow {
 
   /** マッピング一覧の HTML を再生成し、クリック・削除ハンドラを貼り直す。 */
   private renderMappingsList(): void {
-    if (!this.window) return;
-    const listEl = this.window.document.getElementById('mappings-list');
+    const listEl = this.scopeEl?.querySelector('#mappings-list') as HTMLElement | null;
     if (!listEl) return;
 
     const canRemove = this.state.mappings.length > 1;
@@ -1234,7 +1240,7 @@ export class ControlWindow extends BaseWindow {
         e.stopPropagation();
         const item = nameSpan.closest('.mapping-list-item') as HTMLDivElement | null;
         const id = item?.dataset.id;
-        if (!id || !this.window) return;
+        if (!id) return;
         this.startInlineRename(nameSpan, id);
       });
     });
@@ -1248,12 +1254,23 @@ export class ControlWindow extends BaseWindow {
     });
   }
 
+  /** ホスト要素のオーナードキュメント（要素生成・ファイル取得 UI に使う）。 */
+  private get hostDoc(): Document | null {
+    return this.scopeEl?.ownerDocument ?? null;
+  }
+
+  /** ホスト要素のオーナーウィンドウ（alert などに使う）。 */
+  private get hostWin(): Window | null {
+    return this.hostDoc?.defaultView ?? null;
+  }
+
   private exportMappingsToFile(): void {
-    if (!this.window) return;
+    const doc = this.hostDoc;
+    if (!doc) return;
     const json = JSON.stringify(this.state, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = this.window.document.createElement('a');
+    const a = doc.createElement('a');
     a.href = url;
     const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     a.download = `dropcaster-mappings-${ts}.json`;
@@ -1262,8 +1279,9 @@ export class ControlWindow extends BaseWindow {
   }
 
   private importMappingsFromFile(): void {
-    if (!this.window) return;
-    const input = this.window.document.createElement('input');
+    const doc = this.hostDoc;
+    if (!doc) return;
+    const input = doc.createElement('input');
     input.type = 'file';
     input.accept = '.json,application/json';
     input.addEventListener('change', () => {
@@ -1274,12 +1292,12 @@ export class ControlWindow extends BaseWindow {
           try {
             const parsed = parseMappingsState(JSON.parse(text));
             if (!parsed) {
-              this.window?.alert('読み込みに失敗しました（フォーマット不正）');
+              this.hostWin?.alert('読み込みに失敗しました（フォーマット不正）');
               return;
             }
             this.replaceState(parsed);
           } catch (error) {
-            this.window?.alert('読み込みに失敗しました（JSON 解析失敗）');
+            this.hostWin?.alert('読み込みに失敗しました（JSON 解析失敗）');
             console.error('ControlWindow: JSON parse error', error);
           }
         })
@@ -1291,8 +1309,8 @@ export class ControlWindow extends BaseWindow {
   }
 
   private startInlineRename(nameSpan: HTMLElement, id: string): void {
-    if (!this.window) return;
-    const doc = this.window.document;
+    const doc = this.hostDoc;
+    if (!doc) return;
     const input = doc.createElement('input');
     input.className = 'name-input';
     input.type = 'text';
@@ -1326,14 +1344,14 @@ export class ControlWindow extends BaseWindow {
   }
 
   private updateToolValues(): void {
-    if (!this.window) return;
-    const doc = this.window.document;
+    const scope = this.scopeEl;
+    if (!scope) return;
 
     // ソース値の更新
-    const sourceX = doc.getElementById('source-x-value');
-    const sourceY = doc.getElementById('source-y-value');
-    const sourceW = doc.getElementById('source-w-value');
-    const sourceH = doc.getElementById('source-h-value');
+    const sourceX = scope.querySelector('#source-x-value');
+    const sourceY = scope.querySelector('#source-y-value');
+    const sourceW = scope.querySelector('#source-w-value');
+    const sourceH = scope.querySelector('#source-h-value');
 
     if (sourceX) sourceX.textContent = this.sourceSelectionData.x.toFixed(1);
     if (sourceY) sourceY.textContent = this.sourceSelectionData.y.toFixed(1);
@@ -1342,10 +1360,10 @@ export class ControlWindow extends BaseWindow {
 
     // マッピング: 4隅の値を更新
     const fmt = (p: { x: number; y: number }) => `${p.x.toFixed(1)}, ${p.y.toFixed(1)}`;
-    const tl = doc.getElementById('mapping-tl-value');
-    const tr = doc.getElementById('mapping-tr-value');
-    const bl = doc.getElementById('mapping-bl-value');
-    const br = doc.getElementById('mapping-br-value');
+    const tl = scope.querySelector('#mapping-tl-value');
+    const tr = scope.querySelector('#mapping-tr-value');
+    const bl = scope.querySelector('#mapping-bl-value');
+    const br = scope.querySelector('#mapping-br-value');
     if (tl) tl.textContent = fmt(this.quadData.topLeft);
     if (tr) tr.textContent = fmt(this.quadData.topRight);
     if (bl) bl.textContent = fmt(this.quadData.bottomLeft);
@@ -1363,7 +1381,8 @@ export class ControlWindow extends BaseWindow {
   }
 
   private setupSourceDragHandlers(): void {
-    if (!this.selectionBox || !this.window) return;
+    const doc = this.hostDoc;
+    if (!this.selectionBox || !doc) return;
 
     let isDragging = false;
     let startX = 0;
@@ -1406,12 +1425,13 @@ export class ControlWindow extends BaseWindow {
     };
 
     this.selectionBox.addEventListener('mousedown', handleMouseDown);
-    this.window.document.addEventListener('mousemove', handleMouseMove);
-    this.window.document.addEventListener('mouseup', handleMouseUp);
+    doc.addEventListener('mousemove', handleMouseMove);
+    doc.addEventListener('mouseup', handleMouseUp);
   }
 
   private setupSourceResizeHandlers(): void {
-    if (!this.selectionBox || !this.window) return;
+    const doc = this.hostDoc;
+    if (!this.selectionBox || !doc) return;
 
     const handles = this.selectionBox.querySelectorAll('.handle, .edge');
     
@@ -1487,14 +1507,15 @@ export class ControlWindow extends BaseWindow {
       };
 
       handle.addEventListener('mousedown', handleMouseDown as EventListener);
-      this.window!.document.addEventListener('mousemove', handleMouseMove as EventListener);
-      this.window!.document.addEventListener('mouseup', handleMouseUp as EventListener);
+      doc.addEventListener('mousemove', handleMouseMove as EventListener);
+      doc.addEventListener('mouseup', handleMouseUp as EventListener);
     });
   }
 
   // quad 全体を平行移動（cropped-container の見た目領域をドラッグ）
   private setupMappingDragHandlers(): void {
-    if (!this.croppedContainer || !this.window) return;
+    const doc = this.hostDoc;
+    if (!this.croppedContainer || !doc) return;
 
     let isDragging = false;
     let startX = 0;
@@ -1532,17 +1553,19 @@ export class ControlWindow extends BaseWindow {
     };
 
     this.croppedContainer.addEventListener('mousedown', handleMouseDown);
-    this.window.document.addEventListener('mousemove', handleMouseMove);
-    this.window.document.addEventListener('mouseup', handleMouseUp);
+    doc.addEventListener('mousemove', handleMouseMove);
+    doc.addEventListener('mouseup', handleMouseUp);
   }
 
   // 4隅ハンドル: それぞれを独立に動かしてホモグラフィー変形を作る
   private setupQuadHandleHandlers(): void {
-    if (!this.window || !this.croppedContainer) return;
+    const scope = this.scopeEl;
+    const doc = this.hostDoc;
+    if (!scope || !doc || !this.croppedContainer) return;
     const parent = this.croppedContainer.parentElement;
     if (!parent) return;
 
-    const handles = this.window.document.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
+    const handles = scope.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
     handles.forEach(handle => {
       let isDragging = false;
       let startX = 0;
@@ -1584,15 +1607,16 @@ export class ControlWindow extends BaseWindow {
       };
 
       handle.addEventListener('mousedown', onMouseDown);
-      this.window!.document.addEventListener('mousemove', onMouseMove);
-      this.window!.document.addEventListener('mouseup', onMouseUp);
+      doc.addEventListener('mousemove', onMouseMove);
+      doc.addEventListener('mouseup', onMouseUp);
     });
   }
 
   // ── 矢印キーによる微調整（クリックで選択 → 矢印キーで 1px、Shift+矢印で 10px）─────────
   private setupKeyboardNudge(): void {
-    if (!this.window) return;
-    this.window.document.addEventListener('keydown', (e) => this.handleNudgeKey(e));
+    const doc = this.hostDoc;
+    if (!doc) return;
+    doc.addEventListener('keydown', (e) => this.handleNudgeKey(e));
   }
 
   private setKeyboardSelection(sel: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null): void {
@@ -1608,9 +1632,10 @@ export class ControlWindow extends BaseWindow {
 
   /** 選択中のハンドル / 枠に .kbd-selected を付け替える。 */
   private updateKeyboardSelectionUI(): void {
-    if (!this.window) return;
+    const scope = this.scopeEl;
+    if (!scope) return;
     const sel = this.keyboardSelection;
-    this.window.document
+    scope
       .querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle')
       .forEach(h => h.classList.toggle('kbd-selected', sel?.type === 'quad' && h.dataset.corner === sel.corner));
     this.selectionBox?.classList.toggle('kbd-selected', sel?.type === 'source');
@@ -1693,11 +1718,9 @@ export class ControlWindow extends BaseWindow {
     const activeIdx = this.state.mappings.findIndex(m => m.id === this.state.activeId);
     const activeColor = mappingColor(activeIdx >= 0 ? activeIdx : 0);
     this.croppedContainer.style.setProperty('--mapping-color', activeColor);
-    if (this.window) {
-      this.window.document
-        .querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle')
-        .forEach(h => h.style.setProperty('--mapping-color', activeColor));
-    }
+    this.scopeEl
+      ?.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle')
+      .forEach(h => h.style.setProperty('--mapping-color', activeColor));
 
     // 非アクティブ mapping のプレビューを同期
     this.syncInactivePreviews();
@@ -1710,8 +1733,9 @@ export class ControlWindow extends BaseWindow {
   }
 
   private updateQuadHandlePositions(): void {
-    if (!this.window) return;
-    const handles = this.window.document.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
+    const scope = this.scopeEl;
+    if (!scope) return;
+    const handles = scope.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
     handles.forEach(handle => {
       const corner = handle.dataset.corner as CornerKey | undefined;
       if (!corner || !CORNER_KEYS.includes(corner)) return;
@@ -1727,10 +1751,11 @@ export class ControlWindow extends BaseWindow {
    * 上に描画される。クリックでその mapping を active 化。
    */
   private syncInactivePreviews(): void {
-    if (!this.window || !this.croppedContainer) return;
+    if (!this.croppedContainer) return;
     const stage = this.croppedContainer.parentElement;
     if (!stage) return;
-    const doc = this.window.document;
+    const doc = this.hostDoc;
+    if (!doc) return;
     // ステージのピクセルサイズ（変わると quad の px 位置が変わるので sig に含める）
     const stageRect = stage.getBoundingClientRect();
     const stageSig = `${Math.round(stageRect.width)}x${Math.round(stageRect.height)}`;
@@ -1804,7 +1829,7 @@ export class ControlWindow extends BaseWindow {
 
     // ソースビデオがまだ設定されていない場合は、mapping-videoから取得
     if (!this.mappingVideo) {
-      this.mappingVideo = this.window?.document.getElementById('mapping-video') as HTMLVideoElement;
+      this.mappingVideo = this.scopeEl?.querySelector('#mapping-video') as HTMLVideoElement;
     }
 
     if (!this.mappingVideo) return;
@@ -1834,14 +1859,18 @@ export class ControlWindow extends BaseWindow {
    * window スコープのイベント（resize / pagehide）だけを張る。
    * 親からの postMessage 系の購読は controlHost が引き受け、setupHostSubscriptions() で
    * イベントハンドラへ橋渡しする。
+   *
+   * host の window を見るので、popout なら popout の resize、inline なら main の resize に
+   * 反応する（どちらでも「描画レイアウトの拠り所が変わった」シグナルとして妥当）。
    */
   private setupMessageListener(): void {
-    if (!this.window) return;
+    const win = this.controlHost?.window;
+    if (!win) return;
 
     // 操作ウィンドウのリサイズ時にアスペクト比とホモグラフィー行列を再計算（1 フレーム 1 回に間引く）
-    this.window.addEventListener('resize', () => {
-      if (this.resizeRafId !== null || !this.window) return;
-      this.resizeRafId = this.window.requestAnimationFrame(() => {
+    win.addEventListener('resize', () => {
+      if (this.resizeRafId !== null) return;
+      this.resizeRafId = win.requestAnimationFrame(() => {
         this.resizeRafId = null;
         this.updateSourceVideoAspectRatio();
         this.updateQuadTransform();
@@ -1851,7 +1880,7 @@ export class ControlWindow extends BaseWindow {
     // ウィンドウが閉じられる直前に、host の保留中 mutation を確実に flush する。
     // PopoutControlHost も自分で pagehide を捕まえているが、ここでも明示 dispose して
     // 二重に Listener を残さないようにする（ControlWindow 再オープン時の保険）。
-    this.window.addEventListener('pagehide', () => this.disposeHost());
+    win.addEventListener('pagehide', () => this.disposeHost());
   }
 
   /** ControlHost から push される「出力ウィンドウ＋ディスプレイ寸法／全画面状態」を反映。 */
@@ -1887,7 +1916,7 @@ export class ControlWindow extends BaseWindow {
    * hidden 中は中で動いているスケッチの rAF が止まり、captureStream がフリーズするため。
    */
   private updateSourceVisibilityBanner(hidden: boolean): void {
-    const el = this.window?.document.getElementById('dc-source-hidden-banner');
+    const el = this.scopeEl?.querySelector('#dc-source-hidden-banner');
     if (!el) return;
     if (hidden) el.removeAttribute('hidden');
     else el.setAttribute('hidden', '');
@@ -1895,7 +1924,7 @@ export class ControlWindow extends BaseWindow {
 
   /** WebGL コンテキストの ロスト／復帰 を受けてバナーを切り替える。 */
   private updateWebglContextBanner(status: WebglContextStatus): void {
-    const el = this.window?.document.getElementById('dc-webgl-lost-banner');
+    const el = this.scopeEl?.querySelector('#dc-webgl-lost-banner');
     if (!el) return;
     if (status === 'lost') el.removeAttribute('hidden');
     else el.setAttribute('hidden', '');
@@ -1903,8 +1932,7 @@ export class ControlWindow extends BaseWindow {
 
   /** テストパターンボタンの active 表示を kind に合わせて切り替える（state は親が持っている）。 */
   private updateTestPatternUI(kind: TestPatternKindOrOff): void {
-    if (!this.window) return;
-    this.window.document.querySelectorAll('.test-pattern-btn').forEach(el => {
+    this.scopeEl?.querySelectorAll('.test-pattern-btn').forEach(el => {
       const btn = el as HTMLElement;
       btn.classList.toggle('active', btn.dataset.pattern === kind);
     });
@@ -1937,14 +1965,14 @@ export class ControlWindow extends BaseWindow {
    * 寸法・全画面状態は WindowController から output-dimensions-update で push される。
    */
   private updateOutputViz(): void {
-    if (!this.window) return;
-    const doc = this.window.document;
+    const scope = this.scopeEl;
+    if (!scope) return;
     const { innerWidth: w, innerHeight: h, screenWidth: sw, screenHeight: sh, isFullscreen } = this.outputBounds;
 
     // ステータスバッジ（ウィンドウ／フルスクリーン）はデータが無くても更新できる
-    const displayMode = doc.getElementById('display-mode');
+    const displayMode = scope.querySelector('#display-mode');
     if (displayMode) displayMode.textContent = isFullscreen ? 'フルスクリーン' : 'ウィンドウ';
-    const displayStatus = doc.querySelector('.display-status');
+    const displayStatus = scope.querySelector('.display-status');
     if (displayStatus) {
       displayStatus.classList.remove('fullscreen', 'window');
       displayStatus.classList.add(isFullscreen ? 'fullscreen' : 'window');
@@ -1953,15 +1981,15 @@ export class ControlWindow extends BaseWindow {
     // 出力ウィンドウがまだ開いていない等で寸法が無いときはプレースホルダのまま
     if (sw <= 0 || sh <= 0) return;
 
-    const displaySize = doc.getElementById('display-size');
+    const displaySize = scope.querySelector('#display-size');
     if (displaySize) displaySize.textContent = `${sw}x${sh}`;
-    const displayFrame = doc.getElementById('display-frame') as HTMLDivElement | null;
+    const displayFrame = scope.querySelector('#display-frame') as HTMLDivElement | null;
     if (displayFrame) displayFrame.style.aspectRatio = `${sw / sh}`;
 
-    const windowSize = doc.getElementById('window-size');
+    const windowSize = scope.querySelector('#window-size');
     if (windowSize) windowSize.textContent = w > 0 && h > 0 ? `${w}x${h}` : '—';
 
-    const windowFrame = doc.getElementById('window-frame') as HTMLDivElement | null;
+    const windowFrame = scope.querySelector('#window-frame') as HTMLDivElement | null;
     if (windowFrame) {
       const wPct = w > 0 ? Math.min(100, (w / sw) * 100) : 100;
       const hPct = h > 0 ? Math.min(100, (h / sh) * 100) : 100;
@@ -1979,11 +2007,11 @@ export class ControlWindow extends BaseWindow {
   }
 
   private updateSourceVideoAspectRatio(): void {
-    if (!this.window) return;
-    
-    const doc = this.window.document;
-    const canvasFrame = doc.querySelector('.canvas-frame') as HTMLDivElement;
-    const sourcePreviewWrapper = doc.querySelector('.source-preview-wrapper') as HTMLDivElement;
+    const scope = this.scopeEl;
+    if (!scope) return;
+
+    const canvasFrame = scope.querySelector('.canvas-frame') as HTMLDivElement;
+    const sourcePreviewWrapper = scope.querySelector('.source-preview-wrapper') as HTMLDivElement;
     
     if (!canvasFrame || !sourcePreviewWrapper) return;
     
