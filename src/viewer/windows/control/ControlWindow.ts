@@ -1172,7 +1172,7 @@ export class ControlWindow extends BaseWindow {
     if (resetSourceBtn) {
       resetSourceBtn.addEventListener('click', () => {
         this.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
-        this.updateSelectionBox();
+        this.updateAfterSourceChange();
         this.updateToolValues();
         this.broadcastStateMutation();
       });
@@ -1418,7 +1418,7 @@ export class ControlWindow extends BaseWindow {
     // デフォルトで全体を選択
     this.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
 
-    this.updateSelectionBox();
+    this.updateAfterSourceChange();
     this.broadcastStateMutation();
   }
 
@@ -1457,7 +1457,7 @@ export class ControlWindow extends BaseWindow {
       this.sourceSelectionData.x = Math.max(0, Math.min(100 - this.sourceSelectionData.width, initialX + deltaX));
       this.sourceSelectionData.y = Math.max(0, Math.min(100 - this.sourceSelectionData.height, initialY + deltaY));
 
-      this.updateSelectionBox();
+      this.updateAfterSourceChange();
       this.updateToolValues();
       this.broadcastStateMutation();
     };
@@ -1539,7 +1539,7 @@ export class ControlWindow extends BaseWindow {
             break;
         }
 
-        this.updateSelectionBox();
+        this.updateAfterSourceChange();
         this.updateToolValues();
         this.broadcastStateMutation();
       };
@@ -1735,7 +1735,7 @@ export class ControlWindow extends BaseWindow {
       const s = this.sourceSelectionData;
       s.x = Math.max(0, Math.min(100 - s.width,  s.x + (dirX * pixels * 100) / ref.width));
       s.y = Math.max(0, Math.min(100 - s.height, s.y + (dirY * pixels * 100) / ref.height));
-      this.updateSelectionBox();
+      this.updateAfterSourceChange();
       this.updateToolValues();
       this.broadcastStateMutation();
     }
@@ -1748,6 +1748,25 @@ export class ControlWindow extends BaseWindow {
     this.selectionBox.style.top = `${this.sourceSelectionData.y}%`;
     this.selectionBox.style.width = `${this.sourceSelectionData.width}%`;
     this.selectionBox.style.height = `${this.sourceSelectionData.height}%`;
+  }
+
+  /**
+   * ソース矩形を変更した直後に呼ぶまとめ更新ヘルパー。
+   * ソース側の選択枠と、マッピング側のクロップ済み <video>（および非 active プレビュー）の
+   * クロップ表示を同時に再計算する。
+   *
+   * ソース矩形のドラッグ／リサイズ／矢印キー nudge は同じ依存関係（active mapping の source rect）
+   * を持つので、3 箇所がバラバラに呼んでいた updateSelectionBox + 補助呼び出しをここに集約する。
+   */
+  private updateAfterSourceChange(): void {
+    this.updateSelectionBox();
+    // #cropped-video は source rect を clip-path で切り取って見せているので、変更を即反映する。
+    // 元コード（popout 時代）ではここが抜けており、マッピング側のプレビューだけ古い source 表示の
+    // ままになる症状（user 報告: マッピング側を何か操作するまで同期されない）の原因だった。
+    this.updateVideoCrop();
+    // 非 active mapping のプレビュー warp は source も含めた signature で memoize されているので、
+    // source が変わったタイミングで再評価する。
+    this.syncInactivePreviews();
   }
 
   private updateQuadTransform(): void {
