@@ -104,16 +104,16 @@ export class SketchPageController {
   }
 
   private openWindows(): void {
-    // クリックの user gesture 内で コントロール／出力ウィンドウを開く（スライドショーと同様）
-    this.windowController.openBothWindows();
+    // クリックの user gesture 内で出力ウィンドウだけを開く（control popout は廃止 —
+    // 編集 UI は inline ペインとして main の右側に出てくる）。
     this.windowController.openOutputWindow();
 
-    // ウィンドウが開かれた後、Canvasストリーミングを開始（より長い遅延で確実に）
+    // 出力ウィンドウが開かれた後、Canvas ストリーミングを開始（少し待って確実に）
     this.openWindowsTimeout = setTimeout(() => {
       this.openWindowsTimeout = null;
       if (this.isDestroyed) return;
       void this.startCanvasStreamingToWindows();
-    }, 2000); // 2秒後に実行
+    }, 2000);
   }
 
   private async startCanvasStreamingToWindows(): Promise<void> {

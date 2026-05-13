@@ -584,14 +584,13 @@ export class SlideshowView {
 
   private startMapping(): void {
     if (!this.windowController) this.windowController = new WindowController();
-    // クリックの user gesture 内でコントロール／出力ウィンドウを開く
-    this.windowController.openBothWindows();
+    // クリックの user gesture 内で出力ウィンドウだけを開く（control popout は廃止）。
+    // 編集 UI は inline ペインとしてスライドショーの右側にマウントする。
     this.windowController.openOutputWindow();
     this.mappingActive = true;
     this.updateMappingButton();
-    // inline ペインも同時にマウント（popout と並走）
     this.mountInlineEditor();
-    // ウィンドウが開いてから（SketchPageController と同じく）少し待ってストリーミング開始
+    // 出力ウィンドウが開いてから（SketchPageController と同じく）少し待ってストリーミング開始
     this.mappingStartTimeout = window.setTimeout(() => {
       this.mappingStartTimeout = null;
       void this.refreshMappingSource({ start: true });
