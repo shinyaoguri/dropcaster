@@ -79,6 +79,8 @@ export class SketchPageController {
     this.inlinePanel.mountInline(aside, (shell) =>
       new InlineControlHost(window, shell, this.windowController),
     );
+    // 既にストリームが流れていれば bind し直す（mount が broadcastStream より後に来た場合の保険）
+    this.windowController.rebindStreamToInlinePanel();
   }
 
   private unmountInlineEditor(): void {
@@ -107,6 +109,9 @@ export class SketchPageController {
     // クリックの user gesture 内で出力ウィンドウだけを開く（control popout は廃止 —
     // 編集 UI は inline ペインとして main の右側に出てくる）。
     this.windowController.openOutputWindow();
+    // inline panel を即マウントしておく。startCanvasStreaming 内の broadcastStream が
+    // 走るより前にペイン内 <video> を DOM に存在させて、bind を確実に届くようにするため。
+    this.mountInlineEditor();
 
     // 出力ウィンドウが開かれた後、Canvas ストリーミングを開始（少し待って確実に）
     this.openWindowsTimeout = setTimeout(() => {

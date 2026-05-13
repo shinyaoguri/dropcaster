@@ -378,6 +378,16 @@ export class WindowController {
     });
   }
 
+  /**
+   * inline panel が mount された後（broadcastStream の発火タイミングより遅れて mount された場合の保険）に
+   * 呼び出すと、現在のアクティブ stream を panel 内 <video> へ bind する。stream が無ければ何もしない。
+   */
+  rebindStreamToInlinePanel(): void {
+    const stream = this.activeStreams[0];
+    if (!stream) return;
+    this.bindStreamToInlinePanel(stream);
+  }
+
   private notifyVideoDimensions(): void {
     this.events.videoDimensions.set(this.videoActualDimensions);
   }

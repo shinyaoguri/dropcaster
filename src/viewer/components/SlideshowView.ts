@@ -619,6 +619,8 @@ export class SlideshowView {
     this.inlinePanel.mountInline(aside, (shell) =>
       new InlineControlHost(window, shell, wc),
     );
+    // 既にストリームが流れていれば bind し直す（mount が broadcastStream より後に来た場合の保険）
+    wc.rebindStreamToInlinePanel();
   }
 
   private unmountInlineEditor(): void {
