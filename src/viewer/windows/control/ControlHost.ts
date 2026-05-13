@@ -13,6 +13,8 @@
 
 import type { TestPatternKind } from '../../runtime/TestPatternSource';
 import type { MappingsState } from '../../utils/mappingTransform';
+// MediaStream の bind は WindowController がホスト要素配下の <video> を id で見つけて
+// 直接 srcObject に差すので、ControlHost には stream API を持たせない（ホスト側の責務外）。
 
 export type TestPatternKindOrOff = TestPatternKind | 'off';
 
@@ -74,13 +76,6 @@ export interface ControlHost {
 
   getVideoDimensions(): VideoDimensions;
   onVideoDimensionsChange(handler: (dim: VideoDimensions) => void): Unsubscribe;
-
-  // --- 現在のマッピング用 MediaStream（プレビュー <video> へ bind するのに使う） ---
-
-  /** いま流れている MediaStream。まだ無ければ null。 */
-  getStream(): MediaStream | null;
-  /** stream の差し替え通知（ソース切替・テストパターン切替で起こる）。 */
-  onStreamChange(handler: (stream: MediaStream | null) => void): Unsubscribe;
 
   // --- 一時的な警告（B: ソース可視性 / E: WebGL context lost） ---
 
