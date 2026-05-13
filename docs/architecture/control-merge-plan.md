@@ -119,3 +119,29 @@ popout もまだ開いていて、両方で同じ state を編集できる。
 - ControlWindow: main 内のペインとしてマウントされる UI コンポーネント
 - WindowController: state の owner、output へ broadcast、stream の bind を司る（main 内のペインへの
   state push は直接 event で OK）
+
+---
+
+## 実装ステータス（2026-05-13 時点）
+
+**完了**：Step 1 〜 Step 4 すべて。
+
+主要ファイル:
+- `src/viewer/windows/control/ControlHost.ts` — UI が外と話す seam（唯一の実装は InlineControlHost）
+- `src/viewer/windows/control/InlineControlHost.ts` — WindowController.events を購読、メソッドを直接呼ぶ
+- `src/viewer/windows/control/ControlWindow.ts` — UI 本体。`mountInline(outer, hostBuilder)` でマウント
+- `src/viewer/components/WindowController.ts` — canonical state + events.* emitter
+- `src/viewer/components/SketchPageController.ts` / `SlideshowView.ts` —
+  投影モード開始で `<aside id="dc-inline-editor">` に ControlWindow を mountInline、終了で destroy
+
+撤去されたもの:
+- `PopoutControlHost.ts`（削除）
+- `SilentKeepAlive` クラス・C の audio keepalive（削除）
+- B の「ソース可視性警告」関連すべて（broadcast / 購読 / バナー）
+- `WindowController.openControlWindow()` / `openBothWindows()` / `setupStreamToWindow` /
+  control 向け postMessage 全部 / control_window 用 WindowManager 配線
+
+残された保険:
+- A の Screen Wake Lock（main 側で取得。出力ウィンドウは OutputWindow が自分で取る）
+- D の MediaStreamTrack ended 検知 → 自動再キャプチャ
+- E の WebGL コンテキスト lost 検知 → 2 秒後に iframe 自動リロード
