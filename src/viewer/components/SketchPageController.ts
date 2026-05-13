@@ -4,6 +4,8 @@ import { SketchFrame } from '../runtime/SketchFrame';
 import { CursorManager } from '../managers/CursorManager';
 import { SketchPageView } from './SketchPageView';
 import { WindowController } from './WindowController';
+import { ControlWindow } from '../windows/control/ControlWindow';
+import { InlineControlHost } from '../windows/control/InlineControlHost';
 import { publicAssetPath } from '../utils/paths.js';
 
 export class SketchPageController {
@@ -14,6 +16,10 @@ export class SketchPageController {
   private windowController: WindowController;
   private openWindowsTimeout: ReturnType<typeof setTimeout> | null = null;
   private isDestroyed = false;
+  /** projection 中だけ #dc-inline-editor 内にマウントする ControlWindow（inline 経路）。 */
+  private inlinePanel: ControlWindow | null = null;
+  /** unsubscribe: projection-mode-change のリスナを destroy で外すため。 */
+  private boundProjectionChange = (e: Event) => this.handleProjectionChange(e);
 
   constructor() {
     this.fullscreenManager = new FullscreenManager();
@@ -48,6 +54,42 @@ export class SketchPageController {
 
     // イベントリスナーの設定
     this.setupEventListeners();
+
+    // 投影モードの開始／終了で inline ペインを mount／teardown
+    window.addEventListener('projection-mode-change', this.boundProjectionChange);
+  }
+
+  private handleProjectionChange(event: Event): void {
+    const active = !!(event as CustomEvent).detail?.active;
+    if (active) this.mountInlineEditor();
+    else this.unmountInlineEditor();
+  }
+
+  /**
+   * #dc-inline-editor に ControlPanel をマウントする。
+   * popout 版が開いていてもこちらは独立に動き、同じ canonical state を mirror する
+   * （WindowController.events 経由）。Step 3 で popout を撤去するまでの並走期間。
+   */
+  private mountInlineEditor(): void {
+    if (this.inlinePanel) return; // 既に mount 済み
+    const aside = document.getElementById('dc-inline-editor');
+    if (!aside) return;
+    aside.removeAttribute('hidden');
+    this.inlinePanel = new ControlWindow();
+    this.inlinePanel.mountInline(aside, (shell) =>
+      new InlineControlHost(window, shell, this.windowController),
+    );
+  }
+
+  private unmountInlineEditor(): void {
+    if (!this.inlinePanel) return;
+    this.inlinePanel.destroy(); // ControlHost の購読を全部外す（WindowController.events リーク防止）
+    this.inlinePanel = null;
+    const aside = document.getElementById('dc-inline-editor');
+    if (aside) {
+      aside.setAttribute('hidden', '');
+      aside.innerHTML = '';
+    }
   }
 
   private setupEventListeners(): void {
@@ -126,12 +168,14 @@ export class SketchPageController {
 
     window.removeEventListener('beforeunload', this.beforeUnloadHandler);
     window.removeEventListener('pagehide', this.pagehideHandler);
+    window.removeEventListener('projection-mode-change', this.boundProjectionChange);
 
     if (this.openWindowsTimeout) {
       clearTimeout(this.openWindowsTimeout);
       this.openWindowsTimeout = null;
     }
 
+    this.unmountInlineEditor();
     this.fullscreenManager.destroy();
     this.sketchFrame?.dispose();
     this.sketchFrame = null;

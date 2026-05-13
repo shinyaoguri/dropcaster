@@ -81,4 +81,10 @@ export interface ControlHost {
 
   onSourceVisibilityChange(handler: (hidden: boolean) => void): Unsubscribe;
   onWebglContextChange(handler: (status: WebglContextStatus) => void): Unsubscribe;
+
+  /**
+   * host 自身が抱える window listener や保留中の rAF を片付ける。実装によっては no-op。
+   * ControlWindow.disposeHost() から呼ばれる（route 切替や popout 閉鎖時）。
+   */
+  dispose?(): void;
 }

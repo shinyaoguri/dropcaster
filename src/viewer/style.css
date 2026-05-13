@@ -327,6 +327,27 @@ body {
   cursor: none !important;
 }
 
+/* inline マウントされた ControlPanel のシェル。投影モード中は右側に貼り付く */
+.dc-inline-editor {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(720px, 50vw);
+  height: 100%;
+  z-index: 1500;
+  background: #1a1a1a;
+  border-left: 1px solid #333;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  display: flex;
+}
+.dc-inline-editor[hidden] { display: none; }
+/* フルスクリーン中はエディタを隠す（投影が主役、編集 UI は出ない方が自然） */
+.fullscreen-sketch-container.fullscreen .dc-inline-editor { display: none; }
+/* シェル内の dc-control-shell は inline 用に 100% に追従させる（popout の 100vh 前提を上書き） */
+.dc-inline-editor .dc-control-shell { width: 100%; height: 100%; }
+.dc-inline-editor .dc-control-shell .control-container { height: 100%; }
+
 /* UI要素の統一管理 */
 .ui-element {
   transition: opacity 0.3s ease, pointer-events 0.3s ease;

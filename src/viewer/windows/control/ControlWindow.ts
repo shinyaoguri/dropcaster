@@ -167,14 +167,18 @@ export class ControlWindow extends BaseWindow {
     );
   }
 
-  /** 購読を全部外して host 自体も dispose する。再オープン時／pagehide で呼ぶ。 */
+  /** 購読を全部外して host 自体も dispose する。再オープン時／pagehide／inline 解除で呼ぶ。 */
   private disposeHost(): void {
     this.hostUnsubs.forEach(u => { try { u(); } catch { /* ignore */ } });
     this.hostUnsubs = [];
-    // host は自身の dispose で window listener も外し、保留中 mutation を flush する
-    const h = this.controlHost as PopoutControlHost | null;
-    h?.dispose();
+    // host は自身の dispose で window listener も外し、保留中 mutation を flush する（実装次第で no-op）
+    this.controlHost?.dispose?.();
     this.controlHost = null;
+  }
+
+  /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
+  destroy(): void {
+    this.disposeHost();
   }
 
   protected getContent(): string {
