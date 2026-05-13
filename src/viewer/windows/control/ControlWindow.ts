@@ -742,7 +742,14 @@ export class ControlWindow extends BaseWindow {
         display: flex;
         align-items: center;
         justify-content: center;
-        /* サイズはJavaScriptで動的に設定される */
+        /* キャンバスのアスペクト比は --canvas-aspect として scope に注入される（JS から更新）。
+           aspect-ratio + max-width/height で「コンテナに収まる最大サイズ・アスペクト固定」を実現。
+           親 .source-preview-wrapper は flex 中央寄せなので、letterbox 部分は両端の余白になる。 */
+        aspect-ratio: var(--canvas-aspect, 16 / 9);
+        max-width: 100%;
+        max-height: 100%;
+        width: 100%;
+        height: auto;
       }
       
       #source-video {
@@ -2172,48 +2179,21 @@ export class ControlWindow extends BaseWindow {
     this.updateQuadTransform();
   }
 
+  /**
+   * ソース canvas のアスペクト比を CSS カスタムプロパティ --canvas-aspect として scope に注入する。
+   * .canvas-frame 側で `aspect-ratio: var(--canvas-aspect)` + `max-width/height: 100%` を当てて
+   * いるので、レイアウトとリサイズの追従はブラウザ任せ（カラム幅をドラッグしても比率は固定）。
+   *
+   * 旧実装は wrapper の getBoundingClientRect から frame サイズを毎回 px で算出していたが、
+   * カラムリサイザを足したときに「ドラッグ中に再計算が走らずアスペクト比が崩れる」問題が出るので
+   * CSS aspect-ratio 任せに切り替えた。
+   */
   private updateSourceVideoAspectRatio(): void {
     const scope = this.scopeEl;
     if (!scope) return;
-
-    const canvasFrame = scope.querySelector('.canvas-frame') as HTMLDivElement;
-    const sourcePreviewWrapper = scope.querySelector('.source-preview-wrapper') as HTMLDivElement;
-    
-    if (!canvasFrame || !sourcePreviewWrapper) return;
-    
-    // スケッチCanvasの実際のアスペクト比を取得（ビデオストリームから）
     const canvasWidth = this.videoActualDimensions.width || (this.sourceVideo?.videoWidth) || 1920;
     const canvasHeight = this.videoActualDimensions.height || (this.sourceVideo?.videoHeight) || 1080;
-    
-    if (canvasWidth && canvasHeight) {
-      const canvasAspectRatio = canvasWidth / canvasHeight;
-      
-      // wrapperのサイズを取得
-      const wrapperRect = sourcePreviewWrapper.getBoundingClientRect();
-      const wrapperWidth = wrapperRect.width - 40; // padding: 20px * 2
-      const wrapperHeight = wrapperRect.height - 40; // padding: 20px * 2
-      
-      // アスペクト比を維持しつつ、wrapper内に収まる最大サイズを計算
-      let frameWidth: number;
-      let frameHeight: number;
-      
-      const wrapperAspectRatio = wrapperWidth / wrapperHeight;
-      
-      if (canvasAspectRatio > wrapperAspectRatio) {
-        // Canvasの方が横長の場合、幅を基準に
-        frameWidth = wrapperWidth;
-        frameHeight = frameWidth / canvasAspectRatio;
-      } else {
-        // Canvasの方が縦長または同じ場合、高さを基準に
-        frameHeight = wrapperHeight;
-        frameWidth = frameHeight * canvasAspectRatio;
-      }
-      
-      // canvas-frameのサイズを設定
-      canvasFrame.style.width = `${frameWidth}px`;
-      canvasFrame.style.height = `${frameHeight}px`;
-      canvasFrame.style.maxWidth = '100%';
-      canvasFrame.style.maxHeight = '100%';
-    }
+    if (canvasWidth <= 0 || canvasHeight <= 0) return;
+    scope.style.setProperty('--canvas-aspect', `${canvasWidth} / ${canvasHeight}`);
   }
 }
