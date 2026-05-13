@@ -396,20 +396,23 @@ export class ControlWindow extends BaseWindow {
       }
 
       .tool-column {
-        width: 250px;
-        min-width: 200px;
-        max-width: 300px;
+        width: 280px;
+        min-width: 240px;
+        max-width: 340px;
         background: #222;
+        overflow-y: auto;
       }
 
+      /* ソース選択（左ペイン）と warp 後プレビュー（右ペイン）は均等 flex で広げる。
+         全画面エディタになったので、3 列ともゆとりのある幅で表示される。 */
       .source-column {
-        flex: 1;
-        min-width: 300px;
+        flex: 1 1 0;
+        min-width: 360px;
       }
 
       .mapping-column {
-        flex: 1;
-        min-width: 300px;
+        flex: 1 1 0;
+        min-width: 360px;
       }
 
       .column-header {
@@ -1064,11 +1067,22 @@ export class ControlWindow extends BaseWindow {
         cursor: w-resize;
       }
 
-      /* レスポンシブ対応 */
+      /* レスポンシブ対応：横幅が足りないときは tool 列を絞る。それでも足りないときは
+         スクロール（control-container は flex なので各列が min-width 維持） */
+      @media (max-width: 1100px) {
+        .tool-column {
+          width: 220px;
+          min-width: 200px;
+        }
+      }
       @media (max-width: 900px) {
         .tool-column {
           width: 200px;
-          min-width: 150px;
+          min-width: 180px;
+          max-width: 220px;
+        }
+        .source-column, .mapping-column {
+          min-width: 300px;
         }
       }
     }`;

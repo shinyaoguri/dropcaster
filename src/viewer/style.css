@@ -327,23 +327,30 @@ body {
   cursor: none !important;
 }
 
-/* inline マウントされた ControlPanel のシェル。投影モード中は右側に貼り付く */
+/*
+ * inline マウントされた ControlPanel のシェル。投影モード中はコンテナ全面を占有し、
+ * 3 カラム（ツール／ソース／マッピング）に十分な幅を渡す。
+ *
+ * メインのスケッチ iframe は背後で動き続けて captureStream のソースになっているが、
+ * 視覚的にはエディタが完全に覆う。スケッチの「いまの絵」はエディタ中央の
+ * #source-video（受信側）でプレビューできているので、メイン側の見え方は不要。
+ */
 .dc-inline-editor {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: min(720px, 50vw);
-  height: 100%;
+  inset: 0;
   z-index: 1500;
   background: #1a1a1a;
-  border-left: 1px solid #333;
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.4);
   overflow: hidden;
   display: flex;
 }
 .dc-inline-editor[hidden] { display: none; }
-/* フルスクリーン中はエディタを隠す（投影が主役、編集 UI は出ない方が自然） */
+/* メインウィンドウ自体をフルスクリーン化したときはエディタは出さない（投影確認モード） */
 .fullscreen-sketch-container.fullscreen .dc-inline-editor { display: none; }
+/* エディタ表示中はメインのクロップ枠オーバーレイは重複なので隠す（編集はエディタ内で行う） */
+.fullscreen-sketch-container .dc-inline-editor:not([hidden]) ~ .iframe-content-overlay,
+.fullscreen-sketch-container:has(.dc-inline-editor:not([hidden])) .iframe-content-overlay {
+  display: none;
+}
 /* シェル内の dc-control-shell は inline 用に 100% に追従させる（popout の 100vh 前提を上書き） */
 .dc-inline-editor .dc-control-shell { width: 100%; height: 100%; }
 .dc-inline-editor .dc-control-shell .control-container { height: 100%; }
