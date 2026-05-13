@@ -378,6 +378,7 @@ export class WindowController {
         return false;
       }
       this.trackStream(stream);
+      this.attachTrackSurvivalMonitor(stream);
 
       this.videoActualDimensions = {
         width: canvas.width || 1920,
@@ -390,6 +391,43 @@ export class WindowController {
       console.error('WindowController: Canvas streaming開始エラー:', error);
       return false;
     }
+  }
+
+  /**
+   * 元 <canvas> が差し替わったり、解放されたりすると captureStream のトラックは
+   * 'ended' に落ちて、出力ウィンドウの <video> はその場で凍結する（無音で死ぬ）。
+   * track の 'ended' を拾って、テストパターン中でなく source iframe が生きていれば
+   * 自動でキャプチャをやり直す。stopCanvasCapture() による意図的停止はループしないよう、
+   * 停止前にハンドラを外す（cleanup する側の責務）。
+   */
+  private attachTrackSurvivalMonitor(stream: MediaStream): void {
+    const onLost = () => {
+      // 既に別 stream に差し替わっていたら無視
+      if (!this.activeStreams.includes(stream)) return;
+      // テストパターン表示中はテスト側がトラックを管理しているので関与しない
+      if (this.testPatternKind !== 'off') return;
+      if (!this.currentSourceIframe) return;
+      console.warn('WindowController: ソースキャプチャの track が終了 — 自動再キャプチャ');
+      this.scheduleRecapture();
+    };
+    stream.getVideoTracks().forEach((track) => {
+      // on* プロパティで登録（stopCanvasCapture で = null してまとめて潰せるようにするため）。
+      // 'mute' は一時的だが、長く続くと事実上フリーズと同じ。再キャプチャで復帰する見込み。
+      track.onended = onLost;
+      track.onmute = onLost;
+    });
+  }
+
+  private recaptureTimer: number | null = null;
+  /** track ended の通知が同時に複数飛んでくることがあるので、まとめて 1 回だけ再キャプチャする。 */
+  private scheduleRecapture(): void {
+    if (this.recaptureTimer !== null) return;
+    this.recaptureTimer = window.setTimeout(() => {
+      this.recaptureTimer = null;
+      if (!this.currentSourceIframe || this.testPatternKind !== 'off') return;
+      this.stopCanvasCapture();
+      this.captureFromSource();
+    }, 100);
   }
 
   /**
@@ -602,9 +640,20 @@ export class WindowController {
     this.canvasResizeObserver = null;
     this.canvasMutationObserver?.disconnect();
     this.canvasMutationObserver = null;
+    // 自動再キャプチャの予約は意図的停止で確実にキャンセル（再開ループの防止）
+    if (this.recaptureTimer !== null) {
+      clearTimeout(this.recaptureTimer);
+      this.recaptureTimer = null;
+    }
 
     this.activeStreams.forEach(stream => {
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach(track => {
+        // track.stop() は ended を発火する。survival monitor をループさせないために
+        // 先にハンドラを潰してから停止する。
+        track.onended = null;
+        track.onmute = null;
+        track.stop();
+      });
     });
     this.activeStreams = [];
   }
