@@ -105,14 +105,19 @@ export class ControlWindow extends BaseWindow {
     this.render();
     // ControlHost を構築（環境依存 I/O をここに閉じ込める）。BaseWindow.getParentWindow() は
     // window.opener が生きていればそれを返すので、popout 起動直後でも親窓を渡せる。
+    // host は render() が生成した .dc-control-shell（body 直下の wrapper）。これにスコープを
+    // 閉じ込めることで、後で main にマウントしたとき main 側 DOM と id 衝突しないようにする。
     if (this.window) {
       this.disposeHost(); // 再オープン時の前回 host を確実に剥がす
-      this.controlHost = new PopoutControlHost(
-        this.window,
-        this.window.document.body,
-        this.getParentWindow(),
-      );
-      this.setupHostSubscriptions();
+      const shell = this.window.document.querySelector('.dc-control-shell') as HTMLElement | null;
+      if (shell) {
+        this.controlHost = new PopoutControlHost(
+          this.window,
+          shell,
+          this.getParentWindow(),
+        );
+        this.setupHostSubscriptions();
+      }
     }
     this.setupControls();
     this.setupMessageListener();
@@ -148,7 +153,12 @@ export class ControlWindow extends BaseWindow {
   }
 
   protected getContent(): string {
+    // すべての要素を .dc-control-shell の subtree に閉じ込めるための wrapper。
+    // 内部の selector を後段で @scope (.dc-control-shell) や明示 prefix で
+    // スコープ化したとき、main にマウントしても main の CSS と干渉しないようにする。
+    // Step 1 では wrapper だけ用意し、CSS 本体の prefix は Step 2 で必要に応じて行う。
     return `
+      <div class="dc-control-shell">
       <div id="dc-source-hidden-banner" class="dc-banner" hidden role="status">
         <span class="dc-banner-icon">⚠</span>
         <span class="dc-banner-text">
@@ -315,6 +325,7 @@ export class ControlWindow extends BaseWindow {
             </div>
           </div>
         </div>
+      </div>
       </div>
     `;
   }
