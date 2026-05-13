@@ -1,15 +1,11 @@
 /**
- * main 内ペインへインライン配置された ControlWindow が依存する ControlHost 実装。
+ * main 内ペインへインライン配置された ControlWindow が依存する ControlHost 実装（唯一の実装）。
  *
- * popout 版（PopoutControlHost）が postMessage で親窓と話していたのに対し、こちらは
  * 同一プロセスで動く WindowController を直接呼ぶ／購読する。state の真の保持者は
  * WindowController なので、このクラスは「pass-through なルータ」に近い:
  *
  *   - state-mutation 系（emitStateMutation / requestTestPattern）→ WindowController のメソッド呼び出し
  *   - state-update 系（onStateChange / onTestPatternChange / …）→ WindowController.events.* を購読
- *
- * Step 2 では popout の PopoutControlHost と並走することで、両方の UI が同じ canonical state を
- * 鏡像化する状態を作る（A/B 検証用）。Step 3 で popout を撤去すると、これが唯一の host になる。
  */
 
 import { type MappingsState } from '../../utils/mappingTransform';

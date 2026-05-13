@@ -1,14 +1,11 @@
 /**
  * ControlWindow（マッピング操作 UI）が、自分の置かれている環境から状態を読み取り
- * 変更を通知するための seam。これを抽象化することで、同じ UI コードを
- *  - 現状の popout（postMessage で main と双方向）
- *  - 将来の main 内ペイン（main の WindowController と直接やり取り）
- * の両方でホストできるようになる。
+ * 変更を通知するための seam。現状の唯一の実装は InlineControlHost（main 内ペインとして
+ * mount された ControlWindow が、同一プロセスの WindowController.events を購読／呼び出す）。
  *
- * Step 1: インターフェースを定義（このファイル）。実装と UI 側の対応は段階的に進める。
- *   - Step 1a: ControlWindow を popout のまま、PopoutControlHost を経由するように書き換える
- *   - Step 2: main 側に InlineControlHost を実装し、popout と並走可能にする
- *   - Step 3: popout を撤去
+ * 過去（〜2026-05）には PopoutControlHost という popout 用実装が並走していたが、
+ * Step 3 で popout 自体が撤去されたため削除済み。インターフェースの形は、将来また
+ * 別の host 環境（例: WebView 越しの remote control）を足したくなった時の足場として残す。
  */
 
 import type { TestPatternKind } from '../../runtime/TestPatternSource';
@@ -38,12 +35,10 @@ export type Unsubscribe = () => void;
 
 /**
  * ControlHost: マッピング操作 UI（mapping list, source crop, quad handles, test pattern, ...）が
- * 依存する「外の世界」をまとめた口。すべてのインタラクションはこのインターフェース経由で行うこと
- * （`this.window.opener.postMessage` のような直接アクセスをコード中に残さない）。
+ * 依存する「外の世界」をまとめた口。すべてのインタラクションはこのインターフェース経由で行うこと。
  *
- * popout 実装と inline 実装の差はここに閉じ込められる:
- *   - popout: 親へ postMessage、親からの message を購読する PopoutControlHost
- *   - inline: WindowController のメソッドを直接呼ぶ／state event を直接購読する InlineControlHost
+ * いまの唯一の実装は InlineControlHost — main 内ペインの ControlWindow が、同一プロセスの
+ * WindowController を直接呼ぶ／events.* を購読する。
  */
 export interface ControlHost {
   /** パネルが DOM を生やすホスト要素（popout: body 直下／inline: メインの dc-editor 領域）。 */

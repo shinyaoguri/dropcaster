@@ -29,7 +29,6 @@ import type {
   VideoDimensions,
   WebglContextStatus,
 } from './ControlHost';
-import { PopoutControlHost } from './PopoutControlHost';
 
 export class ControlWindow extends BaseWindow {
   private sourceVideo: HTMLVideoElement | null = null;
@@ -100,22 +99,12 @@ export class ControlWindow extends BaseWindow {
     super('control_window', '統合操作ウィンドウ');
   }
 
-  // -- 起動経路は2つ：popout (initialize 経由)、inline (mountInline 経由)。
-  //    どちらも最終的に mount(host) に集約する。
-
-  /** popout 起動：BaseWindow.setWindow() から呼ばれる。 */
+  /**
+   * BaseWindow.setWindow() から呼ばれる popout 起動経路は廃止された
+   * （control は inline マウント専用）。誤って popout 経由で起動した場合に備えた no-op。
+   */
   protected initialize(): void {
-    this.resizeRafId = null;
-    this.render(); // BaseWindow: body.innerHTML = getContent(); setupStyles()
-    if (!this.window) return;
-    // popout の body 自身に最低限のレイアウト指定を inline で入れる。
-    // CSS 側は @scope (.dc-control-shell) で囲っているため body セレクタは
-    // どちらの環境でも発火しない（inline マウント時に main の body へ漏れない代わりに、
-    // popout でも body にスタイルが効かない）。ここで明示的に上書きしてバランスを取る。
-    this.window.document.body.style.cssText = 'margin:0;padding:0;overflow:hidden;background:#1a1a1a;';
-    const shell = this.window.document.querySelector('.dc-control-shell') as HTMLElement | null;
-    if (!shell) return;
-    this.mount(new PopoutControlHost(this.window, shell, this.getParentWindow()));
+    console.warn('ControlWindow: popout 起動は廃止されました。mountInline() を使ってください');
   }
 
   /**
@@ -172,11 +161,11 @@ export class ControlWindow extends BaseWindow {
     );
   }
 
-  /** 購読を全部外して host 自体も dispose する。再オープン時／pagehide／inline 解除で呼ぶ。 */
+  /** 購読を全部外して host 自体も dispose する。inline 解除時に呼ぶ。 */
   private disposeHost(): void {
     this.hostUnsubs.forEach(u => { try { u(); } catch { /* ignore */ } });
     this.hostUnsubs = [];
-    // host は自身の dispose で window listener も外し、保留中 mutation を flush する（実装次第で no-op）
+    // host 実装が listener を抱えていれば外す（InlineControlHost は no-op）
     this.controlHost?.dispose?.();
     this.controlHost = null;
   }
@@ -1904,18 +1893,15 @@ export class ControlWindow extends BaseWindow {
   }
 
   /**
-   * window スコープのイベント（resize / pagehide）だけを張る。
-   * 親からの postMessage 系の購読は controlHost が引き受け、setupHostSubscriptions() で
-   * イベントハンドラへ橋渡しする。
-   *
-   * host の window を見るので、popout なら popout の resize、inline なら main の resize に
-   * 反応する（どちらでも「描画レイアウトの拠り所が変わった」シグナルとして妥当）。
+   * window スコープのイベント（resize / pagehide）を張る。
+   * host の window は main の window（inline マウント）。state 系の購読は
+   * controlHost が引き受け setupHostSubscriptions() でイベントハンドラへ橋渡しする。
    */
   private setupMessageListener(): void {
     const win = this.controlHost?.window;
     if (!win) return;
 
-    // 操作ウィンドウのリサイズ時にアスペクト比とホモグラフィー行列を再計算（1 フレーム 1 回に間引く）
+    // ウィンドウリサイズ時にアスペクト比とホモグラフィー行列を再計算（1 フレーム 1 回に間引く）
     win.addEventListener('resize', () => {
       if (this.resizeRafId !== null) return;
       this.resizeRafId = win.requestAnimationFrame(() => {
@@ -1925,9 +1911,7 @@ export class ControlWindow extends BaseWindow {
       });
     });
 
-    // ウィンドウが閉じられる直前に、host の保留中 mutation を確実に flush する。
-    // PopoutControlHost も自分で pagehide を捕まえているが、ここでも明示 dispose して
-    // 二重に Listener を残さないようにする（ControlWindow 再オープン時の保険）。
+    // タブを閉じる直前に host 購読を畳む
     win.addEventListener('pagehide', () => this.disposeHost());
   }
 
