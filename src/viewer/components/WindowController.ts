@@ -8,6 +8,7 @@ import {
   type MappingsState,
 } from '../utils/mappingTransform';
 import { ScreenWakeLock } from '../utils/wakeLock';
+import { SilentKeepAlive } from '../utils/silentKeepAlive';
 
 const STATE_STORAGE_KEY = 'dropcaster.mappings.v1';
 const SAVE_DEBOUNCE_MS = 250;
@@ -46,6 +47,8 @@ export class WindowController {
   private testPatternKind: TestPatternKind | 'off' = 'off';
   /** メインウィンドウ側の Screen Wake Lock（プロジェクション中はディスプレイをスリープさせない）。 */
   private wakeLock: ScreenWakeLock = new ScreenWakeLock(window);
+  /** 無音オーディオの keepalive（Memory Saver / タイマー絞り対策。完全不可視時の rAF は救えない）。 */
+  private keepAlive: SilentKeepAlive = new SilentKeepAlive();
   /** プロジェクション中の「ソースウィンドウ（このメインウィンドウ）が hidden」を ControlWindow に通知中か。 */
   private visibilityWatchActive = false;
   private boundVisibilityChange = () => this.notifySourceVisibility();
@@ -341,6 +344,10 @@ export class WindowController {
     // プロジェクション中はメインウィンドウ側のディスプレイをスリープさせない。
     // 出力ウィンドウ側は OutputWindow が自分で wake lock を取る。
     void this.wakeLock.acquire();
+    // タブのバックグラウンド絞り込み（タイマー throttling、Memory Saver による
+    // discard、freeze など）を抑止する無音 keepalive。startCanvasStreaming 自体が
+    // 「ウィンドウを開く」ボタンクリックを起点に呼ばれるのでユーザジェスチャ内。
+    this.keepAlive.start();
     this.setProjectionMode(true);
   }
 
@@ -619,6 +626,7 @@ export class WindowController {
 
     // プロジェクションモードを解除
     this.wakeLock.release();
+    this.keepAlive.stop();
     this.setProjectionMode(false);
   }
 
@@ -632,6 +640,7 @@ export class WindowController {
     window.removeEventListener('pagehide', this.flushSaveHandler);
     this.flushSave(); // デバウンス中の保存があれば確定
     this.wakeLock.release();
+    this.keepAlive.stop();
     this.closeAllWindows();
     this.testPattern?.dispose();
     this.testPattern = null;
