@@ -21,6 +21,14 @@ import {
   type MappingsState,
   type SourceRect,
 } from '../../utils/mappingTransform';
+import type {
+  ControlHost,
+  OutputBoundsSnapshot,
+  TestPatternKindOrOff,
+  Unsubscribe,
+  VideoDimensions,
+  WebglContextStatus,
+} from './ControlHost';
 
 export class ControlWindow extends BaseWindow {
   private sourceVideo: HTMLVideoElement | null = null;
@@ -42,10 +50,24 @@ export class ControlWindow extends BaseWindow {
   private outputBounds = { innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false };
   /** 矢印キーで微調整する対象（quad の隅 / ソース矩形）。null = 未選択。 */
   private keyboardSelection: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null = null;
-  /** state-mutation 送信を 1 フレームに 1 回へ間引くための rAF id（null = 予約なし）。 */
-  private mutationRafId: number | null = null;
+  /** マッピング領域（#mapping-area）の寸法変化を見張る observer。カラムリサイザのドラッグや
+   *  ウィンドウサイズ変更に応じて matrix3d を再計算するために使う。 */
+  private mappingAreaObserver: ResizeObserver | null = null;
+  private mappingAreaResizeRafId: number | null = null;
   /** ウィンドウ resize 由来の再レイアウトを 1 フレームに 1 回へ間引くための rAF id。 */
   private resizeRafId: number | null = null;
+  /** 環境（popout / 将来的に main 内ペイン）依存の I/O を集約した seam。null = 未初期化。 */
+  private controlHost: ControlHost | null = null;
+  /** host のイベント購読解除関数。dispose で全部呼ぶ。 */
+  private hostUnsubs: Unsubscribe[] = [];
+
+  /**
+   * id / class ベースの DOM 探索はすべてこの要素配下で行う（popout: body、inline: 指定要素）。
+   * main 内に持っていったとき main 側の id と衝突しないようにするための seam。null = 未初期化。
+   */
+  private get scopeEl(): HTMLElement | null {
+    return this.controlHost?.host ?? null;
+  }
 
   // canonical state は親 (WindowController) が保持。これは mirror。
   // ローカル UI 操作では optimistic に書き換えて即座に state-mutation を送る。
@@ -81,10 +103,34 @@ export class ControlWindow extends BaseWindow {
     super('control_window', '統合操作ウィンドウ');
   }
 
+  /**
+   * BaseWindow.setWindow() から呼ばれる popout 起動経路は廃止された
+   * （control は inline マウント専用）。誤って popout 経由で起動した場合に備えた no-op。
+   */
   protected initialize(): void {
-    this.mutationRafId = null; // 再オープン時に旧ウィンドウの stale な rAF id を持ち越さない
+    console.warn('ControlWindow: popout 起動は廃止されました。mountInline() を使ってください');
+  }
+
+  /**
+   * inline 起動：main 内ペインとしてマウントする。
+   * outer は <aside> 等のマウント先要素。中身は getContent() で差し替えられ、
+   * ControlHost は呼び出し側が hostBuilder で組み立てる（InlineControlHost を渡す想定）。
+   * outer の ownerDocument の head に CSS を 1 度だけ注入する。
+   */
+  mountInline(outer: HTMLElement, hostBuilder: (shell: HTMLElement) => ControlHost): void {
     this.resizeRafId = null;
-    this.render();
+    outer.innerHTML = this.getContent();
+    this.injectStylesInto(outer.ownerDocument);
+    const shell = outer.querySelector('.dc-control-shell') as HTMLElement | null;
+    if (!shell) return;
+    this.mount(hostBuilder(shell));
+  }
+
+  /** popout / inline 共通：host 確定後のセットアップを行う。 */
+  private mount(host: ControlHost): void {
+    this.disposeHost(); // 既存 host があれば確実に剥がす
+    this.controlHost = host;
+    this.setupHostSubscriptions();
     this.setupControls();
     this.setupMessageListener();
     // 初期化時にアスペクト比を設定（出力ウィンドウの寸法は WindowController から後で push される）
@@ -94,15 +140,58 @@ export class ControlWindow extends BaseWindow {
     }, 100);
   }
 
+  /** CSS を host の owner document へ 1 度だけ注入する（inline 起動用）。重複注入を防ぐ。 */
+  private static injectedDocs = new WeakSet<Document>();
+  private injectStylesInto(doc: Document): void {
+    if (ControlWindow.injectedDocs.has(doc)) return;
+    ControlWindow.injectedDocs.add(doc);
+    const style = doc.createElement('style');
+    style.textContent = this.getStyles();
+    style.setAttribute('data-dropcaster', 'control-panel');
+    doc.head.appendChild(style);
+  }
+
+  /** ControlHost の各イベントを購読し、対応する UI 更新メソッドへ転送する。 */
+  private setupHostSubscriptions(): void {
+    const h = this.controlHost;
+    if (!h) return;
+    this.hostUnsubs.push(
+      h.onStateChange((s: MappingsState) => this.handleStateUpdate(s)),
+      h.onVideoDimensionsChange((d: VideoDimensions) => this.handleVideoDimensionsUpdate(d)),
+      h.onOutputBoundsChange((b: OutputBoundsSnapshot) => this.handleOutputBoundsUpdate(b)),
+      h.onTestPatternChange((k: TestPatternKindOrOff) => this.updateTestPatternUI(k)),
+      h.onWebglContextChange((status: WebglContextStatus) => this.updateWebglContextBanner(status)),
+    );
+  }
+
+  /** 購読を全部外して host 自体も dispose する。inline 解除時に呼ぶ。 */
+  private disposeHost(): void {
+    this.hostUnsubs.forEach(u => { try { u(); } catch { /* ignore */ } });
+    this.hostUnsubs = [];
+    // host 実装が listener を抱えていれば外す（InlineControlHost は no-op）
+    this.controlHost?.dispose?.();
+    this.controlHost = null;
+    // マッピング領域の ResizeObserver も解除
+    this.mappingAreaObserver?.disconnect();
+    this.mappingAreaObserver = null;
+    if (this.mappingAreaResizeRafId !== null) {
+      cancelAnimationFrame(this.mappingAreaResizeRafId);
+      this.mappingAreaResizeRafId = null;
+    }
+  }
+
+  /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
+  destroy(): void {
+    this.disposeHost();
+  }
+
   protected getContent(): string {
+    // すべての要素を .dc-control-shell の subtree に閉じ込めるための wrapper。
+    // 内部の selector を後段で @scope (.dc-control-shell) や明示 prefix で
+    // スコープ化したとき、main にマウントしても main の CSS と干渉しないようにする。
+    // Step 1 では wrapper だけ用意し、CSS 本体の prefix は Step 2 で必要に応じて行う。
     return `
-      <div id="dc-source-hidden-banner" class="dc-banner" hidden role="status">
-        <span class="dc-banner-icon">⚠</span>
-        <span class="dc-banner-text">
-          ソースウィンドウ（dropcaster 本体タブ）が隠れています。<br>
-          このままだとスケッチが止まり、プロジェクションがフリーズします。前面に戻してください。
-        </span>
-      </div>
+      <div class="dc-control-shell">
       <div id="dc-webgl-lost-banner" class="dc-banner dc-banner-warn" hidden role="status">
         <span class="dc-banner-icon">⚠</span>
         <span class="dc-banner-text">
@@ -112,7 +201,7 @@ export class ControlWindow extends BaseWindow {
       </div>
       <div class="control-container">
         <!-- ツールカラム -->
-        <div class="column tool-column">
+        <div class="column tool-column" data-resize-target="tool">
           <div class="column-header">
             <h2>ツール</h2>
           </div>
@@ -187,8 +276,11 @@ export class ControlWindow extends BaseWindow {
           </div>
         </div>
 
+        <!-- tool ↔ source の区切りリサイザ -->
+        <div class="dc-column-resizer" data-resize-edge="tool" title="ドラッグでツールカラムの幅を変更" aria-hidden="true"></div>
+
         <!-- ソースカラム -->
-        <div class="column source-column">
+        <div class="column source-column" data-resize-target="source">
           <div class="column-header">
             <h2>ソース選択</h2>
           </div>
@@ -214,6 +306,9 @@ export class ControlWindow extends BaseWindow {
             </div>
           </div>
         </div>
+
+        <!-- source ↔ mapping の区切りリサイザ -->
+        <div class="dc-column-resizer" data-resize-edge="source" title="ドラッグでソース／マッピング欄の比率を変更" aria-hidden="true"></div>
 
         <!-- マッピングカラム -->
         <div class="column mapping-column">
@@ -263,16 +358,20 @@ export class ControlWindow extends BaseWindow {
           </div>
         </div>
       </div>
+      </div>
     `;
   }
 
   protected getStyles(): string {
-    return super.getStyles() + `
-      body {
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-      }
+    // すべてのスタイルを @scope (.dc-control-shell) で囲って、main にインライン
+    // マウントしたときに main 側 DOM へスタイルが漏れないようにする。@scope 内では
+    // body セレクタは（body が shell の祖先なので）マッチしない。popout の body
+    // レイアウトは initialize() で inline style として直接当てる。
+    //
+    // BaseWindow.getStyles() の generic ルール（h1, button, .window-container 等）も
+    // @scope 配下に閉じ込められるので main の同名要素には影響しない。
+    return `@scope (.dc-control-shell) {
+      ${super.getStyles()}
 
       /* ソースウィンドウが hidden になったときの警告バナー（B 対応） */
       .dc-banner {
@@ -292,8 +391,7 @@ export class ControlWindow extends BaseWindow {
       .dc-banner[hidden] { display: none; }
       .dc-banner .dc-banner-icon { font-size: 18px; flex: 0 0 auto; }
       .dc-banner .dc-banner-text { flex: 1 1 auto; }
-      /* もう片方の警告（WebGL ロスト等）が同時に出たときに重ねず縦に並べるためのオフセット */
-      #dc-webgl-lost-banner { top: 44px; background: #ca8a04; }
+      #dc-webgl-lost-banner { background: #ca8a04; }
 
       .control-container {
         display: flex;
@@ -315,21 +413,41 @@ export class ControlWindow extends BaseWindow {
       }
 
       .tool-column {
-        width: 250px;
-        min-width: 200px;
-        max-width: 300px;
+        width: 280px;
+        min-width: 240px;
+        max-width: 340px;
         background: #222;
+        overflow-y: auto;
       }
 
+      /* ソース選択（左ペイン）と warp 後プレビュー（右ペイン）は均等 flex で広げる。
+         全画面エディタになったので、3 列ともゆとりのある幅で表示される。 */
       .source-column {
-        flex: 1;
-        min-width: 300px;
+        flex: 1 1 0;
+        min-width: 360px;
       }
 
       .mapping-column {
-        flex: 1;
-        min-width: 300px;
+        flex: 1 1 0;
+        min-width: 360px;
       }
+
+      /* カラム間のドラッグリサイザ。control-container の flex 行の中に薄く入る。 */
+      .dc-column-resizer {
+        flex: 0 0 auto;
+        width: 6px;
+        background: #2a2a2a;
+        border-left: 1px solid #444;
+        border-right: 1px solid #444;
+        cursor: col-resize;
+        transition: background 0.12s ease;
+        user-select: none;
+        touch-action: none;
+      }
+      .dc-column-resizer:hover { background: #3b82f6; }
+      .dc-column-resizer.dragging { background: #2563eb; }
+      /* ドラッグ中は cursor とテキスト選択を本体側で抑止する（CSS の @scope 外では
+         body セレクタが使えないため、JS で body.style を直書きして対応） */
 
       .column-header {
         padding: 15px;
@@ -635,7 +753,14 @@ export class ControlWindow extends BaseWindow {
         display: flex;
         align-items: center;
         justify-content: center;
-        /* サイズはJavaScriptで動的に設定される */
+        /* キャンバスのアスペクト比は --canvas-aspect として scope に注入される（JS から更新）。
+           aspect-ratio + max-width/height で「コンテナに収まる最大サイズ・アスペクト固定」を実現。
+           親 .source-preview-wrapper は flex 中央寄せなので、letterbox 部分は両端の余白になる。 */
+        aspect-ratio: var(--canvas-aspect, 16 / 9);
+        max-width: 100%;
+        max-height: 100%;
+        width: 100%;
+        height: auto;
       }
       
       #source-video {
@@ -983,14 +1108,25 @@ export class ControlWindow extends BaseWindow {
         cursor: w-resize;
       }
 
-      /* レスポンシブ対応 */
+      /* レスポンシブ対応：横幅が足りないときは tool 列を絞る。それでも足りないときは
+         スクロール（control-container は flex なので各列が min-width 維持） */
+      @media (max-width: 1100px) {
+        .tool-column {
+          width: 220px;
+          min-width: 200px;
+        }
+      }
       @media (max-width: 900px) {
         .tool-column {
           width: 200px;
-          min-width: 150px;
+          min-width: 180px;
+          max-width: 220px;
+        }
+        .source-column, .mapping-column {
+          min-width: 300px;
         }
       }
-    `;
+    }`;
   }
 
   protected setupEventListeners(): void {
@@ -998,16 +1134,15 @@ export class ControlWindow extends BaseWindow {
   }
 
   private setupControls(): void {
-    if (!this.window) return;
+    const scope = this.scopeEl;
+    if (!scope) return;
 
-    const doc = this.window.document;
-    
-    // ビデオ要素を取得
-    this.sourceVideo = doc.getElementById('source-video') as HTMLVideoElement;
-    this.mappingVideo = doc.getElementById('mapping-video') as HTMLVideoElement;
-    this.croppedContainer = doc.getElementById('cropped-container') as HTMLDivElement;
-    this.croppedVideo = doc.getElementById('cropped-video') as HTMLVideoElement;
-    this.selectionBox = doc.getElementById('selection-box') as HTMLDivElement;
+    // ビデオ要素を取得（scope は ControlHost.host：popout body もしくは inline マウント先要素）
+    this.sourceVideo = scope.querySelector('#source-video') as HTMLVideoElement;
+    this.mappingVideo = scope.querySelector('#mapping-video') as HTMLVideoElement;
+    this.croppedContainer = scope.querySelector('#cropped-container') as HTMLDivElement;
+    this.croppedVideo = scope.querySelector('#cropped-video') as HTMLVideoElement;
+    this.selectionBox = scope.querySelector('#selection-box') as HTMLDivElement;
 
     // sourceVideoのメタデータ読み込み時にアスペクト比を更新し、
     // すでに作成済みの非アクティブプレビュー video にも stream を bind する
@@ -1024,18 +1159,116 @@ export class ControlWindow extends BaseWindow {
 
     // ソース選択ボックスの設定
     this.setupSelectionBox();
-    
+
     // マッピング領域の設定
     this.setupMappingArea();
-    
+
     // ツールボタンの設定
     this.setupToolButtons();
 
     // 矢印キーによる微調整
     this.setupKeyboardNudge();
 
+    // カラム間のドラッグリサイザ（前回保存幅の復元含む）
+    this.setupColumnResizers();
+
     // 初期値を更新
     this.updateToolValues();
+  }
+
+  /**
+   * 3 カラム（tool / source / mapping）の間に置かれた .dc-column-resizer を
+   * マウスでドラッグして幅を調整できるようにする。
+   *   - tool 側リサイザ: tool-column の width を直接書き換える（min/max は CSS でクランプ）。
+   *     source・mapping は flex で残りを分け合う。
+   *   - source 側リサイザ: source-column の flex-basis を書き換えて、source vs mapping の
+   *     比率を変える。mapping は flex 維持で残りを取る。
+   *
+   * ユーザの設定は localStorage に保存し、次回マウント時に復元する。
+   */
+  private setupColumnResizers(): void {
+    const scope = this.scopeEl;
+    const doc = this.hostDoc;
+    if (!scope || !doc) return;
+
+    const toolCol  = scope.querySelector<HTMLElement>('.tool-column');
+    const sourceCol = scope.querySelector<HTMLElement>('.source-column');
+    const mappingCol = scope.querySelector<HTMLElement>('.mapping-column');
+    if (!toolCol || !sourceCol || !mappingCol) return;
+
+    // localStorage から前回の幅を復元
+    this.restoreColumnWidths(toolCol, sourceCol);
+
+    const resizers = scope.querySelectorAll<HTMLElement>('.dc-column-resizer');
+    resizers.forEach(resizer => {
+      const edge = resizer.dataset.resizeEdge; // 'tool' or 'source'
+      if (edge !== 'tool' && edge !== 'source') return;
+
+      resizer.addEventListener('mousedown', (e: MouseEvent) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startToolW = toolCol.getBoundingClientRect().width;
+        const startSourceW = sourceCol.getBoundingClientRect().width;
+        resizer.classList.add('dragging');
+        const prevCursor = doc.body.style.cursor;
+        const prevUserSelect = doc.body.style.userSelect;
+        doc.body.style.cursor = 'col-resize';
+        doc.body.style.userSelect = 'none';
+
+        const onMove = (ev: MouseEvent) => {
+          const dx = ev.clientX - startX;
+          if (edge === 'tool') {
+            // tool-column の幅を直接変更（CSS の min/max にクランプされる）
+            toolCol.style.width = `${Math.max(180, startToolW + dx)}px`;
+          } else {
+            // source-column を「固定 width で flex-basis に展開」して、source vs mapping の比率を決める。
+            // mapping-column は flex:1 のまま残りを取る。
+            const nextSourceW = Math.max(280, startSourceW + dx);
+            sourceCol.style.flex = '0 0 auto';
+            sourceCol.style.width = `${nextSourceW}px`;
+          }
+        };
+
+        const onUp = () => {
+          resizer.classList.remove('dragging');
+          doc.body.style.cursor = prevCursor;
+          doc.body.style.userSelect = prevUserSelect;
+          doc.removeEventListener('mousemove', onMove);
+          doc.removeEventListener('mouseup', onUp);
+          this.persistColumnWidths(toolCol, sourceCol);
+        };
+
+        doc.addEventListener('mousemove', onMove);
+        doc.addEventListener('mouseup', onUp);
+      });
+    });
+  }
+
+  /** カラム幅を localStorage に保存（key: dropcaster.control.columnWidths.v1）。 */
+  private persistColumnWidths(toolCol: HTMLElement, sourceCol: HTMLElement): void {
+    try {
+      const payload = {
+        tool: toolCol.getBoundingClientRect().width,
+        source: sourceCol.getBoundingClientRect().width,
+      };
+      localStorage.setItem('dropcaster.control.columnWidths.v1', JSON.stringify(payload));
+    } catch { /* ignore quota / private mode */ }
+  }
+
+  /** localStorage から前回保存した幅を復元（無ければ何もしない）。 */
+  private restoreColumnWidths(toolCol: HTMLElement, sourceCol: HTMLElement): void {
+    try {
+      const raw = localStorage.getItem('dropcaster.control.columnWidths.v1');
+      if (!raw) return;
+      const data = JSON.parse(raw) as { tool?: number; source?: number };
+      if (typeof data.tool === 'number' && data.tool > 0) {
+        toolCol.style.width = `${data.tool}px`;
+      }
+      if (typeof data.source === 'number' && data.source > 0) {
+        sourceCol.style.flex = '0 0 auto';
+        sourceCol.style.width = `${data.source}px`;
+      }
+    } catch { /* ignore parse error */ }
   }
 
   private setupSelectionBox(): void {
@@ -1063,28 +1296,54 @@ export class ControlWindow extends BaseWindow {
     // 初期位置を設定
     this.updateQuadTransform();
 
+    // #mapping-area の寸法変化を監視して matrix3d を再計算する。カラム間ドラッグリサイザでの
+    // 幅変更に追従させるため。matrix3d は親の getBoundingClientRect ベースで毎回計算するので、
+    // ピクセル寸法が変わったらやり直さないと warp が静止したまま %ベースのハンドル位置だけ
+    // ずれて見える（user 報告: ハンドル位置が同期されない）。
+    this.observeMappingAreaResize();
+
     // ストリームが設定されるのを待つ
     setTimeout(() => {
       this.updateCroppedVideo();
     }, 1000);
   }
 
+  private observeMappingAreaResize(): void {
+    // 旧 observer があれば disconnect（再 mount 時の保険）
+    this.mappingAreaObserver?.disconnect();
+    this.mappingAreaObserver = null;
+
+    const target = this.scopeEl?.querySelector('#mapping-area') as HTMLElement | null;
+    if (!target) return;
+
+    const win = this.controlHost?.window ?? window;
+    this.mappingAreaObserver = new ResizeObserver(() => {
+      // 1 frame に 1 回へコアレス（ドラッグ中は連続発火するので毎回 matrix3d を更新しない）
+      if (this.mappingAreaResizeRafId !== null) return;
+      this.mappingAreaResizeRafId = win.requestAnimationFrame(() => {
+        this.mappingAreaResizeRafId = null;
+        this.updateQuadTransform();
+      });
+    });
+    this.mappingAreaObserver.observe(target);
+  }
+
   private setupToolButtons(): void {
-    if (!this.window) return;
-    const doc = this.window.document;
+    const scope = this.scopeEl;
+    if (!scope) return;
 
     // リセットボタン
-    const resetSourceBtn = doc.getElementById('reset-source-btn');
+    const resetSourceBtn = scope.querySelector('#reset-source-btn');
     if (resetSourceBtn) {
       resetSourceBtn.addEventListener('click', () => {
         this.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
-        this.updateSelectionBox();
+        this.updateAfterSourceChange();
         this.updateToolValues();
         this.broadcastStateMutation();
       });
     }
 
-    const resetMappingBtn = doc.getElementById('reset-mapping-btn');
+    const resetMappingBtn = scope.querySelector('#reset-mapping-btn');
     if (resetMappingBtn) {
       resetMappingBtn.addEventListener('click', () => {
         this.setActiveQuad(defaultQuad());
@@ -1095,19 +1354,20 @@ export class ControlWindow extends BaseWindow {
     }
 
     // テストパターンボタン（off / white / grid / smpte）
-    const testPatternBtns = doc.querySelectorAll('.test-pattern-btn');
+    const testPatternBtns = scope.querySelectorAll('.test-pattern-btn');
     testPatternBtns.forEach(btn => {
       btn.addEventListener('click', (e) => {
-        const kind = (e.currentTarget as HTMLElement).dataset.pattern;
+        const kind = (e.currentTarget as HTMLElement).dataset.pattern as
+          TestPatternKindOrOff | undefined;
         if (!kind) return;
         // optimistic に active 表示を切り替え（parent から test-pattern-update が返って確定）
         this.updateTestPatternUI(kind);
-        this.sendTestPatternRequest(kind);
+        this.controlHost?.requestTestPattern(kind);
       });
     });
 
     // マッピング追加ボタン
-    const addMappingBtn = doc.getElementById('add-mapping-btn');
+    const addMappingBtn = scope.querySelector('#add-mapping-btn');
     if (addMappingBtn) {
       addMappingBtn.addEventListener('click', () => {
         this.replaceState(withAddedMapping(this.state));
@@ -1115,13 +1375,13 @@ export class ControlWindow extends BaseWindow {
     }
 
     // 保存（JSON ダウンロード）
-    const exportBtn = doc.getElementById('export-mappings-btn');
+    const exportBtn = scope.querySelector('#export-mappings-btn');
     if (exportBtn) {
       exportBtn.addEventListener('click', () => this.exportMappingsToFile());
     }
 
     // 読み込み（JSON ファイルピッカー）
-    const importBtn = doc.getElementById('import-mappings-btn');
+    const importBtn = scope.querySelector('#import-mappings-btn');
     if (importBtn) {
       importBtn.addEventListener('click', () => this.importMappingsFromFile());
     }
@@ -1135,8 +1395,7 @@ export class ControlWindow extends BaseWindow {
 
   /** マッピング一覧の HTML を再生成し、クリック・削除ハンドラを貼り直す。 */
   private renderMappingsList(): void {
-    if (!this.window) return;
-    const listEl = this.window.document.getElementById('mappings-list');
+    const listEl = this.scopeEl?.querySelector('#mappings-list') as HTMLElement | null;
     if (!listEl) return;
 
     const canRemove = this.state.mappings.length > 1;
@@ -1188,7 +1447,7 @@ export class ControlWindow extends BaseWindow {
         e.stopPropagation();
         const item = nameSpan.closest('.mapping-list-item') as HTMLDivElement | null;
         const id = item?.dataset.id;
-        if (!id || !this.window) return;
+        if (!id) return;
         this.startInlineRename(nameSpan, id);
       });
     });
@@ -1202,12 +1461,23 @@ export class ControlWindow extends BaseWindow {
     });
   }
 
+  /** ホスト要素のオーナードキュメント（要素生成・ファイル取得 UI に使う）。 */
+  private get hostDoc(): Document | null {
+    return this.scopeEl?.ownerDocument ?? null;
+  }
+
+  /** ホスト要素のオーナーウィンドウ（alert などに使う）。 */
+  private get hostWin(): Window | null {
+    return this.hostDoc?.defaultView ?? null;
+  }
+
   private exportMappingsToFile(): void {
-    if (!this.window) return;
+    const doc = this.hostDoc;
+    if (!doc) return;
     const json = JSON.stringify(this.state, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = this.window.document.createElement('a');
+    const a = doc.createElement('a');
     a.href = url;
     const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     a.download = `dropcaster-mappings-${ts}.json`;
@@ -1216,8 +1486,9 @@ export class ControlWindow extends BaseWindow {
   }
 
   private importMappingsFromFile(): void {
-    if (!this.window) return;
-    const input = this.window.document.createElement('input');
+    const doc = this.hostDoc;
+    if (!doc) return;
+    const input = doc.createElement('input');
     input.type = 'file';
     input.accept = '.json,application/json';
     input.addEventListener('change', () => {
@@ -1228,12 +1499,12 @@ export class ControlWindow extends BaseWindow {
           try {
             const parsed = parseMappingsState(JSON.parse(text));
             if (!parsed) {
-              this.window?.alert('読み込みに失敗しました（フォーマット不正）');
+              this.hostWin?.alert('読み込みに失敗しました（フォーマット不正）');
               return;
             }
             this.replaceState(parsed);
           } catch (error) {
-            this.window?.alert('読み込みに失敗しました（JSON 解析失敗）');
+            this.hostWin?.alert('読み込みに失敗しました（JSON 解析失敗）');
             console.error('ControlWindow: JSON parse error', error);
           }
         })
@@ -1245,8 +1516,8 @@ export class ControlWindow extends BaseWindow {
   }
 
   private startInlineRename(nameSpan: HTMLElement, id: string): void {
-    if (!this.window) return;
-    const doc = this.window.document;
+    const doc = this.hostDoc;
+    if (!doc) return;
     const input = doc.createElement('input');
     input.className = 'name-input';
     input.type = 'text';
@@ -1280,14 +1551,14 @@ export class ControlWindow extends BaseWindow {
   }
 
   private updateToolValues(): void {
-    if (!this.window) return;
-    const doc = this.window.document;
+    const scope = this.scopeEl;
+    if (!scope) return;
 
     // ソース値の更新
-    const sourceX = doc.getElementById('source-x-value');
-    const sourceY = doc.getElementById('source-y-value');
-    const sourceW = doc.getElementById('source-w-value');
-    const sourceH = doc.getElementById('source-h-value');
+    const sourceX = scope.querySelector('#source-x-value');
+    const sourceY = scope.querySelector('#source-y-value');
+    const sourceW = scope.querySelector('#source-w-value');
+    const sourceH = scope.querySelector('#source-h-value');
 
     if (sourceX) sourceX.textContent = this.sourceSelectionData.x.toFixed(1);
     if (sourceY) sourceY.textContent = this.sourceSelectionData.y.toFixed(1);
@@ -1296,10 +1567,10 @@ export class ControlWindow extends BaseWindow {
 
     // マッピング: 4隅の値を更新
     const fmt = (p: { x: number; y: number }) => `${p.x.toFixed(1)}, ${p.y.toFixed(1)}`;
-    const tl = doc.getElementById('mapping-tl-value');
-    const tr = doc.getElementById('mapping-tr-value');
-    const bl = doc.getElementById('mapping-bl-value');
-    const br = doc.getElementById('mapping-br-value');
+    const tl = scope.querySelector('#mapping-tl-value');
+    const tr = scope.querySelector('#mapping-tr-value');
+    const bl = scope.querySelector('#mapping-bl-value');
+    const br = scope.querySelector('#mapping-br-value');
     if (tl) tl.textContent = fmt(this.quadData.topLeft);
     if (tr) tr.textContent = fmt(this.quadData.topRight);
     if (bl) bl.textContent = fmt(this.quadData.bottomLeft);
@@ -1312,12 +1583,13 @@ export class ControlWindow extends BaseWindow {
     // デフォルトで全体を選択
     this.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
 
-    this.updateSelectionBox();
+    this.updateAfterSourceChange();
     this.broadcastStateMutation();
   }
 
   private setupSourceDragHandlers(): void {
-    if (!this.selectionBox || !this.window) return;
+    const doc = this.hostDoc;
+    if (!this.selectionBox || !doc) return;
 
     let isDragging = false;
     let startX = 0;
@@ -1350,7 +1622,7 @@ export class ControlWindow extends BaseWindow {
       this.sourceSelectionData.x = Math.max(0, Math.min(100 - this.sourceSelectionData.width, initialX + deltaX));
       this.sourceSelectionData.y = Math.max(0, Math.min(100 - this.sourceSelectionData.height, initialY + deltaY));
 
-      this.updateSelectionBox();
+      this.updateAfterSourceChange();
       this.updateToolValues();
       this.broadcastStateMutation();
     };
@@ -1360,12 +1632,13 @@ export class ControlWindow extends BaseWindow {
     };
 
     this.selectionBox.addEventListener('mousedown', handleMouseDown);
-    this.window.document.addEventListener('mousemove', handleMouseMove);
-    this.window.document.addEventListener('mouseup', handleMouseUp);
+    doc.addEventListener('mousemove', handleMouseMove);
+    doc.addEventListener('mouseup', handleMouseUp);
   }
 
   private setupSourceResizeHandlers(): void {
-    if (!this.selectionBox || !this.window) return;
+    const doc = this.hostDoc;
+    if (!this.selectionBox || !doc) return;
 
     const handles = this.selectionBox.querySelectorAll('.handle, .edge');
     
@@ -1431,7 +1704,7 @@ export class ControlWindow extends BaseWindow {
             break;
         }
 
-        this.updateSelectionBox();
+        this.updateAfterSourceChange();
         this.updateToolValues();
         this.broadcastStateMutation();
       };
@@ -1441,14 +1714,15 @@ export class ControlWindow extends BaseWindow {
       };
 
       handle.addEventListener('mousedown', handleMouseDown as EventListener);
-      this.window!.document.addEventListener('mousemove', handleMouseMove as EventListener);
-      this.window!.document.addEventListener('mouseup', handleMouseUp as EventListener);
+      doc.addEventListener('mousemove', handleMouseMove as EventListener);
+      doc.addEventListener('mouseup', handleMouseUp as EventListener);
     });
   }
 
   // quad 全体を平行移動（cropped-container の見た目領域をドラッグ）
   private setupMappingDragHandlers(): void {
-    if (!this.croppedContainer || !this.window) return;
+    const doc = this.hostDoc;
+    if (!this.croppedContainer || !doc) return;
 
     let isDragging = false;
     let startX = 0;
@@ -1486,17 +1760,19 @@ export class ControlWindow extends BaseWindow {
     };
 
     this.croppedContainer.addEventListener('mousedown', handleMouseDown);
-    this.window.document.addEventListener('mousemove', handleMouseMove);
-    this.window.document.addEventListener('mouseup', handleMouseUp);
+    doc.addEventListener('mousemove', handleMouseMove);
+    doc.addEventListener('mouseup', handleMouseUp);
   }
 
   // 4隅ハンドル: それぞれを独立に動かしてホモグラフィー変形を作る
   private setupQuadHandleHandlers(): void {
-    if (!this.window || !this.croppedContainer) return;
+    const scope = this.scopeEl;
+    const doc = this.hostDoc;
+    if (!scope || !doc || !this.croppedContainer) return;
     const parent = this.croppedContainer.parentElement;
     if (!parent) return;
 
-    const handles = this.window.document.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
+    const handles = scope.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
     handles.forEach(handle => {
       let isDragging = false;
       let startX = 0;
@@ -1538,15 +1814,16 @@ export class ControlWindow extends BaseWindow {
       };
 
       handle.addEventListener('mousedown', onMouseDown);
-      this.window!.document.addEventListener('mousemove', onMouseMove);
-      this.window!.document.addEventListener('mouseup', onMouseUp);
+      doc.addEventListener('mousemove', onMouseMove);
+      doc.addEventListener('mouseup', onMouseUp);
     });
   }
 
   // ── 矢印キーによる微調整（クリックで選択 → 矢印キーで 1px、Shift+矢印で 10px）─────────
   private setupKeyboardNudge(): void {
-    if (!this.window) return;
-    this.window.document.addEventListener('keydown', (e) => this.handleNudgeKey(e));
+    const doc = this.hostDoc;
+    if (!doc) return;
+    doc.addEventListener('keydown', (e) => this.handleNudgeKey(e));
   }
 
   private setKeyboardSelection(sel: { type: 'quad'; corner: CornerKey } | { type: 'source' } | null): void {
@@ -1562,9 +1839,10 @@ export class ControlWindow extends BaseWindow {
 
   /** 選択中のハンドル / 枠に .kbd-selected を付け替える。 */
   private updateKeyboardSelectionUI(): void {
-    if (!this.window) return;
+    const scope = this.scopeEl;
+    if (!scope) return;
     const sel = this.keyboardSelection;
-    this.window.document
+    scope
       .querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle')
       .forEach(h => h.classList.toggle('kbd-selected', sel?.type === 'quad' && h.dataset.corner === sel.corner));
     this.selectionBox?.classList.toggle('kbd-selected', sel?.type === 'source');
@@ -1622,7 +1900,7 @@ export class ControlWindow extends BaseWindow {
       const s = this.sourceSelectionData;
       s.x = Math.max(0, Math.min(100 - s.width,  s.x + (dirX * pixels * 100) / ref.width));
       s.y = Math.max(0, Math.min(100 - s.height, s.y + (dirY * pixels * 100) / ref.height));
-      this.updateSelectionBox();
+      this.updateAfterSourceChange();
       this.updateToolValues();
       this.broadcastStateMutation();
     }
@@ -1637,6 +1915,25 @@ export class ControlWindow extends BaseWindow {
     this.selectionBox.style.height = `${this.sourceSelectionData.height}%`;
   }
 
+  /**
+   * ソース矩形を変更した直後に呼ぶまとめ更新ヘルパー。
+   * ソース側の選択枠と、マッピング側のクロップ済み <video>（および非 active プレビュー）の
+   * クロップ表示を同時に再計算する。
+   *
+   * ソース矩形のドラッグ／リサイズ／矢印キー nudge は同じ依存関係（active mapping の source rect）
+   * を持つので、3 箇所がバラバラに呼んでいた updateSelectionBox + 補助呼び出しをここに集約する。
+   */
+  private updateAfterSourceChange(): void {
+    this.updateSelectionBox();
+    // #cropped-video は source rect を clip-path で切り取って見せているので、変更を即反映する。
+    // 元コード（popout 時代）ではここが抜けており、マッピング側のプレビューだけ古い source 表示の
+    // ままになる症状（user 報告: マッピング側を何か操作するまで同期されない）の原因だった。
+    this.updateVideoCrop();
+    // 非 active mapping のプレビュー warp は source も含めた signature で memoize されているので、
+    // source が変わったタイミングで再評価する。
+    this.syncInactivePreviews();
+  }
+
   private updateQuadTransform(): void {
     if (!this.croppedContainer) return;
 
@@ -1647,11 +1944,9 @@ export class ControlWindow extends BaseWindow {
     const activeIdx = this.state.mappings.findIndex(m => m.id === this.state.activeId);
     const activeColor = mappingColor(activeIdx >= 0 ? activeIdx : 0);
     this.croppedContainer.style.setProperty('--mapping-color', activeColor);
-    if (this.window) {
-      this.window.document
-        .querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle')
-        .forEach(h => h.style.setProperty('--mapping-color', activeColor));
-    }
+    this.scopeEl
+      ?.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle')
+      .forEach(h => h.style.setProperty('--mapping-color', activeColor));
 
     // 非アクティブ mapping のプレビューを同期
     this.syncInactivePreviews();
@@ -1664,8 +1959,9 @@ export class ControlWindow extends BaseWindow {
   }
 
   private updateQuadHandlePositions(): void {
-    if (!this.window) return;
-    const handles = this.window.document.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
+    const scope = this.scopeEl;
+    if (!scope) return;
+    const handles = scope.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
     handles.forEach(handle => {
       const corner = handle.dataset.corner as CornerKey | undefined;
       if (!corner || !CORNER_KEYS.includes(corner)) return;
@@ -1681,10 +1977,11 @@ export class ControlWindow extends BaseWindow {
    * 上に描画される。クリックでその mapping を active 化。
    */
   private syncInactivePreviews(): void {
-    if (!this.window || !this.croppedContainer) return;
+    if (!this.croppedContainer) return;
     const stage = this.croppedContainer.parentElement;
     if (!stage) return;
-    const doc = this.window.document;
+    const doc = this.hostDoc;
+    if (!doc) return;
     // ステージのピクセルサイズ（変わると quad の px 位置が変わるので sig に含める）
     const stageRect = stage.getBoundingClientRect();
     const stageSig = `${Math.round(stageRect.width)}x${Math.round(stageRect.height)}`;
@@ -1758,7 +2055,7 @@ export class ControlWindow extends BaseWindow {
 
     // ソースビデオがまだ設定されていない場合は、mapping-videoから取得
     if (!this.mappingVideo) {
-      this.mappingVideo = this.window?.document.getElementById('mapping-video') as HTMLVideoElement;
+      this.mappingVideo = this.scopeEl?.querySelector('#mapping-video') as HTMLVideoElement;
     }
 
     if (!this.mappingVideo) return;
@@ -1784,64 +2081,36 @@ export class ControlWindow extends BaseWindow {
     applyVideoCrop(this.croppedVideo, this.sourceSelectionData);
   }
 
+  /**
+   * window スコープのイベント（resize / pagehide）を張る。
+   * host の window は main の window（inline マウント）。state 系の購読は
+   * controlHost が引き受け setupHostSubscriptions() でイベントハンドラへ橋渡しする。
+   */
   private setupMessageListener(): void {
-    if (!this.window) return;
+    const win = this.controlHost?.window;
+    if (!win) return;
 
-    this.window.addEventListener('message', (event) => {
-      const parentWindow = this.getParentWindow();
-      if (parentWindow && event.source !== parentWindow) return;
-      if (parentWindow && event.origin !== parentWindow.location.origin) return;
-
-      switch (event.data.type) {
-        case 'state-update':
-          this.handleStateUpdate(event.data.data);
-          break;
-        case 'video-dimensions-update':
-          this.handleVideoDimensionsUpdate(event.data.data);
-          break;
-        case 'output-dimensions-update':
-          this.handleOutputBoundsUpdate(event.data.data);
-          break;
-        case 'test-pattern-update':
-          this.updateTestPatternUI(event.data.data?.kind ?? 'off');
-          break;
-        case 'source-visibility-update':
-          this.updateSourceVisibilityBanner(!!event.data.data?.hidden);
-          break;
-        case 'webgl-context-update':
-          this.updateWebglContextBanner(event.data.data?.status);
-          break;
-      }
-    });
-
-    // 操作ウィンドウのリサイズ時にアスペクト比とホモグラフィー行列を再計算（1 フレーム 1 回に間引く）
-    this.window.addEventListener('resize', () => {
-      if (this.resizeRafId !== null || !this.window) return;
-      this.resizeRafId = this.window.requestAnimationFrame(() => {
+    // ウィンドウリサイズ時にアスペクト比とホモグラフィー行列を再計算（1 フレーム 1 回に間引く）
+    win.addEventListener('resize', () => {
+      if (this.resizeRafId !== null) return;
+      this.resizeRafId = win.requestAnimationFrame(() => {
         this.resizeRafId = null;
         this.updateSourceVideoAspectRatio();
         this.updateQuadTransform();
       });
     });
 
-    // ウィンドウが閉じられる直前に、間引き中の state 変更があれば取りこぼさず送る
-    this.window.addEventListener('pagehide', () => this.flushStateMutation());
+    // タブを閉じる直前に host 購読を畳む
+    win.addEventListener('pagehide', () => this.disposeHost());
   }
 
-  /** WindowController から push される「出力ウィンドウ＋ディスプレイ寸法／全画面状態」を反映。 */
-  private handleOutputBoundsUpdate(d: any): void {
-    if (!d) return;
-    this.outputBounds = {
-      innerWidth:  Number(d.innerWidth)  || 0,
-      innerHeight: Number(d.innerHeight) || 0,
-      screenWidth:  Number(d.screenWidth)  || 0,
-      screenHeight: Number(d.screenHeight) || 0,
-      isFullscreen: !!d.isFullscreen,
-    };
+  /** ControlHost から push される「出力ウィンドウ＋ディスプレイ寸法／全画面状態」を反映。 */
+  private handleOutputBoundsUpdate(b: OutputBoundsSnapshot): void {
+    this.outputBounds = { ...b };
     this.updateOutputViz();
   }
 
-  private handleVideoDimensionsUpdate(dimensions: any): void {
+  private handleVideoDimensionsUpdate(dimensions: VideoDimensions): void {
     this.videoActualDimensions = dimensions;
     this.updateVideoCrop();
     this.updateSourceVideoAspectRatio();
@@ -1863,77 +2132,29 @@ export class ControlWindow extends BaseWindow {
     this.renderMappingsList();
   }
 
-  /**
-   * メイン（ソース）ウィンドウが hidden（最小化／背面）になったら警告バナーを表示。
-   * hidden 中は中で動いているスケッチの rAF が止まり、captureStream がフリーズするため。
-   */
-  private updateSourceVisibilityBanner(hidden: boolean): void {
-    const el = this.window?.document.getElementById('dc-source-hidden-banner');
-    if (!el) return;
-    if (hidden) el.removeAttribute('hidden');
-    else el.setAttribute('hidden', '');
-  }
-
   /** WebGL コンテキストの ロスト／復帰 を受けてバナーを切り替える。 */
-  private updateWebglContextBanner(status: unknown): void {
-    const el = this.window?.document.getElementById('dc-webgl-lost-banner');
+  private updateWebglContextBanner(status: WebglContextStatus): void {
+    const el = this.scopeEl?.querySelector('#dc-webgl-lost-banner');
     if (!el) return;
     if (status === 'lost') el.removeAttribute('hidden');
     else el.setAttribute('hidden', '');
   }
 
   /** テストパターンボタンの active 表示を kind に合わせて切り替える（state は親が持っている）。 */
-  private updateTestPatternUI(kind: string): void {
-    if (!this.window) return;
-    this.window.document.querySelectorAll('.test-pattern-btn').forEach(el => {
+  private updateTestPatternUI(kind: TestPatternKindOrOff): void {
+    this.scopeEl?.querySelectorAll('.test-pattern-btn').forEach(el => {
       const btn = el as HTMLElement;
       btn.classList.toggle('active', btn.dataset.pattern === kind);
     });
   }
 
-  /** ユーザーがテストパターン切り替えボタンを押したことを親に伝える。 */
-  private sendTestPatternRequest(kind: string): void {
-    const targetWindow = this.getParentWindow();
-    if (!targetWindow) return;
-    try {
-      // targetOrigin は '*'：このウィンドウは about:blank で origin が 'null' になり得る。
-      // 受信側（WindowController.messageHandler）が event.origin を検証している。
-      targetWindow.postMessage({
-        type: 'test-pattern-set',
-        data: { kind },
-      }, '*');
-    } catch (error) {
-      console.error('ControlWindow: test-pattern-set 送信エラー', error);
-    }
-  }
-
   /**
    * ローカル mutation 後に呼ぶ。alias 経由で source/quad オブジェクトを直接書き換えると
    * active な entry の同じ参照が更新される（state は同じインスタンス）。
-   * postMessage は structured clone でコピーされて親に届くので、双方向の流入はない。
-   * ドラッグ移動や矢印キー連打で連続して呼ばれるので 1 フレームに 1 回へ間引く
-   * （親は最新の state さえ受け取れば足りる。中間状態を毎 mousemove 送らない）。
+   * 連続発火（ドラッグ移動・矢印キー連打）の間引きや親への送信は ControlHost が責任を持つ。
    */
   private broadcastStateMutation(): void {
-    if (this.mutationRafId !== null || !this.window) return;
-    this.mutationRafId = this.window.requestAnimationFrame(() => {
-      this.mutationRafId = null;
-      this.flushStateMutation();
-    });
-  }
-
-  private flushStateMutation(): void {
-    const targetWindow = this.getParentWindow();
-    if (!targetWindow) return;
-    try {
-      // targetOrigin は '*'（受信側で origin 検証。OutputWindow の requestStream と同じ理由）
-      targetWindow.postMessage({
-        type: 'state-mutation',
-        data: this.state satisfies MappingsState,
-      }, '*');
-    } catch (error) {
-      console.error('ControlWindow: state-mutation 送信エラー', error);
-    }
+    this.controlHost?.emitStateMutation(this.state);
   }
 
   /** プログラム的に state を差し替える時に使う（active 切替・追加・削除など）。 */
@@ -1954,14 +2175,14 @@ export class ControlWindow extends BaseWindow {
    * 寸法・全画面状態は WindowController から output-dimensions-update で push される。
    */
   private updateOutputViz(): void {
-    if (!this.window) return;
-    const doc = this.window.document;
+    const scope = this.scopeEl;
+    if (!scope) return;
     const { innerWidth: w, innerHeight: h, screenWidth: sw, screenHeight: sh, isFullscreen } = this.outputBounds;
 
     // ステータスバッジ（ウィンドウ／フルスクリーン）はデータが無くても更新できる
-    const displayMode = doc.getElementById('display-mode');
+    const displayMode = scope.querySelector('#display-mode');
     if (displayMode) displayMode.textContent = isFullscreen ? 'フルスクリーン' : 'ウィンドウ';
-    const displayStatus = doc.querySelector('.display-status');
+    const displayStatus = scope.querySelector('.display-status');
     if (displayStatus) {
       displayStatus.classList.remove('fullscreen', 'window');
       displayStatus.classList.add(isFullscreen ? 'fullscreen' : 'window');
@@ -1970,15 +2191,15 @@ export class ControlWindow extends BaseWindow {
     // 出力ウィンドウがまだ開いていない等で寸法が無いときはプレースホルダのまま
     if (sw <= 0 || sh <= 0) return;
 
-    const displaySize = doc.getElementById('display-size');
+    const displaySize = scope.querySelector('#display-size');
     if (displaySize) displaySize.textContent = `${sw}x${sh}`;
-    const displayFrame = doc.getElementById('display-frame') as HTMLDivElement | null;
+    const displayFrame = scope.querySelector('#display-frame') as HTMLDivElement | null;
     if (displayFrame) displayFrame.style.aspectRatio = `${sw / sh}`;
 
-    const windowSize = doc.getElementById('window-size');
+    const windowSize = scope.querySelector('#window-size');
     if (windowSize) windowSize.textContent = w > 0 && h > 0 ? `${w}x${h}` : '—';
 
-    const windowFrame = doc.getElementById('window-frame') as HTMLDivElement | null;
+    const windowFrame = scope.querySelector('#window-frame') as HTMLDivElement | null;
     if (windowFrame) {
       const wPct = w > 0 ? Math.min(100, (w / sw) * 100) : 100;
       const hPct = h > 0 ? Math.min(100, (h / sh) * 100) : 100;
@@ -1995,48 +2216,21 @@ export class ControlWindow extends BaseWindow {
     this.updateQuadTransform();
   }
 
+  /**
+   * ソース canvas のアスペクト比を CSS カスタムプロパティ --canvas-aspect として scope に注入する。
+   * .canvas-frame 側で `aspect-ratio: var(--canvas-aspect)` + `max-width/height: 100%` を当てて
+   * いるので、レイアウトとリサイズの追従はブラウザ任せ（カラム幅をドラッグしても比率は固定）。
+   *
+   * 旧実装は wrapper の getBoundingClientRect から frame サイズを毎回 px で算出していたが、
+   * カラムリサイザを足したときに「ドラッグ中に再計算が走らずアスペクト比が崩れる」問題が出るので
+   * CSS aspect-ratio 任せに切り替えた。
+   */
   private updateSourceVideoAspectRatio(): void {
-    if (!this.window) return;
-    
-    const doc = this.window.document;
-    const canvasFrame = doc.querySelector('.canvas-frame') as HTMLDivElement;
-    const sourcePreviewWrapper = doc.querySelector('.source-preview-wrapper') as HTMLDivElement;
-    
-    if (!canvasFrame || !sourcePreviewWrapper) return;
-    
-    // スケッチCanvasの実際のアスペクト比を取得（ビデオストリームから）
+    const scope = this.scopeEl;
+    if (!scope) return;
     const canvasWidth = this.videoActualDimensions.width || (this.sourceVideo?.videoWidth) || 1920;
     const canvasHeight = this.videoActualDimensions.height || (this.sourceVideo?.videoHeight) || 1080;
-    
-    if (canvasWidth && canvasHeight) {
-      const canvasAspectRatio = canvasWidth / canvasHeight;
-      
-      // wrapperのサイズを取得
-      const wrapperRect = sourcePreviewWrapper.getBoundingClientRect();
-      const wrapperWidth = wrapperRect.width - 40; // padding: 20px * 2
-      const wrapperHeight = wrapperRect.height - 40; // padding: 20px * 2
-      
-      // アスペクト比を維持しつつ、wrapper内に収まる最大サイズを計算
-      let frameWidth: number;
-      let frameHeight: number;
-      
-      const wrapperAspectRatio = wrapperWidth / wrapperHeight;
-      
-      if (canvasAspectRatio > wrapperAspectRatio) {
-        // Canvasの方が横長の場合、幅を基準に
-        frameWidth = wrapperWidth;
-        frameHeight = frameWidth / canvasAspectRatio;
-      } else {
-        // Canvasの方が縦長または同じ場合、高さを基準に
-        frameHeight = wrapperHeight;
-        frameWidth = frameHeight * canvasAspectRatio;
-      }
-      
-      // canvas-frameのサイズを設定
-      canvasFrame.style.width = `${frameWidth}px`;
-      canvasFrame.style.height = `${frameHeight}px`;
-      canvasFrame.style.maxWidth = '100%';
-      canvasFrame.style.maxHeight = '100%';
-    }
+    if (canvasWidth <= 0 || canvasHeight <= 0) return;
+    scope.style.setProperty('--canvas-aspect', `${canvasWidth} / ${canvasHeight}`);
   }
 }

@@ -73,6 +73,9 @@ export class SketchPageView {
 
         <!-- 投影中のソース可視化レイヤ（前面化して、各マッピングのソース矩形を枠で描く。子は動的生成） -->
         <div id="iframe-content-overlay" class="iframe-content-overlay"></div>
+
+        <!-- inline マウントされた ControlPanel のシェル。投影モードでだけ表示される -->
+        <aside id="dc-inline-editor" class="dc-inline-editor" hidden></aside>
       </div>
     `;
 

@@ -1,5 +1,4 @@
-import { WindowManager, type WindowConfig } from '../managers/WindowManager';
-import { ControlWindow } from '../windows/control/ControlWindow';
+import { WindowManager } from '../managers/WindowManager';
 import { OutputWindow } from '../windows/output/OutputWindow';
 import { TestPatternSource, type TestPatternKind } from '../runtime/TestPatternSource';
 import {
@@ -8,7 +7,13 @@ import {
   type MappingsState,
 } from '../utils/mappingTransform';
 import { ScreenWakeLock } from '../utils/wakeLock';
-import { SilentKeepAlive } from '../utils/silentKeepAlive';
+import { Emitter } from '../utils/emitter';
+import type {
+  OutputBoundsSnapshot,
+  TestPatternKindOrOff,
+  VideoDimensions,
+  WebglContextStatus,
+} from '../windows/control/ControlHost';
 
 const STATE_STORAGE_KEY = 'dropcaster.mappings.v1';
 const SAVE_DEBOUNCE_MS = 250;
@@ -31,12 +36,11 @@ interface ScreenDetails { screens: ScreenDetailed[]; currentScreen?: ScreenDetai
 
 export class WindowController {
   private windowManager: WindowManager;
-  private controlWindow: ControlWindow;
   private outputWindow: OutputWindow;
   private activeStreams: MediaStream[] = [];
   private windowMonitoringInterval: number | null = null;
   private saveTimer: number | null = null;
-  /** 直近に ControlWindow へ送った出力ウィンドウ寸法（JSON）。同じなら再送しない。 */
+  /** 直近に通知した出力ウィンドウ寸法（JSON）。同じなら再 emit しない。 */
   private lastOutputBoundsJson: string | null = null;
   private canvasResizeObserver: ResizeObserver | null = null;
   private canvasMutationObserver: MutationObserver | null = null;
@@ -47,31 +51,31 @@ export class WindowController {
   private testPatternKind: TestPatternKind | 'off' = 'off';
   /** メインウィンドウ側の Screen Wake Lock（プロジェクション中はディスプレイをスリープさせない）。 */
   private wakeLock: ScreenWakeLock = new ScreenWakeLock(window);
-  /** 無音オーディオの keepalive（Memory Saver / タイマー絞り対策。完全不可視時の rAF は救えない）。 */
-  private keepAlive: SilentKeepAlive = new SilentKeepAlive();
-  /** プロジェクション中の「ソースウィンドウ（このメインウィンドウ）が hidden」を ControlWindow に通知中か。 */
-  private visibilityWatchActive = false;
-  private boundVisibilityChange = () => this.notifySourceVisibility();
+
+  /**
+   * inline マウントされた ControlPanel（InlineControlHost）が購読する in-process イベント。
+   * popout への postMessage と並行して fire するので、Step 2 では両方が動く（A/B 検証可能）。
+   * 値は常に最新を保持し、`events.X.get()` で snapshot として取れる。
+   */
+  readonly events = {
+    state: new Emitter<MappingsState>(defaultMappingsState()),
+    testPattern: new Emitter<TestPatternKindOrOff>('off'),
+    outputBounds: new Emitter<OutputBoundsSnapshot>({
+      innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false,
+    }),
+    videoDimensions: new Emitter<VideoDimensions>({ width: 1, height: 1 }),
+    webglContext: new Emitter<WebglContextStatus>('ok'),
+  };
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
-
-    if (event.data?.type === 'state-mutation') {
-      // ControlWindow が user 入力で更新した state を受け取る。
-      // 既に control 側に反映済みなので broadcastBack=false。
-      this.applyState(event.data.data, { broadcastToControl: false });
-    } else if (event.data?.type === 'output-needs-stream') {
-      // 出力ウィンドウが video 群を組み直したので stream を bind し直す
+    // control popout 撤去後、残るのは出力ウィンドウからの `output-needs-stream` だけ。
+    if (event.data?.type === 'output-needs-stream') {
       this.bindStreamToOutputWindow();
-    } else if (event.data?.type === 'test-pattern-set') {
-      // ControlWindow からのテストパターン切り替え要求
-      const kind = event.data.data?.kind as TestPatternKind | 'off' | undefined;
-      if (kind) this.setTestPattern(kind);
     }
   };
 
-  // 正規 state（複数 mapping ＋ activeId）。
-  // ControlWindow と SketchPageView はこれの mirror をレンダリングするだけで、
-  // 直接書き込まない（必ず state-mutation メッセージ／state-update 経由）。
+  // 正規 state（複数 mapping ＋ activeId）。inline panel と SketchPageView はこれの
+  // mirror をレンダリングするだけで、直接書き込まない（必ず applyStateFromInline 経由）。
   private state: MappingsState = defaultMappingsState();
 
 
@@ -82,7 +86,6 @@ export class WindowController {
 
   constructor() {
     this.windowManager = new WindowManager();
-    this.controlWindow = new ControlWindow();
     this.outputWindow = new OutputWindow();
 
     // 前回のマッピング設定を localStorage から復元（あれば）
@@ -121,60 +124,6 @@ export class WindowController {
     }
   }
 
-  private calculateWindowPosition(): WindowConfig {
-    const screenWidth = window.screen.availWidth;
-    const currentScreenX = window.screenX;
-    const currentScreenY = window.screenY;
-    
-    // ウィンドウサイズ定数
-    const WINDOW_WIDTH = 1200;
-    const WINDOW_HEIGHT = 700;
-    const TOP_OFFSET = 50;
-    
-    // 中央配置を計算
-    let windowLeft = Math.max(100, (screenWidth - WINDOW_WIDTH) / 2);
-    
-    // 現在のウィンドウに近い位置に調整
-    if (currentScreenX > 0) {
-      windowLeft = Math.max(100, currentScreenX + 100);
-    }
-    
-    return {
-      name: 'control_window',
-      title: '統合操作パネル',
-      width: WINDOW_WIDTH,
-      height: WINDOW_HEIGHT,
-      left: windowLeft,
-      top: Math.max(TOP_OFFSET, currentScreenY + TOP_OFFSET)
-    };
-  }
-
-  openControlWindow(): void {
-    const position = this.calculateWindowPosition();
-    const controlWin = this.windowManager.openWindow(position);
-    if (controlWin) {
-      this.lastOutputBoundsJson = null; // 新しい ControlWindow には dedup を効かせず最新値を必ず送る
-      this.controlWindow.setWindow(controlWin);
-      // 親ウィンドウ参照を設定
-      this.controlWindow.setParentWindow(window);
-
-      // 初期 state を broadcast（マッピング設定 ＋ 現在のテストパターン ＋ 出力ウィンドウ寸法 ＋ 可視性）
-      setTimeout(() => {
-        this.broadcastStateToControl();
-        this.broadcastTestPatternState();
-        this.notifyOutputBounds();
-        if (this.visibilityWatchActive) this.notifySourceVisibility();
-      }, 500);
-    }
-  }
-
-  openBothWindows(): void {
-    this.openControlWindow();
-    setTimeout(() => {
-      this.dispatchOverlayUpdate();
-    }, 1000);
-  }
-
   /**
    * プロジェクション出力専用のポップアウトウィンドウを開く（プロジェクタの画面に置く想定）。
    * まず通常位置で開いてから、画面が複数あれば内蔵でない画面へ移動・最大化する
@@ -194,7 +143,7 @@ export class WindowController {
 
     this.outputWindow.setWindow(outputWin);
     this.outputWindow.setParentWindow(window);
-    // 出力ウィンドウのサイズ・全画面状態の変化を ControlWindow の可視化へ伝える
+    // 出力ウィンドウのサイズ・全画面状態の変化を inline panel の可視化へ伝える
     outputWin.addEventListener('resize', () => this.notifyOutputBounds());
     outputWin.document.addEventListener('fullscreenchange', () => {
       this.notifyOutputBounds();
@@ -267,7 +216,10 @@ export class WindowController {
   /**
    * 正規 state の唯一の更新ポイント。state を差し替えてから:
    *  - SketchPageView へ overlay 更新イベントを発火
-   *  - ControlWindow へ state-update を broadcast（プログラム的変更時のみ）
+   *  - 出力ウィンドウへは常に broadcast
+   *  - inline 版 control へは `broadcastToControl: false` でなければ events.state を fire
+   *
+   * inline 自身が変更の起点なら echo back しない（自己ループ防止）。
    */
   private applyState(
     next: MappingsState,
@@ -278,18 +230,13 @@ export class WindowController {
     this.dispatchOverlayUpdate();
     this.broadcastStateToOutput();
     if (options.broadcastToControl !== false) {
-      this.broadcastStateToControl();
+      this.events.state.set(next);
     }
   }
 
-  private broadcastStateToControl(): void {
-    const controlWin = this.windowManager.getWindow('control_window');
-    if (controlWin && !controlWin.closed) {
-      controlWin.postMessage({
-        type: 'state-update',
-        data: this.state,
-      }, window.location.origin);
-    }
+  /** inline ペインの ControlPanel から「UI で state を変えた」と通知される入口。 */
+  applyStateFromInline(next: MappingsState): void {
+    this.applyState(next, { broadcastToControl: false });
   }
 
   private broadcastStateToOutput(): void {
@@ -313,29 +260,6 @@ export class WindowController {
     window.dispatchEvent(event);
   }
 
-  /**
-   * 同一の MediaStream を統合ウィンドウ内の各 video 要素に共有 bind する。
-   * clone は作らない —— 全 video が同じ stream を参照するだけで同期再生されるため、
-   * GPU/CPU のデコーダ・コンポジット負荷を最小化できる。
-   */
-  private setupStreamToWindow(targetWindow: Window, stream: MediaStream): void {
-    try {
-      const targetDoc = targetWindow.document;
-      const videoIds = ['source-video', 'mapping-video', 'cropped-video'];
-      videoIds.forEach(id => {
-        const video = targetDoc.getElementById(id) as HTMLVideoElement | null;
-        if (video) {
-          video.srcObject = stream;
-          video.play().catch(error => {
-            console.error(`WindowController: ${id}の再生エラー:`, error);
-          });
-        }
-      });
-    } catch (error) {
-      console.error('WindowController: 統合ウィンドウへのストリーム設定エラー:', error);
-    }
-  }
-
   async startCanvasStreaming(iframeElement: HTMLIFrameElement): Promise<void> {
     this.currentSourceIframe = iframeElement;
     this.stopCanvasCapture(); // 既存のキャプチャがあれば一旦止める（ウィンドウは閉じない）
@@ -344,10 +268,6 @@ export class WindowController {
     // プロジェクション中はメインウィンドウ側のディスプレイをスリープさせない。
     // 出力ウィンドウ側は OutputWindow が自分で wake lock を取る。
     void this.wakeLock.acquire();
-    // タブのバックグラウンド絞り込み（タイマー throttling、Memory Saver による
-    // discard、freeze など）を抑止する無音 keepalive。startCanvasStreaming 自体が
-    // 「ウィンドウを開く」ボタンクリックを起点に呼ばれるのでユーザジェスチャ内。
-    this.keepAlive.start();
     this.setProjectionMode(true);
   }
 
@@ -431,46 +351,57 @@ export class WindowController {
   }
 
   /**
-   * いまの「カレント MediaStream」を、stream を消費するすべての場所
-   * （control window のプレビュー / output window の各 mapping video）に bind し直す。
+   * いまの「カレント MediaStream」を、stream を消費するすべての場所に bind し直す。
    * captureFromSource とテストパターン両方の共通経路。
-   * （メインウィンドウはソース矩形の枠を出すだけなので stream は不要 → mapping-overlay-update だけ送る）
+   *   - main の inline panel 内に存在する <video>（#source-video / #mapping-video /
+   *     #cropped-video）に同一 stream を共有 bind
+   *   - 出力ウィンドウの warp 用 <video> 群にも同 stream を bind
    */
   private broadcastStream(stream: MediaStream): void {
-    // コントロールウィンドウの video 群（clone せず共有）
-    const controlWindow = this.windowManager.getWindow('control_window');
-    if (controlWindow && !controlWindow.closed) {
-      this.setupStreamToWindow(controlWindow, stream);
-    }
-
-    // 出力ウィンドウの video 群にも同じ stream を bind
+    // inline panel（main の DOM 上）の video 群（clone せず共有 bind）
+    this.bindStreamToInlinePanel(stream);
+    // 出力ウィンドウの video 群にも同じ stream
     this.bindStreamToOutputWindow();
-
     this.dispatchOverlayUpdate();
   }
 
-  private notifyVideoDimensions(): void {
-    const controlWindow = this.windowManager.getWindow('control_window');
-    if (controlWindow && !controlWindow.closed) {
-      controlWindow.postMessage({
-        type: 'video-dimensions-update',
-        data: this.videoActualDimensions,
-      }, window.location.origin);
-    }
+  private bindStreamToInlinePanel(stream: MediaStream): void {
+    const videoIds = ['source-video', 'mapping-video', 'cropped-video'];
+    videoIds.forEach(id => {
+      const video = document.getElementById(id) as HTMLVideoElement | null;
+      if (!video) return;
+      if (video.srcObject === stream) return;
+      video.srcObject = stream;
+      video.play().catch(error => {
+        console.error(`WindowController: ${id} の再生エラー:`, error);
+      });
+    });
   }
 
   /**
-   * 出力ウィンドウのビューポート／載っているディスプレイの寸法・全画面状態を ControlWindow へ通知。
-   * ControlWindow の「ディスプレイに対する出力ウィンドウの大きさ」可視化と、quad の「出力1px」ステップに使う。
-   * 1 秒間隔の監視 interval からも呼ばれるので、前回送ったものと同じなら postMessage しない
-   * （ControlWindow が再オープンされたときは openControlWindow() で lastOutputBoundsJson を null に戻す）。
+   * inline panel が mount された後（broadcastStream の発火タイミングより遅れて mount された場合の保険）に
+   * 呼び出すと、現在のアクティブ stream を panel 内 <video> へ bind する。stream が無ければ何もしない。
+   */
+  rebindStreamToInlinePanel(): void {
+    const stream = this.activeStreams[0];
+    if (!stream) return;
+    this.bindStreamToInlinePanel(stream);
+  }
+
+  private notifyVideoDimensions(): void {
+    this.events.videoDimensions.set(this.videoActualDimensions);
+  }
+
+  /**
+   * 出力ウィンドウのビューポート／載っているディスプレイの寸法・全画面状態を inline panel に通知。
+   * 「ディスプレイに対する出力ウィンドウの大きさ」可視化と、quad の「出力1px」ステップに使う。
+   * 1 秒間隔の監視 interval からも呼ばれるので、前回と同じなら no-op。
    */
   private notifyOutputBounds(): void {
     const outputWin = this.windowManager.getWindow('output_window');
-    const controlWin = this.windowManager.getWindow('control_window');
-    if (!outputWin || outputWin.closed || !controlWin || controlWin.closed) return;
+    if (!outputWin || outputWin.closed) return;
     try {
-      const data = {
+      const data: OutputBoundsSnapshot = {
         innerWidth: outputWin.innerWidth,
         innerHeight: outputWin.innerHeight,
         screenWidth: outputWin.screen.width,
@@ -480,9 +411,9 @@ export class WindowController {
       const json = JSON.stringify(data);
       if (json === this.lastOutputBoundsJson) return;
       this.lastOutputBoundsJson = json;
-      controlWin.postMessage({ type: 'output-dimensions-update', data }, window.location.origin);
+      this.events.outputBounds.set(data);
     } catch (error) {
-      console.error('WindowController: output-dimensions-update 送信エラー', error);
+      console.error('WindowController: notifyOutputBounds エラー', error);
     }
   }
 
@@ -495,6 +426,7 @@ export class WindowController {
     if (this.testPatternKind === kind) return;
     const prev = this.testPatternKind;
     this.testPatternKind = kind;
+    this.events.testPattern.set(kind);
 
     if (kind === 'off') {
       // テスト → 通常ソース。テスト stream を止めて、source iframe から再キャプチャする
@@ -522,56 +454,13 @@ export class WindowController {
   }
 
   private broadcastTestPatternState(): void {
-    const controlWindow = this.windowManager.getWindow('control_window');
-    if (controlWindow && !controlWindow.closed) {
-      controlWindow.postMessage({
-        type: 'test-pattern-update',
-        data: { kind: this.testPatternKind },
-      }, window.location.origin);
-    }
+    this.events.testPattern.set(this.testPatternKind);
   }
 
   private setProjectionMode(active: boolean): void {
     window.dispatchEvent(new CustomEvent('projection-mode-change', {
       detail: { active }
     }));
-    this.setVisibilityWatch(active);
-  }
-
-  /**
-   * プロジェクション中だけメインウィンドウの可視性を見張り、hidden になったら ControlWindow に通知する。
-   * メインウィンドウが最小化／完全に隠れると、その中で動いているスケッチの rAF が止まり captureStream が
-   * フリーズするので、運用者に「ソースウィンドウが隠れています」と知らせて前面に戻してもらうため。
-   */
-  private setVisibilityWatch(active: boolean): void {
-    if (active === this.visibilityWatchActive) return;
-    this.visibilityWatchActive = active;
-    if (active) {
-      document.addEventListener('visibilitychange', this.boundVisibilityChange);
-      // 開始時点の状態を一度送る（既に hidden で始まっている場合に備えて）
-      this.notifySourceVisibility();
-    } else {
-      document.removeEventListener('visibilitychange', this.boundVisibilityChange);
-      // 念のため「可視に戻った」状態を送って ControlWindow 側のバナーを消しておく
-      this.broadcastSourceVisibility(false);
-    }
-  }
-
-  private notifySourceVisibility(): void {
-    this.broadcastSourceVisibility(document.visibilityState !== 'visible');
-  }
-
-  private broadcastSourceVisibility(hidden: boolean): void {
-    const controlWin = this.windowManager.getWindow('control_window');
-    if (!controlWin || controlWin.closed) return;
-    try {
-      controlWin.postMessage(
-        { type: 'source-visibility-update', data: { hidden } },
-        window.location.origin,
-      );
-    } catch {
-      /* ignore */
-    }
   }
 
   /** ソース canvas の描画バッファサイズ（width/height 属性）の変化を監視し、変わったら各所へ通知する。 */
@@ -620,7 +509,7 @@ export class WindowController {
   /**
    * WebGL コンテキストロスト／復帰を見張る。長時間 WebGL を回すと Chrome の GPU プロセスが
    * クラッシュ・リカバリすることがあり、そのとき canvas は無音で死ぬ。
-   * 検知したら ControlWindow に警告を出し、preventDefault で復帰を許可する。
+   * 検知したら inline panel に警告を出し、preventDefault で復帰を許可する。
    * 2 秒待っても restored が来なければ source iframe を強制リロードして映像を復活させる。
    */
   private monitorCanvasContext(canvas: HTMLCanvasElement, iframe: HTMLIFrameElement): void {
@@ -662,16 +551,7 @@ export class WindowController {
   }
 
   private broadcastWebglContextStatus(status: 'lost' | 'ok'): void {
-    const controlWin = this.windowManager.getWindow('control_window');
-    if (!controlWin || controlWin.closed) return;
-    try {
-      controlWin.postMessage(
-        { type: 'webgl-context-update', data: { status } },
-        window.location.origin,
-      );
-    } catch {
-      /* ignore */
-    }
+    this.events.webglContext.set(status);
   }
 
   private startWindowMonitoring(): void {
@@ -689,12 +569,10 @@ export class WindowController {
     }, 1000);
   }
 
-  // アクティブなウィンドウ（コントロール or 出力）があるかチェック
+  // 出力ウィンドウがまだ開いているかをチェック（control popout は廃止）
   private hasActiveWindows(): boolean {
-    const controlWindow = this.windowManager.getWindow('control_window');
     const outputWindow = this.windowManager.getWindow('output_window');
-    return (controlWindow !== null && !controlWindow.closed) ||
-           (outputWindow !== null && !outputWindow.closed);
+    return outputWindow !== null && !outputWindow.closed;
   }
 
   /** canvas からのキャプチャだけを止める（observer 切断 ＋ tracks 停止）。ウィンドウ・監視はそのまま。 */
@@ -740,7 +618,6 @@ export class WindowController {
 
     // プロジェクションモードを解除
     this.wakeLock.release();
-    this.keepAlive.stop();
     this.setProjectionMode(false);
   }
 
@@ -754,7 +631,6 @@ export class WindowController {
     window.removeEventListener('pagehide', this.flushSaveHandler);
     this.flushSave(); // デバウンス中の保存があれば確定
     this.wakeLock.release();
-    this.keepAlive.stop();
     this.closeAllWindows();
     this.testPattern?.dispose();
     this.testPattern = null;
