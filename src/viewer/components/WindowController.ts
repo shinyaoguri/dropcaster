@@ -9,6 +9,13 @@ import {
 } from '../utils/mappingTransform';
 import { ScreenWakeLock } from '../utils/wakeLock';
 import { SilentKeepAlive } from '../utils/silentKeepAlive';
+import { Emitter } from '../utils/emitter';
+import type {
+  OutputBoundsSnapshot,
+  TestPatternKindOrOff,
+  VideoDimensions,
+  WebglContextStatus,
+} from '../windows/control/ControlHost';
 
 const STATE_STORAGE_KEY = 'dropcaster.mappings.v1';
 const SAVE_DEBOUNCE_MS = 250;
@@ -52,13 +59,29 @@ export class WindowController {
   /** プロジェクション中の「ソースウィンドウ（このメインウィンドウ）が hidden」を ControlWindow に通知中か。 */
   private visibilityWatchActive = false;
   private boundVisibilityChange = () => this.notifySourceVisibility();
+
+  /**
+   * inline マウントされた ControlPanel（InlineControlHost）が購読する in-process イベント。
+   * popout への postMessage と並行して fire するので、Step 2 では両方が動く（A/B 検証可能）。
+   * 値は常に最新を保持し、`events.X.get()` で snapshot として取れる。
+   */
+  readonly events = {
+    state: new Emitter<MappingsState>(defaultMappingsState()),
+    testPattern: new Emitter<TestPatternKindOrOff>('off'),
+    outputBounds: new Emitter<OutputBoundsSnapshot>({
+      innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false,
+    }),
+    videoDimensions: new Emitter<VideoDimensions>({ width: 1, height: 1 }),
+    sourceVisibility: new Emitter<boolean>(false),
+    webglContext: new Emitter<WebglContextStatus>('ok'),
+  };
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
 
     if (event.data?.type === 'state-mutation') {
-      // ControlWindow が user 入力で更新した state を受け取る。
-      // 既に control 側に反映済みなので broadcastBack=false。
-      this.applyState(event.data.data, { broadcastToControl: false });
+      // popout の ControlWindow が user 入力で更新した state を受け取る。popout 自身には
+      // 既に反映済みなので popout へは echo back せず、inline panel と output へは push する。
+      this.applyState(event.data.data, { broadcastToPopoutControl: false });
     } else if (event.data?.type === 'output-needs-stream') {
       // 出力ウィンドウが video 群を組み直したので stream を bind し直す
       this.bindStreamToOutputWindow();
@@ -267,22 +290,42 @@ export class WindowController {
   /**
    * 正規 state の唯一の更新ポイント。state を差し替えてから:
    *  - SketchPageView へ overlay 更新イベントを発火
-   *  - ControlWindow へ state-update を broadcast（プログラム的変更時のみ）
+   *  - 出力ウィンドウへは常に broadcast
+   *  - popout 版 control へは `broadcastToPopoutControl: false` でなければ postMessage
+   *  - inline 版 control へは `broadcastToInlineControl: false` でなければ events.state を fire
+   *
+   * popout が変更の起点なら popout へは echo back しない、inline が起点なら inline へは echo back しない、
+   * といった片方向制御を呼び出し側がフラグで指定できる（双方を同時に受け取る state mirror が
+   * 自己ループしないようにするため）。
    */
   private applyState(
     next: MappingsState,
-    options: { broadcastToControl?: boolean } = {}
+    options: { broadcastToPopoutControl?: boolean; broadcastToInlineControl?: boolean } = {}
   ): void {
     this.state = next;
     this.scheduleSave();
     this.dispatchOverlayUpdate();
     this.broadcastStateToOutput();
-    if (options.broadcastToControl !== false) {
-      this.broadcastStateToControl();
+    if (options.broadcastToPopoutControl !== false) {
+      this.postStateToPopoutControl();
+    }
+    if (options.broadcastToInlineControl !== false) {
+      this.events.state.set(next);
     }
   }
 
+  /** inline ペインの ControlPanel から「UI で state を変えた」と通知される入口。 */
+  applyStateFromInline(next: MappingsState): void {
+    this.applyState(next, { broadcastToInlineControl: false });
+  }
+
+  /** プログラム的（メニュー操作・初期化など）に両方の control へ state を反映する。 */
   private broadcastStateToControl(): void {
+    this.postStateToPopoutControl();
+    this.events.state.set(this.state);
+  }
+
+  private postStateToPopoutControl(): void {
     const controlWin = this.windowManager.getWindow('control_window');
     if (controlWin && !controlWin.closed) {
       controlWin.postMessage({
@@ -450,6 +493,7 @@ export class WindowController {
   }
 
   private notifyVideoDimensions(): void {
+    this.events.videoDimensions.set(this.videoActualDimensions);
     const controlWindow = this.windowManager.getWindow('control_window');
     if (controlWindow && !controlWindow.closed) {
       controlWindow.postMessage({
@@ -467,10 +511,9 @@ export class WindowController {
    */
   private notifyOutputBounds(): void {
     const outputWin = this.windowManager.getWindow('output_window');
-    const controlWin = this.windowManager.getWindow('control_window');
-    if (!outputWin || outputWin.closed || !controlWin || controlWin.closed) return;
+    if (!outputWin || outputWin.closed) return;
     try {
-      const data = {
+      const data: OutputBoundsSnapshot = {
         innerWidth: outputWin.innerWidth,
         innerHeight: outputWin.innerHeight,
         screenWidth: outputWin.screen.width,
@@ -480,7 +523,13 @@ export class WindowController {
       const json = JSON.stringify(data);
       if (json === this.lastOutputBoundsJson) return;
       this.lastOutputBoundsJson = json;
-      controlWin.postMessage({ type: 'output-dimensions-update', data }, window.location.origin);
+      // inline 向けに emit
+      this.events.outputBounds.set(data);
+      // popout 向けには開いていたら postMessage
+      const controlWin = this.windowManager.getWindow('control_window');
+      if (controlWin && !controlWin.closed) {
+        controlWin.postMessage({ type: 'output-dimensions-update', data }, window.location.origin);
+      }
     } catch (error) {
       console.error('WindowController: output-dimensions-update 送信エラー', error);
     }
@@ -495,6 +544,7 @@ export class WindowController {
     if (this.testPatternKind === kind) return;
     const prev = this.testPatternKind;
     this.testPatternKind = kind;
+    this.events.testPattern.set(kind);
 
     if (kind === 'off') {
       // テスト → 通常ソース。テスト stream を止めて、source iframe から再キャプチャする
@@ -522,6 +572,7 @@ export class WindowController {
   }
 
   private broadcastTestPatternState(): void {
+    this.events.testPattern.set(this.testPatternKind);
     const controlWindow = this.windowManager.getWindow('control_window');
     if (controlWindow && !controlWindow.closed) {
       controlWindow.postMessage({
@@ -562,6 +613,7 @@ export class WindowController {
   }
 
   private broadcastSourceVisibility(hidden: boolean): void {
+    this.events.sourceVisibility.set(hidden);
     const controlWin = this.windowManager.getWindow('control_window');
     if (!controlWin || controlWin.closed) return;
     try {
@@ -662,6 +714,7 @@ export class WindowController {
   }
 
   private broadcastWebglContextStatus(status: 'lost' | 'ok'): void {
+    this.events.webglContext.set(status);
     const controlWin = this.windowManager.getWindow('control_window');
     if (!controlWin || controlWin.closed) return;
     try {

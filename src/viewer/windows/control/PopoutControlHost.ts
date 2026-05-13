@@ -25,8 +25,7 @@ import type {
   VideoDimensions,
   WebglContextStatus,
 } from './ControlHost';
-
-type Listener<T> = (value: T) => void;
+import { Emitter, type Listener } from '../../utils/emitter';
 
 const DEFAULT_BOUNDS: OutputBoundsSnapshot = {
   innerWidth: 0,
@@ -37,28 +36,6 @@ const DEFAULT_BOUNDS: OutputBoundsSnapshot = {
 };
 
 const DEFAULT_DIMENSIONS: VideoDimensions = { width: 1, height: 1 };
-
-/**
- * 同じイベント種別を複数の購読者へ流すミニ pub/sub。最後に渡された値を覚えていて、
- * 新規購読者には emit せず、`get*()` で取れるようにするだけ（既存 UI の更新は state-update で
- * push されたタイミングで再発火する想定）。
- */
-class Emitter<T> {
-  private listeners = new Set<Listener<T>>();
-  private value: T;
-  constructor(initial: T) { this.value = initial; }
-  get(): T { return this.value; }
-  set(next: T): void {
-    this.value = next;
-    for (const l of this.listeners) {
-      try { l(next); } catch (e) { console.error('ControlHost: listener エラー', e); }
-    }
-  }
-  subscribe(l: Listener<T>): Unsubscribe {
-    this.listeners.add(l);
-    return () => { this.listeners.delete(l); };
-  }
-}
 
 export class PopoutControlHost implements ControlHost {
   readonly host: HTMLElement;
