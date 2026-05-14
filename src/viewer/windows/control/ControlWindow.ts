@@ -1,6 +1,7 @@
 import { BaseWindow } from '../shared/BaseWindow';
 import { CONTROL_PANEL_HTML } from './ControlWindow.template';
 import { CONTROL_PANEL_CSS } from './ControlWindow.styles';
+import { ColumnResizers } from './panels/ColumnResizers';
 import {
   applyVideoCrop,
   applyQuadTransform,
@@ -62,6 +63,7 @@ export class ControlWindow extends BaseWindow {
   private controlHost: ControlHost | null = null;
   /** host のイベント購読解除関数。dispose で全部呼ぶ。 */
   private hostUnsubs: Unsubscribe[] = [];
+  private columnResizers = new ColumnResizers();
 
   /**
    * id / class ベースの DOM 探索はすべてこの要素配下で行う（inline マウント先要素）。
@@ -180,6 +182,7 @@ export class ControlWindow extends BaseWindow {
       cancelAnimationFrame(this.mappingAreaResizeRafId);
       this.mappingAreaResizeRafId = null;
     }
+    this.columnResizers.destroy();
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
@@ -245,105 +248,12 @@ ${CONTROL_PANEL_CSS}
     this.setupKeyboardNudge();
 
     // カラム間のドラッグリサイザ（前回保存幅の復元含む）
-    this.setupColumnResizers();
+    if (this.scopeEl && this.hostDoc) {
+      this.columnResizers.attach(this.scopeEl, this.hostDoc);
+    }
 
     // 初期値を更新
     this.updateToolValues();
-  }
-
-  /**
-   * 3 カラム（tool / source / mapping）の間に置かれた .dc-column-resizer を
-   * マウスでドラッグして幅を調整できるようにする。
-   *   - tool 側リサイザ: tool-column の width を直接書き換える（min/max は CSS でクランプ）。
-   *     source・mapping は flex で残りを分け合う。
-   *   - source 側リサイザ: source-column の flex-basis を書き換えて、source vs mapping の
-   *     比率を変える。mapping は flex 維持で残りを取る。
-   *
-   * ユーザの設定は localStorage に保存し、次回マウント時に復元する。
-   */
-  private setupColumnResizers(): void {
-    const scope = this.scopeEl;
-    const doc = this.hostDoc;
-    if (!scope || !doc) return;
-
-    const toolCol  = scope.querySelector<HTMLElement>('.tool-column');
-    const sourceCol = scope.querySelector<HTMLElement>('.source-column');
-    const mappingCol = scope.querySelector<HTMLElement>('.mapping-column');
-    if (!toolCol || !sourceCol || !mappingCol) return;
-
-    // localStorage から前回の幅を復元
-    this.restoreColumnWidths(toolCol, sourceCol);
-
-    const resizers = scope.querySelectorAll<HTMLElement>('.dc-column-resizer');
-    resizers.forEach(resizer => {
-      const edge = resizer.dataset.resizeEdge; // 'tool' or 'source'
-      if (edge !== 'tool' && edge !== 'source') return;
-
-      resizer.addEventListener('mousedown', (e: MouseEvent) => {
-        e.preventDefault();
-        const startX = e.clientX;
-        const startToolW = toolCol.getBoundingClientRect().width;
-        const startSourceW = sourceCol.getBoundingClientRect().width;
-        resizer.classList.add('dragging');
-        const prevCursor = doc.body.style.cursor;
-        const prevUserSelect = doc.body.style.userSelect;
-        doc.body.style.cursor = 'col-resize';
-        doc.body.style.userSelect = 'none';
-
-        const onMove = (ev: MouseEvent) => {
-          const dx = ev.clientX - startX;
-          if (edge === 'tool') {
-            // tool-column の幅を直接変更（CSS の min/max にクランプされる）
-            toolCol.style.width = `${Math.max(180, startToolW + dx)}px`;
-          } else {
-            // source-column を「固定 width で flex-basis に展開」して、source vs mapping の比率を決める。
-            // mapping-column は flex:1 のまま残りを取る。
-            const nextSourceW = Math.max(280, startSourceW + dx);
-            sourceCol.style.flex = '0 0 auto';
-            sourceCol.style.width = `${nextSourceW}px`;
-          }
-        };
-
-        const onUp = () => {
-          resizer.classList.remove('dragging');
-          doc.body.style.cursor = prevCursor;
-          doc.body.style.userSelect = prevUserSelect;
-          doc.removeEventListener('mousemove', onMove);
-          doc.removeEventListener('mouseup', onUp);
-          this.persistColumnWidths(toolCol, sourceCol);
-        };
-
-        doc.addEventListener('mousemove', onMove);
-        doc.addEventListener('mouseup', onUp);
-      });
-    });
-  }
-
-  /** カラム幅を localStorage に保存（key: dropcaster.control.columnWidths.v1）。 */
-  private persistColumnWidths(toolCol: HTMLElement, sourceCol: HTMLElement): void {
-    try {
-      const payload = {
-        tool: toolCol.getBoundingClientRect().width,
-        source: sourceCol.getBoundingClientRect().width,
-      };
-      localStorage.setItem('dropcaster.control.columnWidths.v1', JSON.stringify(payload));
-    } catch { /* ignore quota / private mode */ }
-  }
-
-  /** localStorage から前回保存した幅を復元（無ければ何もしない）。 */
-  private restoreColumnWidths(toolCol: HTMLElement, sourceCol: HTMLElement): void {
-    try {
-      const raw = localStorage.getItem('dropcaster.control.columnWidths.v1');
-      if (!raw) return;
-      const data = JSON.parse(raw) as { tool?: number; source?: number };
-      if (typeof data.tool === 'number' && data.tool > 0) {
-        toolCol.style.width = `${data.tool}px`;
-      }
-      if (typeof data.source === 'number' && data.source > 0) {
-        sourceCol.style.flex = '0 0 auto';
-        sourceCol.style.width = `${data.source}px`;
-      }
-    } catch { /* ignore parse error */ }
   }
 
   private setupSelectionBox(): void {
