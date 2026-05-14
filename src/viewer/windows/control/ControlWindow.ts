@@ -10,12 +10,8 @@ import { SourceCropPanel } from './panels/SourceCropPanel';
 import { MappingAreaPanel } from './panels/MappingAreaPanel';
 import { MappingsController } from './MappingsController';
 import {
-  defaultMappingsState,
-  getActiveMapping,
   withActiveSet,
-  type Quad,
   type MappingsState,
-  type SourceRect,
 } from '../../utils/mappingTransform';
 import type {
   ControlHost,
@@ -51,15 +47,9 @@ export class ControlWindow extends BaseWindow {
   private mappingsList = new MappingsListPanel();
   private sourceCrop = new SourceCropPanel();
   private mappingArea = new MappingAreaPanel();
-  private ctrl = new MappingsController({
-    getState: () => this.state,
-    getActiveSource: () => this.sourceSelectionData,
-    getActiveQuad: () => this.quadData,
-    setActiveSource: (s) => this.setActiveSource(s),
-    setActiveQuad: (q) => this.setActiveQuad(q),
-    replaceState: (next) => this.replaceState(next),
-    commit: () => this.broadcastStateMutation(),
-  });
+  // canonical state（および active alias）は MappingsController が所有する。
+  // ローカル mutation 後の broadcast 経路（commit）だけ親側から差し込む。
+  private ctrl = new MappingsController((state) => this.controlHost?.emitStateMutation(state));
 
   /**
    * id / class ベースの DOM 探索はすべてこの要素配下で行う（inline マウント先要素）。
@@ -67,36 +57,6 @@ export class ControlWindow extends BaseWindow {
    */
   private get scopeEl(): HTMLElement | null {
     return this.controlHost?.host ?? null;
-  }
-
-  // canonical state は親 (WindowController) が保持。これは mirror。
-  // ローカル UI 操作では optimistic に書き換えて即座に state-mutation を送る。
-  // state-update で親から再同期。
-  private state: MappingsState = defaultMappingsState();
-  // active な mapping の source / quad オブジェクトへの alias。
-  // 既存ハンドラが this.sourceSelectionData.x = ... のように内部 mutation するので、
-  // 同じ参照を保持して active 切替時に rebindActiveAliases() で貼り直す。
-  private sourceSelectionData: SourceRect = this.state.mappings[0].source;
-  private quadData: Quad = this.state.mappings[0].quad;
-
-  private rebindActiveAliases(): void {
-    const active = getActiveMapping(this.state);
-    this.sourceSelectionData = active.source;
-    this.quadData = active.quad;
-  }
-
-  /** active な entry の quad を新しいオブジェクトで差し替え、alias も同期。 */
-  private setActiveQuad(quad: Quad): void {
-    const active = getActiveMapping(this.state);
-    active.quad = quad;
-    this.quadData = quad;
-  }
-
-  /** active な entry の source を新しいオブジェクトで差し替え、alias も同期。 */
-  private setActiveSource(source: SourceRect): void {
-    const active = getActiveMapping(this.state);
-    active.source = source;
-    this.sourceSelectionData = source;
   }
 
   constructor() {
@@ -133,8 +93,23 @@ export class ControlWindow extends BaseWindow {
     this.setupHostSubscriptions();
     this.setupControls();
     this.setupMessageListener();
+    // state が丸ごと差し替わった時の UI 一括再描画。disposeHost で外れる。
+    this.hostUnsubs.push(this.ctrl.onChange(() => this.refreshAllFromState()));
     // 初期化時にアスペクト比を設定（出力ウィンドウの寸法は WindowController から後で push される）
     setTimeout(() => this.outputViz.refresh(), 100);
+  }
+
+  /**
+   * state が外部 push (applyExternal) や programmatic replace で丸ごと変わった時の
+   * UI 全体再描画。drag/nudge 中の in-place mutation では発火しない（panel が自前で
+   * 必要な部分だけ refresh する）。
+   */
+  private refreshAllFromState(): void {
+    this.keyboardNudge.clearSelection();
+    this.sourceCrop.refresh();
+    this.mappingArea.refreshTransform();
+    this.updateToolValues();
+    this.mappingsList.rerender();
   }
 
   /** CSS を host の owner document へ 1 度だけ注入する（inline 起動用）。重複注入を防ぐ。 */
@@ -153,7 +128,7 @@ export class ControlWindow extends BaseWindow {
     const h = this.controlHost;
     if (!h) return;
     this.hostUnsubs.push(
-      h.onStateChange((s: MappingsState) => this.handleStateUpdate(s)),
+      h.onStateChange((s: MappingsState) => this.ctrl.applyExternal(s)),
       h.onVideoDimensionsChange((d: VideoDimensions) => this.handleVideoDimensionsUpdate(d)),
       h.onOutputBoundsChange((b: OutputBoundsSnapshot) => this.handleOutputBoundsUpdate(b)),
       h.onTestPatternChange((k: TestPatternKindOrOff) => this.updateTestPatternUI(k)),
@@ -232,7 +207,7 @@ ${CONTROL_PANEL_CSS}
         setKeyboardSourceSelection: () => this.keyboardNudge.setSelection({ type: 'source' }),
         onSourceChanged: () => {
           this.mappingArea.refreshVideoCrop();
-          this.inactivePreviews.sync(this.state);
+          this.inactivePreviews.sync(this.ctrl.getState());
           this.updateToolValues();
         },
       });
@@ -244,7 +219,7 @@ ${CONTROL_PANEL_CSS}
         setKeyboardQuadSelection: (corner) => this.keyboardNudge.setSelection({ type: 'quad', corner }),
         clearKeyboardSelection: () => this.keyboardNudge.clearSelection(),
         onQuadChanged: () => {
-          this.inactivePreviews.sync(this.state);
+          this.inactivePreviews.sync(this.ctrl.getState());
           this.updateToolValues();
         },
         onCroppedVideoMetadata: (d) => { this.videoActualDimensions = d; },
@@ -257,7 +232,7 @@ ${CONTROL_PANEL_CSS}
       this.inactivePreviews.attach(stage, this.hostDoc, {
         getSourceVideo: () => this.sourceVideo,
         getActiveContainer: () => this.mappingArea.getCroppedContainer(),
-        onActivate: (id) => this.replaceState(withActiveSet(this.state, id)),
+        onActivate: (id) => this.ctrl.replaceState(withActiveSet(this.ctrl.getState(), id)),
       });
     }
 
@@ -337,16 +312,19 @@ ${CONTROL_PANEL_CSS}
     const scope = this.scopeEl;
     if (!scope) return;
 
+    const source = this.ctrl.getActiveSource();
+    const quad = this.ctrl.getActiveQuad();
+
     // ソース値の更新
     const sourceX = scope.querySelector('#source-x-value');
     const sourceY = scope.querySelector('#source-y-value');
     const sourceW = scope.querySelector('#source-w-value');
     const sourceH = scope.querySelector('#source-h-value');
 
-    if (sourceX) sourceX.textContent = this.sourceSelectionData.x.toFixed(1);
-    if (sourceY) sourceY.textContent = this.sourceSelectionData.y.toFixed(1);
-    if (sourceW) sourceW.textContent = this.sourceSelectionData.width.toFixed(1);
-    if (sourceH) sourceH.textContent = this.sourceSelectionData.height.toFixed(1);
+    if (sourceX) sourceX.textContent = source.x.toFixed(1);
+    if (sourceY) sourceY.textContent = source.y.toFixed(1);
+    if (sourceW) sourceW.textContent = source.width.toFixed(1);
+    if (sourceH) sourceH.textContent = source.height.toFixed(1);
 
     // マッピング: 4隅の値を更新
     const fmt = (p: { x: number; y: number }) => `${p.x.toFixed(1)}, ${p.y.toFixed(1)}`;
@@ -354,10 +332,10 @@ ${CONTROL_PANEL_CSS}
     const tr = scope.querySelector('#mapping-tr-value');
     const bl = scope.querySelector('#mapping-bl-value');
     const br = scope.querySelector('#mapping-br-value');
-    if (tl) tl.textContent = fmt(this.quadData.topLeft);
-    if (tr) tr.textContent = fmt(this.quadData.topRight);
-    if (bl) bl.textContent = fmt(this.quadData.bottomLeft);
-    if (br) br.textContent = fmt(this.quadData.bottomRight);
+    if (tl) tl.textContent = fmt(quad.topLeft);
+    if (tr) tr.textContent = fmt(quad.topRight);
+    if (bl) bl.textContent = fmt(quad.bottomLeft);
+    if (br) br.textContent = fmt(quad.bottomRight);
   }
 
   /** quad の「出力1px」の基準サイズ。出力ウィンドウのビューポート → ソース canvas 寸法 → 1920×1080 でフォールバック。 */
@@ -391,7 +369,7 @@ ${CONTROL_PANEL_CSS}
     this.mappingArea.refreshVideoCrop();
     // 非 active mapping のプレビュー warp は source も含めた signature で memoize されているので、
     // source が変わったタイミングで再評価する。
-    this.inactivePreviews.sync(this.state);
+    this.inactivePreviews.sync(this.ctrl.getState());
   }
 
   /**
@@ -430,21 +408,6 @@ ${CONTROL_PANEL_CSS}
     // display-frameは物理ディスプレイのアスペクト比を維持するので更新しない
   }
 
-  /**
-   * 親 (WindowController) からの canonical state push を mirror に反映。
-   * active alias を貼り直して UI 全体を再描画。
-   */
-  private handleStateUpdate(state: MappingsState): void {
-    if (!state || !Array.isArray(state.mappings) || state.mappings.length === 0) return;
-    this.state = state;
-    this.rebindActiveAliases();
-    this.keyboardNudge.clearSelection();
-    this.sourceCrop.refresh();
-    this.mappingArea.refreshTransform();
-    this.updateToolValues();
-    this.mappingsList.rerender();
-  }
-
   /** WebGL コンテキストの ロスト／復帰 を受けてバナーを切り替える。 */
   private updateWebglContextBanner(status: WebglContextStatus): void {
     const el = this.scopeEl?.querySelector('#dc-webgl-lost-banner');
@@ -461,24 +424,4 @@ ${CONTROL_PANEL_CSS}
     });
   }
 
-  /**
-   * ローカル mutation 後に呼ぶ。alias 経由で source/quad オブジェクトを直接書き換えると
-   * active な entry の同じ参照が更新される（state は同じインスタンス）。
-   * 連続発火（ドラッグ移動・矢印キー連打）の間引きや親への送信は ControlHost が責任を持つ。
-   */
-  private broadcastStateMutation(): void {
-    this.controlHost?.emitStateMutation(this.state);
-  }
-
-  /** プログラム的に state を差し替える時に使う（active 切替・追加・削除など）。 */
-  private replaceState(next: MappingsState): void {
-    this.state = next;
-    this.rebindActiveAliases();
-    this.keyboardNudge.clearSelection();
-    this.sourceCrop.refresh();
-    this.mappingArea.refreshTransform();
-    this.updateToolValues();
-    this.mappingsList.rerender();
-    this.broadcastStateMutation();
-  }
 }
