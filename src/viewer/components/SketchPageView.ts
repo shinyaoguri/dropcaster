@@ -1,5 +1,4 @@
 import type { Sketch } from '../types/sketch.js';
-import { EventEmitter } from '../events/EventEmitter';
 import { UIElementController } from '../ui/services/UIElementController';
 import { escapeHtml } from '../utils/html.js';
 import {
@@ -9,7 +8,7 @@ import {
 } from '../utils/mappingTransform.js';
 
 export class SketchPageView {
-  private eventEmitter: EventEmitter;
+  private openWindowsToggleCallback: (() => void) | null = null;
   private uiController: UIElementController;
   // 投影中、各マッピングのソース切り抜き範囲を示すワイヤーフレーム枠（.dc-source-crop-box）はここに生成される
   private projectionStage: HTMLDivElement | null = null;
@@ -25,7 +24,6 @@ export class SketchPageView {
   private boundProjectionModeChange = this.handleProjectionModeChange.bind(this);
 
   constructor() {
-    this.eventEmitter = new EventEmitter();
     this.uiController = new UIElementController();
   }
 
@@ -106,7 +104,7 @@ export class SketchPageView {
 
     // ウィンドウ開くボタンのイベント
     openWindowsBtn.addEventListener('click', () => {
-      this.eventEmitter.emit('openWindowsToggle');
+      this.openWindowsToggleCallback?.();
     });
   }
 
@@ -279,7 +277,7 @@ export class SketchPageView {
 
 
   onOpenWindowsToggle(callback: () => void): void {
-    this.eventEmitter.on('openWindowsToggle', callback);
+    this.openWindowsToggleCallback = callback;
   }
 
   destroy(): void {
@@ -290,6 +288,6 @@ export class SketchPageView {
     window.removeEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
     window.removeEventListener('resize', this.boundResize);
     window.removeEventListener('projection-mode-change', this.boundProjectionModeChange);
-    this.eventEmitter.removeAllListeners();
+    this.openWindowsToggleCallback = null;
   }
 }

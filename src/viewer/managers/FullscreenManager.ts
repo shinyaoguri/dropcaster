@@ -1,11 +1,10 @@
-import { EventEmitter } from '../events/EventEmitter';
 import { UIElementController } from '../ui/services/UIElementController';
 import { MouseEventHandler } from '../ui/services/MouseEventHandler';
 
 // fullscreenchange を監視し、フルスクリーン中は一定時間操作が無ければ UI 要素（ボタン等）を隠す。
 // フルスクリーン状態の変化は onFullscreenChange で通知する。
 export class FullscreenManager {
-  private eventEmitter: EventEmitter;
+  private fullscreenChangeCallback: ((isFullscreen: boolean) => void) | null = null;
   private isFullscreen = false;
   private uiHideTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly UI_HIDE_DELAY = 3000; // 3秒後にUI要素を非表示
@@ -14,7 +13,6 @@ export class FullscreenManager {
   private boundFullscreenChange = this.handleFullscreenChange.bind(this);
 
   constructor() {
-    this.eventEmitter = new EventEmitter();
     this.uiController = new UIElementController();
     this.mouseHandler = new MouseEventHandler();
   }
@@ -37,7 +35,7 @@ export class FullscreenManager {
       this.uiController.showElements();
     }
 
-    this.eventEmitter.emit('fullscreenChange', this.isFullscreen);
+    this.fullscreenChangeCallback?.(this.isFullscreen);
   }
 
   private startUIHideTimer(): void {
@@ -60,13 +58,13 @@ export class FullscreenManager {
   };
 
   onFullscreenChange(callback: (isFullscreen: boolean) => void): void {
-    this.eventEmitter.on('fullscreenChange', callback);
+    this.fullscreenChangeCallback = callback;
   }
 
   destroy(): void {
     this.stopUIHideTimer();
     document.removeEventListener('fullscreenchange', this.boundFullscreenChange);
     this.mouseHandler.destroy();
-    this.eventEmitter.removeAllListeners();
+    this.fullscreenChangeCallback = null;
   }
 }
