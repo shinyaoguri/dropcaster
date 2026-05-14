@@ -3,6 +3,7 @@ import { CONTROL_PANEL_HTML } from './ControlWindow.template';
 import { CONTROL_PANEL_CSS } from './ControlWindow.styles';
 import { ColumnResizers } from './panels/ColumnResizers';
 import { OutputVizPanel } from './panels/OutputVizPanel';
+import { InactivePreviewPool } from './panels/InactivePreviewPool';
 import {
   applyVideoCrop,
   applyQuadTransform,
@@ -40,8 +41,7 @@ export class ControlWindow extends BaseWindow {
   private selectionBox: HTMLDivElement | null = null;
   private croppedContainer: HTMLDivElement | null = null;
   private croppedVideo: HTMLVideoElement | null = null;
-  // 非アクティブ mapping のプレビュー要素（active は cropped-container を流用）
-  private inactivePreviews = new Map<string, { div: HTMLDivElement; video: HTMLVideoElement; sig: string }>();
+  private inactivePreviews = new InactivePreviewPool();
   private videoActualDimensions = {
     width: 1,
     height: 1
@@ -183,6 +183,7 @@ export class ControlWindow extends BaseWindow {
     }
     this.columnResizers.destroy();
     this.outputViz.destroy();
+    this.inactivePreviews.destroy();
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
@@ -231,7 +232,7 @@ ${CONTROL_PANEL_CSS}
           height: this.sourceVideo!.videoHeight || 1080
         };
         this.outputViz.refreshAspectRatio();
-        this.refreshInactivePreviewStreams();
+        this.inactivePreviews.rebindStreams();
       });
     }
 
@@ -281,6 +282,17 @@ ${CONTROL_PANEL_CSS}
 
   private setupMappingArea(): void {
     if (!this.croppedContainer || !this.croppedVideo) return;
+
+    // 非 active mapping のプレビュー pool を cropped-container の親 (#mapping-area) に attach
+    const stage = this.croppedContainer.parentElement;
+    const doc = this.hostDoc;
+    if (stage && doc) {
+      this.inactivePreviews.attach(stage, doc, {
+        getSourceVideo: () => this.sourceVideo,
+        getActiveContainer: () => this.croppedContainer,
+        onActivate: (id) => this.replaceState(withActiveSet(this.state, id)),
+      });
+    }
 
     // ドラッグ（quad全体平行移動）と4隅ハンドル（独立操作）
     this.setupMappingDragHandlers();
@@ -947,7 +959,7 @@ ${CONTROL_PANEL_CSS}
     this.updateVideoCrop();
     // 非 active mapping のプレビュー warp は source も含めた signature で memoize されているので、
     // source が変わったタイミングで再評価する。
-    this.syncInactivePreviews();
+    this.inactivePreviews.sync(this.state);
   }
 
   private updateQuadTransform(): void {
@@ -965,7 +977,7 @@ ${CONTROL_PANEL_CSS}
       .forEach(h => h.style.setProperty('--mapping-color', activeColor));
 
     // 非アクティブ mapping のプレビューを同期
-    this.syncInactivePreviews();
+    this.inactivePreviews.sync(this.state);
 
     // 4 隅ハンドル位置を quad に追従させる
     this.updateQuadHandlePositions();
@@ -987,84 +999,6 @@ ${CONTROL_PANEL_CSS}
     });
   }
 
-  /**
-   * 非 active な mapping ごとに preview-mapping div を生成・更新・削除する。
-   * cropped-container の前（DOM 順）に挿入することで、active なプレビューが
-   * 上に描画される。クリックでその mapping を active 化。
-   */
-  private syncInactivePreviews(): void {
-    if (!this.croppedContainer) return;
-    const stage = this.croppedContainer.parentElement;
-    if (!stage) return;
-    const doc = this.hostDoc;
-    if (!doc) return;
-    // ステージのピクセルサイズ（変わると quad の px 位置が変わるので sig に含める）
-    const stageRect = stage.getBoundingClientRect();
-    const stageSig = `${Math.round(stageRect.width)}x${Math.round(stageRect.height)}`;
-
-    const inactiveIds = new Set(
-      this.state.mappings.filter(m => m.id !== this.state.activeId).map(m => m.id)
-    );
-
-    // 不要になった preview を削除（消滅・active 化）
-    for (const [id, { div }] of this.inactivePreviews) {
-      if (!inactiveIds.has(id)) {
-        div.remove();
-        this.inactivePreviews.delete(id);
-      }
-    }
-
-    // 各非 active mapping を反映
-    for (let i = 0; i < this.state.mappings.length; i++) {
-      const m = this.state.mappings[i];
-      if (m.id === this.state.activeId) continue;
-
-      let entry = this.inactivePreviews.get(m.id);
-      if (!entry) {
-        const div = doc.createElement('div');
-        div.className = 'preview-mapping inactive';
-        div.dataset.mappingId = m.id;
-        const video = doc.createElement('video');
-        video.autoplay = true;
-        video.muted = true;
-        video.playsInline = true;
-        div.appendChild(video);
-        // active container の前 = 描画上は active より後ろ
-        stage.insertBefore(div, this.croppedContainer);
-        // クリックで active 化（drag は不可）
-        div.addEventListener('mousedown', (e) => {
-          e.stopPropagation();
-          this.replaceState(withActiveSet(this.state, m.id));
-        });
-        this.bindStreamToInactiveVideo(video);
-        entry = { div, video, sig: '' };
-        this.inactivePreviews.set(m.id, entry);
-      }
-
-      // 入力（index ＝色, quad, source, ステージサイズ）が前回と同じなら DOM を触らない。
-      // active な quad をドラッグ中、毎フレーム全 inactive preview を再 warp するのを防ぐ。
-      const sig = `${stageSig}|${i}|${m.quad.topLeft.x},${m.quad.topLeft.y},${m.quad.topRight.x},${m.quad.topRight.y},${m.quad.bottomRight.x},${m.quad.bottomRight.y},${m.quad.bottomLeft.x},${m.quad.bottomLeft.y}|${m.source.x},${m.source.y},${m.source.width},${m.source.height}`;
-      if (sig !== entry.sig) {
-        entry.sig = sig;
-        entry.div.style.setProperty('--mapping-color', mappingColor(i));
-        applyQuadTransform(entry.div, m.quad);
-        applyVideoCrop(entry.video, m.source);
-      }
-    }
-  }
-
-  private bindStreamToInactiveVideo(video: HTMLVideoElement): void {
-    if (!this.sourceVideo || !this.sourceVideo.srcObject) return;
-    if (video.srcObject === this.sourceVideo.srcObject) return;
-    video.srcObject = this.sourceVideo.srcObject;
-    video.play().catch(error => {
-      console.warn('ControlWindow: inactive preview の再生失敗', error);
-    });
-  }
-
-  private refreshInactivePreviewStreams(): void {
-    this.inactivePreviews.forEach(({ video }) => this.bindStreamToInactiveVideo(video));
-  }
 
   private updateCroppedVideo(): void {
     if (!this.croppedVideo) return;
