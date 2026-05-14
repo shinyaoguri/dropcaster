@@ -9,6 +9,14 @@ import { checkEnv, formatEnvReport } from '../../core/check-env.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// dropcaster 自身の package.json から version を読む。生成プロジェクトの
+// dependencies に書き込む際、固定文字列でハードコードするとリリース時に置き忘れる。
+async function readDropcasterVersion() {
+  const pkgPath = join(__dirname, '../../..', 'package.json');
+  const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
+  return pkg.version;
+}
+
 export async function init(options) {
   console.log(chalk.blue('🚀 Initializing new dropcaster project...'));
   
@@ -98,6 +106,11 @@ export async function init(options) {
     );
     
     // Create package.json
+    // dropcaster の version を caret range で記述する。生成された package.json は
+    // 別マシンに git clone されても解決可能でなければいけないので、ローカル file:
+    // 絶対パスは使わない（公開前のローカル開発で必要なら、ユーザ側で `npm link
+    // dropcaster` するか手動で書き換えてもらう）。
+    const dropcasterVersion = await readDropcasterVersion();
     const packageJson = {
       name: projectName,
       version: '1.0.0',
@@ -112,7 +125,7 @@ export async function init(options) {
         preview: 'dropcaster preview'
       },
       dependencies: {
-        dropcaster: `file:${join(__dirname, '../../..')}`
+        dropcaster: `^${dropcasterVersion}`
       }
     };
     
