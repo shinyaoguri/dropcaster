@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
+import { DEFAULT_ICON_SVG } from './config.js';
 
 export async function generateManifest(config, outputDir) {
   const startUrl = config.start_url || config.base || './';
@@ -45,13 +46,7 @@ export async function generateManifest(config, outputDir) {
       ];
     } catch {
       // No icon found, create a default one
-      const defaultIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="64" fill="#000"/>
-  <circle cx="256" cy="256" r="180" fill="#fff"/>
-  <circle cx="256" cy="256" r="120" fill="#000"/>
-  <circle cx="256" cy="256" r="60" fill="#fff"/>
-</svg>`;
-      await fs.writeFile(iconSvgPath, defaultIcon, 'utf-8');
+      await fs.writeFile(iconSvgPath, DEFAULT_ICON_SVG, 'utf-8');
       manifest.icons = [
         {
           src: 'icon.svg',

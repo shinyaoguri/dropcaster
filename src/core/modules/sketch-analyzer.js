@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from 'fs/promises';
 import { join } from 'path';
-import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE } from './config.js';
+import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE } from './constants.js';
 
 /**
  * 個別のスケッチを分析

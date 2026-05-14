@@ -8,7 +8,7 @@ import { analyzeSketch } from './modules/sketch-analyzer.js';
 import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists } from './modules/file-manager.js';
 import { generateSketchPreview } from './modules/preview-generator.js';
 import { checkPreviewTools } from './check-env.js';
-import { MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './modules/config.js';
+import { MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './modules/constants.js';
 
 // プロジェクトルートの解決:
 //   1. DROPCASTER_PROJECT_ROOT 環境変数（dropcaster CLI から呼ばれた場合に設定される）

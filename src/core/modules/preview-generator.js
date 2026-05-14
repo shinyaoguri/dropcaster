@@ -3,7 +3,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { readFile, writeFile, mkdir, rm, stat, copyFile } from 'fs/promises';
 import { join, resolve } from 'path';
-import { PREVIEW_OPTIONS, PREVIEW_PATH_PREFIX } from './config.js';
+import { PREVIEW_OPTIONS, PREVIEW_PATH_PREFIX } from './constants.js';
 import { detectGraphicsMode, getBrowserArgs } from './webgpu-detector.js';
 
 // FFmpeg は execFile + args 配列で起動する（shell を経由しない）。

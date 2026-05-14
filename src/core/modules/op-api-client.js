@@ -3,7 +3,7 @@
 // スケッチ ID の配列 → タイトル・ユーザー名・ユーザー URL などのメタデータを返す。
 
 import axios from 'axios';
-import { API_CONFIG, DEFAULTS } from './config.js';
+import { API_CONFIG, DEFAULTS } from './constants.js';
 
 const API_TOKEN_ENV_NAMES = [
   'OPENPROCESSING_API_TOKEN',

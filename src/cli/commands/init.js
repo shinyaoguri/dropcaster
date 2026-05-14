@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import prompts from 'prompts';
 import { checkEnv, formatEnvReport } from '../../core/check-env.js';
+import { DEFAULT_CONFIG, DEFAULT_ICON_SVG } from '../utils/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -81,22 +82,16 @@ export async function init(options) {
     await fs.mkdir(join(projectPath, 'public/previews'), { recursive: true });
     
     // Create default icon (simple SVG)
-    const defaultIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="64" fill="#000"/>
-  <circle cx="256" cy="256" r="180" fill="#fff"/>
-  <circle cx="256" cy="256" r="120" fill="#000"/>
-  <circle cx="256" cy="256" r="60" fill="#fff"/>
-</svg>`;
-    await fs.writeFile(join(projectPath, 'public/icon.svg'), defaultIcon, 'utf-8');
-    
-    // Create config file
+    await fs.writeFile(join(projectPath, 'public/icon.svg'), DEFAULT_ICON_SVG, 'utf-8');
+
+    // Create config file: DEFAULT_CONFIG をベースに、ユーザが prompt で答えたフィールドだけ上書き。
+    // 上書きしないフィールド（background_color / display / start_url）は loadConfig() の
+    // fallback と一致する。
     const config = {
+      ...DEFAULT_CONFIG,
       title: response.title || 'My Sketch Gallery',
-      description: response.description || 'A collection of creative coding sketches',
-      theme_color: response.theme_color || '#000000',
-      background_color: '#ffffff',
-      display: 'standalone',
-      start_url: '/'
+      description: response.description || DEFAULT_CONFIG.description,
+      theme_color: response.theme_color || DEFAULT_CONFIG.theme_color,
     };
     
     await fs.writeFile(
