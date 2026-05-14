@@ -20,6 +20,7 @@ export interface MappingsControllerOps {
   getState: () => MappingsState;
   getActiveSource: () => SourceRect;
   getActiveQuad: () => Quad;
+  setActiveSource: (source: SourceRect) => void;
   setActiveQuad: (quad: Quad) => void;
   replaceState: (next: MappingsState) => void;
   commit: () => void;
@@ -35,6 +36,9 @@ export class MappingsController {
   getState(): MappingsState { return this.ops.getState(); }
   getActiveSource(): SourceRect { return this.ops.getActiveSource(); }
   getActiveQuad(): Quad { return this.ops.getActiveQuad(); }
+
+  /** active source をまるごと差し替える（alias も貼り直される）。 */
+  setActiveSource(source: SourceRect): void { this.ops.setActiveSource(source); }
 
   /** active quad をまるごと差し替える（alias も貼り直される）。 */
   setActiveQuad(quad: Quad): void { this.ops.setActiveQuad(quad); }

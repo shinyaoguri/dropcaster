@@ -6,6 +6,7 @@ import { OutputVizPanel } from './panels/OutputVizPanel';
 import { InactivePreviewPool } from './panels/InactivePreviewPool';
 import { KeyboardNudge } from './panels/KeyboardNudge';
 import { MappingsListPanel } from './panels/MappingsListPanel';
+import { SourceCropPanel } from './panels/SourceCropPanel';
 import { MappingsController } from './MappingsController';
 import {
   applyVideoCrop,
@@ -35,7 +36,6 @@ import type {
 export class ControlWindow extends BaseWindow {
   private sourceVideo: HTMLVideoElement | null = null;
   private mappingVideo: HTMLVideoElement | null = null;
-  private selectionBox: HTMLDivElement | null = null;
   private croppedContainer: HTMLDivElement | null = null;
   private croppedVideo: HTMLVideoElement | null = null;
   private inactivePreviews = new InactivePreviewPool();
@@ -63,10 +63,12 @@ export class ControlWindow extends BaseWindow {
   private outputViz = new OutputVizPanel();
   private keyboardNudge = new KeyboardNudge();
   private mappingsList = new MappingsListPanel();
+  private sourceCrop = new SourceCropPanel();
   private ctrl = new MappingsController({
     getState: () => this.state,
     getActiveSource: () => this.sourceSelectionData,
     getActiveQuad: () => this.quadData,
+    setActiveSource: (s) => this.setActiveSource(s),
     setActiveQuad: (q) => this.setActiveQuad(q),
     replaceState: (next) => this.replaceState(next),
     commit: () => this.broadcastStateMutation(),
@@ -191,6 +193,7 @@ export class ControlWindow extends BaseWindow {
     this.inactivePreviews.destroy();
     this.keyboardNudge.destroy();
     this.mappingsList.destroy();
+    this.sourceCrop.destroy();
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
@@ -228,7 +231,6 @@ ${CONTROL_PANEL_CSS}
     this.mappingVideo = scope.querySelector('#mapping-video') as HTMLVideoElement;
     this.croppedContainer = scope.querySelector('#cropped-container') as HTMLDivElement;
     this.croppedVideo = scope.querySelector('#cropped-video') as HTMLVideoElement;
-    this.selectionBox = scope.querySelector('#selection-box') as HTMLDivElement;
 
     // sourceVideoのメタデータ読み込み時にアスペクト比を更新し、
     // すでに作成済みの非アクティブプレビュー video にも stream を bind する
@@ -243,9 +245,18 @@ ${CONTROL_PANEL_CSS}
       });
     }
 
-    // ソース選択ボックスの設定
-    this.setupSelectionBox();
-
+    // ソース選択ボックスのドラッグ／リサイズ／リセット／初期化
+    if (this.hostDoc) {
+      this.sourceCrop.attach(scope, this.hostDoc, this.ctrl, {
+        getSourceVideo: () => this.sourceVideo,
+        setKeyboardSourceSelection: () => this.keyboardNudge.setSelection({ type: 'source' }),
+        onSourceChanged: () => {
+          this.updateVideoCrop();
+          this.inactivePreviews.sync(this.state);
+          this.updateToolValues();
+        },
+      });
+    }
     // マッピング領域の設定
     this.setupMappingArea();
 
@@ -257,7 +268,7 @@ ${CONTROL_PANEL_CSS}
       this.keyboardNudge.attach(scope, this.hostDoc, this.ctrl, {
         getQuadRefSize: () => this.quadStepRefSize(),
         getSourceRefSize: () => this.sourceStepRefSize(),
-        getSelectionBox: () => this.selectionBox,
+        getSelectionBox: () => this.sourceCrop.getSelectionBox(),
         onAfterMutate: (type) => {
           if (type === 'quad') this.updateQuadTransform();
           else this.updateAfterSourceChange();
@@ -288,21 +299,6 @@ ${CONTROL_PANEL_CSS}
 
     // 初期値を更新
     this.updateToolValues();
-  }
-
-  private setupSelectionBox(): void {
-    if (!this.selectionBox || !this.sourceVideo) return;
-
-    // ビデオが読み込まれたら初期位置を設定
-    this.sourceVideo.addEventListener('loadedmetadata', () => {
-      this.initializeSelectionBox();
-      this.outputViz.refreshAspectRatio();
-    });
-
-    // 選択ボックスのドラッグ処理
-    this.setupSourceDragHandlers();
-    // リサイズハンドルの処理
-    this.setupSourceResizeHandlers();
   }
 
   private setupMappingArea(): void {
@@ -361,17 +357,6 @@ ${CONTROL_PANEL_CSS}
   private setupToolButtons(): void {
     const scope = this.scopeEl;
     if (!scope) return;
-
-    // リセットボタン
-    const resetSourceBtn = scope.querySelector('#reset-source-btn');
-    if (resetSourceBtn) {
-      resetSourceBtn.addEventListener('click', () => {
-        this.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
-        this.updateAfterSourceChange();
-        this.updateToolValues();
-        this.broadcastStateMutation();
-      });
-    }
 
     const resetMappingBtn = scope.querySelector('#reset-mapping-btn');
     if (resetMappingBtn) {
@@ -435,148 +420,6 @@ ${CONTROL_PANEL_CSS}
     if (tr) tr.textContent = fmt(this.quadData.topRight);
     if (bl) bl.textContent = fmt(this.quadData.bottomLeft);
     if (br) br.textContent = fmt(this.quadData.bottomRight);
-  }
-
-  private initializeSelectionBox(): void {
-    if (!this.sourceVideo || !this.selectionBox) return;
-
-    // デフォルトで全体を選択
-    this.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
-
-    this.updateAfterSourceChange();
-    this.broadcastStateMutation();
-  }
-
-  private setupSourceDragHandlers(): void {
-    const doc = this.hostDoc;
-    if (!this.selectionBox || !doc) return;
-
-    let isDragging = false;
-    let startX = 0;
-    let startY = 0;
-    let initialX = 0;
-    let initialY = 0;
-
-    const handleMouseDown = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.classList.contains('handle') || target.classList.contains('edge')) {
-        return;
-      }
-
-      this.keyboardNudge.setSelection({ type: 'source' });
-      isDragging = true;
-      startX = e.clientX;
-      startY = e.clientY;
-      initialX = this.sourceSelectionData.x;
-      initialY = this.sourceSelectionData.y;
-      e.preventDefault();
-    };
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging || !this.sourceVideo) return;
-
-      const videoRect = this.sourceVideo.getBoundingClientRect();
-      const deltaX = ((e.clientX - startX) / videoRect.width) * 100;
-      const deltaY = ((e.clientY - startY) / videoRect.height) * 100;
-
-      this.sourceSelectionData.x = Math.max(0, Math.min(100 - this.sourceSelectionData.width, initialX + deltaX));
-      this.sourceSelectionData.y = Math.max(0, Math.min(100 - this.sourceSelectionData.height, initialY + deltaY));
-
-      this.updateAfterSourceChange();
-      this.updateToolValues();
-      this.broadcastStateMutation();
-    };
-
-    const handleMouseUp = () => {
-      isDragging = false;
-    };
-
-    this.selectionBox.addEventListener('mousedown', handleMouseDown);
-    doc.addEventListener('mousemove', handleMouseMove);
-    doc.addEventListener('mouseup', handleMouseUp);
-  }
-
-  private setupSourceResizeHandlers(): void {
-    const doc = this.hostDoc;
-    if (!this.selectionBox || !doc) return;
-
-    const handles = this.selectionBox.querySelectorAll('.handle, .edge');
-    
-    handles.forEach(handle => {
-      let isResizing = false;
-      let startX = 0;
-      let startY = 0;
-      let initialData = { x: 0, y: 0, width: 0, height: 0 };
-
-      const handleMouseDown = (e: MouseEvent) => {
-        this.keyboardNudge.setSelection({ type: 'source' });
-        isResizing = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        initialData = { ...this.sourceSelectionData };
-        e.stopPropagation();
-        e.preventDefault();
-      };
-
-      const handleMouseMove = (e: MouseEvent) => {
-        if (!isResizing || !this.sourceVideo) return;
-
-        const videoRect = this.sourceVideo.getBoundingClientRect();
-        const deltaX = ((e.clientX - startX) / videoRect.width) * 100;
-        const deltaY = ((e.clientY - startY) / videoRect.height) * 100;
-
-        const handleType = (handle as HTMLElement).dataset.handle || (handle as HTMLElement).dataset.edge;
-        
-        switch(handleType) {
-          case 'nw':
-            this.sourceSelectionData.x = Math.max(0, Math.min(initialData.x + initialData.width - 5, initialData.x + deltaX));
-            this.sourceSelectionData.y = Math.max(0, Math.min(initialData.y + initialData.height - 5, initialData.y + deltaY));
-            this.sourceSelectionData.width = initialData.width - (this.sourceSelectionData.x - initialData.x);
-            this.sourceSelectionData.height = initialData.height - (this.sourceSelectionData.y - initialData.y);
-            break;
-          case 'ne':
-            this.sourceSelectionData.y = Math.max(0, Math.min(initialData.y + initialData.height - 5, initialData.y + deltaY));
-            this.sourceSelectionData.width = Math.max(5, Math.min(100 - initialData.x, initialData.width + deltaX));
-            this.sourceSelectionData.height = initialData.height - (this.sourceSelectionData.y - initialData.y);
-            break;
-          case 'sw':
-            this.sourceSelectionData.x = Math.max(0, Math.min(initialData.x + initialData.width - 5, initialData.x + deltaX));
-            this.sourceSelectionData.width = initialData.width - (this.sourceSelectionData.x - initialData.x);
-            this.sourceSelectionData.height = Math.max(5, Math.min(100 - initialData.y, initialData.height + deltaY));
-            break;
-          case 'se':
-            this.sourceSelectionData.width = Math.max(5, Math.min(100 - initialData.x, initialData.width + deltaX));
-            this.sourceSelectionData.height = Math.max(5, Math.min(100 - initialData.y, initialData.height + deltaY));
-            break;
-          case 'n':
-            this.sourceSelectionData.y = Math.max(0, Math.min(initialData.y + initialData.height - 5, initialData.y + deltaY));
-            this.sourceSelectionData.height = initialData.height - (this.sourceSelectionData.y - initialData.y);
-            break;
-          case 'e':
-            this.sourceSelectionData.width = Math.max(5, Math.min(100 - initialData.x, initialData.width + deltaX));
-            break;
-          case 's':
-            this.sourceSelectionData.height = Math.max(5, Math.min(100 - initialData.y, initialData.height + deltaY));
-            break;
-          case 'w':
-            this.sourceSelectionData.x = Math.max(0, Math.min(initialData.x + initialData.width - 5, initialData.x + deltaX));
-            this.sourceSelectionData.width = initialData.width - (this.sourceSelectionData.x - initialData.x);
-            break;
-        }
-
-        this.updateAfterSourceChange();
-        this.updateToolValues();
-        this.broadcastStateMutation();
-      };
-
-      const handleMouseUp = () => {
-        isResizing = false;
-      };
-
-      handle.addEventListener('mousedown', handleMouseDown as EventListener);
-      doc.addEventListener('mousemove', handleMouseMove as EventListener);
-      doc.addEventListener('mouseup', handleMouseUp as EventListener);
-    });
   }
 
   // quad 全体を平行移動（cropped-container の見た目領域をドラッグ）
@@ -695,15 +538,6 @@ ${CONTROL_PANEL_CSS}
     return { width: 1920, height: 1080 };
   }
 
-  private updateSelectionBox(): void {
-    if (!this.selectionBox) return;
-
-    this.selectionBox.style.left = `${this.sourceSelectionData.x}%`;
-    this.selectionBox.style.top = `${this.sourceSelectionData.y}%`;
-    this.selectionBox.style.width = `${this.sourceSelectionData.width}%`;
-    this.selectionBox.style.height = `${this.sourceSelectionData.height}%`;
-  }
-
   /**
    * ソース矩形を変更した直後に呼ぶまとめ更新ヘルパー。
    * ソース側の選択枠と、マッピング側のクロップ済み <video>（および非 active プレビュー）の
@@ -713,7 +547,7 @@ ${CONTROL_PANEL_CSS}
    * を持つので、3 箇所がバラバラに呼んでいた updateSelectionBox + 補助呼び出しをここに集約する。
    */
   private updateAfterSourceChange(): void {
-    this.updateSelectionBox();
+    this.sourceCrop.refresh();
     // #cropped-video は source rect を clip-path で切り取って見せているので、変更を即反映する
     // （抜けるとマッピング側プレビューが古い source 表示のままになる）。
     this.updateVideoCrop();
@@ -836,7 +670,7 @@ ${CONTROL_PANEL_CSS}
     this.state = state;
     this.rebindActiveAliases();
     this.keyboardNudge.clearSelection();
-    this.updateSelectionBox();
+    this.sourceCrop.refresh();
     this.updateQuadTransform();
     this.updateToolValues();
     this.mappingsList.rerender();
@@ -872,7 +706,7 @@ ${CONTROL_PANEL_CSS}
     this.state = next;
     this.rebindActiveAliases();
     this.keyboardNudge.clearSelection();
-    this.updateSelectionBox();
+    this.sourceCrop.refresh();
     this.updateQuadTransform();
     this.updateToolValues();
     this.mappingsList.rerender();
