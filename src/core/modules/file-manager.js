@@ -74,7 +74,12 @@ function shouldCopySketchFile(source) {
   return !SKETCH_COPY_EXCLUDES.has(basename(source));
 }
 
-async function getLatestMtime(path) {
+/**
+ * 与えられたパス配下（ファイル単体 or ディレクトリ再帰）の最新 mtime を返す。
+ * スケッチディレクトリの更新判定（src と public の新旧比較、プレビュー再生成判定）で
+ * 共有する。
+ */
+export async function getLatestMtime(path) {
   const stats = await stat(path);
   if (!stats.isDirectory()) {
     return stats.mtime;
@@ -88,6 +93,11 @@ async function getLatestMtime(path) {
   return mtimes.reduce((latest, current) => {
     return current > latest ? current : latest;
   }, stats.mtime);
+}
+
+/** stat ベースの存在チェック（fs.access より readable）。 */
+export async function fileExists(path) {
+  try { await stat(path); return true; } catch { return false; }
 }
 
 /**

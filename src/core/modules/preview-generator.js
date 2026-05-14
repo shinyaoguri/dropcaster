@@ -5,6 +5,7 @@ import { readFile, writeFile, mkdir, rm, stat, copyFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { PREVIEW_OPTIONS, PREVIEW_PATH_PREFIX } from './constants.js';
 import { detectGraphicsMode, getBrowserArgs } from './webgpu-detector.js';
+import { getLatestMtime } from './file-manager.js';
 
 // FFmpeg は execFile + args 配列で起動する（shell を経由しない）。
 // sketchName 由来の tempDir / outputPath にシェルメタ文字が混ざっても引数として渡るだけで
@@ -261,23 +262,6 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
       }
     }
   }
-}
-
-async function getLatestMtime(path) {
-  const stats = await stat(path);
-  if (!stats.isDirectory()) {
-    return stats.mtime;
-  }
-
-  const { readdir } = await import('fs/promises');
-  const entries = await readdir(path, { withFileTypes: true });
-  const mtimes = await Promise.all(entries.map(async (entry) => {
-    return getLatestMtime(join(path, entry.name));
-  }));
-
-  return mtimes.reduce((latest, current) => {
-    return current > latest ? current : latest;
-  }, stats.mtime);
 }
 
 async function generateAnimatedGIF(tempDir, outputPath, frameCount) {

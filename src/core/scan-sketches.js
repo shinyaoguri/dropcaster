@@ -5,7 +5,7 @@ import { resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { fetchUserDataForSketches } from './modules/op-api-client.js';
 import { analyzeSketch } from './modules/sketch-analyzer.js';
-import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists } from './modules/file-manager.js';
+import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists, fileExists } from './modules/file-manager.js';
 import { generateSketchPreview } from './modules/preview-generator.js';
 import { checkPreviewTools } from './check-env.js';
 import { MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './modules/constants.js';
@@ -288,10 +288,6 @@ async function findSketchDirectoryName(sketchId) {
     }
   }
   return null;
-}
-
-async function fileExists(path) {
-  try { await stat(path); return true; } catch { return false; }
 }
 
 export { scanSketches };
