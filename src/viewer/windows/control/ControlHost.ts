@@ -1,11 +1,7 @@
 /**
  * ControlWindow（マッピング操作 UI）が、自分の置かれている環境から状態を読み取り
- * 変更を通知するための seam。現状の唯一の実装は InlineControlHost（main 内ペインとして
+ * 変更を通知するための seam。実装は InlineControlHost のみ（main 内ペインとして
  * mount された ControlWindow が、同一プロセスの WindowController.events を購読／呼び出す）。
- *
- * 過去（〜2026-05）には PopoutControlHost という popout 用実装が並走していたが、
- * Step 3 で popout 自体が撤去されたため削除済み。インターフェースの形は、将来また
- * 別の host 環境（例: WebView 越しの remote control）を足したくなった時の足場として残す。
  */
 
 import type { TestPatternKind } from '../../runtime/TestPatternSource';
@@ -41,7 +37,7 @@ export type Unsubscribe = () => void;
  * WindowController を直接呼ぶ／events.* を購読する。
  */
 export interface ControlHost {
-  /** パネルが DOM を生やすホスト要素（popout: body 直下／inline: メインの dc-editor 領域）。 */
+  /** パネルが DOM を生やすホスト要素（メインの dc-editor 領域）。 */
   readonly host: HTMLElement;
   /** host が属する Window（rAF・タイマー登録のスコープ）。 */
   readonly window: Window;
@@ -78,7 +74,7 @@ export interface ControlHost {
 
   /**
    * host 自身が抱える window listener や保留中の rAF を片付ける。実装によっては no-op。
-   * ControlWindow.disposeHost() から呼ばれる（route 切替や popout 閉鎖時）。
+   * ControlWindow.disposeHost() から呼ばれる（route 切替時など）。
    */
   dispose?(): void;
 }

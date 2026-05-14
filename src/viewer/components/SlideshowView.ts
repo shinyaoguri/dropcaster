@@ -15,11 +15,11 @@ export class SlideshowView {
   private SLIDE_INTERVAL = 30000; // 30秒
   private boundHandleKeydown = this.handleKeydown.bind(this);
   private pool: SketchPool | null = null;
-  // プロジェクションマッピング（ポップアウトのコントロール／出力ウィンドウ）
+  // プロジェクションマッピング（出力ウィンドウと inline コントロールパネル）
   private windowController: WindowController | null = null;
   private mappingActive = false;
   private mappingStartTimeout: number | null = null;
-  private boundClosePopouts = () => this.windowController?.closeAllWindows();
+  private boundCloseProjectionWindows = () => this.windowController?.closeAllWindows();
   /** projection 中だけ #dc-inline-editor 内にマウントする ControlWindow（inline 経路）。 */
   private inlinePanel: ControlWindow | null = null;
 
@@ -98,8 +98,8 @@ export class SlideshowView {
 
     this.addStyles();
     this.setupEventListeners();
-    // タブが閉じられたらマッピングのポップアウトウィンドウも閉じる
-    window.addEventListener('pagehide', this.boundClosePopouts);
+    // タブが閉じられたらマッピング用の出力ウィンドウも閉じる
+    window.addEventListener('pagehide', this.boundCloseProjectionWindows);
 
     const stage = document.getElementById('slideshow-stage');
     if (stage) this.pool = new SketchPool(stage, { size: 2 });
@@ -584,7 +584,7 @@ export class SlideshowView {
 
   private startMapping(): void {
     if (!this.windowController) this.windowController = new WindowController();
-    // クリックの user gesture 内で出力ウィンドウだけを開く（control popout は廃止）。
+    // クリックの user gesture 内で出力ウィンドウを開く。
     // 編集 UI は inline ペインとしてスライドショーの右側にマウントする。
     this.windowController.openOutputWindow();
     this.mappingActive = true;
@@ -655,7 +655,7 @@ export class SlideshowView {
   public destroy(): void {
     this.stopAutoPlay();
     document.removeEventListener('keydown', this.boundHandleKeydown);
-    window.removeEventListener('pagehide', this.boundClosePopouts);
+    window.removeEventListener('pagehide', this.boundCloseProjectionWindows);
     if (this.mappingStartTimeout) {
       clearTimeout(this.mappingStartTimeout);
       this.mappingStartTimeout = null;

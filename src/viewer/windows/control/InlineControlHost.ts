@@ -38,9 +38,8 @@ export class InlineControlHost implements ControlHost {
     return this.wc.events.state.subscribe(handler);
   }
   emitStateMutation(state: MappingsState): void {
-    // popout 版と同じく親（state の真のオーナー）へ「ローカル変更があった」と伝える。
-    // WindowController.applyStateFromInline は broadcast の方向を制御する（自身が起点なので
-    // inline 自身に echo back せず、popout と output にのみ反映する）。
+    // 親（state の真のオーナー）へ「ローカル変更があった」と伝える。
+    // applyStateFromInline は inline 自身に echo back せず、出力ウィンドウにのみ反映する。
     this.wc.applyStateFromInline(state);
   }
 

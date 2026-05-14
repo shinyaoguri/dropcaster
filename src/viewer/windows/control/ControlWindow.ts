@@ -56,14 +56,14 @@ export class ControlWindow extends BaseWindow {
   private mappingAreaResizeRafId: number | null = null;
   /** ウィンドウ resize 由来の再レイアウトを 1 フレームに 1 回へ間引くための rAF id。 */
   private resizeRafId: number | null = null;
-  /** 環境（popout / 将来的に main 内ペイン）依存の I/O を集約した seam。null = 未初期化。 */
+  /** ホスト環境依存の I/O を集約した seam。null = 未初期化。 */
   private controlHost: ControlHost | null = null;
   /** host のイベント購読解除関数。dispose で全部呼ぶ。 */
   private hostUnsubs: Unsubscribe[] = [];
 
   /**
-   * id / class ベースの DOM 探索はすべてこの要素配下で行う（popout: body、inline: 指定要素）。
-   * main 内に持っていったとき main 側の id と衝突しないようにするための seam。null = 未初期化。
+   * id / class ベースの DOM 探索はすべてこの要素配下で行う（inline マウント先要素）。
+   * main 側の id と衝突しないようにするための seam。null = 未初期化。
    */
   private get scopeEl(): HTMLElement | null {
     return this.controlHost?.host ?? null;
@@ -104,11 +104,11 @@ export class ControlWindow extends BaseWindow {
   }
 
   /**
-   * BaseWindow.setWindow() から呼ばれる popout 起動経路は廃止された
-   * （control は inline マウント専用）。誤って popout 経由で起動した場合に備えた no-op。
+   * BaseWindow の契約上必要だが ControlWindow は inline 専用なので使われない。
+   * mountInline() が唯一の起動経路。
    */
   protected initialize(): void {
-    console.warn('ControlWindow: popout 起動は廃止されました。mountInline() を使ってください');
+    /* no-op */
   }
 
   /**
@@ -126,7 +126,7 @@ export class ControlWindow extends BaseWindow {
     this.mount(hostBuilder(shell));
   }
 
-  /** popout / inline 共通：host 確定後のセットアップを行う。 */
+  /** host 確定後のセットアップを行う（mountInline から呼ばれる）。 */
   private mount(host: ControlHost): void {
     this.disposeHost(); // 既存 host があれば確実に剥がす
     this.controlHost = host;
@@ -365,8 +365,7 @@ export class ControlWindow extends BaseWindow {
   protected getStyles(): string {
     // すべてのスタイルを @scope (.dc-control-shell) で囲って、main にインライン
     // マウントしたときに main 側 DOM へスタイルが漏れないようにする。@scope 内では
-    // body セレクタは（body が shell の祖先なので）マッチしない。popout の body
-    // レイアウトは initialize() で inline style として直接当てる。
+    // body セレクタは（body が shell の祖先なので）マッチしない。
     //
     // BaseWindow.getStyles() の generic ルール（h1, button, .window-container 等）も
     // @scope 配下に閉じ込められるので main の同名要素には影響しない。
@@ -1137,7 +1136,7 @@ export class ControlWindow extends BaseWindow {
     const scope = this.scopeEl;
     if (!scope) return;
 
-    // ビデオ要素を取得（scope は ControlHost.host：popout body もしくは inline マウント先要素）
+    // ビデオ要素を取得（scope = ControlHost.host：inline マウント先要素）
     this.sourceVideo = scope.querySelector('#source-video') as HTMLVideoElement;
     this.mappingVideo = scope.querySelector('#mapping-video') as HTMLVideoElement;
     this.croppedContainer = scope.querySelector('#cropped-container') as HTMLDivElement;
@@ -1949,9 +1948,8 @@ export class ControlWindow extends BaseWindow {
    */
   private updateAfterSourceChange(): void {
     this.updateSelectionBox();
-    // #cropped-video は source rect を clip-path で切り取って見せているので、変更を即反映する。
-    // 元コード（popout 時代）ではここが抜けており、マッピング側のプレビューだけ古い source 表示の
-    // ままになる症状（user 報告: マッピング側を何か操作するまで同期されない）の原因だった。
+    // #cropped-video は source rect を clip-path で切り取って見せているので、変更を即反映する
+    // （抜けるとマッピング側プレビューが古い source 表示のままになる）。
     this.updateVideoCrop();
     // 非 active mapping のプレビュー warp は source も含めた signature で memoize されているので、
     // source が変わったタイミングで再評価する。

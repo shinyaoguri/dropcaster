@@ -54,7 +54,6 @@ export class WindowController {
 
   /**
    * inline マウントされた ControlPanel（InlineControlHost）が購読する in-process イベント。
-   * popout への postMessage と並行して fire するので、Step 2 では両方が動く（A/B 検証可能）。
    * 値は常に最新を保持し、`events.X.get()` で snapshot として取れる。
    */
   readonly events = {
@@ -68,7 +67,7 @@ export class WindowController {
   };
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
-    // control popout 撤去後、残るのは出力ウィンドウからの `output-needs-stream` だけ。
+    // 出力ウィンドウからの `output-needs-stream` のみハンドル。
     if (event.data?.type === 'output-needs-stream') {
       this.bindStreamToOutputWindow();
     }
@@ -569,7 +568,7 @@ export class WindowController {
     }, 1000);
   }
 
-  // 出力ウィンドウがまだ開いているかをチェック（control popout は廃止）
+  // 出力ウィンドウがまだ開いているかをチェック
   private hasActiveWindows(): boolean {
     const outputWindow = this.windowManager.getWindow('output_window');
     return outputWindow !== null && !outputWindow.closed;

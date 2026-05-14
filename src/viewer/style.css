@@ -346,7 +346,7 @@ body {
 .dc-inline-editor[hidden] { display: none; }
 /* メインウィンドウ自体をフルスクリーン化したときはエディタは出さない（投影確認モード） */
 .fullscreen-sketch-container.fullscreen .dc-inline-editor { display: none; }
-/* シェル内の dc-control-shell は inline 用に 100% に追従させる（popout の 100vh 前提を上書き） */
+/* シェル内の dc-control-shell はマウント先要素のサイズに追従させる */
 .dc-inline-editor .dc-control-shell { width: 100%; height: 100%; }
 .dc-inline-editor .dc-control-shell .control-container { height: 100%; }
 

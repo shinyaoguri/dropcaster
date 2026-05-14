@@ -67,8 +67,8 @@ export class SketchPageController {
 
   /**
    * #dc-inline-editor に ControlPanel をマウントする。
-   * popout 版が開いていてもこちらは独立に動き、同じ canonical state を mirror する
-   * （WindowController.events 経由）。Step 3 で popout を撤去するまでの並走期間。
+   * canonical state は WindowController が保持し、ペインはその mirror をレンダリングする
+   * （WindowController.events 経由）。
    */
   private mountInlineEditor(): void {
     if (this.inlinePanel) return; // 既に mount 済み
@@ -106,8 +106,8 @@ export class SketchPageController {
   }
 
   private openWindows(): void {
-    // クリックの user gesture 内で出力ウィンドウだけを開く（control popout は廃止 —
-    // 編集 UI は inline ペインとして main の右側に出てくる）。
+    // クリックの user gesture 内で出力ウィンドウを開く。
+    // 編集 UI は inline ペインとして main の右側に出てくる。
     this.windowController.openOutputWindow();
     // inline panel を即マウントしておく。startCanvasStreaming 内の broadcastStream が
     // 走るより前にペイン内 <video> を DOM に存在させて、bind を確実に届くようにするため。
