@@ -50,17 +50,29 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     });
     
     const page = await browser.newPage();
-    
+
+    // p5.sound は AudioWorklet を addModule() で読み込もうとするが、file:// 配信だと
+    // 解決に失敗し、p5 内部の _preloadCount が 1 のまま残って setup() が永久に走らない
+    // （preview は "Loading..." 画面のまま固まる）。preview は GIF で音は使わないので、
+    // worklet load を no-op に置き換えて即 resolve させる。
+    await page.addInitScript(() => {
+      try {
+        if (typeof AudioWorklet !== 'undefined' && AudioWorklet.prototype) {
+          AudioWorklet.prototype.addModule = function () { return Promise.resolve(); };
+        }
+      } catch (_) { /* noop */ }
+    });
+
     // ビューポートサイズを設定
     await page.setViewportSize({
       width: PREVIEW_OPTIONS.width,
       height: PREVIEW_OPTIONS.height
     });
-    
+
     // スケッチページを読み込み
     const fileUrl = `file://${resolve(indexPath)}`;
     await page.goto(fileUrl, { waitUntil: 'networkidle' });
-    
+
     // CSS注入：余分なpadding/marginを除去
     await page.addStyleTag({
       content: `

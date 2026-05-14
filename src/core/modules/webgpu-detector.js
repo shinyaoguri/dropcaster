@@ -106,7 +106,11 @@ export async function detectGraphicsMode(sketchPath) {
 export function getBrowserArgs(graphicsMode) {
   const baseArgs = [
     '--no-sandbox',
-    '--disable-dev-shm-usage'
+    '--disable-dev-shm-usage',
+    // p5.sound などが load されている場合、AudioContext が user gesture を待って
+    // suspended のままになり、p5 の preload カウンタが下がらず setup() が走らない。
+    // headless では gesture を出せないので、policy を緩めて AudioContext を即 running に。
+    '--autoplay-policy=no-user-gesture-required'
   ];
   
   switch (graphicsMode) {
