@@ -2,6 +2,7 @@ import { BaseWindow } from '../shared/BaseWindow';
 import { CONTROL_PANEL_HTML } from './ControlWindow.template';
 import { CONTROL_PANEL_CSS } from './ControlWindow.styles';
 import { ColumnResizers } from './panels/ColumnResizers';
+import { OutputVizPanel } from './panels/OutputVizPanel';
 import {
   applyVideoCrop,
   applyQuadTransform,
@@ -64,6 +65,7 @@ export class ControlWindow extends BaseWindow {
   /** host のイベント購読解除関数。dispose で全部呼ぶ。 */
   private hostUnsubs: Unsubscribe[] = [];
   private columnResizers = new ColumnResizers();
+  private outputViz = new OutputVizPanel();
 
   /**
    * id / class ベースの DOM 探索はすべてこの要素配下で行う（inline マウント先要素）。
@@ -138,10 +140,7 @@ export class ControlWindow extends BaseWindow {
     this.setupControls();
     this.setupMessageListener();
     // 初期化時にアスペクト比を設定（出力ウィンドウの寸法は WindowController から後で push される）
-    setTimeout(() => {
-      this.updateSourceVideoAspectRatio();
-      this.updateOutputViz();
-    }, 100);
+    setTimeout(() => this.outputViz.refresh(), 100);
   }
 
   /** CSS を host の owner document へ 1 度だけ注入する（inline 起動用）。重複注入を防ぐ。 */
@@ -183,6 +182,7 @@ export class ControlWindow extends BaseWindow {
       this.mappingAreaResizeRafId = null;
     }
     this.columnResizers.destroy();
+    this.outputViz.destroy();
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
@@ -230,7 +230,7 @@ ${CONTROL_PANEL_CSS}
           width: this.sourceVideo!.videoWidth || 1920,
           height: this.sourceVideo!.videoHeight || 1080
         };
-        this.updateSourceVideoAspectRatio();
+        this.outputViz.refreshAspectRatio();
         this.refreshInactivePreviewStreams();
       });
     }
@@ -252,6 +252,14 @@ ${CONTROL_PANEL_CSS}
       this.columnResizers.attach(this.scopeEl, this.hostDoc);
     }
 
+    // 出力ウィンドウ枠 + canvas アスペクト比の可視化
+    this.outputViz.attach(scope, {
+      getOutputBounds: () => this.outputBounds,
+      getVideoDimensions: () => this.videoActualDimensions,
+      getSourceVideo: () => this.sourceVideo,
+      onWindowFrameReflow: () => this.updateQuadTransform(),
+    });
+
     // 初期値を更新
     this.updateToolValues();
   }
@@ -262,7 +270,7 @@ ${CONTROL_PANEL_CSS}
     // ビデオが読み込まれたら初期位置を設定
     this.sourceVideo.addEventListener('loadedmetadata', () => {
       this.initializeSelectionBox();
-      this.updateSourceVideoAspectRatio();
+      this.outputViz.refreshAspectRatio();
     });
 
     // 選択ボックスのドラッグ処理
@@ -375,7 +383,7 @@ ${CONTROL_PANEL_CSS}
     this.renderMappingsList();
 
     // ディスプレイサイズを更新
-    this.updateOutputViz();
+    this.outputViz.refreshOutputViz();
   }
 
   /** マッピング一覧の HTML を再生成し、クリック・削除ハンドラを貼り直す。 */
@@ -1103,7 +1111,7 @@ ${CONTROL_PANEL_CSS}
       if (this.resizeRafId !== null) return;
       this.resizeRafId = win.requestAnimationFrame(() => {
         this.resizeRafId = null;
-        this.updateSourceVideoAspectRatio();
+        this.outputViz.refreshAspectRatio();
         this.updateQuadTransform();
       });
     });
@@ -1115,13 +1123,13 @@ ${CONTROL_PANEL_CSS}
   /** ControlHost から push される「出力ウィンドウ＋ディスプレイ寸法／全画面状態」を反映。 */
   private handleOutputBoundsUpdate(b: OutputBoundsSnapshot): void {
     this.outputBounds = { ...b };
-    this.updateOutputViz();
+    this.outputViz.refreshOutputViz();
   }
 
   private handleVideoDimensionsUpdate(dimensions: VideoDimensions): void {
     this.videoActualDimensions = dimensions;
     this.updateVideoCrop();
-    this.updateSourceVideoAspectRatio();
+    this.outputViz.refreshAspectRatio();
     // display-frameは物理ディスプレイのアスペクト比を維持するので更新しない
   }
 
@@ -1175,70 +1183,5 @@ ${CONTROL_PANEL_CSS}
     this.updateToolValues();
     this.renderMappingsList();
     this.broadcastStateMutation();
-  }
-  
-  /**
-   * 「ディスプレイに対する出力ウィンドウの大きさ」と全画面状態を可視化する。
-   * 表示するのはプロジェクション出力に使う出力ウィンドウ（メインの操作ウィンドウではない）。
-   * 寸法・全画面状態は WindowController から output-dimensions-update で push される。
-   */
-  private updateOutputViz(): void {
-    const scope = this.scopeEl;
-    if (!scope) return;
-    const { innerWidth: w, innerHeight: h, screenWidth: sw, screenHeight: sh, isFullscreen } = this.outputBounds;
-
-    // ステータスバッジ（ウィンドウ／フルスクリーン）はデータが無くても更新できる
-    const displayMode = scope.querySelector('#display-mode');
-    if (displayMode) displayMode.textContent = isFullscreen ? 'フルスクリーン' : 'ウィンドウ';
-    const displayStatus = scope.querySelector('.display-status');
-    if (displayStatus) {
-      displayStatus.classList.remove('fullscreen', 'window');
-      displayStatus.classList.add(isFullscreen ? 'fullscreen' : 'window');
-    }
-
-    // 出力ウィンドウがまだ開いていない等で寸法が無いときはプレースホルダのまま
-    if (sw <= 0 || sh <= 0) return;
-
-    const displaySize = scope.querySelector('#display-size');
-    if (displaySize) displaySize.textContent = `${sw}x${sh}`;
-    const displayFrame = scope.querySelector('#display-frame') as HTMLDivElement | null;
-    if (displayFrame) displayFrame.style.aspectRatio = `${sw / sh}`;
-
-    const windowSize = scope.querySelector('#window-size');
-    if (windowSize) windowSize.textContent = w > 0 && h > 0 ? `${w}x${h}` : '—';
-
-    const windowFrame = scope.querySelector('#window-frame') as HTMLDivElement | null;
-    if (windowFrame) {
-      const wPct = w > 0 ? Math.min(100, (w / sw) * 100) : 100;
-      const hPct = h > 0 ? Math.min(100, (h / sh) * 100) : 100;
-      windowFrame.style.position = 'absolute';
-      windowFrame.style.left = '50%';
-      windowFrame.style.top = '50%';
-      windowFrame.style.transform = 'translate(-50%, -50%)';
-      windowFrame.style.width = `${wPct}%`;
-      windowFrame.style.height = `${hPct}%`;
-      windowFrame.classList.toggle('fullscreen', isFullscreen);
-    }
-
-    // #window-frame（= #mapping-area の祖先）のサイズが変わったので quad の matrix3d を再計算
-    this.updateQuadTransform();
-  }
-
-  /**
-   * ソース canvas のアスペクト比を CSS カスタムプロパティ --canvas-aspect として scope に注入する。
-   * .canvas-frame 側で `aspect-ratio: var(--canvas-aspect)` + `max-width/height: 100%` を当てて
-   * いるので、レイアウトとリサイズの追従はブラウザ任せ（カラム幅をドラッグしても比率は固定）。
-   *
-   * 旧実装は wrapper の getBoundingClientRect から frame サイズを毎回 px で算出していたが、
-   * カラムリサイザを足したときに「ドラッグ中に再計算が走らずアスペクト比が崩れる」問題が出るので
-   * CSS aspect-ratio 任せに切り替えた。
-   */
-  private updateSourceVideoAspectRatio(): void {
-    const scope = this.scopeEl;
-    if (!scope) return;
-    const canvasWidth = this.videoActualDimensions.width || (this.sourceVideo?.videoWidth) || 1920;
-    const canvasHeight = this.videoActualDimensions.height || (this.sourceVideo?.videoHeight) || 1080;
-    if (canvasWidth <= 0 || canvasHeight <= 0) return;
-    scope.style.setProperty('--canvas-aspect', `${canvasWidth} / ${canvasHeight}`);
   }
 }
