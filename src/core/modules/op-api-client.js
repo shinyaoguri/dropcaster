@@ -1,8 +1,7 @@
-// OpenProcessing Public API のクライアント（旧 scraper.js — 以前は Puppeteer スクレイパだったが、
-// /api/sketch/{id} と /api/user/{id} を叩く axios クライアントに置き換え済み）。
+// OpenProcessing Public API のクライアント。
+// /api/sketch/{id} と /api/user/{id} を Node の native fetch で叩き、
 // スケッチ ID の配列 → タイトル・ユーザー名・ユーザー URL などのメタデータを返す。
 
-import axios from 'axios';
 import { API_CONFIG, DEFAULTS } from './constants.js';
 
 const API_TOKEN_ENV_NAMES = [
@@ -58,35 +57,35 @@ export class OpenProcessingApiClient {
     };
     if (this.apiToken) headers.Authorization = `Bearer ${this.apiToken}`;
 
-    const response = await axios.get(`${API_CONFIG.apiBaseUrl}${path}`, {
+    const response = await fetch(`${API_CONFIG.apiBaseUrl}${path}`, {
       headers,
-      timeout: API_CONFIG.apiRequestTimeout,
-      responseType: 'json',
-      transformResponse: [(data) => {
-        if (typeof data !== 'string' || data.length === 0) return data;
-        try { return JSON.parse(data); } catch { return data; }
-      }],
-      validateStatus: () => true,
+      signal: AbortSignal.timeout(API_CONFIG.apiRequestTimeout),
     });
     this.lastApiRequestAt = Date.now();
 
-    if (response.status >= 400) throw new Error(formatApiError(response));
-    if (typeof response.data === 'string') {
-      if (response.data.includes('Attention Required') || response.data.includes('Cloudflare')) {
+    const status = response.status;
+    const text = await response.text();
+    // 一旦 JSON へパースを試みる（失敗したら text のまま）。エラーボディも JSON のことが多いので
+    // 4xx/5xx の前にやっておく。
+    let data;
+    try { data = JSON.parse(text); }
+    catch { data = text; }
+
+    if (status >= 400) throw new Error(formatApiError({ status, data }));
+    if (typeof data === 'string') {
+      if (data.includes('Attention Required') || data.includes('Cloudflare')) {
         throw new Error('Cloudflare response returned from Public API endpoint');
       }
-      throw new Error(`OpenProcessing API returned non-JSON response (${response.status})`);
+      throw new Error(`OpenProcessing API returned non-JSON response (${status})`);
     }
-    if (!response.data || typeof response.data !== 'object') {
-      throw new Error(`OpenProcessing API returned an empty response (${response.status})`);
+    if (!data || typeof data !== 'object') {
+      throw new Error(`OpenProcessing API returned an empty response (${status})`);
     }
-    if (response.data.success === false) {
-      throw new Error(response.data.message || response.data.error || 'OpenProcessing API request failed');
+    if (data.success === false) {
+      throw new Error(data.message || data.error || 'OpenProcessing API request failed');
     }
 
-    return response.data.object && Object.keys(response.data).length <= 4
-      ? response.data.object
-      : response.data;
+    return data.object && Object.keys(data).length <= 4 ? data.object : data;
   }
 
   async waitForApiRateLimit() {
