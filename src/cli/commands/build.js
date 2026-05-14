@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, resolve, sep } from 'path';
+import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { build as viteBuild } from 'vite';
 import chalk from 'chalk';
@@ -13,6 +14,60 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = resolve(__dirname, '../../..'); // package root (src/cli/commands → repo root)
 
+// クリーンビルドで `fs.rm` の対象になるディレクトリ。`--output .` や `--output ..`
+// などでプロジェクト本体や親ディレクトリが消し飛ばないように、削除前にここで検証する。
+const PROTECTED_SUBDIRS = ['src', 'sketches', 'content', 'public', 'node_modules', '.git'];
+
+// config.title / config.description / config.theme_color などを index.html に差し込むときの
+// 最低限の HTML エスケープ。text と attribute どちらに入れても安全な 5 文字を置換する。
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function assertSafeOutputDir(outputDir, cwd) {
+  // 1. cwd と一致／cwd の祖先は拒否（`.`, `..`, 絶対パスで cwd を指す等を全部塞ぐ）
+  if (outputDir === cwd) {
+    throw new Error(`output directory must not be the current directory: ${outputDir}`);
+  }
+  const cwdWithSep = cwd.endsWith(sep) ? cwd : cwd + sep;
+  const outWithSep = outputDir.endsWith(sep) ? outputDir : outputDir + sep;
+  if (cwdWithSep.startsWith(outWithSep)) {
+    throw new Error(`output directory must not be an ancestor of the current directory: ${outputDir}`);
+  }
+
+  // 2. ファイルシステムルートや $HOME 直下も拒否
+  if (outputDir === sep || outputDir === homedir()) {
+    throw new Error(`output directory must not be a system path: ${outputDir}`);
+  }
+
+  // 3. cwd 配下の保護対象（ソース／コンテンツ／.git 等）は拒否
+  for (const name of PROTECTED_SUBDIRS) {
+    const protectedPath = join(cwd, name);
+    const protectedWithSep = protectedPath + sep;
+    if (outputDir === protectedPath || outputDir.startsWith(protectedWithSep)) {
+      throw new Error(`output directory must not be inside "${name}/": ${outputDir}`);
+    }
+  }
+
+  // 4. 既存ディレクトリで .git を含むものは別プロジェクトのルートの可能性が高いので拒否
+  //    （cwd 外への絶対パス指定でうっかり別リポジトリを消すのを防ぐ）
+  let hasGit = false;
+  try {
+    await fs.access(join(outputDir, '.git'));
+    hasGit = true;
+  } catch (err) {
+    // ENOENT 以外（権限など）は fs.rm 側に任せる
+  }
+  if (hasGit) {
+    throw new Error(`refusing to clean output directory that contains .git: ${outputDir}`);
+  }
+}
+
 export async function build(options) {
   const spinner = ora('Building for production...').start();
   
@@ -20,7 +75,12 @@ export async function build(options) {
     // Load user config
     const config = await loadConfig(process.cwd());
     const outputDir = resolve(process.cwd(), options.output);
-    
+
+    // 出力先が cwd 自身／その祖先／保護対象サブディレクトリ等になっていないか検証
+    // — `fs.rm(..., { recursive: true, force: true })` でプロジェクトや親ディレクトリを
+    // 消し飛ばさないための安全弁。
+    await assertSafeOutputDir(outputDir, process.cwd());
+
     // Clean output directory
     await fs.rm(outputDir, { recursive: true, force: true });
     await fs.mkdir(outputDir, { recursive: true });
@@ -100,25 +160,27 @@ export async function build(options) {
     let indexHtml = await fs.readFile(indexPath, 'utf-8');
     
     // Update title and meta tags
+    // 値は dropcaster.config.js 由来。`</title>` や `">` のような文字列を含むと
+    // タグを閉じてしまうので、HTML エスケープしてから差し込む。
     indexHtml = indexHtml.replace(
       /<title>.*?<\/title>/,
-      `<title>${config.title}</title>`
+      `<title>${escapeHtml(config.title)}</title>`
     );
     indexHtml = indexHtml.replace(
       /<meta name="description".*?>/,
-      `<meta name="description" content="${config.description}">`
+      `<meta name="description" content="${escapeHtml(config.description)}">`
     );
     indexHtml = indexHtml.replace(
       /<meta name="theme-color".*?>/,
-      `<meta name="theme-color" content="${config.theme_color}">`
+      `<meta name="theme-color" content="${escapeHtml(config.theme_color)}">`
     );
-    
+
     // Ensure manifest link exists
     if (!indexHtml.includes('rel="manifest"')) {
       const basePath = options.base.replace(/\/?$/, '/');
       indexHtml = indexHtml.replace(
         '</head>',
-        `  <link rel="manifest" href="${basePath}manifest.json">\n  </head>`
+        `  <link rel="manifest" href="${escapeHtml(basePath)}manifest.json">\n  </head>`
       );
     }
     

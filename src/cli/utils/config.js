@@ -13,25 +13,27 @@ const defaultConfig = {
 
 export async function loadConfig(projectPath) {
   const configPath = join(projectPath, 'dropcaster.config.js');
-  
+
+  // 「ファイルが存在しない」と「ファイルはあるが構文／import エラー」は別物として扱う。
+  // 後者をデフォルト設定で握りつぶすと、誤った内容のままビルドが通って公開されるので、
+  // ENOENT 以外は素直に投げて build を止める。
   try {
-    // Check if config file exists
     await fs.access(configPath);
-    
-    // Import the config file
-    const configUrl = pathToFileURL(configPath).href;
-    const { default: userConfig } = await import(configUrl);
-    
-    // Merge with defaults
-    return {
-      ...defaultConfig,
-      ...userConfig
-    };
   } catch (error) {
-    // Return default config if file doesn't exist
-    console.warn('No dropcaster.config.js found, using defaults');
-    return defaultConfig;
+    if (error && error.code === 'ENOENT') {
+      console.warn('No dropcaster.config.js found, using defaults');
+      return defaultConfig;
+    }
+    throw error;
   }
+
+  const configUrl = pathToFileURL(configPath).href;
+  const { default: userConfig } = await import(configUrl);
+
+  return {
+    ...defaultConfig,
+    ...userConfig
+  };
 }
 
 export async function saveConfig(projectPath, config) {

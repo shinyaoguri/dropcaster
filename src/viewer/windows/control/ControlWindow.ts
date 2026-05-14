@@ -1399,26 +1399,50 @@ export class ControlWindow extends BaseWindow {
     if (!listEl) return;
 
     const canRemove = this.state.mappings.length > 1;
-    listEl.innerHTML = this.state.mappings
-      .map((m, idx) => {
-        const isActive = m.id === this.state.activeId;
-        const enabled = isMappingEnabled(m);
-        const name = m.name ?? `Mapping ${idx + 1}`;
-        const color = mappingColor(idx);
-        const cls = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}`;
-        return `
-          <div class="${cls}" data-id="${m.id}" style="--mapping-color: ${color}">
-            <span class="color-chip"></span>
-            <span class="name">${name}</span>
-            <button class="toggle-btn${enabled ? ' enabled' : ''}" data-id="${m.id}"
-              title="${enabled ? '出力中（クリックで停止）' : '停止中（クリックで出力）'}"
-            >${enabled ? '●' : '○'}</button>
-            <button class="remove-btn" data-id="${m.id}" ${canRemove ? '' : 'disabled'}
-              title="削除">×</button>
-          </div>
-        `;
-      })
-      .join('');
+    const doc = this.hostDoc ?? document;
+
+    // インポート JSON や localStorage 経由で `m.id` / `m.name` に細工した文字列が
+    // 混入しても XSS にならないよう、innerHTML テンプレート補間ではなく
+    // DOM API（textContent / dataset / style.setProperty）で組み立てる。
+    listEl.replaceChildren();
+
+    this.state.mappings.forEach((m, idx) => {
+      const isActive = m.id === this.state.activeId;
+      const enabled = isMappingEnabled(m);
+      const displayName = m.name ?? `Mapping ${idx + 1}`;
+      const color = mappingColor(idx);
+
+      const item = doc.createElement('div');
+      item.className = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}`;
+      item.dataset.id = m.id;
+      item.style.setProperty('--mapping-color', color);
+
+      const chip = doc.createElement('span');
+      chip.className = 'color-chip';
+      item.appendChild(chip);
+
+      const nameSpan = doc.createElement('span');
+      nameSpan.className = 'name';
+      nameSpan.textContent = displayName;
+      item.appendChild(nameSpan);
+
+      const toggleBtn = doc.createElement('button');
+      toggleBtn.className = `toggle-btn${enabled ? ' enabled' : ''}`;
+      toggleBtn.dataset.id = m.id;
+      toggleBtn.title = enabled ? '出力中（クリックで停止）' : '停止中（クリックで出力）';
+      toggleBtn.textContent = enabled ? '●' : '○';
+      item.appendChild(toggleBtn);
+
+      const removeBtn = doc.createElement('button');
+      removeBtn.className = 'remove-btn';
+      removeBtn.dataset.id = m.id;
+      removeBtn.title = '削除';
+      removeBtn.textContent = '×';
+      if (!canRemove) removeBtn.disabled = true;
+      item.appendChild(removeBtn);
+
+      listEl.appendChild(item);
+    });
 
     listEl.querySelectorAll<HTMLDivElement>('.mapping-list-item').forEach(item => {
       item.addEventListener('click', (e) => {

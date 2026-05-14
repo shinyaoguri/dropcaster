@@ -1,12 +1,15 @@
 import { chromium } from 'playwright';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { readFile, writeFile, mkdir, rm, stat, copyFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { PREVIEW_OPTIONS, PREVIEW_PATH_PREFIX } from './config.js';
 import { detectGraphicsMode, getBrowserArgs } from './webgpu-detector.js';
 
-const execAsync = promisify(exec);
+// FFmpeg は execFile + args 配列で起動する（shell を経由しない）。
+// sketchName 由来の tempDir / outputPath にシェルメタ文字が混ざっても引数として渡るだけで
+// 注入経路にならない。
+const execFileAsync = promisify(execFile);
 
 /**
  * スケッチのプレビューGIFを生成（FFmpeg方式）
@@ -15,7 +18,13 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
   const previewPath = join(previewsDir, `${sketchName}.gif`);
   const indexPath = join(sketchPath, 'index.html');
   const tempDir = join(previewsDir, `temp_${sketchName}`);
-  
+
+  // 起動した Chromium を必ず閉じるための外側スコープ。
+  // try の中で page.goto / screenshot 等が throw すると catch は走るが、その時点で
+  // browser を try-local に持っていると参照できず、子プロセスが残ってしまう。
+  // 大量スキャン時に headless Chromium がリークするので finally で確実に閉じる。
+  let browser = null;
+
   try {
     // 既存のプレビューと更新日時を比較
     try {
@@ -44,7 +53,7 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     await mkdir(tempDir, { recursive: true });
     
     // グラフィックスモードに応じてブラウザを起動
-    const browser = await chromium.launch({
+    browser = await chromium.launch({
       headless: true,
       args: getBrowserArgs(graphicsMode)
     });
@@ -212,32 +221,45 @@ export async function generateSketchPreview(sketchName, sketchPath, previewsDir,
     
     // 最後に改行を出力して次の出力を正しく表示
     console.error();
-    
+
+    // FFmpeg 変換中は browser を握っておく必要がないので早めに閉じる。
+    // finally 側でも再度 close するが、Playwright の browser.close() は idempotent。
     await browser.close();
-    
+    browser = null;
+
     // FFmpegでアニメーションGIFを生成
     if (frameCount > 0) {
       await generateAnimatedGIF(tempDir, previewPath, frameCount);
-      
+
       // 一時ディレクトリをクリーンアップ
       await rm(tempDir, { recursive: true, force: true });
-      
+
       return `${PREVIEW_PATH_PREFIX}${sketchName}.gif`;
     }
-    
+
     return null;
-    
+
   } catch (error) {
     console.warn(`Warning: Failed to generate preview for ${sketchName}:`, error.message);
-    
+
     // エラー時も一時ディレクトリをクリーンアップ
     try {
       await rm(tempDir, { recursive: true, force: true });
     } catch (cleanupError) {
       // クリーンアップエラーは無視
     }
-    
+
     return null;
+  } finally {
+    // try の途中（launch 後の任意の await）で throw した場合に headless Chromium を
+    // 残さないための保険。happy path で既に閉じていれば browser は null。
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (closeError) {
+        // 既に死んでいる等のクローズエラーは無視
+      }
+    }
   }
 }
 
@@ -262,26 +284,38 @@ async function generateAnimatedGIF(tempDir, outputPath, frameCount) {
   try {
     // FFmpegの存在確認
     try {
-      await execAsync('ffmpeg -version');
+      await execFileAsync('ffmpeg', ['-version']);
     } catch (error) {
       throw new Error('FFmpeg is not installed or not available in PATH');
     }
-    
+
     process.stderr.write(`🎬 Converting ${frameCount} frames to GIF...`);
-    
+
     const gifPlaybackFps = 60;
-    
+
     // GIF出力サイズ
     const outputWidth = 400;
     const outputHeight = Math.round((outputWidth / PREVIEW_OPTIONS.width) * PREVIEW_OPTIONS.height);
-    
+
     // 高速化版：1段階処理でGIFを生成
     const scaleFilter = PREVIEW_OPTIONS.scaleFilter || 'fast_bilinear';
     const maxColors = PREVIEW_OPTIONS.maxColors || 128;
-    
-    const gifGenCmd = `ffmpeg -y -framerate ${PREVIEW_OPTIONS.fps} -i "${tempDir}/frame_%03d.png" -vf "scale=${outputWidth}:${outputHeight}:flags=${scaleFilter},fps=${gifPlaybackFps},split[s0][s1];[s0]palettegen=max_colors=${maxColors}:stats_mode=single[p];[s1][p]paletteuse=new=1" "${outputPath}" 2>/dev/null`;
-    
-    await execAsync(gifGenCmd);
+
+    const vfArg =
+      `scale=${outputWidth}:${outputHeight}:flags=${scaleFilter},` +
+      `fps=${gifPlaybackFps},` +
+      `split[s0][s1];` +
+      `[s0]palettegen=max_colors=${maxColors}:stats_mode=single[p];` +
+      `[s1][p]paletteuse=new=1`;
+
+    await execFileAsync('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error',  // 旧 `2>/dev/null` 相当（shell 経由しない）
+      '-y',
+      '-framerate', String(PREVIEW_OPTIONS.fps),
+      '-i', join(tempDir, 'frame_%03d.png'),
+      '-vf', vfArg,
+      outputPath
+    ]);
     process.stderr.write(` ✅\n`);
     
   } catch (error) {
