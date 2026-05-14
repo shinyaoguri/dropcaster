@@ -177,10 +177,6 @@ async function scanSketches(options = {}) {
           if (!manual.has('title') && userData.sketchTitle && userData.sketchTitle !== 'Unknown Title') {
             sketches[idx].title = userData.sketchTitle;
           }
-          // 旧フィールドは廃止し userData に統一
-          delete sketches[idx].author;
-          delete sketches[idx].author_icon;
-          delete sketches[idx].author_icon_local;
           if (!manual.has('userData')) {
             sketches[idx].userData = { userId: userData.userId, userName: userData.userName, userUrl: userData.userUrl };
           }
