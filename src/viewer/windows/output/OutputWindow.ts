@@ -70,9 +70,9 @@ export class OutputWindow extends BaseWindow {
       html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
       #dc-output-stage { position: fixed; inset: 0; background: #000; }
       #dc-output-root { position: absolute; inset: 0; }
-      .dc-out-mapping { position: absolute; inset: 0; overflow: hidden; transform-origin: 0 0; will-change: transform; }
+      .dc-out-mapping { position: absolute; inset: 0; overflow: hidden; transform-origin: top left; backface-visibility: hidden; will-change: transform; }
       /* video は自動で合成レイヤになるので will-change は不要（warp する親 div だけに付ける） */
-      .dc-out-mapping > video { position: absolute; top: 0; left: 0; object-fit: fill; }
+      .dc-out-mapping > video { position: absolute; top: 0; left: 0; transform-origin: top left; object-fit: fill; }
       .dc-output-ui { transition: opacity 0.3s ease; }
       #dc-output-fs {
         position: fixed; top: 16px; right: 16px; z-index: 10;

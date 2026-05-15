@@ -72,8 +72,12 @@ export class OutputVizPanel {
 
     const displaySize = scope.querySelector('#display-size');
     if (displaySize) displaySize.textContent = `${sw}x${sh}`;
-    const displayFrame = scope.querySelector('#display-frame') as HTMLDivElement | null;
-    if (displayFrame) displayFrame.style.aspectRatio = `${sw / sh}`;
+    // ディスプレイ寸法のアスペクトを scope に注入。.display-frame の aspect-ratio と
+    // width 計算（min(..., calc(100cqh * aspect))）の両方で参照される。canvas 側と同じ
+    // 理由で「分数形式」と「数値形式」の 2 つを置く（aspect-ratio は分数を受けるが、
+    // calc() の掛け算には数値が要る）。
+    scope.style.setProperty('--display-aspect', `${sw} / ${sh}`);
+    scope.style.setProperty('--display-aspect-num', `${sw / sh}`);
 
     const windowSize = scope.querySelector('#window-size');
     if (windowSize) windowSize.textContent = w > 0 && h > 0 ? `${w}x${h}` : '—';
@@ -109,6 +113,9 @@ export class OutputVizPanel {
     const canvasWidth = dims.width || video?.videoWidth || 1920;
     const canvasHeight = dims.height || video?.videoHeight || 1080;
     if (canvasWidth <= 0 || canvasHeight <= 0) return;
+    // 分数形式は CSS の aspect-ratio プロパティ用。数値形式は canvas-frame の width 計算
+    // （min(..., calc(100cqh * aspect))）で掛け算に使うため別途必要。
     scope.style.setProperty('--canvas-aspect', `${canvasWidth} / ${canvasHeight}`);
+    scope.style.setProperty('--canvas-aspect-num', `${canvasWidth / canvasHeight}`);
   }
 }

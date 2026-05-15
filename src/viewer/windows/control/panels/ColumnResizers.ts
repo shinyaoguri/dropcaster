@@ -32,18 +32,25 @@ export class ColumnResizers {
         const startX = e.clientX;
         const startToolW = toolCol.getBoundingClientRect().width;
         const startSourceW = sourceCol.getBoundingClientRect().width;
+        const startMappingW = mappingCol.getBoundingClientRect().width;
         resizer.classList.add('dragging');
         const prevCursor = doc.body.style.cursor;
         const prevUserSelect = doc.body.style.userSelect;
         doc.body.style.cursor = 'col-resize';
         doc.body.style.userSelect = 'none';
 
+        // source / mapping 両方に同じ JS 側の最低幅を課す（CSS min-width はさらに上から効く）。
+        // 右方向の上限は「いまの mapping 幅をこの最低幅まで縮められる量」で決まる。
+        const MIN_COL_W = 280;
+
         const onMove = (ev: MouseEvent) => {
           const dx = ev.clientX - startX;
           if (edge === 'tool') {
             toolCol.style.width = `${Math.max(180, startToolW + dx)}px`;
           } else {
-            const nextSourceW = Math.max(280, startSourceW + dx);
+            const maxDx = Math.max(0, startMappingW - MIN_COL_W);
+            const clampedDx = Math.min(dx, maxDx);
+            const nextSourceW = Math.max(MIN_COL_W, startSourceW + clampedDx);
             sourceCol.style.flex = '0 0 auto';
             sourceCol.style.width = `${nextSourceW}px`;
           }

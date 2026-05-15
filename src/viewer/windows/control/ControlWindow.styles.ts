@@ -374,6 +374,8 @@ export const CONTROL_PANEL_CSS = `
         justify-content: center;
         padding: 20px;
         box-sizing: border-box;
+        /* 中の .canvas-frame が cqh でこの content-box の高さを参照できるようにする */
+        container-type: size;
       }
 
       .canvas-frame {
@@ -386,14 +388,17 @@ export const CONTROL_PANEL_CSS = `
         display: flex;
         align-items: center;
         justify-content: center;
-        /* キャンバスのアスペクト比は --canvas-aspect として scope に注入される（JS から更新）。
-           aspect-ratio + max-width/height で「コンテナに収まる最大サイズ・アスペクト固定」を実現。
-           親 .source-preview-wrapper は flex 中央寄せなので、letterbox 部分は両端の余白になる。 */
+        /* キャンバスのアスペクト比は --canvas-aspect（分数形式）と --canvas-aspect-num
+           （数値形式）の 2 つで scope に注入される（JS から更新）。
+           width を min(横方向の上限, 縦方向の上限から逆算した幅) で直接決めることで、
+           ソースカラムの横幅と高さのどちらが制限要因でも常にアスペクトが保たれる。
+           （width: 100%; height: auto 単独では width が固定されるため、
+            高さが制限要因のとき aspect-ratio が崩れる。） */
         aspect-ratio: var(--canvas-aspect, 16 / 9);
+        width: min(100%, calc(100cqh * var(--canvas-aspect-num, 1.7777)));
+        height: auto;
         max-width: 100%;
         max-height: 100%;
-        width: 100%;
-        height: auto;
       }
 
       #source-video {
@@ -449,13 +454,26 @@ export const CONTROL_PANEL_CSS = `
         justify-content: center;
         gap: 10px;
         max-height: calc(100% - 40px); /* サイズ情報の高さを考慮 */
+        /* 中の .display-frame が cqh でこの content-box の高さを参照できるようにする */
+        container-type: size;
       }
 
       .display-frame {
         position: relative;
-        width: 100%;
+        /* アスペクト比は --display-aspect / --display-aspect-num として scope に注入される
+           （OutputVizPanel.renderOutputViz が出力ウィンドウの screen 寸法から算出）。
+           width を min(横方向の上限, 縦方向の上限から逆算した幅) で直接決めることで、
+           マッピングカラムの横幅と高さのどちらが制限要因でも常にアスペクトが保たれる。
+           cqh から 40px 引いているのは、wrapper の中に flex sibling として .display-size-info
+           が居るぶんの余白確保（gap 10px + 表示テキスト約 30px）。
+           flex-shrink: 0 で、flex column の縮小アルゴリズムによって height が勝手に
+           詰められて width:height の比が壊れるのを防ぐ。 */
+        aspect-ratio: var(--display-aspect, 16 / 9);
+        width: min(100%, calc((100cqh - 40px) * var(--display-aspect-num, 1.7777)));
+        height: auto;
+        flex-shrink: 0;
         max-width: 100%;
-        /* aspect-ratioはJavaScriptで動的に設定される */
+        max-height: 100%;
         border: 2px solid #444;
         border-radius: 4px;
         background: #111;
