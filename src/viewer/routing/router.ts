@@ -29,14 +29,23 @@ export class Router {
     }
 
     const path = stripBasePath(window.location.pathname);
-    
+
+    // OpenProcessing 経路を最優先で拾う:
+    //   /op/<id>           パスベース
+    //   /?op=<id>          クエリベース (任意のパスで効くが、典型はホーム)
+    const opId = pickOpId(path, window.location.search);
+    if (opId) {
+      const handler = this.routes.get('/op/:id');
+      if (handler) { handler(opId); return; }
+    }
+
     // 完全一致のルートをまずチェック
     const exactHandler = this.routes.get(path);
     if (exactHandler) {
       exactHandler('');
       return;
     }
-    
+
     // ホームページ
     if (path === '/') {
       const handler = this.routes.get('/');
@@ -61,12 +70,31 @@ export class Router {
     document.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
       const link = target.closest('a');
-      
+
       if (link && link.href.startsWith(window.location.origin) && link.target !== '_blank') {
         e.preventDefault();
         const url = new URL(link.href);
-        this.navigate(stripBasePath(url.pathname));
+        // search も含めて navigate (?op=<id> リンクで OP 経路に入れるように)
+        this.navigate(stripBasePath(url.pathname) + url.search);
       }
     });
   }
+}
+
+/** path と search から OP の id を拾う。なければ null。 */
+function pickOpId(path: string, search: string): string | null {
+  // path: /op/<id> 形式 (id は数字のみ)
+  const pathMatch = path.match(/^\/op\/(\d+)\/?$/);
+  if (pathMatch) return pathMatch[1];
+
+  // ?op=<id> または ?op=sketch<id>
+  try {
+    const params = new URLSearchParams(search);
+    const raw = params.get('op');
+    if (raw) {
+      const id = raw.replace(/^sketch/i, '');
+      if (/^\d+$/.test(id)) return id;
+    }
+  } catch { /* ignore */ }
+  return null;
 }
