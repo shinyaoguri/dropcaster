@@ -29,6 +29,13 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# 両ジョブで Pages の参照と書き込みが必要。configure-pages が build 側で動くため
+# top-level に置く (job ごとに permissions を書くと build 側で resource-not-accessible になる)。
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -46,7 +53,11 @@ jobs:
       - name: Build hosted bundle
         run: npm run build:web
 
+      # enablement: true で repo の Pages が未有効なら自動有効化する。
+      # 初回 deploy が Settings での手動切替に失敗するのを防ぐ。
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -55,9 +66,6 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
