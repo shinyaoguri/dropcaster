@@ -21,7 +21,7 @@ export class OpenProcessingApiClient {
     );
   }
 
-  /** 1 スケッチぶんのメタデータを取得する（{ userId, userName, userUrl, sketchTitle, sketchId, sketchUrl } か { error, sketchId }）。 */
+  /** 1 スケッチぶんのメタデータを取得する（{ userId, userName, userUrl, sketchTitle, sketchDescription, sketchId, sketchUrl } か { error, sketchId }）。 */
   async getSketchUserInfo(sketchId) {
     const id = normalizeId(sketchId);
     try {
@@ -109,6 +109,7 @@ export class OpenProcessingApiClient {
       userName,
       userUrl: userId ? `${API_CONFIG.baseUrl}/user/${userId}/` : '',
       sketchTitle: normalizeString(sketch.title) || DEFAULTS.unknownTitle,
+      sketchDescription: normalizeString(sketch.description),
       sketchId: visualId,
       sketchUrl: `${API_CONFIG.baseUrl}/sketch/${visualId}`,
     };
@@ -118,15 +119,25 @@ export class OpenProcessingApiClient {
 /**
  * スケッチ ID の配列を順に取得する。各要素は getSketchUserInfo の戻り値（成功 or { error, sketchId }）。
  * レート制限は client 内の waitForApiRateLimit が担うので、ここでは追加の sleep をしない。
+ * options.onProgress({ index, total, sketchId, result }) が指定されていれば 1 件ごとに呼ぶ（進捗表示用）。
  */
 export async function fetchUserDataForSketches(sketchIds, options = {}) {
   const client = new OpenProcessingApiClient(options);
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+  const total = sketchIds.length;
   const results = [];
-  for (const sketchId of sketchIds) {
+  for (let i = 0; i < total; i++) {
+    const sketchId = sketchIds[i];
+    let result;
     try {
-      results.push(await client.getSketchUserInfo(sketchId));
+      result = await client.getSketchUserInfo(sketchId);
     } catch (error) {
-      results.push({ error: error.message, sketchId });
+      result = { error: error.message, sketchId };
+    }
+    results.push(result);
+    if (onProgress) {
+      try { onProgress({ index: i + 1, total, sketchId, result }); }
+      catch { /* 進捗 callback 内のエラーは握りつぶす（取得処理は止めない） */ }
     }
   }
   return results;

@@ -433,56 +433,100 @@ body {
   top: 5rem;
 }
 
-/* ユーザー情報オーバーレイ */
-.sketch-overlay-info {
+/* 美術館の壁掛けラベル風の情報パネル。スライドショーと個別スケッチ表示で共用。
+   位置決め・透明度（フェード）は各 View 側で上書きする。 */
+.dc-info-panel {
+  background: rgba(248, 245, 238, 0.96);
+  backdrop-filter: blur(6px);
+  padding: 14px 18px 12px;
+  border: 0;
+  border-radius: 1px;
+  color: #1a1a24;
+  font-family: 'M PLUS 2', 'M PLUS 1 Code', system-ui, sans-serif;
+  font-feature-settings: 'palt';
+  max-width: min(360px, calc(100vw - 60px));
+}
+
+.dc-info-panel .sketch-title {
+  margin: 0;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  color: #14141c;
+  text-shadow: none; /* global .sketch-title の影を打ち消す */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dc-info-panel .sketch-author {
+  position: relative;
+  margin: 9px 0 0 0;
+  padding-top: 8px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+/* タイトルと著者の間のヘアライン */
+.dc-info-panel .sketch-author::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 22px;
+  height: 1px;
+  background: rgba(20, 20, 28, 0.32);
+}
+
+.dc-info-panel .author-by {
+  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  color: rgba(20, 20, 28, 0.42);
+}
+
+.dc-info-panel .author-name {
+  color: rgba(20, 20, 28, 0.82);
+  text-shadow: none; /* global .author-name の影を打ち消す */
+}
+
+.dc-info-panel .sketch-description {
+  margin: 10px 0 0 0;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0.02em;
+  color: rgba(20, 20, 28, 0.66);
+  white-space: pre-line;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.dc-info-panel .sketch-description[hidden] {
+  display: none;
+}
+
+/* 個別スケッチページでの位置決め（スライドショー側は SlideshowView 内の inline スタイルで決める） */
+.fullscreen-sketch-container .dc-info-panel {
   position: fixed;
   bottom: 1rem;
   right: 1rem;
-  background: rgba(15, 23, 42, 0.72);
-  backdrop-filter: blur(8px);
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-left: 2px solid rgba(96, 165, 250, 0.9);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
-  padding: 0.55rem 0.75rem 0.55rem 0.85rem;
-  max-width: min(320px, calc(100vw - 2rem));
   z-index: 1001;
-  transition: opacity 0.3s ease, pointer-events 0.3s ease;
-}
-
-.sketch-overlay-info:hover {
-  background: rgba(15, 23, 42, 0.86);
-}
-
-.sketch-overlay-content {
-  display: flex;
-  align-items: center;
-  color: white;
-}
-
-.overlay-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 0.1rem;
-}
-
-.overlay-username-small {
-  font-size: 0.7rem;
-  color: rgba(255, 255, 255, 0.8);
-  font-weight: 400;
-  line-height: 1.2;
-}
-
-.overlay-title-small {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: white;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 260px;
+  transition: opacity 0.3s ease;
 }
 
 .error-page {
@@ -584,20 +628,10 @@ body {
     padding: 0.4rem 0.8rem;
   }
   
-  .sketch-overlay-info {
+  .fullscreen-sketch-container .dc-info-panel {
     bottom: 0.75rem;
     right: 0.75rem;
-    padding: 0.5rem 0.65rem 0.5rem 0.75rem;
-    max-width: min(260px, calc(100vw - 1.5rem));
-  }
-  
-  .overlay-username-small {
-    font-size: 0.65rem;
-  }
-  
-  .overlay-title-small {
-    font-size: 0.7rem;
-    max-width: 100px;
+    max-width: min(280px, calc(100vw - 1.5rem));
   }
 }
 
@@ -669,7 +703,7 @@ body {
 
 /* 操作系UIはステージより前面へ */
 .fullscreen-sketch-container.projecting .top-right-button,
-.fullscreen-sketch-container.projecting .sketch-overlay-info {
+.fullscreen-sketch-container.projecting .dc-info-panel {
   z-index: 1200;
 }
 

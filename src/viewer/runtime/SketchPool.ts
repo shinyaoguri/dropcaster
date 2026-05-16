@@ -49,6 +49,8 @@ export class SketchPool {
   /** 非表示になった順の並び（先頭ほど古い ＝ 再利用候補）。 */
   private idleOrder: SketchFrame[];
   private destroyed = false;
+  /** クロスフェード中に呼ばれた preload を保留しておき、遷移完了後にまとめて実行する。 */
+  private pendingPreloadUrl: string | null = null;
 
   /**
    * @param container プールの土俵となる要素。子に iframe を絶対配置で重ねる。
@@ -95,10 +97,15 @@ export class SketchPool {
 
     if (previous && previous !== target) {
       previous.setVisible(false);
-      this.markIdle(previous);
-      // フェードアウト完了後に（p5 なら）一時停止して負荷を下げる
+      // フェードアウト中は previous をまだ idle 扱いしない。idle 化すると直後の preload で
+      // previous の iframe.src が書き換わり、まだ opacity が残っているフレームのコンテンツが
+      // 切り替わって一瞬チラつくため（next 方向で目立つ）。遷移完了後に idle 化・pause し、
+      // この間に保留されていた preload があればここでまとめて実行する。
       window.setTimeout(() => {
-        if (!this.destroyed && this.visibleFrame !== previous) previous.pause();
+        if (this.destroyed || this.visibleFrame === previous) return;
+        this.markIdle(previous);
+        previous.pause();
+        this.flushPendingPreload();
       }, TRANSITION_MS + 50);
     }
     return target;
@@ -109,13 +116,26 @@ export class SketchPool {
     if (this.destroyed) return;
     if (this.frames.some(f => f.currentUrl === url)) return;
     const idle = this.idleOrder.find(f => f !== this.visibleFrame) ?? null;
-    if (!idle) return;
+    if (!idle) {
+      // クロスフェード中で idle 扱いの frame が無い。遷移完了後に show() が flush する。
+      this.pendingPreloadUrl = url;
+      return;
+    }
+    this.pendingPreloadUrl = null;
     void idle.load(url).catch(() => { /* 先読みの失敗は握りつぶす（show 時に再試行される） */ });
+  }
+
+  private flushPendingPreload(): void {
+    const url = this.pendingPreloadUrl;
+    if (!url) return;
+    this.pendingPreloadUrl = null;
+    this.preload(url);
   }
 
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.pendingPreloadUrl = null;
     for (const frame of this.frames) frame.dispose();
     this.frames.length = 0;
     this.idleOrder.length = 0;

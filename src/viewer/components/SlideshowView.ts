@@ -84,10 +84,11 @@ export class SlideshowView {
         </div>
         <div class="slideshow-frame-container">
           <div id="slideshow-stage"></div>
-          <div id="sketch-info" class="sketch-info">
+          <div id="sketch-info" class="sketch-info dc-info-panel">
             <div class="sketch-details">
               <h3 id="sketch-title" class="sketch-title"></h3>
               <p id="sketch-author" class="sketch-author"><span class="author-by">by</span> <span class="author-name"></span></p>
+              <p id="sketch-description" class="sketch-description" hidden></p>
             </div>
           </div>
           <!-- inline マウントされた ControlPanel のシェル。投影モード中だけ表示 -->
@@ -301,67 +302,26 @@ export class SlideshowView {
 
       /* スケッチ本体は SketchPool が #slideshow-stage 内に iframe を重ねて表示する（.dc-sketch-* クラス） */
 
-      /* スケッチ情報 */
+      /* スケッチ情報パネル — 見た目は共通の .dc-info-panel (style.css)。
+         ここではスライドショー固有の位置・フェード挙動だけ重ねる。 */
       .slideshow-container .sketch-info {
         position: absolute;
-        bottom: 30px;
-        right: 30px;
-        display: flex;
-        align-items: stretch;
-        background: rgba(15, 23, 42, 0.72);
-        backdrop-filter: blur(10px);
-        padding: 14px 18px 14px 20px;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        border-left: 2px solid rgba(96, 165, 250, 0.9);
-        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
-        color: white;
+        bottom: 32px;
+        right: 32px;
+        /* 表示中 iframe（.dc-sketch-frame.dc-visible）が z-index:1 で
+           同じ stacking context に持ち上がるため、それより前面に置く。
+           マッピング中の .dc-inline-editor (z-index:1500) よりは下。 */
+        z-index: 5;
         transition: opacity 0.5s ease;
-        max-width: min(440px, calc(100vw - 60px));
         opacity: 0;
       }
-      
+
       .slideshow-container .sketch-info.fade-in {
         opacity: 1;
       }
-      
-      .slideshow-container:not(:hover) .sketch-info.fade-in {
-        opacity: 0.7;
-      }
 
-      .slideshow-container .sketch-details {
-        flex: 1;
-        min-width: 0;
-      }
-      
-      .slideshow-container .sketch-title {
-        margin: 0;
-        font-size: 18px;
-        font-weight: 600;
-        line-height: 1.15;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      
-      .slideshow-container .sketch-author {
-        margin: 6px 0 0 0;
-        font-size: 14px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        display: flex;
-        align-items: baseline;
-      }
-      
-      .slideshow-container .author-by {
-        color: rgba(255, 255, 255, 0.5);
-        font-size: 12px;
-        margin-right: 4px;
-      }
-      
-      .slideshow-container .author-name {
-        color: rgba(255, 255, 255, 0.9);
+      .slideshow-container:not(:hover) .sketch-info.fade-in {
+        opacity: 0.85;
       }
     `;
     document.head.appendChild(style);
@@ -426,9 +386,6 @@ export class SlideshowView {
     this.currentIndex = index;
     const sketchInfo = document.getElementById("sketch-info");
 
-    // 情報パネルをフェードアウト
-    sketchInfo?.classList.remove("fade-in");
-
     // URL を更新（履歴には積まない）
     const url = new URL(window.location.href);
     url.searchParams.set("index", index.toString());
@@ -448,7 +405,9 @@ export class SlideshowView {
     }
     if (!this.pool) return;
 
-    // 情報パネルを更新してフェードイン
+    // 情報パネルのテキストを更新。fade-in は初回だけ実効（以降はクラスが付いたままなので no-op）。
+    // 切替ごとに remove/add するとフェード途中に隠れて「一瞬しか見えない」状態になるので、
+    // パネル自体は出しっぱなしにしてテキストだけ差し替える。
     this.updateSketchInfo(index);
     sketchInfo?.classList.add("fade-in");
 
@@ -463,17 +422,31 @@ export class SlideshowView {
   private updateSketchInfo(index: number): void {
     const sketch = this.sketches[index];
     if (!sketch) return;
-    
+
     const titleElement = document.getElementById('sketch-title') as HTMLHeadingElement;
     const authorNameElement = document.querySelector('.author-name') as HTMLSpanElement;
-    
+    const descriptionElement = document.getElementById('sketch-description') as HTMLParagraphElement;
+
     if (titleElement) {
       titleElement.textContent = sketch.title || `Sketch ${sketch.id}`;
     }
-    
+
     if (authorNameElement) {
       // userDataが存在する場合はユーザ名を使用
       authorNameElement.textContent = sketch.userData?.userName || 'Anonymous';
+    }
+
+    if (descriptionElement) {
+      // sketch-analyzer のデフォルト（"<dirName> スケッチ"）は実質的に説明が無いケースなので非表示扱い。
+      const desc = sketch.description?.trim() ?? '';
+      const isDefault = desc === `${sketch.id} スケッチ`;
+      if (desc && !isDefault) {
+        descriptionElement.textContent = desc;
+        descriptionElement.removeAttribute('hidden');
+      } else {
+        descriptionElement.textContent = '';
+        descriptionElement.setAttribute('hidden', '');
+      }
     }
   }
 

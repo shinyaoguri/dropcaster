@@ -2,7 +2,7 @@ export class UIElementController {
   private readonly elements = {
     fullscreenBtn: () => document.getElementById('fullscreen-btn') as HTMLButtonElement,
     openWindowsBtn: () => document.getElementById('open-windows-btn') as HTMLButtonElement,
-    overlayInfo: () => document.querySelector('.sketch-overlay-info') as HTMLDivElement
+    overlayInfo: () => document.querySelector('.fullscreen-sketch-container .dc-info-panel') as HTMLDivElement
   };
 
   showElements(): void {

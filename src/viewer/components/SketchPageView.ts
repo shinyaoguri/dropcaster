@@ -34,18 +34,23 @@ export class SketchPageView {
     const userName = sketch.userData?.userName || 'Unknown User';
     const title = escapeHtml(sketch.title);
     const escapedUserName = escapeHtml(userName);
+    // 説明文: 空 or sketch-analyzer のデフォルト ("<id> スケッチ") の場合は非表示扱い
+    const rawDescription = (sketch.description ?? '').trim();
+    const defaultDescription = `${sketch.id} スケッチ`;
+    const hasDescription = !!rawDescription && rawDescription !== defaultDescription;
+    const descriptionAttrs = hasDescription ? '' : ' hidden';
+    const descriptionText = hasDescription ? escapeHtml(rawDescription) : '';
 
     app.innerHTML = `
       <div class="fullscreen-sketch-container">
         <!-- スケッチ iframe は SketchPageController が SketchFrame を使ってここに差し込む -->
         <div id="sketch-stage" class="fullscreen-iframe"></div>
 
-        <div class="sketch-overlay-info ui-element">
-          <div class="sketch-overlay-content">
-            <div class="overlay-text">
-              <div class="overlay-username-small">${escapedUserName}</div>
-              <div class="overlay-title-small">${title}</div>
-            </div>
+        <div class="sketch-info dc-info-panel ui-element">
+          <div class="sketch-details">
+            <h3 class="sketch-title">${title}</h3>
+            <p class="sketch-author"><span class="author-by">by</span> <span class="author-name">${escapedUserName}</span></p>
+            <p class="sketch-description"${descriptionAttrs}>${descriptionText}</p>
           </div>
         </div>
 

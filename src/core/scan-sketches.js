@@ -8,7 +8,7 @@ import { analyzeSketch } from './modules/sketch-analyzer.js';
 import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists, fileExists } from './modules/file-manager.js';
 import { generateSketchPreview } from './modules/preview-generator.js';
 import { checkPreviewTools } from './check-env.js';
-import { MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './modules/constants.js';
+import { DEFAULT_DESCRIPTION_SUFFIX, MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './modules/constants.js';
 
 // プロジェクトルートの解決:
 //   1. DROPCASTER_PROJECT_ROOT 環境変数（dropcaster CLI から呼ばれた場合に設定される）
@@ -122,6 +122,13 @@ async function scanSketches(options = {}) {
         const manual = sketchInfo.__manualMetadataFields || new Set();
         if (existing.userData && !manual.has('userData')) sketchInfo.userData = existing.userData;
         if (existing.title && existing.title !== entry.name && !manual.has('title')) sketchInfo.title = existing.title;
+        if (
+          existing.description &&
+          existing.description !== `${entry.name}${DEFAULT_DESCRIPTION_SUFFIX}` &&
+          !manual.has('description')
+        ) {
+          sketchInfo.description = existing.description;
+        }
         if (existing.sketchUrl && !manual.has('sketchUrl')) sketchInfo.sketchUrl = existing.sketchUrl;
         if (existing.previewGif && !manual.has('previewGif')) sketchInfo.previewGif = existing.previewGif;
       }
@@ -160,8 +167,22 @@ async function scanSketches(options = {}) {
     // OpenProcessing Public API からタイトル・ユーザー情報を取得して統合
     if (fetchUserData && sketchIds.length > 0) {
       console.error(`🔍 OpenProcessing Public API からメタデータを取得中... (${sketchIds.length}件)`);
+      const padTotal = String(sketchIds.length).length;
       try {
-        const userDataResults = await fetchUserDataForSketches(sketchIds, fetchOptions);
+        const userDataResults = await fetchUserDataForSketches(sketchIds, {
+          ...fetchOptions,
+          onProgress: ({ index, total, sketchId, result }) => {
+            const counter = `[${String(index).padStart(padTotal, ' ')}/${total}]`;
+            if (result.error) {
+              console.error(`   ${counter} sketch${sketchId} → ❌ ${result.error}`);
+            } else {
+              const author = result.userName || '(unknown)';
+              const title = result.sketchTitle || '(untitled)';
+              const desc = result.sketchDescription ? ' 📝' : '';
+              console.error(`   ${counter} sketch${sketchId} → ${title} / ${author}${desc}`);
+            }
+          },
+        });
         let updated = 0;
         let errors = 0;
         for (const userData of userDataResults) {
@@ -176,6 +197,9 @@ async function scanSketches(options = {}) {
           const manual = sketches[idx].__manualMetadataFields || new Set();
           if (!manual.has('title') && userData.sketchTitle && userData.sketchTitle !== 'Unknown Title') {
             sketches[idx].title = userData.sketchTitle;
+          }
+          if (!manual.has('description') && userData.sketchDescription) {
+            sketches[idx].description = userData.sketchDescription;
           }
           if (!manual.has('userData')) {
             sketches[idx].userData = { userId: userData.userId, userName: userData.userName, userUrl: userData.userUrl };
