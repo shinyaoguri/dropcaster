@@ -39,8 +39,10 @@ type DcSketchWindow = Window & {
 
 export class SketchFrame {
   readonly iframe: HTMLIFrameElement;
-  /** いま読み込んでいる（または読み込み中の）URL。about:blank のときは null。 */
+  /** いま読み込んでいる（または読み込み中の）URL。about:blank or srcdoc のときは null。 */
   private loadedUrl: string | null = null;
+  /** srcdoc 経由でロードしたときの呼び出し側識別子（同一性判定用）。url 経由でロードしたときは null。 */
+  private loadedTag: string | null = null;
   /** 進行中の読み込みの完了 Promise。読み込んでいなければ即 resolve 済み。 */
   private loadPromise: Promise<void> = Promise.resolve();
   /** 進行中の load の後始末（fallback タイマー・load リスナ・resolve）。再 load / dispose で確実に畳む。 */
@@ -61,9 +63,14 @@ export class SketchFrame {
     container.appendChild(iframe);
   }
 
-  /** いま読み込んでいる URL（未読み込みなら null） */
+  /** いま読み込んでいる URL（未読み込み・srcdoc 経路なら null） */
   get currentUrl(): string | null {
     return this.loadedUrl;
+  }
+
+  /** srcdoc 経路で読み込んだときの呼び出し側識別子（url 経路なら null） */
+  get currentTag(): string | null {
+    return this.loadedTag;
   }
 
   /** 進行中の読み込みの完了を待つ Promise（読み込み中でなければ即解決） */
@@ -82,6 +89,29 @@ export class SketchFrame {
     this.settlePendingLoad(); // 進行中だった別 URL のロードのタイマー・リスナを片付け、待っている呼び出しを解放する
 
     this.loadedUrl = url;
+    this.loadedTag = null;
+    return this.startLoad((iframe) => { iframe.src = url; });
+  }
+
+  /**
+   * srcdoc に指定 HTML 文字列を読み込ませる。about:srcdoc は parent と同一オリジン扱いなので
+   * contentDocument 経由の canvas 検出・pause/resume・captureStream は load(url) と同じく動作する。
+   * tag は呼び出し側が同一性を判定するための任意キー (再ロード抑止用)。
+   */
+  loadSrcdoc(html: string, opts?: { tag?: string }): Promise<void> {
+    if (this.disposed) return Promise.reject(new Error('SketchFrame is disposed'));
+    const tag = opts?.tag ?? null;
+    if (tag && this.loadedTag === tag) return this.loadPromise;
+
+    this.settlePendingLoad();
+
+    this.loadedUrl = null;
+    this.loadedTag = tag;
+    return this.startLoad((iframe) => { iframe.srcdoc = html; });
+  }
+
+  /** load / loadSrcdoc の共通処理。pendingLoad のセットアップと style 注入の後始末を担う。 */
+  private startLoad(applySource: (iframe: HTMLIFrameElement) => void): Promise<void> {
     this.loadPromise = new Promise<void>((resolve) => {
       const finish = () => {
         if (!this.pendingLoad) return; // すでに settle 済み
@@ -92,7 +122,7 @@ export class SketchFrame {
       const onLoad = () => finish();
       this.pendingLoad = { timer: window.setTimeout(finish, LOAD_TIMEOUT_MS), onLoad, resolve };
       this.iframe.addEventListener('load', onLoad, { once: true });
-      this.iframe.src = url;
+      applySource(this.iframe);
     });
     return this.loadPromise;
   }
@@ -227,5 +257,6 @@ export class SketchFrame {
     }
     this.iframe.remove();
     this.loadedUrl = null;
+    this.loadedTag = null;
   }
 }
