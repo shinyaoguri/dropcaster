@@ -7,6 +7,7 @@ import { preview } from './commands/preview.js';
 import { scan, scanReset } from './commands/scan.js';
 import { init } from './commands/init.js';
 import { doctor } from './commands/doctor.js';
+import { fetchCommand } from './commands/fetch.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -75,5 +76,14 @@ program
   .command('doctor')
   .description('Check that required tools (FFmpeg, Chromium, Node) are available')
   .action(doctor);
+
+program
+  .command('fetch <id>')
+  .description('Fetch an OpenProcessing sketch into sketches/sketch<id>/ with code and assets bundled')
+  .option('--no-assets', 'Skip downloading external assets (code will reference OP CDN absolute URLs)')
+  .option('--overwrite', 'Replace the sketch directory if it already exists')
+  .option('--output <dir>', 'Sketches base directory', 'sketches')
+  .option('-v, --verbose', 'Show per-file progress')
+  .action(fetchCommand);
 
 program.parse();

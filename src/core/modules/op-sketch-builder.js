@@ -79,6 +79,38 @@ export function rewriteAssetUrls(text, assetProxyBaseUrl) {
   return text.split(DECKARD_HOST).join(base);
 }
 
+/**
+ * 既存のローカル sketch ディレクトリ形式の index.html を組み立てる。
+ * `dropcaster fetch` がローカルに書き出すときに使う (各タブを別ファイルにし
+ * <script src="*.js"> で参照、エンジンとライブラリは CDN URL のまま)。
+ *
+ * @param {object} params
+ * @param {string} params.engineURL                    例: https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.js
+ * @param {Array<{url: string}>} [params.libraries=[]]
+ * @param {string[]} params.scriptFiles                code タブごとに書き出した .js のファイル名 (相対)
+ * @returns {string}
+ */
+export function assembleLocalOpSketchHtml({ engineURL, libraries = [], scriptFiles }) {
+  const libScripts = libraries
+    .filter(l => l && l.url)
+    .map(l => `    <script src="${escapeAttr(l.url)}" type="text/javascript"><\/script>`)
+    .join('\n');
+  const codeScripts = (scriptFiles || [])
+    .map(f => `    <script src="${escapeAttr(f)}" type="text/javascript"><\/script>`)
+    .join('\n');
+
+  return `<html>
+  <head>
+    <meta charset="utf-8">
+    <script src="${escapeAttr(engineURL || '')}" type="text/javascript"><\/script>
+${libScripts ? libScripts + '\n' : ''}${codeScripts}
+  </head>
+  <body>
+  </body>
+</html>
+`;
+}
+
 /** code タブを orderID 昇順で結合する。orderID が無い／同値でも安定。 */
 export function sortAndJoinCode(codeTabs) {
   if (!Array.isArray(codeTabs)) return '';
