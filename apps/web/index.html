@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="dropcaster" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <meta name="description" content="OpenProcessing 作品 ID から投影マッピング用のビューアを直接起動するホスト版 dropcaster" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+1+Code:wght@100;200;300;400;500;600;700;800;900&family=M+PLUS+2:wght@100;200;300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <title>dropcaster - hosted</title>
+    <script>
+      // ホスト版の DropcasterConfig。assetProxyBaseUrl は Cloudflare Worker のデプロイ後に書き換える。
+      // 空のままでもアセット無しの p5js 作品 (生成的なコードのみ) は完全に動く。
+      window.__DROPCASTER_CONFIG__ = {
+        assetProxyBaseUrl: '',
+        enablePwa: true,
+        cacheVersion: '0.1.0',
+        supportedOpModes: ['p5js'],
+      };
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="../../src/viewer/main.ts"></script>
+  </body>
+</html>
