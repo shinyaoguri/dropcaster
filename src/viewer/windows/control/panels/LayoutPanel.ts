@@ -127,6 +127,9 @@ export class LayoutPanel {
     canvasEl.style.left = `${left}px`;
     canvasEl.style.top = `${top}px`;
     canvasEl.style.transform = `scale(${scale})`;
+    // resize ハンドル等を screen-px 一定サイズで描画するための逆スケール係数。
+    // OutputVizPanel と同じ命名で、CSS から calc(... * var(--canvas-counter-scale)) で参照。
+    canvasEl.style.setProperty('--canvas-counter-scale', `${scale > 0 ? 1 / scale : 1}`);
 
     this.syncOutputs(state);
   }

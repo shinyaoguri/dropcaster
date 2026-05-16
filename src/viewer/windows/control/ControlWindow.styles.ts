@@ -631,22 +631,39 @@ export const CONTROL_PANEL_CSS = `
         pointer-events: none;
         white-space: nowrap;
       }
+      /* 出力レイアウトの resize ハンドル — マッピング window の quad-handle と同じ視覚サイズ
+         （14px）にして掴みやすくする。layout-canvas の transform: scale(fitScale) を
+         打ち消すために --canvas-counter-scale で逆スケール。
+         margin -7px で box の中心を right: 0 / bottom: 0（出力矩形の右下角）に置く。
+         scale は transform-origin: center で中心固定なので、scale 後も中心は角に乗ったまま。
+         box-shadow で背景に対して浮かせて見やすく。 */
       .dc-layout-canvas .dc-layout-output .dc-layout-resize {
         position: absolute;
         width: 14px;
         height: 14px;
         background: #fff;
-        border: 1px solid #3b82f6;
+        border: 2px solid #3b82f6;
+        border-radius: 3px;
         box-sizing: border-box;
+        box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
         z-index: 3;
+        transform: scale(var(--canvas-counter-scale, 1));
+        transform-origin: center;
       }
       .dc-layout-canvas .dc-layout-output.is-active .dc-layout-resize {
         border-color: #f59e0b;
       }
       .dc-layout-canvas .dc-layout-output .dc-layout-resize.se {
-        right: -7px;
-        bottom: -7px;
+        right: 0;
+        bottom: 0;
+        margin: 0 -7px -7px 0;
         cursor: nwse-resize;
+      }
+      .dc-layout-canvas .dc-layout-output .dc-layout-resize:hover {
+        background: #e0eaff;
+      }
+      .dc-layout-canvas .dc-layout-output.is-active .dc-layout-resize:hover {
+        background: #fff3d6;
       }
 
       /* canvas-host: 仮想キャンバス全体を canvas px サイズで持ち、scale + offset で
