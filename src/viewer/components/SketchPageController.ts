@@ -40,7 +40,12 @@ export class SketchPageController {
       this.sketchFrame = new SketchFrame(stage);
       // CursorManager / MouseEventHandler が #sketch-iframe で参照するので id を付ける（このページは frame 1 枚）
       this.sketchFrame.iframe.id = 'sketch-iframe';
-      await this.sketchFrame.load(publicAssetPath(sketch.path));
+      if (sketch.srcdoc) {
+        // OP 由来など、組み立て済み HTML を直接 srcdoc にロードする経路
+        await this.sketchFrame.loadSrcdoc(sketch.srcdoc, { tag: sketch.id });
+      } else {
+        await this.sketchFrame.load(publicAssetPath(sketch.path));
+      }
     } else {
       console.warn('SketchPageController: #sketch-stage が見つかりません');
     }

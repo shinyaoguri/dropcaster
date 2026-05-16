@@ -1,0 +1,14 @@
+name = "dropcaster-asset-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+# 出力先のサブドメインは Cloudflare アカウントに依存:
+#   https://dropcaster-asset-proxy.<account>.workers.dev
+# 本番ドメインに紐付けたくなったら routes を設定する。
+#
+# Cache API はデフォルトで利用可能。KV / Durable Objects / R2 は未使用なので
+# bindings は不要。
+
+# 観測用 (Cloudflare ダッシュボードの Workers > Logs)。本番では false に下げてもよい。
+[observability]
+enabled = true

@@ -720,3 +720,134 @@ body {
   font-size: 0.875rem;
   margin: 0;
 }
+
+/* ===== OpenProcessing ID 入力 UI ===== */
+
+/* catalog 空時のホスト版 hero */
+.op-hero-container {
+  max-width: 720px;
+  padding: 3rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2rem;
+  min-height: 80vh;
+  justify-content: center;
+}
+
+.op-hero-header {
+  text-align: center;
+}
+
+.op-hero-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+  color: #1e293b;
+  letter-spacing: -0.02em;
+}
+
+.op-hero-subtitle {
+  color: #64748b;
+  font-size: 1rem;
+  margin: 0;
+}
+
+.op-hero-footer {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.8125rem;
+}
+
+.op-hero-footer p { margin: 0; }
+
+/* フォーム共通 */
+.op-id-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.op-id-form--hero {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.op-id-form--inline {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.op-id-label {
+  font-size: 0.8125rem;
+  color: #475569;
+  font-weight: 600;
+}
+
+.op-id-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.op-id-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.9375rem;
+  color: #0f172a;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.op-id-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+.op-id-input--invalid,
+.op-id-input--invalid:focus {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+.op-id-submit {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.625rem 1.25rem;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s, transform 0.05s;
+}
+
+.op-id-submit:hover { opacity: 0.92; }
+.op-id-submit:active { transform: translateY(1px); }
+
+.op-id-error {
+  color: #b91c1c;
+  font-size: 0.8125rem;
+  margin: 0;
+}
+
+/* ギャラリー上のインラインバー */
+.op-id-inline {
+  margin-bottom: 1.5rem;
+  padding: 0.75rem 1rem;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}

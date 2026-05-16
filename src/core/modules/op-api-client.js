@@ -1,8 +1,15 @@
 // OpenProcessing Public API のクライアント。
-// /api/sketch/{id} と /api/user/{id} を Node の native fetch で叩き、
-// スケッチ ID の配列 → タイトル・ユーザー名・ユーザー URL などのメタデータを返す。
+// /api/sketch/{id} / /api/sketch/{id}/code / /api/user/{id} を native fetch で叩く。
+//
+// Browser (viewer の OpenProcessingSource) と Node (CLI の scan / fetch) の両方から
+// 同じファイルを import して使う。Browser からの利用に備えて:
+//   - process.env を typeof チェック越しに参照
+//   - User-Agent は Browser だと禁止ヘッダなので付けない
+//   - waitForApiRateLimit と userCache はインスタンス単位 (Browser のシングルセッションには十分)
 
 import { API_CONFIG, DEFAULTS } from './constants.js';
+
+const IS_BROWSER = typeof window !== 'undefined' && typeof document !== 'undefined';
 
 const API_TOKEN_ENV_NAMES = [
   'OPENPROCESSING_API_TOKEN',
@@ -34,6 +41,22 @@ export class OpenProcessingApiClient {
     }
   }
 
+  /** /api/sketch/{id} の生 JSON を返す（visualID, engineURL, mode, libraries, fileBase, ...）。エラーは throw。 */
+  async getSketch(sketchId) {
+    const id = normalizeId(sketchId);
+    return this.apiGet(`/sketch/${id}`);
+  }
+
+  /** /api/sketch/{id}/code の生 JSON 配列を返す（[{ codeID, orderID, code, title, ... }]）。エラーは throw。 */
+  async getSketchCode(sketchId) {
+    const id = normalizeId(sketchId);
+    const data = await this.apiGet(`/sketch/${id}/code`);
+    if (!Array.isArray(data)) {
+      throw new Error('OpenProcessing API: /code response was not an array');
+    }
+    return data;
+  }
+
   async getUser(userId) {
     const key = normalizeId(userId);
     if (!key) return null;
@@ -53,8 +76,9 @@ export class OpenProcessingApiClient {
 
     const headers = {
       Accept: 'application/json',
-      'User-Agent': API_CONFIG.userAgent,
     };
+    // User-Agent は Browser だと禁止ヘッダ。Node でだけ付ける。
+    if (!IS_BROWSER) headers['User-Agent'] = API_CONFIG.userAgent;
     if (this.apiToken) headers.Authorization = `Bearer ${this.apiToken}`;
 
     const response = await fetch(`${API_CONFIG.apiBaseUrl}${path}`, {
@@ -144,6 +168,9 @@ export async function fetchUserDataForSketches(sketchIds, options = {}) {
 }
 
 function findApiToken() {
+  if (IS_BROWSER) return null;
+  // process が無い実行環境（古い bundler 等）でも壊れないように typeof で防御
+  if (typeof process === 'undefined' || !process.env) return null;
   for (const name of API_TOKEN_ENV_NAMES) {
     const value = process.env[name];
     if (value && value.trim()) return value.trim();

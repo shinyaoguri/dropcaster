@@ -1,0 +1,19 @@
+{
+  "name": "dropcaster",
+  "short_name": "dropcaster",
+  "description": "OpenProcessing 作品 ID を入れて投影マッピング用に起動するビューア",
+  "theme_color": "#000000",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "orientation": "any",
+  "scope": "/",
+  "start_url": "/",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

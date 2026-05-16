@@ -11,8 +11,21 @@ export class SketchServiceImpl implements SketchService {
         cache: 'no-cache'
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      // ホスト版 (apps/web) のように sketches.json を同梱しない場合、404 か
+      // SPA fallback の text/html が返るので、どちらも「catalog 無し」として
+      // 静かに扱う (error ではなく info で出して emptyState を選ばせる)。
+      if (response.status === 404) {
+        console.info('No sketches.json found — running in empty-catalog mode');
+        this.sketches = [];
+        this.isInitialized = true;
+        return [];
+      }
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.ok || !contentType.toLowerCase().includes('json')) {
+        console.info('sketches.json missing or not JSON — running in empty-catalog mode');
+        this.sketches = [];
+        this.isInitialized = true;
+        return [];
       }
 
       const sketches = await response.json();

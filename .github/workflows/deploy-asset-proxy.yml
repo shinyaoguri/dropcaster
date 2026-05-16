@@ -1,0 +1,60 @@
+# dropcaster asset proxy (Cloudflare Worker) を自動デプロイする。
+#
+# main へ push されたとき、apps/asset-proxy 配下に変更があるか、ワークフロー自身が
+# 変わった場合のみ走る (apps/web の更新ごとに Worker を再デプロイしないように)。
+# workflow_dispatch でも手動実行可能。
+#
+# 必須 secrets (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN    Cloudflare の API トークン。
+#                           "Edit Cloudflare Workers" テンプレートで作成 (Workers Scripts: Edit 権限)。
+#   CLOUDFLARE_ACCOUNT_ID   Cloudflare Dashboard 右サイドバーの Account ID。
+#
+# デプロイ先 URL は wrangler.toml の name を元に
+#   https://dropcaster-asset-proxy.<workers-subdomain>.workers.dev
+# となる。初回 deploy 時に workers.dev サブドメインが自動で割り当てられる。
+# 出力 URL は apps/web/index.html の assetProxyBaseUrl にも書き戻す必要あり。
+
+name: Deploy asset proxy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/asset-proxy/**'
+      - '.github/workflows/deploy-asset-proxy.yml'
+  workflow_dispatch:
+
+# Worker のデプロイは同時実行を 1 つに絞る (race を防ぐ)
+concurrency:
+  group: deploy-asset-proxy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: apps/asset-proxy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/asset-proxy/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck Worker
+        run: npm run typecheck
+
+      - name: Deploy via wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/asset-proxy
+          command: deploy
