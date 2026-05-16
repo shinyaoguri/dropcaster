@@ -20,7 +20,9 @@ import type {
 
 // v2: 仮想キャンバス座標系（quad は px、output は position/size）。v1 とは非互換。
 const STATE_STORAGE_KEY = 'dropcaster.mappings.v2';
-const SAVE_DEBOUNCE_MS = 250;
+// drag が止まってから何 ms 後に localStorage へ書き出すか。drag 中は毎フレーム reschedule して
+// 書込みを発火させない（最後の mutation から STATE_SAVE_QUIESCE_MS 経過してから 1 回だけ flush）。
+const STATE_SAVE_QUIESCE_MS = 600;
 
 // Window Management API（Chrome/Edge 系のみ）の最小型定義
 interface ScreenDetailed {
@@ -79,9 +81,10 @@ export class WindowController {
     // 開発モード: 出力ウィンドウに mapping の枠線とマウス追従クロスヘアを重ねる校正用 UI。
     // セッション限りのフラグで永続化しない（localStorage の MappingsState とは独立）。
     devMode: new Emitter<boolean>(false),
-    // 出力ウィンドウから push されるマウスカーソル位置（dev mode 時のみ）。
-    // 操作ウィンドウのマッピングプレビューに同じ位置のクロスヘアをミラーする。
-    devCursor: new Emitter<DevCursorEvent>({ outputId: '', xFrac: 0, yFrac: 0, visible: false }),
+    // dev mode のカーソル位置（仮想キャンバス座標）。出力ウィンドウからの mousemove、
+    // 操作ウィンドウのプレビューからの mousemove のいずれも canvas px に変換してここで集約し、
+    // 全出力ウィンドウ + プレビューに同じ canvas-space cursor を放送する。
+    devCursor: new Emitter<DevCursorEvent>({ visible: false, canvasX: 0, canvasY: 0 }),
   };
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
@@ -90,15 +93,15 @@ export class WindowController {
       const targetId = typeof event.data.outputId === 'string' ? event.data.outputId : undefined;
       this.bindStreamToOutputWindows(targetId);
     } else if (event.data?.type === 'dev-cursor') {
-      // 出力ウィンドウ→親 のカーソル位置中継。inline panel が onDevCursorChange で受ける。
+      // 出力ウィンドウ→親 のカーソル位置中継（canvas-space）。inline panel が
+      // onDevCursorChange で受け、他の出力ウィンドウへも放送する。
       const d = event.data as Partial<DevCursorEvent> & { type: string };
-      if (typeof d.outputId !== 'string') return;
-      this.events.devCursor.set({
-        outputId: d.outputId,
-        xFrac: typeof d.xFrac === 'number' ? d.xFrac : 0,
-        yFrac: typeof d.yFrac === 'number' ? d.yFrac : 0,
-        visible: !!d.visible,
-      });
+      const visible = !!d.visible;
+      const canvasX = typeof d.canvasX === 'number' ? d.canvasX : 0;
+      const canvasY = typeof d.canvasY === 'number' ? d.canvasY : 0;
+      this.events.devCursor.set({ visible, canvasX, canvasY });
+      // 全出力ウィンドウへ放送（origin はローカル描画済みなので skip）
+      this.broadcastDevCursorToOutputs(visible, canvasX, canvasY, event.source);
     }
   };
 
@@ -136,12 +139,19 @@ export class WindowController {
   }
 
   /**
-   * localStorage への保存はトレーリングデバウンス（ドラッグ中は毎フレーム state が変わるので、
-   * JSON.stringify + 同期 setItem を 60Hz で叩かない）。pagehide / destroy で確実にフラッシュする。
+   * localStorage への保存はトレーリング debounce（最後の mutation から QUIESCE_MS 経過したら
+   * 1 回だけ flush する）。drag 中は毎フレーム reschedule されるので、drag が止まるまで save が
+   * 走らない。pagehide / destroy で確実にフラッシュする。
+   *
+   * **重要**: 以前は `if (saveTimer !== null) return` の "leading-skip" 実装で、結果として
+   * drag 中も QUIESCE_MS 周期で同期 IO (JSON.stringify + localStorage.setItem) が走り、
+   * メインスレッドジャンクの原因になっていた。trailing debounce に修正済み。
    */
   private scheduleSave(): void {
-    if (this.saveTimer !== null) return;
-    this.saveTimer = window.setTimeout(() => { this.saveTimer = null; this.flushSave(); }, SAVE_DEBOUNCE_MS);
+    if (this.saveTimer !== null) {
+      clearTimeout(this.saveTimer);
+    }
+    this.saveTimer = window.setTimeout(() => { this.saveTimer = null; this.flushSave(); }, STATE_SAVE_QUIESCE_MS);
   }
 
   private flushSave(): void {
@@ -436,22 +446,40 @@ export class WindowController {
 
   /**
    * 操作ウィンドウのマッピングプレビューでマウスが動いた時に呼ばれる、preview→output 方向の中継。
-   * 該当出力ウィンドウへ dev-cursor-set を送ってクロスヘアを描かせ、
-   * 同時に inline panel 側の Emitter にも同じイベントを流して preview のクロスヘアも更新する
-   * （双方向同期: どちらでマウスを動かしても両方に描画される）。
+   * 全出力ウィンドウへ dev-cursor-set を送ってクロスヘアを描かせ、同時に inline panel 側の
+   * Emitter にも同じイベントを流して preview のクロスヘアも更新する（双方向同期）。
+   * 全出力に放送するので、跨ぎ位置でも複数出力に同じ canvas 位置のクロスヘアが出る。
    */
-  setDevCursorFromPreview(outputId: string, xFrac: number, yFrac: number, visible: boolean): void {
+  setDevCursorFromPreview(canvasX: number, canvasY: number, visible: boolean): void {
     if (!this.events.devMode.get()) return;
-    // inline panel 側の preview に反映（既存の onDevCursorChange 経路）
-    this.events.devCursor.set({ outputId, xFrac, yFrac, visible });
-    // 該当出力ウィンドウへも送って向こうのクロスヘアを更新
-    const ow = this.outputWindows.get(outputId);
-    const win = ow?.getWindow();
-    if (!win || win.closed) return;
-    try {
-      win.postMessage({ type: 'dev-cursor-set', xFrac, yFrac, visible }, window.location.origin);
-    } catch {
-      /* ignore */
+    // inline panel 側の preview に反映
+    this.events.devCursor.set({ visible, canvasX, canvasY });
+    // 全出力ウィンドウへ放送
+    this.broadcastDevCursorToOutputs(visible, canvasX, canvasY, null);
+  }
+
+  /**
+   * 全出力ウィンドウへ canvas-space cursor を送る。`exceptSource` に Window を渡すと
+   * その送信元（自前で既にローカル描画済み）はスキップする。
+   */
+  private broadcastDevCursorToOutputs(
+    visible: boolean,
+    canvasX: number,
+    canvasY: number,
+    exceptSource: MessageEventSource | null,
+  ): void {
+    for (const ow of this.outputWindows.values()) {
+      const win = ow.getWindow();
+      if (!win || win.closed) continue;
+      if (exceptSource && win === exceptSource) continue;
+      try {
+        win.postMessage(
+          { type: 'dev-cursor-set', visible, canvasX, canvasY },
+          window.location.origin,
+        );
+      } catch {
+        /* ignore */
+      }
     }
   }
 

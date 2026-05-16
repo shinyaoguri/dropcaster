@@ -89,8 +89,8 @@ export class InlineControlHost implements ControlHost {
   onDevCursorChange(handler: Listener<DevCursorEvent>): Unsubscribe {
     return this.wc.events.devCursor.subscribe(handler);
   }
-  requestDevCursor(outputId: string, xFrac: number, yFrac: number, visible: boolean): void {
-    this.wc.setDevCursorFromPreview(outputId, xFrac, yFrac, visible);
+  requestDevCursor(canvasX: number, canvasY: number, visible: boolean): void {
+    this.wc.setDevCursorFromPreview(canvasX, canvasY, visible);
   }
 
   // --- warnings (WebGL context lost) ---

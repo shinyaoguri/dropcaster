@@ -1,11 +1,18 @@
 /**
- * マッピング一覧（出力ごとにグループ化）と、出力／マッピングの追加・削除・export/import
- * ボタンを担当する panel。tools カラム上半分の UI。
+ * 出力ウィンドウとマッピングの一覧 panel。tool カラムに 2 つのセクションを生やす:
  *
- * 構造:
- *   - 出力ごとに `.output-group` ヘッダ（名前・開閉ボタン・削除）
- *     - その下に所属 mapping の list と、その出力に mapping を足す `+` ボタン
- *   - 全体下に `+ 出力を追加` と export/import ボタン
+ *   [出力ウィンドウ]
+ *     - 出力ごとに 1 行: 名前 / 開閉ボタン / 削除
+ *     - + 出力を追加
+ *
+ *   [マッピング]
+ *     - 全 mapping をフラットに列挙: 色 / 名前 / enable / 削除
+ *     - + マッピングを追加
+ *     - export / import
+ *
+ * 出力管理とマッピング管理は独立した存在として扱う（v2.1 で primary owner 概念を廃止）。
+ * マッピングがどの出力に映るかは仮想キャンバス上の quad 座標と各出力の bounds の交差で
+ * 自動的に決まるので、UI でも所属関係を表現しない。
  *
  * インポート JSON や localStorage 経由で m.id / m.name に細工された文字列が混入しても
  * XSS にならないよう、`innerHTML` テンプレート補間ではなく DOM API（textContent / dataset /
@@ -44,6 +51,14 @@ export class MappingsListPanel {
   private doc: Document | null = null;
   private ctrl: MappingsController | null = null;
   private opts: MappingsListPanelAttachOptions | null = null;
+  /**
+   * 直近の rerender で使った state の構造シグネチャ（outputs / mappings 別々）。
+   * 出力レイアウト drag のように tool 列に映らない変化（position/size 等）では rerender を
+   * スキップして DOM rebuild = 一瞬のフリッカを避ける。outputs と mappings を別に持つことで、
+   * 片方だけ変わった時に他方を無駄に作り直すのも防ぐ。
+   */
+  private lastOutputsSig: string | null = null;
+  private lastMappingsSig: string | null = null;
 
   attach(scope: HTMLElement, doc: Document, ctrl: MappingsController, opts: MappingsListPanelAttachOptions): void {
     this.scope = scope;
@@ -54,125 +69,49 @@ export class MappingsListPanel {
     this.rerender();
   }
 
-  /** 親 (handleStateUpdate / replaceState) が state 変更を反映したら呼ぶ。 */
+  /**
+   * 親 (handleStateUpdate / replaceState) が state 変更を反映したら呼ぶ。
+   * tool 列の表示に影響する場（出力 ID/name、open/close 状態、active output、mapping ID/name/
+   * enabled、active mapping）が変わったときだけ該当セクションの DOM を作り直す。
+   */
   rerender(): void {
-    const scope = this.scope;
-    const ctrl = this.ctrl;
-    const doc = this.doc;
-    const opts = this.opts;
-    if (!scope || !ctrl || !doc || !opts) return;
-
-    const state = ctrl.getState();
-    const listEl = scope.querySelector('#mappings-list') as HTMLElement | null;
-    if (!listEl) return;
-
-    listEl.replaceChildren();
-
-    // インデックス（mapping color 計算用 — 全 state.mappings 上の位置）
-    const indexById = new Map<string, number>();
-    state.mappings.forEach((m, i) => indexById.set(m.id, i));
-
-    const canRemoveMapping = state.mappings.length > 1;
-    const canRemoveOutput = state.outputs.length > 1;
-    const canAddMapping = true; // 個数上限は無いので常に true
-
-    for (const out of state.outputs) {
-      const isActiveOutput = state.activeOutputId === out.id;
-      const group = doc.createElement('div');
-      group.className = `output-group${isActiveOutput ? ' active' : ''}`;
-      group.dataset.outputId = out.id;
-
-      // ── ヘッダ ──
-      const header = doc.createElement('div');
-      header.className = 'output-group-header';
-
-      const isOpen = opts.isOutputWindowOpen(out.id);
-      const statusBadge = doc.createElement('span');
-      statusBadge.className = `output-window-status${isOpen ? ' open' : ''}`;
-      statusBadge.textContent = isOpen ? '●' : '○';
-      header.appendChild(statusBadge);
-
-      const nameSpan = doc.createElement('span');
-      nameSpan.className = 'output-name';
-      nameSpan.textContent = out.name ?? out.id;
-      nameSpan.title = '出力名（ダブルクリックで編集）';
-      header.appendChild(nameSpan);
-
-      const openBtn = doc.createElement('button');
-      openBtn.className = `open-btn${isOpen ? ' is-open' : ''}`;
-      openBtn.dataset.outputId = out.id;
-      openBtn.textContent = isOpen ? '閉じる' : '開く';
-      openBtn.title = isOpen ? 'この出力ウィンドウを閉じる' : 'この出力をポップアウトで開く';
-      header.appendChild(openBtn);
-
-      const removeOutputBtn = doc.createElement('button');
-      removeOutputBtn.className = 'remove-output-btn';
-      removeOutputBtn.dataset.outputId = out.id;
-      removeOutputBtn.textContent = '×';
-      removeOutputBtn.title = canRemoveOutput
-        ? 'この出力を削除（mapping は最初の出力へ移籍）'
-        : '最後の出力は削除できません';
-      removeOutputBtn.disabled = !canRemoveOutput;
-      header.appendChild(removeOutputBtn);
-
-      group.appendChild(header);
-
-      // ── mappings ──
-      const mappingsWrap = doc.createElement('div');
-      mappingsWrap.className = 'output-group-mappings';
-
-      const owned = state.mappings.filter(m => m.outputId === out.id);
-      for (const m of owned) {
-        const idx = indexById.get(m.id) ?? 0;
-        const isActive = m.id === state.activeId;
-        const enabled = isMappingEnabled(m);
-        const displayName = m.name ?? `Mapping ${idx + 1}`;
-        const color = mappingColor(idx);
-
-        const item = doc.createElement('div');
-        item.className = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}`;
-        item.dataset.id = m.id;
-        item.style.setProperty('--mapping-color', color);
-
-        const chip = doc.createElement('span');
-        chip.className = 'color-chip';
-        item.appendChild(chip);
-
-        const mappingNameSpan = doc.createElement('span');
-        mappingNameSpan.className = 'name';
-        mappingNameSpan.textContent = displayName;
-        item.appendChild(mappingNameSpan);
-
-        const toggleBtn = doc.createElement('button');
-        toggleBtn.className = `toggle-btn${enabled ? ' enabled' : ''}`;
-        toggleBtn.dataset.id = m.id;
-        toggleBtn.title = enabled ? '出力中（クリックで停止）' : '停止中（クリックで出力）';
-        toggleBtn.textContent = enabled ? '●' : '○';
-        item.appendChild(toggleBtn);
-
-        const removeBtn = doc.createElement('button');
-        removeBtn.className = 'remove-btn';
-        removeBtn.dataset.id = m.id;
-        removeBtn.title = '削除';
-        removeBtn.textContent = '×';
-        if (!canRemoveMapping) removeBtn.disabled = true;
-        item.appendChild(removeBtn);
-
-        mappingsWrap.appendChild(item);
-      }
-
-      const addHereBtn = doc.createElement('button');
-      addHereBtn.className = 'add-mapping-here-btn';
-      addHereBtn.dataset.outputId = out.id;
-      addHereBtn.textContent = `＋ この出力に mapping を追加`;
-      addHereBtn.disabled = !canAddMapping;
-      mappingsWrap.appendChild(addHereBtn);
-
-      group.appendChild(mappingsWrap);
-      listEl.appendChild(group);
+    const oSig = this.computeOutputsSig();
+    if (oSig !== this.lastOutputsSig) {
+      this.lastOutputsSig = oSig;
+      this.renderOutputsSection();
     }
+    const mSig = this.computeMappingsSig();
+    if (mSig !== this.lastMappingsSig) {
+      this.lastMappingsSig = mSig;
+      this.renderMappingsSection();
+    }
+  }
 
-    this.wireListInteractions();
+  /** signature を null に戻して次回 rerender を強制的に走らせる（DOM 破棄後など）。 */
+  invalidate(): void {
+    this.lastOutputsSig = null;
+    this.lastMappingsSig = null;
+  }
+
+  private computeOutputsSig(): string {
+    const ctrl = this.ctrl;
+    const opts = this.opts;
+    if (!ctrl || !opts) return '';
+    const state = ctrl.getState();
+    const outputs = state.outputs
+      .map(o => `${o.id}:${o.name ?? ''}:${opts.isOutputWindowOpen(o.id) ? 1 : 0}`)
+      .join('|');
+    return `${state.activeOutputId ?? ''}|${state.outputs.length}|${outputs}`;
+  }
+
+  private computeMappingsSig(): string {
+    const ctrl = this.ctrl;
+    if (!ctrl) return '';
+    const state = ctrl.getState();
+    const mappings = state.mappings
+      .map(m => `${m.id}:${m.name ?? ''}:${isMappingEnabled(m) ? 1 : 0}`)
+      .join('|');
+    return `${state.activeId}|${state.mappings.length}|${mappings}`;
   }
 
   destroy(): void {
@@ -182,7 +121,166 @@ export class MappingsListPanel {
     this.opts = null;
   }
 
-  // ── イベント wiring ─────────────────────────────────────────
+  // ── 出力セクション ───────────────────────────────────────────
+
+  private renderOutputsSection(): void {
+    const scope = this.scope;
+    const ctrl = this.ctrl;
+    const doc = this.doc;
+    const opts = this.opts;
+    if (!scope || !ctrl || !doc || !opts) return;
+    const listEl = scope.querySelector('#outputs-list') as HTMLElement | null;
+    if (!listEl) return;
+
+    const state = ctrl.getState();
+    listEl.replaceChildren();
+
+    const canRemoveOutput = state.outputs.length > 1;
+
+    for (const out of state.outputs) {
+      const isActiveOutput = state.activeOutputId === out.id;
+      const isOpen = opts.isOutputWindowOpen(out.id);
+
+      const row = doc.createElement('div');
+      row.className = `output-item${isActiveOutput ? ' active' : ''}`;
+      row.dataset.outputId = out.id;
+
+      const statusBadge = doc.createElement('span');
+      statusBadge.className = `output-window-status${isOpen ? ' open' : ''}`;
+      statusBadge.textContent = isOpen ? '●' : '○';
+      row.appendChild(statusBadge);
+
+      const nameSpan = doc.createElement('span');
+      nameSpan.className = 'output-name';
+      nameSpan.textContent = out.name ?? out.id;
+      nameSpan.title = '出力名（クリックで選択 / ダブルクリックで編集）';
+      row.appendChild(nameSpan);
+
+      const openBtn = doc.createElement('button');
+      openBtn.className = `open-btn${isOpen ? ' is-open' : ''}`;
+      openBtn.textContent = isOpen ? '閉じる' : '開く';
+      openBtn.title = isOpen ? 'この出力ウィンドウを閉じる' : 'この出力をポップアウトで開く';
+      openBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (opts.isOutputWindowOpen(out.id)) {
+          opts.closeOutputWindow(out.id);
+        } else {
+          opts.openOutputWindow(out.id);
+        }
+        this.rerender();
+      });
+      row.appendChild(openBtn);
+
+      const removeBtn = doc.createElement('button');
+      removeBtn.className = 'remove-output-btn';
+      removeBtn.textContent = '×';
+      removeBtn.title = canRemoveOutput ? 'この出力を削除' : '最後の出力は削除できません';
+      removeBtn.disabled = !canRemoveOutput;
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        ctrl.replaceState(withRemovedOutput(ctrl.getState(), out.id));
+      });
+      row.appendChild(removeBtn);
+
+      // 行全体クリック / 名前クリックで activeOutputId 切替
+      nameSpan.addEventListener('click', (e) => {
+        e.stopPropagation();
+        ctrl.replaceState(withActiveOutputSet(ctrl.getState(), out.id));
+      });
+      nameSpan.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        this.startInlineOutputRename(nameSpan, out.id);
+      });
+
+      listEl.appendChild(row);
+    }
+
+    // 出力追加ボタンの enable/disable
+    const addOutputBtn = scope.querySelector('#add-output-btn') as HTMLButtonElement | null;
+    if (addOutputBtn) {
+      addOutputBtn.disabled = state.outputs.length >= MAX_OUTPUTS;
+    }
+  }
+
+  // ── マッピングセクション ─────────────────────────────────────
+
+  private renderMappingsSection(): void {
+    const scope = this.scope;
+    const ctrl = this.ctrl;
+    const doc = this.doc;
+    if (!scope || !ctrl || !doc) return;
+    const listEl = scope.querySelector('#mappings-list') as HTMLElement | null;
+    if (!listEl) return;
+
+    const state = ctrl.getState();
+    listEl.replaceChildren();
+
+    const canRemoveMapping = state.mappings.length > 1;
+
+    state.mappings.forEach((m, idx) => {
+      const isActive = m.id === state.activeId;
+      const enabled = isMappingEnabled(m);
+      const displayName = m.name ?? `Mapping ${idx + 1}`;
+      const color = mappingColor(idx);
+
+      const item = doc.createElement('div');
+      item.className = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}`;
+      item.dataset.id = m.id;
+      item.style.setProperty('--mapping-color', color);
+
+      const chip = doc.createElement('span');
+      chip.className = 'color-chip';
+      item.appendChild(chip);
+
+      const nameSpan = doc.createElement('span');
+      nameSpan.className = 'name';
+      nameSpan.textContent = displayName;
+      item.appendChild(nameSpan);
+
+      const toggleBtn = doc.createElement('button');
+      toggleBtn.className = `toggle-btn${enabled ? ' enabled' : ''}`;
+      toggleBtn.title = enabled ? '出力中（クリックで停止）' : '停止中（クリックで出力）';
+      toggleBtn.textContent = enabled ? '●' : '○';
+      toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        ctrl.replaceState(withMappingToggled(ctrl.getState(), m.id));
+      });
+      item.appendChild(toggleBtn);
+
+      const removeBtn = doc.createElement('button');
+      removeBtn.className = 'remove-btn';
+      removeBtn.title = '削除';
+      removeBtn.textContent = '×';
+      removeBtn.disabled = !canRemoveMapping;
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        ctrl.replaceState(withRemovedMapping(ctrl.getState(), m.id));
+      });
+      item.appendChild(removeBtn);
+
+      // 行クリックで active mapping 切替
+      item.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (target.classList.contains('remove-btn')) return;
+        if (target.classList.contains('toggle-btn')) return;
+        if (target.tagName === 'INPUT') return;
+        const cur = ctrl.getState();
+        if (m.id !== cur.activeId) {
+          ctrl.replaceState(withActiveSet(cur, m.id));
+        }
+      });
+
+      // 名前のダブルクリックでインライン rename
+      nameSpan.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        this.startInlineMappingRename(nameSpan, m.id);
+      });
+
+      listEl.appendChild(item);
+    });
+  }
+
+  // ── ツールボタン（add/export/import） ───────────────────────
 
   private wireToolButtons(): void {
     const scope = this.scope;
@@ -197,9 +295,15 @@ export class MappingsListPanel {
         if (next === before) return; // MAX_OUTPUTS で頭打ち — no-op
         ctrl.replaceState(next);
         // 直後に同じ user gesture でポップアウトを開く（ユーザの「増やすと出る」期待に合わせる）。
-        // next.activeOutputId は withAddedOutput が新規 id を入れている。
         const newId = next.activeOutputId;
         if (newId) this.opts?.openOutputWindow(newId);
+      });
+    }
+
+    const addMappingBtn = scope.querySelector('#add-mapping-btn');
+    if (addMappingBtn) {
+      addMappingBtn.addEventListener('click', () => {
+        ctrl.replaceState(withAddedMapping(ctrl.getState()));
       });
     }
 
@@ -211,112 +315,6 @@ export class MappingsListPanel {
     const importBtn = scope.querySelector('#import-mappings-btn');
     if (importBtn) {
       importBtn.addEventListener('click', () => this.importFromFile());
-    }
-  }
-
-  /** rerender 後の listEl の中のボタン／要素に handler を張る。 */
-  private wireListInteractions(): void {
-    const scope = this.scope;
-    const ctrl = this.ctrl;
-    const opts = this.opts;
-    if (!scope || !ctrl || !opts) return;
-    const listEl = scope.querySelector('#mappings-list') as HTMLElement | null;
-    if (!listEl) return;
-
-    // mapping-list-item のアクティブ化（toggle / remove ボタンは除外）
-    listEl.querySelectorAll<HTMLDivElement>('.mapping-list-item').forEach(item => {
-      item.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        if (target.classList.contains('remove-btn')) return;
-        if (target.classList.contains('toggle-btn')) return;
-        const id = item.dataset.id!;
-        const cur = ctrl.getState();
-        if (id !== cur.activeId) {
-          ctrl.replaceState(withActiveSet(cur, id));
-        }
-      });
-    });
-
-    listEl.querySelectorAll<HTMLButtonElement>('.toggle-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.id!;
-        ctrl.replaceState(withMappingToggled(ctrl.getState(), id));
-      });
-    });
-
-    listEl.querySelectorAll<HTMLSpanElement>('.mapping-list-item .name').forEach(nameSpan => {
-      nameSpan.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        const itemEl = nameSpan.closest('.mapping-list-item') as HTMLDivElement | null;
-        const id = itemEl?.dataset.id;
-        if (!id) return;
-        this.startInlineMappingRename(nameSpan, id);
-      });
-    });
-
-    listEl.querySelectorAll<HTMLButtonElement>('.remove-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.id!;
-        ctrl.replaceState(withRemovedMapping(ctrl.getState(), id));
-      });
-    });
-
-    // output-group ヘッダ
-    listEl.querySelectorAll<HTMLButtonElement>('.open-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const outputId = btn.dataset.outputId!;
-        if (opts.isOutputWindowOpen(outputId)) {
-          opts.closeOutputWindow(outputId);
-        } else {
-          opts.openOutputWindow(outputId);
-        }
-        // 開閉直後の表示更新
-        this.rerender();
-      });
-    });
-
-    listEl.querySelectorAll<HTMLButtonElement>('.remove-output-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const outputId = btn.dataset.outputId!;
-        ctrl.replaceState(withRemovedOutput(ctrl.getState(), outputId));
-      });
-    });
-
-    listEl.querySelectorAll<HTMLButtonElement>('.add-mapping-here-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const outputId = btn.dataset.outputId!;
-        const s1 = withActiveOutputSet(ctrl.getState(), outputId);
-        ctrl.replaceState(withAddedMapping(s1));
-      });
-    });
-
-    listEl.querySelectorAll<HTMLSpanElement>('.output-group-header .output-name').forEach(nameSpan => {
-      nameSpan.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        const groupEl = nameSpan.closest('.output-group') as HTMLDivElement | null;
-        const outputId = groupEl?.dataset.outputId;
-        if (!outputId) return;
-        this.startInlineOutputRename(nameSpan, outputId);
-      });
-      // クリックで activeOutputId を設定（次の add mapping の宛先）
-      nameSpan.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const groupEl = nameSpan.closest('.output-group') as HTMLDivElement | null;
-        const outputId = groupEl?.dataset.outputId;
-        if (!outputId) return;
-        ctrl.replaceState(withActiveOutputSet(ctrl.getState(), outputId));
-      });
-    });
-
-    // 出力追加ボタンを再評価（MAX_OUTPUTS で disable）
-    const addOutputBtn = scope.querySelector('#add-output-btn') as HTMLButtonElement | null;
-    if (addOutputBtn) {
-      addOutputBtn.disabled = ctrl.getState().outputs.length >= MAX_OUTPUTS;
     }
   }
 
@@ -338,11 +336,14 @@ export class MappingsListPanel {
     const commit = () => {
       if (committed) return;
       committed = true;
+      // 名前が同一でも DOM は <input> に置換済みなので必ず rebuild させる
+      this.invalidate();
       ctrl.replaceState(withMappingRenamed(ctrl.getState(), id, input.value));
     };
     const cancel = () => {
       if (committed) return;
       committed = true;
+      this.invalidate();
       this.rerender();
     };
 
@@ -369,11 +370,14 @@ export class MappingsListPanel {
     const commit = () => {
       if (committed) return;
       committed = true;
+      // 名前が同一でも DOM は <input> に置換済みなので必ず rebuild させる
+      this.invalidate();
       ctrl.replaceState(withOutputRenamed(ctrl.getState(), outputId, input.value));
     };
     const cancel = () => {
       if (committed) return;
       committed = true;
+      this.invalidate();
       this.rerender();
     };
 

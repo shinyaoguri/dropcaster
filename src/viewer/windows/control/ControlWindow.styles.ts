@@ -180,6 +180,7 @@ export const CONTROL_PANEL_CSS = `
         background: #333;
         border-radius: 4px;
         font-size: 12px;
+        min-width: 0; /* grid セル内で子（特に <input>）の intrinsic min-width で広がらないようにする */
       }
 
       .tool-value .label {
@@ -188,6 +189,44 @@ export const CONTROL_PANEL_CSS = `
       }
 
       .tool-value span:last-child {
+        color: #fff;
+        font-weight: 500;
+      }
+
+      /* 出力設定の数値入力。tool-value のレイアウトに収まりつつ、span 表示と同じ右寄せ感を出す。
+         spinner ボタンは UI ノイズなので消す。width: 0 + flex: 1 1 0 で <input> の intrinsic
+         min-width を無視して、grid セル幅にぴったり収める（ソース設定の span と同じ見え方）。 */
+      .tool-value .num-input {
+        flex: 1 1 0;
+        width: 0;
+        min-width: 0;
+        box-sizing: border-box;
+        background: transparent;
+        border: 0;
+        outline: 0;
+        color: #fff;
+        font: inherit;
+        font-weight: 500;
+        text-align: right;
+        padding: 0;
+        margin: 0;
+        -moz-appearance: textfield;
+      }
+      .tool-value .num-input::-webkit-outer-spin-button,
+      .tool-value .num-input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      .tool-value .num-input:focus {
+        background: rgba(59, 130, 246, 0.15);
+        box-shadow: inset 0 0 0 1px #3b82f6;
+        border-radius: 2px;
+      }
+      .tool-value .num-input:disabled {
+        color: #666;
+        cursor: not-allowed;
+      }
+      #output-settings-target {
         color: #fff;
         font-weight: 500;
       }
@@ -381,26 +420,28 @@ export const CONTROL_PANEL_CSS = `
         cursor: not-allowed;
       }
 
-      /* 出力グループヘッダ（MappingsListPanel — 出力ごとに mappings をぶら下げる） */
-      .output-group {
-        margin-bottom: 12px;
-        border: 1px solid #333;
-        border-radius: 4px;
-        overflow: hidden;
+      /* 出力一覧（MappingsListPanel — 出力管理セクション） */
+      .outputs-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 10px;
       }
-      .output-group.active {
-        border-color: #3b82f6;
-      }
-      .output-group-header {
+      .output-item {
         display: flex;
         align-items: center;
         gap: 4px;
         padding: 6px 8px;
         background: #2a2a2a;
+        border: 1px solid #333;
+        border-radius: 4px;
         font-size: 11px;
         color: #ccc;
       }
-      .output-group-header .output-name {
+      .output-item.active {
+        border-color: #3b82f6;
+      }
+      .output-item .output-name {
         flex: 1;
         font-weight: 500;
         cursor: pointer;
@@ -409,7 +450,7 @@ export const CONTROL_PANEL_CSS = `
         white-space: nowrap;
         user-select: none;
       }
-      .output-group-header .output-name-input {
+      .output-item .output-name-input {
         flex: 1;
         background: #222;
         border: 1px solid #3b82f6;
@@ -420,15 +461,15 @@ export const CONTROL_PANEL_CSS = `
         outline: none;
         min-width: 0;
       }
-      .output-group-header .output-window-status {
+      .output-item .output-window-status {
         font-size: 10px;
         color: #888;
         margin-right: 2px;
       }
-      .output-group-header .output-window-status.open {
+      .output-item .output-window-status.open {
         color: #27c93f;
       }
-      .output-group-header button {
+      .output-item button {
         background: transparent;
         border: 1px solid #555;
         color: #ccc;
@@ -438,45 +479,24 @@ export const CONTROL_PANEL_CSS = `
         border-radius: 3px;
         line-height: 1;
       }
-      .output-group-header button:hover:not(:disabled) {
+      .output-item button:hover:not(:disabled) {
         background: #3a3a3a;
       }
-      .output-group-header button:disabled {
+      .output-item button:disabled {
         color: #555;
         cursor: not-allowed;
       }
-      .output-group-header .open-btn.is-open {
+      .output-item .open-btn.is-open {
         background: #27c93f33;
         border-color: #27c93f;
         color: #27c93f;
       }
-      .output-group-header .remove-output-btn {
+      .output-item .remove-output-btn {
         color: #888;
       }
-      .output-group-header .remove-output-btn:hover:not(:disabled) {
+      .output-item .remove-output-btn:hover:not(:disabled) {
         color: #ff5555;
         border-color: #ff5555;
-      }
-      .output-group-mappings {
-        padding: 4px;
-        background: #1f1f1f;
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-      }
-      .output-group-mappings .add-mapping-here-btn {
-        margin-top: 4px;
-        background: transparent;
-        border: 1px dashed #555;
-        color: #888;
-        padding: 4px;
-        font-size: 11px;
-        border-radius: 3px;
-        cursor: pointer;
-      }
-      .output-group-mappings .add-mapping-here-btn:hover {
-        color: #ccc;
-        border-color: #888;
       }
       #add-output-btn {
         margin-top: 4px;
@@ -1002,6 +1022,50 @@ export const CONTROL_PANEL_CSS = `
       /* 矢印キーで微調整中の選択ハンドル（白いリング） */
       .quad-handle.kbd-selected {
         box-shadow: 0 0 0 3px #fff, 0 0 6px rgba(0, 0, 0, 0.8);
+      }
+
+      /* 全体スケール（uniform scale）ハンドル — 重心ぴったりに表示。
+         角丸ありの白い四角で、4 隅ハンドル（丸）と視覚的に区別する。 */
+      .quad-handle.quad-handle-scale {
+        border-radius: 3px;
+        background: #fff;
+        border-color: var(--mapping-color, #ff00ff);
+        cursor: nwse-resize;
+      }
+      .quad-handle.quad-handle-scale.dragging {
+        background: var(--mapping-color, #ff00ff);
+        border-color: #fff;
+      }
+
+      /* 全体回転ハンドル — quad の right 辺（TR ↔ BR）中点に配置されるので、
+         位置オフセットは不要。base .quad-handle と同じ scale(counter-scale) で
+         画面上 14px を保つ。 */
+      .quad-handle.quad-handle-rotate {
+        background: #fff;
+        border-color: var(--mapping-color, #ff00ff);
+        cursor: grab;
+      }
+      .quad-handle.quad-handle-rotate::before {
+        /* 回転アイコン代わりの小さな弧 */
+        content: '↻';
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: bold;
+        color: var(--mapping-color, #ff00ff);
+        line-height: 1;
+        pointer-events: none;
+      }
+      .quad-handle.quad-handle-rotate.dragging {
+        cursor: grabbing;
+        background: var(--mapping-color, #ff00ff);
+        border-color: #fff;
+      }
+      .quad-handle.quad-handle-rotate.dragging::before {
+        color: #fff;
       }
 
       /* 非アクティブ mapping のプレビュー — width/height はランタイムで canvas px に設定 */

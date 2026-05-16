@@ -20,6 +20,7 @@
 import {
   defaultMappingsState,
   getActiveMapping,
+  recomputeCanvasBounds,
   type Quad,
   type SourceRect,
   type MappingsState,
@@ -59,6 +60,43 @@ export class MappingsController {
   /** active quad をまるごと差し替える。 */
   setActiveQuad(quad: Quad): void {
     getActiveMapping(this.state).quad = quad;
+  }
+
+  /**
+   * 指定 output の position / size を in-place 書き換える（onChange は発火しない）。
+   * LayoutPanel の drag/resize 中に毎フレーム呼ぶ用。最終位置は commit() で親へ伝搬される。
+   * position は (0,0) 以上に、size は 1 以上にクランプする（withOutputLayoutSet と同じ）。
+   *
+   * **canvas dim は recompute しない**。drag 中に canvas dim が伸び縮みすると、
+   *   - LayoutPanel の fitScale が毎フレーム変わって他出力が連動して縮む
+   *   - canvasWindow / preview の matrix3d 分母が毎フレーム変わって preview が揺れる
+   *   - OutputWindow の canvasEl が再リサイズされる
+   * のように複数箇所がフラッシュする。canvas dim は quad の絶対座標から見た「matrix3d の
+   * 分母」でしかなく、更新しなくても描画は正しい（quad は絶対 px なので任意の dim で
+   * 表現できる）。recompute は drag 終了時に commitOutputLayoutBounds() で行う。
+   */
+  mutateOutputLayout(
+    outputId: string,
+    patch: { position?: { x: number; y: number }; size?: { width: number; height: number } },
+  ): void {
+    const out = this.state.outputs.find(o => o.id === outputId);
+    if (!out) return;
+    if (patch.position) {
+      out.position.x = Math.max(0, patch.position.x);
+      out.position.y = Math.max(0, patch.position.y);
+    }
+    if (patch.size) {
+      out.size.width = Math.max(1, patch.size.width);
+      out.size.height = Math.max(1, patch.size.height);
+    }
+  }
+
+  /**
+   * drag 終了時に canvas dim を outputs から再計算して state に反映する。
+   * mutateOutputLayout を一連使った後に 1 回だけ呼ぶ想定。
+   */
+  commitOutputLayoutBounds(): void {
+    this.state.canvas = recomputeCanvasBounds(this.state.outputs);
   }
 
   // ── full state replacement（onChange を発火する）─────────────────

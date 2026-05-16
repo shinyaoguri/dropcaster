@@ -22,12 +22,44 @@ export const CONTROL_PANEL_HTML = `
           </div>
           <div class="tool-content">
             <div class="tool-section">
-              <h3>出力 / マッピング一覧</h3>
-              <div id="mappings-list" class="mappings-list"></div>
+              <h3>出力ウィンドウ</h3>
+              <div id="outputs-list" class="outputs-list"></div>
               <button id="add-output-btn" class="tool-button">＋ 出力を追加</button>
+            </div>
+
+            <div class="tool-section">
+              <h3>マッピング</h3>
+              <div id="mappings-list" class="mappings-list"></div>
+              <button id="add-mapping-btn" class="tool-button">＋ マッピングを追加</button>
               <div class="io-buttons">
                 <button id="export-mappings-btn" class="tool-button">保存</button>
                 <button id="import-mappings-btn" class="tool-button">読み込み</button>
+              </div>
+            </div>
+
+            <div class="tool-section">
+              <h3>出力設定</h3>
+              <p class="section-hint">アクティブな出力の位置とサイズを数値で編集（仮想キャンバス px）</p>
+              <div class="tool-item">
+                <label id="output-settings-label">対象: <span id="output-settings-target">—</span></label>
+                <div class="tool-values output-values">
+                  <div class="tool-value">
+                    <span class="label">X:</span>
+                    <input id="output-x-input" class="num-input" type="number" step="1" min="0" inputmode="numeric" disabled />
+                  </div>
+                  <div class="tool-value">
+                    <span class="label">Y:</span>
+                    <input id="output-y-input" class="num-input" type="number" step="1" min="0" inputmode="numeric" disabled />
+                  </div>
+                  <div class="tool-value">
+                    <span class="label">幅:</span>
+                    <input id="output-w-input" class="num-input" type="number" step="1" min="1" inputmode="numeric" disabled />
+                  </div>
+                  <div class="tool-value">
+                    <span class="label">高さ:</span>
+                    <input id="output-h-input" class="num-input" type="number" step="1" min="1" inputmode="numeric" disabled />
+                  </div>
+                </div>
               </div>
             </div>
 

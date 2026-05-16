@@ -175,15 +175,18 @@ export class OutputWindow extends BaseWindow {
     } else if (e.data?.type === 'dev-mode-update') {
       this.setDevMode(!!e.data.enabled);
     } else if (e.data?.type === 'dev-cursor-set') {
-      // 操作ウィンドウ側でマウスが動いた → ここに同じ位置のクロスヘアを描く（双方向同期）
+      // 他のウィンドウまたはプレビューでマウスが動いた → canvas-space cursor を受け、
+      // 自分の bounds に変換してクロスヘアを描く（自出力 bounds の外なら線が窓外に出て見えない）
       if (!this.devMode) return;
-      const xFrac = typeof e.data.xFrac === 'number' ? e.data.xFrac : 0;
-      const yFrac = typeof e.data.yFrac === 'number' ? e.data.yFrac : 0;
       const visible = !!e.data.visible;
       if (!visible) { this.hideCrosshair(); return; }
-      const w = this.window.innerWidth;
-      const h = this.window.innerHeight;
-      this.setCrosshairAt(xFrac * w, yFrac * h);
+      const canvasX = typeof e.data.canvasX === 'number' ? e.data.canvasX : 0;
+      const canvasY = typeof e.data.canvasY === 'number' ? e.data.canvasY : 0;
+      const rect = this.outputRect;
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      const localX = (canvasX - rect.x) * (this.window.innerWidth / rect.width);
+      const localY = (canvasY - rect.y) * (this.window.innerHeight / rect.height);
+      this.setCrosshairAt(localX, localY);
     }
   }
 
@@ -192,14 +195,20 @@ export class OutputWindow extends BaseWindow {
   }
 
   /**
-   * マッピング設定を受け取り、自分の出力 bounds と交差する有効な mapping を描画する。
+   * マッピング設定を受け取り、有効な mapping を描画する。
    *
    * **跨ぎマッピング対応**: 旧仕様では `m.outputId === this.outputId` で「自分宛て」だけに
    * 絞っていたが、quad が複数の出力を跨ぐ場合に片方が描かれない問題があった。新仕様では
    * outputId は primary owner（操作 UI の所属表示用）に過ぎず、描画は quad の絶対座標が
    * 自出力の bounds と交差するかで判定する。clip 自体は `#dc-output-stage` の overflow:hidden
    * と canvas-host の transform が自動で行うので、ここでの交差判定は「無関係な mapping の
-   * <video> を生成しない」性能最適化として機能する。
+   * <video> を新規生成しない」性能最適化として機能する（intersect しない mapping は
+   * `seen` に入らないので新規 child が作られない）。
+   *
+   * ただし intersect 判定は「destroy」には使わない: 出力レイアウトのドラッグ中に
+   * intersect が true↔false で揺れると、毎フレーム child の create/destroy が起きて
+   * 親側に stream 再 bind を要求し、出力ウィンドウが黒くフラッシュする。一度作った
+   * child は disabled / 削除されるまで維持する。
    */
   setMappings(state: MappingsState | null | undefined): void {
     if (!state) {
@@ -217,8 +226,13 @@ export class OutputWindow extends BaseWindow {
       ? { x: out.position.x, y: out.position.y, width: out.size.width, height: out.size.height }
       : null;
     const rect = this.outputRect;
+    // 有効 mapping のうち「rect と交差する」or「既に child を持っている」ものを残す。
+    // 既存 child を維持することで、出力ドラッグ中の intersect 揺れによる destroy/recreate
+    // ＝ stream 再 bind 由来の黒フラッシュを防ぐ。
     this.mappings = rect
-      ? state.mappings.filter(m => isMappingEnabled(m) && this.quadIntersectsRect(m, rect))
+      ? state.mappings.filter(m =>
+          isMappingEnabled(m) && (this.children.has(m.id) || this.quadIntersectsRect(m, rect)),
+        )
       : [];
     // 新しい <video> を作ったときだけ親へ stream を要求する（既存の video は bind 済み）。
     // quad/source の微調整だけのときは要求しない（毎フレーム postMessage 往復を避ける）。
@@ -374,12 +388,12 @@ export class OutputWindow extends BaseWindow {
     this.wakeUp();
     if (!this.devMode || !this.window) return;
     this.setCrosshairAt(e.clientX, e.clientY);
-    // 操作ウィンドウのプレビューにミラー
-    const w = this.window.innerWidth;
-    const h = this.window.innerHeight;
-    const xFrac = w > 0 ? e.clientX / w : 0;
-    const yFrac = h > 0 ? e.clientY / h : 0;
-    this.sendCursorEvent(true, xFrac, yFrac);
+    // 自分の local px → canvas-space px に変換して親へ通知（親が全出力 + preview に放送）
+    const rect = this.outputRect;
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+    const canvasX = rect.x + e.clientX * (rect.width / this.window.innerWidth);
+    const canvasY = rect.y + e.clientY * (rect.height / this.window.innerHeight);
+    this.sendCursorEvent(true, canvasX, canvasY);
   }
 
   private onMouseOut(e: Event): void {
@@ -433,11 +447,14 @@ export class OutputWindow extends BaseWindow {
     this.updateDevReadout(null);
   }
 
-  /** 親（WindowController）へカーソル位置を中継。inline panel が devCursor Emitter で受ける。 */
-  private sendCursorEvent(visible: boolean, xFrac: number, yFrac: number): void {
+  /**
+   * 親（WindowController）へ canvas-space cursor を中継。親は他出力 + preview に放送する。
+   * visible=false の時は canvasX/Y は読まれないので 0 で構わない。
+   */
+  private sendCursorEvent(visible: boolean, canvasX: number, canvasY: number): void {
     try {
       this.getParentWindow()?.postMessage(
-        { type: 'dev-cursor', outputId: this.outputId, xFrac, yFrac, visible },
+        { type: 'dev-cursor', visible, canvasX, canvasY },
         '*',
       );
     } catch {

@@ -19,7 +19,6 @@ import {
   isMappingEnabled,
   mappingColor,
   withActiveOutputSet,
-  withOutputLayoutSet,
   type MappingsState,
 } from '../../../utils/mappingTransform';
 import type { MappingsController } from '../MappingsController';
@@ -45,6 +44,12 @@ interface OutputEntry {
 export interface LayoutPanelAttachOptions {
   /** mapping preview の stream donor として参照するソース video（InactivePreviewPool と同じソース） */
   getSourceVideo: () => HTMLVideoElement | null;
+  /**
+   * drag/resize で出力の position/size が in-place 変化したときに呼ばれる（mousemove 毎）。
+   * ツール列の「出力設定」入力欄を live 更新する用途。fireChange は走らないので
+   * refreshAllFromState では追いつけないため、別経路で通知する。
+   */
+  onOutputLayoutMutated?: () => void;
 }
 
 export class LayoutPanel {
@@ -331,10 +336,23 @@ export class LayoutPanel {
         const dx = (e.clientX - snap.startX) / this.fitScale;
         const dy = (e.clientY - snap.startY) / this.fitScale;
         const next = { x: snap.initialPos.x + dx, y: snap.initialPos.y + dy };
-        ctrl.replaceState(withOutputLayoutSet(ctrl.getState(), outputId, { position: next }));
+        // drag 中は in-place mutation + commit のみ。fireChange を発火させて他パネルを
+        // 丸ごと再描画すると tool 列の mappings/outputs list が DOM rebuild されて
+        // ツール窓がフラッシュするため。canvas dim は recompute しない（mutateOutputLayout の
+        // 仕様）— drag 終了時に commitOutputLayoutBounds() でまとめて確定する。
+        ctrl.mutateOutputLayout(outputId, { position: next });
+        ctrl.commit();
+        // fitScale も canvas dim も変わらないので、dragged 出力の style だけ更新すれば足りる。
+        this.updateDraggedOutputStyle(outputId);
+        this.opts?.onOutputLayoutMutated?.();
       },
       onEnd: () => {
         div.classList.remove('dragging');
+        // drag 終了時に canvas dim を確定 + 他パネル（mapping タブ・ツール列）を追従させる。
+        // replaceState() の fireChange → refreshAllFromState → layoutPanel.refresh() が
+        // 走るので、ここで直接 refresh() は呼ばない（二重実行回避）。
+        ctrl.commitOutputLayoutBounds();
+        ctrl.replaceState(ctrl.getState());
       },
     });
   }
@@ -367,9 +385,40 @@ export class LayoutPanel {
           width: Math.max(16, snap.initialSize.width + dw),
           height: Math.max(16, snap.initialSize.height + dh),
         };
-        ctrl.replaceState(withOutputLayoutSet(ctrl.getState(), outputId, { size }));
+        ctrl.mutateOutputLayout(outputId, { size });
+        ctrl.commit();
+        // 位置 drag と同じ理由で fitScale / canvas dim は更新しない。resize 中の出力の style だけ直接更新。
+        this.updateDraggedOutputStyle(outputId);
+        this.opts?.onOutputLayoutMutated?.();
+      },
+      onEnd: () => {
+        ctrl.commitOutputLayoutBounds();
+        ctrl.replaceState(ctrl.getState());
       },
     });
+  }
+
+  /**
+   * drag/resize 中の出力 1 件だけ、style.left/top/width/height + label + canvasWindow.transform を
+   * 現 state に追従させる。fitScale や他の出力、canvas dim（canvasWindow.width/height や preview の
+   * matrix3d 分母）には一切触らない。preview の matrix3d / div サイズと canvasWindow サイズの
+   * 整合性を保ったまま、dragged 出力の位置・サイズだけが滑らかに動く。canvas dim の確定は
+   * drag 終了時に commitOutputLayoutBounds() + refresh() で 1 回だけ行う。
+   */
+  private updateDraggedOutputStyle(outputId: string): void {
+    const ctrl = this.ctrl;
+    if (!ctrl) return;
+    const entry = this.outputs.get(outputId);
+    if (!entry) return;
+    const out = ctrl.getState().outputs.find(o => o.id === outputId);
+    if (!out) return;
+    entry.div.style.left = `${out.position.x}px`;
+    entry.div.style.top = `${out.position.y}px`;
+    entry.div.style.width = `${out.size.width}px`;
+    entry.div.style.height = `${out.size.height}px`;
+    entry.label.textContent =
+      `${out.name ?? out.id}  ${Math.round(out.size.width)}×${Math.round(out.size.height)} @ (${Math.round(out.position.x)},${Math.round(out.position.y)})`;
+    entry.canvasWindow.style.transform = `translate(${-out.position.x}px, ${-out.position.y}px)`;
   }
 
   private setActiveOutput(outputId: string): void {

@@ -24,16 +24,15 @@ export type CornerKey = typeof CORNER_KEYS[number];
  * 個別マッピング。source crop と destination quad を1組持つ。
  * enabled が false の場合、メイン画面の投影出力からは除外される（コントロール上は編集可能）。
  *
- * outputId は所属する出力（OutputDef）の id を指す。これは UI 上の primary owner
- * （一覧グルーピング、追加時のデフォルト所属、削除時の依存追跡）であって、描画上は
- * outputId に関わらず quad が交差する全出力に描かれる（跨ぎマッピング対応）。
+ * 出力との関係は「quad の bounds と各出力の bounds の交差」だけで決まる（v2.1 で
+ * primary owner 概念は廃止）。出力管理とマッピングは独立した存在で、quad を仮想キャンバス
+ * 上のどこに置くかで自然にどの出力に映るかが決まる。
  *
  * quad の座標は「仮想キャンバス」座標（px）。仮想キャンバス上の全出力（OutputDef.position
  * + OutputDef.size の矩形）と quad の交差部分だけが各出力で見える。
  */
 export interface MappingEntry {
   id: string;
-  outputId: string;
   name?: string;
   enabled?: boolean;
   source: SourceRect;
@@ -150,7 +149,6 @@ export function defaultMappingsState(): MappingsState {
   const out = defaultOutput('Output 1');
   const e: MappingEntry = {
     id: generateMappingId(),
-    outputId: out.id,
     name: 'Mapping 1',
     source: { x: 0, y: 0, width: 100, height: 100 },
     quad: defaultQuad(out),
@@ -183,26 +181,21 @@ export function withActiveMapping(
 
 /**
  * 新しい mapping を追加して active にする。可視性のため少しずらした quad で生成。
- * 割り当て先は activeOutputId（あれば）→ outputs[0] の順で決まる。
- * quad は所属出力の中央 25..75% 領域を覆い、mapping 数に応じて少しずらして重ならないようにする。
+ * 配置位置は activeOutputId（あれば）の中央 → outputs[0] の中央 にフォールバック。
+ * 既存 mapping 数に応じて 4% 刻みの斜めオフセットで重ならないようにする。
  */
 export function withAddedMapping(state: MappingsState): MappingsState {
   const id = generateMappingId();
-  const outputId =
-    (state.activeOutputId && state.outputs.some(o => o.id === state.activeOutputId))
-      ? state.activeOutputId
-      : state.outputs[0].id;
-  const owner = state.outputs.find(o => o.id === outputId) ?? state.outputs[0];
-  // 同じ出力に既に乗っている mapping の数で 4% 刻みの斜めオフセット
-  const sameOutput = state.mappings.filter(m => m.outputId === owner.id).length;
-  const offsetFrac = (sameOutput * 0.04) % 0.30;
+  const targetOut =
+    state.outputs.find(o => o.id === state.activeOutputId)
+      ?? state.outputs[0];
+  const offsetFrac = (state.mappings.length * 0.04) % 0.30;
   const px = (frac: number) => ({
-    x: owner.position.x + (frac + offsetFrac) * owner.size.width,
-    y: owner.position.y + (frac + offsetFrac) * owner.size.height,
+    x: targetOut.position.x + (frac + offsetFrac) * targetOut.size.width,
+    y: targetOut.position.y + (frac + offsetFrac) * targetOut.size.height,
   });
   const entry: MappingEntry = {
     id,
-    outputId,
     name: `Mapping ${state.mappings.length + 1}`,
     source: { x: 0, y: 0, width: 100, height: 100 },
     quad: {
@@ -250,17 +243,6 @@ export function withMappingRenamed(state: MappingsState, id: string, name: strin
   };
 }
 
-/** mapping の所属出力を変更する。outputId が無効なら no-op。 */
-export function withMappingReassigned(state: MappingsState, id: string, outputId: string): MappingsState {
-  if (!state.outputs.some(o => o.id === outputId)) return state;
-  return {
-    ...state,
-    mappings: state.mappings.map(m =>
-      m.id === id ? { ...m, outputId } : m
-    ),
-  };
-}
-
 /**
  * 出力を 1 件追加して activeOutputId に。MAX_OUTPUTS 到達時は no-op。
  * position は他出力の右側に水平に並べる。canvas も再計算。
@@ -287,22 +269,20 @@ export function withAddedOutput(state: MappingsState): MappingsState {
 }
 
 /**
- * 出力を 1 件削除。最後の 1 件なら no-op。所属 mapping は残りの先頭出力へ再割当する
- * （mapping そのものは消えない — ユーザが明示的に消すべき）。
+ * 出力を 1 件削除。最後の 1 件なら no-op。
+ * mapping は出力と独立（v2.1 で primary owner 廃止）なので、出力を消しても
+ * mapping は仮想キャンバス上にそのまま残る（quad の位置によっては他の出力に映る、
+ * またはどこにも映らない状態になる）。
  * activeOutputId がその出力を指していたら undefined に戻す。
  */
 export function withRemovedOutput(state: MappingsState, outputId: string): MappingsState {
   if (state.outputs.length <= 1) return state;
   const remaining = state.outputs.filter(o => o.id !== outputId);
   if (remaining.length === state.outputs.length) return state; // 該当なし
-  const fallbackId = remaining[0].id;
   return {
     ...state,
     outputs: remaining,
     canvas: recomputeCanvasBounds(remaining),
-    mappings: state.mappings.map(m =>
-      m.outputId === outputId ? { ...m, outputId: fallbackId } : m
-    ),
     activeOutputId: state.activeOutputId === outputId ? undefined : state.activeOutputId,
   };
 }
@@ -409,7 +389,6 @@ export function parseMappingsState(data: unknown): MappingsState | null {
     }
   }
   if (validOutputs.length === 0) return null;
-  const defaultOutputId = validOutputs[0].id;
   const outputIdSet = new Set(validOutputs.map(o => o.id));
 
   // --- canvas: 明示値があれば採用、無ければ outputs から再計算 ---
@@ -439,12 +418,8 @@ export function parseMappingsState(data: unknown): MappingsState | null {
     if (!q || !isPoint(q.topLeft) || !isPoint(q.topRight) || !isPoint(q.bottomRight) || !isPoint(q.bottomLeft)) {
       return null;
     }
-    const rawOutputId = typeof m.outputId === 'string' ? m.outputId : null;
-    const outputId =
-      rawOutputId && outputIdSet.has(rawOutputId) ? rawOutputId : defaultOutputId;
     validMappings.push({
       id: m.id,
-      outputId,
       name: typeof m.name === 'string' ? m.name : undefined,
       enabled: typeof m.enabled === 'boolean' ? m.enabled : undefined,
       source: { x: src.x, y: src.y, width: src.width, height: src.height },
@@ -544,6 +519,54 @@ export function cloneQuad(quad: Quad): Quad {
     topRight:    { ...quad.topRight },
     bottomRight: { ...quad.bottomRight },
     bottomLeft:  { ...quad.bottomLeft },
+  };
+}
+
+/** quad の重心（4 隅の平均）。scale/rotate の中心として使う。 */
+export function quadCentroid(quad: Quad): Point {
+  return {
+    x: (quad.topLeft.x + quad.topRight.x + quad.bottomRight.x + quad.bottomLeft.x) / 4,
+    y: (quad.topLeft.y + quad.topRight.y + quad.bottomRight.y + quad.bottomLeft.y) / 4,
+  };
+}
+
+/**
+ * quad の全 4 隅を `center` 中心に `factor` 倍する（形状はそのままで拡大縮小）。
+ * factor < 0 は呼び出し側で防ぐ想定（負スケール = 反転は意図しない）。
+ */
+export function scaleQuadAround(quad: Quad, center: Point, factor: number): Quad {
+  const scale = (p: Point): Point => ({
+    x: center.x + (p.x - center.x) * factor,
+    y: center.y + (p.y - center.y) * factor,
+  });
+  return {
+    topLeft:     scale(quad.topLeft),
+    topRight:    scale(quad.topRight),
+    bottomRight: scale(quad.bottomRight),
+    bottomLeft:  scale(quad.bottomLeft),
+  };
+}
+
+/**
+ * quad の全 4 隅を `center` 中心に `angleRad` 回転する（形状はそのままで回転）。
+ * 正の angle = 反時計回り（数学的標準）— ただし画面座標は Y 軸下向きなので、見た目は時計回り。
+ */
+export function rotateQuadAround(quad: Quad, center: Point, angleRad: number): Quad {
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+  const rot = (p: Point): Point => {
+    const dx = p.x - center.x;
+    const dy = p.y - center.y;
+    return {
+      x: center.x + dx * cos - dy * sin,
+      y: center.y + dx * sin + dy * cos,
+    };
+  };
+  return {
+    topLeft:     rot(quad.topLeft),
+    topRight:    rot(quad.topRight),
+    bottomRight: rot(quad.bottomRight),
+    bottomLeft:  rot(quad.bottomLeft),
   };
 }
 

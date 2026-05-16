@@ -15,7 +15,6 @@
  * 既存要素の inline style と class だけを更新する（active mapping の移動先など）。
  */
 
-import type { MappingsState } from '../../../utils/mappingTransform';
 import type { OutputBoundsMap, VideoDimensions } from '../ControlHost';
 import type { MappingsController } from '../MappingsController';
 
@@ -28,11 +27,11 @@ export interface OutputVizPanelAttachOptions {
   /** window-frame のサイズが変わったときに quad の matrix3d 再計算を要求する。 */
   onWindowFrameReflow: () => void;
   /**
-   * プレビューの window-content 上でマウスが動いた／離れた時に発火（dev mode の双方向同期用）。
-   * xFrac/yFrac は window-content に対する 0..1。dev mode OFF 時に呼んでも無害なよう、
+   * プレビューの canvas-host 上でマウスが動いた／離れた時に発火（dev mode の双方向同期用）。
+   * canvas-space の座標（仮想キャンバス px）を送る。dev mode OFF 時に呼んでも無害なよう、
    * gating（dev mode 確認）は呼び出し側の責任。
    */
-  onPreviewCursor?: (outputId: string, xFrac: number, yFrac: number, visible: boolean) => void;
+  onPreviewCursor?: (canvasX: number, canvasY: number, visible: boolean) => void;
 }
 
 interface FrameEntry {
@@ -66,6 +65,14 @@ export class OutputVizPanel {
   private canvasMappings: HTMLElement | null = null;
   /** quad ハンドルを置くレイヤ（mappings の上、frame の上）。 */
   private canvasHandles: HTMLElement | null = null;
+  /**
+   * stage 自身のサイズ変化（カラムリサイザでマッピングカラムの幅を変えた、ウィンドウリサイズで
+   * 親フレックスが再分配された、等）に追従するための observer。LayoutPanel と同じ理由で
+   * 必要 — window resize イベントだけだとカラム resize に追従できないため。
+   * 1 frame に 1 回だけ refresh を呼ぶよう rAF で間引く。
+   */
+  private resizeObserver: ResizeObserver | null = null;
+  private resizeRafId: number | null = null;
 
   attach(scope: HTMLElement, opts: OutputVizPanelAttachOptions, ctrl: MappingsController): void {
     this.scope = scope;
@@ -91,51 +98,46 @@ export class OutputVizPanel {
     this.canvasHost.addEventListener('mousemove', (e) => this.handleHostMouseMove(e));
     this.canvasHost.addEventListener('mouseleave', () => this.handleHostMouseLeave());
 
+    // stage 自身の resize（カラムリサイザ・ウィンドウリサイズ etc.）でフィット scale を再計算する。
+    // window の resize イベントだけだとカラム幅変更には反応できないので必須。
+    this.resizeObserver = new ResizeObserver(() => this.scheduleResizeRefresh());
+    this.resizeObserver.observe(stage);
+
     this.rebuildFromState();
     this.refresh();
   }
 
-  /** dev mode 用: canvas-host 上のマウス位置を canvas px に変換し、該当出力の xFrac/yFrac を通知。 */
-  private lastCursorOutputId: string | null = null;
+  /**
+   * resize 起因の再フィット。renderAll（scale/offset の再計算 + 各 frame の position 更新）のみで
+   * 十分なので rebuildFromState は省略。1 フレームに 1 回まで間引く。
+   */
+  private scheduleResizeRefresh(): void {
+    const win = this.stageEl?.ownerDocument?.defaultView;
+    if (!win || this.resizeRafId !== null) return;
+    this.resizeRafId = win.requestAnimationFrame(() => {
+      this.resizeRafId = null;
+      this.renderAll();
+    });
+  }
+
+  /**
+   * dev mode 用: canvas-host 上のマウス位置を canvas px に変換して通知する。
+   * hit-test は不要（cursor 位置は全出力に同じ canvas-space で放送されるので、
+   * どの出力に「属する」かを決める必要が無い）。
+   */
   private handleHostMouseMove(e: MouseEvent): void {
     const cb = this.opts?.onPreviewCursor;
-    const ctrl = this.ctrl;
     const host = this.canvasHost;
-    if (!cb || !ctrl || !host) return;
+    if (!cb || !host) return;
     const rect = host.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
     const scale = parseFloat(host.style.getPropertyValue('--canvas-scale')) || 1;
     const cx = (e.clientX - rect.left) / scale;
     const cy = (e.clientY - rect.top) / scale;
-    const state = ctrl.getState();
-    for (const out of state.outputs) {
-      if (
-        cx >= out.position.x && cx <= out.position.x + out.size.width &&
-        cy >= out.position.y && cy <= out.position.y + out.size.height
-      ) {
-        const xFrac = (cx - out.position.x) / out.size.width;
-        const yFrac = (cy - out.position.y) / out.size.height;
-        // 前回と違う出力に入ったら、古い出力の crosshair を消してから新しい出力に通知
-        if (this.lastCursorOutputId && this.lastCursorOutputId !== out.id) {
-          cb(this.lastCursorOutputId, 0, 0, false);
-        }
-        this.lastCursorOutputId = out.id;
-        cb(out.id, xFrac, yFrac, true);
-        return;
-      }
-    }
-    // どの出力にも入っていない — 直前の出力の crosshair を消す
-    if (this.lastCursorOutputId) {
-      cb(this.lastCursorOutputId, 0, 0, false);
-      this.lastCursorOutputId = null;
-    }
+    cb(cx, cy, true);
   }
   private handleHostMouseLeave(): void {
-    const cb = this.opts?.onPreviewCursor;
-    if (cb && this.lastCursorOutputId) {
-      cb(this.lastCursorOutputId, 0, 0, false);
-      this.lastCursorOutputId = null;
-    }
+    this.opts?.onPreviewCursor?.(0, 0, false);
   }
 
   /** 出力ウィンドウ枠 + アスペクト比 を再描画（フレーム DOM の同期も行う）。 */
@@ -158,7 +160,7 @@ export class OutputVizPanel {
   refreshActiveOutput(): void {
     const state = this.ctrl?.getState();
     if (!state) return;
-    const active = state.activeOutputId ?? this.resolveActiveOutputFromMapping(state);
+    const active = state.activeOutputId;
     for (const [id, entry] of this.frames) {
       entry.root.classList.toggle('is-active', id === active);
     }
@@ -178,12 +180,14 @@ export class OutputVizPanel {
     return this.canvasHandles;
   }
 
-  /** state の active mapping から推定する activeOutput（activeOutputId が無いときの fallback）。 */
-  private resolveActiveOutputFromMapping(state: MappingsState): string | undefined {
-    return state.mappings.find(m => m.id === state.activeId)?.outputId;
-  }
-
   destroy(): void {
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    if (this.resizeRafId !== null) {
+      const win = this.stageEl?.ownerDocument?.defaultView;
+      win?.cancelAnimationFrame(this.resizeRafId);
+      this.resizeRafId = null;
+    }
     this.canvasHost?.remove();
     this.canvasHost = null;
     this.canvasMappings = null;
@@ -282,25 +286,31 @@ export class OutputVizPanel {
   }
 
   /**
-   * 出力ウィンドウから push されたカーソル位置を、対応する出力プレビューの crosshair に反映。
-   * xFrac/yFrac は 0..1。SVG は viewBox 0..100 を preserveAspectRatio=none で window-content
-   * 全面にストレッチしているので、`x * 100` をそのまま使えば縦横比に関係なく正しい位置に描ける。
+   * canvas-space cursor を受けて全出力フレームの crosshair を更新する。各フレームは
+   * 自分の bounds に対する fraction を計算し、SVG（viewBox 0..100、preserveAspectRatio=none）
+   * の対応位置に線を引く。bounds 外（fraction < 0 or > 1 → viewBox 値 < 0 or > 100）に
+   * 来た線は SVG の overflow:hidden で自然にクリップされる。
    */
-  updateDevCursor(outputId: string, xFrac: number, yFrac: number, visible: boolean): void {
-    const entry = this.frames.get(outputId);
-    if (!entry) return;
-    entry.devCrosshair.dataset.visible = visible ? 'true' : 'false';
-    if (!visible) return;
-    const xv = String(Math.max(0, Math.min(100, xFrac * 100)));
-    const yv = String(Math.max(0, Math.min(100, yFrac * 100)));
-    entry.devCrosshairH.setAttribute('x1', '0');
-    entry.devCrosshairH.setAttribute('x2', '100');
-    entry.devCrosshairH.setAttribute('y1', yv);
-    entry.devCrosshairH.setAttribute('y2', yv);
-    entry.devCrosshairV.setAttribute('x1', xv);
-    entry.devCrosshairV.setAttribute('x2', xv);
-    entry.devCrosshairV.setAttribute('y1', '0');
-    entry.devCrosshairV.setAttribute('y2', '100');
+  updateDevCursor(canvasX: number, canvasY: number, visible: boolean): void {
+    const state = this.ctrl?.getState();
+    if (!state) return;
+    for (const out of state.outputs) {
+      const entry = this.frames.get(out.id);
+      if (!entry) continue;
+      entry.devCrosshair.dataset.visible = visible ? 'true' : 'false';
+      if (!visible) continue;
+      if (out.size.width <= 0 || out.size.height <= 0) continue;
+      const xv = String(((canvasX - out.position.x) / out.size.width) * 100);
+      const yv = String(((canvasY - out.position.y) / out.size.height) * 100);
+      entry.devCrosshairH.setAttribute('x1', '0');
+      entry.devCrosshairH.setAttribute('x2', '100');
+      entry.devCrosshairH.setAttribute('y1', yv);
+      entry.devCrosshairH.setAttribute('y2', yv);
+      entry.devCrosshairV.setAttribute('x1', xv);
+      entry.devCrosshairV.setAttribute('x2', xv);
+      entry.devCrosshairV.setAttribute('y1', '0');
+      entry.devCrosshairV.setAttribute('y2', '100');
+    }
   }
 
   /** dev mode OFF 時など、全プレビューの crosshair を一括で非表示にする。 */
@@ -326,7 +336,7 @@ export class OutputVizPanel {
     if (!ctrl || !stage || !canvasHost || !canvasMappings || !canvasHandles) return;
     const state = ctrl.getState();
     const boundsMap = this.opts?.getOutputBounds() ?? {};
-    const activeOutput = state.activeOutputId ?? this.resolveActiveOutputFromMapping(state);
+    const activeOutput = state.activeOutputId;
 
     // 仮想キャンバスを #output-stage の viewport にフィットさせる scale + 中央寄せオフセット
     const stageRect = stage.getBoundingClientRect();

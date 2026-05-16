@@ -24,8 +24,12 @@ import {
   cloneQuad,
   defaultQuad,
   mappingColor,
+  quadCentroid,
+  rotateQuadAround,
+  scaleQuadAround,
   translateQuad,
   type CornerKey,
+  type Point,
   type Quad,
 } from '../../../utils/mappingTransform';
 import type { MappingsController } from '../MappingsController';
@@ -62,6 +66,9 @@ export class MappingAreaPanel {
   private mappingVideo: HTMLVideoElement | null = null;
   /** 4 隅の quad-handle 要素群。cropped-container と一緒に親に動く。 */
   private handles: HTMLDivElement[] = [];
+  /** 全体スケール（中心固定）と全体回転（中心固定）の追加ハンドル。重心に配置。 */
+  private scaleHandle: HTMLDivElement | null = null;
+  private rotateHandle: HTMLDivElement | null = null;
   private cleanups: Array<() => void> = [];
   private resizeObserver: ResizeObserver | null = null;
   private observedArea: HTMLElement | null = null;
@@ -80,6 +87,8 @@ export class MappingAreaPanel {
     this.wireResetButton();
     this.setupQuadBodyDrag();
     this.setupQuadHandles();
+    this.setupScaleHandle();
+    this.setupRotateHandle();
     this.mountInActiveOutput();
     this.refreshTransform();
     this.setupResizeObserver();
@@ -117,6 +126,8 @@ export class MappingAreaPanel {
     const activeColor = mappingColor(activeIdx >= 0 ? activeIdx : 0);
     this.croppedContainer.style.setProperty('--mapping-color', activeColor);
     for (const h of this.handles) h.style.setProperty('--mapping-color', activeColor);
+    this.scaleHandle?.style.setProperty('--mapping-color', activeColor);
+    this.rotateHandle?.style.setProperty('--mapping-color', activeColor);
 
     this.updateQuadHandlePositions(quad);
     this.refreshVideoCrop();
@@ -154,6 +165,10 @@ export class MappingAreaPanel {
     this.croppedContainer?.remove();
     for (const h of this.handles) h.remove();
     this.handles = [];
+    this.scaleHandle?.remove();
+    this.scaleHandle = null;
+    this.rotateHandle?.remove();
+    this.rotateHandle = null;
     this.scope = null;
     this.doc = null;
     this.win = null;
@@ -188,6 +203,17 @@ export class MappingAreaPanel {
       h.dataset.corner = corner;
       this.handles.push(h);
     }
+
+    // 全体スケール（重心固定の uniform scale）と全体回転（重心固定）の追加ハンドル。
+    // 重心に配置する。rotate ハンドルは CSS transform で screen-px 単位の固定オフセットを
+    // 載せて、重心の少し上に表示される。
+    this.scaleHandle = doc.createElement('div');
+    this.scaleHandle.className = 'quad-handle quad-handle-scale';
+    this.scaleHandle.title = '全体を拡大縮小（形は維持）';
+
+    this.rotateHandle = doc.createElement('div');
+    this.rotateHandle.className = 'quad-handle quad-handle-rotate';
+    this.rotateHandle.title = '全体を回転（形は維持）';
   }
 
   /**
@@ -208,6 +234,12 @@ export class MappingAreaPanel {
     for (const h of this.handles) {
       if (h.parentElement !== canvasHandles) canvasHandles.appendChild(h);
     }
+    if (this.scaleHandle && this.scaleHandle.parentElement !== canvasHandles) {
+      canvasHandles.appendChild(this.scaleHandle);
+    }
+    if (this.rotateHandle && this.rotateHandle.parentElement !== canvasHandles) {
+      canvasHandles.appendChild(this.rotateHandle);
+    }
     this.rebindResizeObserver();
   }
 
@@ -220,11 +252,12 @@ export class MappingAreaPanel {
     const btn = scope.querySelector('#reset-mapping-btn');
     if (!btn) return;
     btn.addEventListener('click', () => {
-      // active mapping の所属出力の中央 25..75% に戻す（仮想キャンバス px）
+      // active output（あれば）の中央 25..75% に戻す。無ければ outputs[0]、それも無ければ canvas 中央。
       const state = ctrl.getState();
-      const active = state.mappings.find(m => m.id === state.activeId);
-      const out = active ? state.outputs.find(o => o.id === active.outputId) : undefined;
-      ctrl.setActiveQuad(defaultQuad(out));
+      const target =
+        state.outputs.find(o => o.id === state.activeOutputId)
+        ?? state.outputs[0];
+      ctrl.setActiveQuad(defaultQuad(target));
       this.refreshTransform();
       ctrl.commit();
     });
@@ -331,6 +364,11 @@ export class MappingAreaPanel {
    * 4 隅ハンドルは canvas-handles（canvas-host 内、canvas px サイズ）直下に置かれる。
    * 位置は仮想キャンバス px そのまま。親の scale でハンドルも縮拡されるが、CSS で
    * `transform: scale(var(--canvas-counter-scale))` を当てて 14px に保つ。
+   *
+   * scale ハンドルは top 辺の中点（TL と TR の中央）、rotate ハンドルは right 辺の中点
+   * （TR と BR の中央）に配置。quad が回転・変形しても辺の中点なので一緒に追従する。
+   * 拡大縮小・回転の中心は quad の重心（drag handler 側で固定）なので、ハンドルの
+   * 視覚位置と変形の中心は別物。
    */
   private updateQuadHandlePositions(quad: Quad): void {
     for (const handle of this.handles) {
@@ -340,6 +378,130 @@ export class MappingAreaPanel {
       handle.style.left = `${p.x}px`;
       handle.style.top = `${p.y}px`;
     }
+    if (this.scaleHandle) {
+      const mx = (quad.topLeft.x + quad.topRight.x) / 2;
+      const my = (quad.topLeft.y + quad.topRight.y) / 2;
+      this.scaleHandle.style.left = `${mx}px`;
+      this.scaleHandle.style.top = `${my}px`;
+    }
+    if (this.rotateHandle) {
+      const mx = (quad.topRight.x + quad.bottomRight.x) / 2;
+      const my = (quad.topRight.y + quad.bottomRight.y) / 2;
+      this.rotateHandle.style.left = `${mx}px`;
+      this.rotateHandle.style.top = `${my}px`;
+    }
+  }
+
+  /**
+   * canvas-mappings 親（canvas-host 内の canvas-px レイヤ）の bounding rect から、
+   * クライアント px → canvas px の変換係数を返す。drag onMove で使う。
+   */
+  private clientToCanvas(e: MouseEvent, parent: HTMLElement): Point | null {
+    const rect = parent.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const ctrl = this.ctrl;
+    if (!ctrl) return null;
+    const state = ctrl.getState();
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * state.canvas.width,
+      y: ((e.clientY - rect.top) / rect.height) * state.canvas.height,
+    };
+  }
+
+  /** 重心固定の uniform scale ハンドル。drag 距離の比率を quad 全体に適用する。 */
+  private setupScaleHandle(): void {
+    const doc = this.doc;
+    const ctrl = this.ctrl;
+    const handle = this.scaleHandle;
+    if (!doc || !ctrl || !handle) return;
+
+    type Snap = {
+      initialQuad: Quad;
+      center: Point;
+      initialDist: number;
+    };
+    const dispose = draggable<Snap>(handle, doc, {
+      onStart: (e) => {
+        const container = this.croppedContainer;
+        const parent = container?.parentElement;
+        if (!parent) return null;
+        const initialQuad = cloneQuad(ctrl.getActiveQuad());
+        const center = quadCentroid(initialQuad);
+        const mouseCanvas = this.clientToCanvas(e, parent);
+        if (!mouseCanvas) return null;
+        const initialDist = Math.hypot(mouseCanvas.x - center.x, mouseCanvas.y - center.y);
+        // ハンドルは重心ぴったりなので initialDist は基本的に 0 に近い → 最小値でクランプ。
+        // クランプしないと最初の dx で巨大スケールが計算されて quad が爆発する。
+        const safeDist = Math.max(initialDist, 1e-3);
+        handle.classList.add('dragging');
+        e.stopPropagation();
+        e.preventDefault();
+        return { initialQuad, center, initialDist: safeDist };
+      },
+      onMove: (e, snap) => {
+        const container = this.croppedContainer;
+        const parent = container?.parentElement;
+        if (!parent) return;
+        const mouseCanvas = this.clientToCanvas(e, parent);
+        if (!mouseCanvas) return;
+        const dist = Math.hypot(mouseCanvas.x - snap.center.x, mouseCanvas.y - snap.center.y);
+        // 比率は ratio = dist / initialDist。極端な縮小（quad 退化）と無限大を防ぐためにクランプ。
+        const ratio = Math.max(0.05, dist / snap.initialDist);
+        ctrl.setActiveQuad(scaleQuadAround(snap.initialQuad, snap.center, ratio));
+        this.refreshTransform();
+        ctrl.commit();
+      },
+      onEnd: () => {
+        handle.classList.remove('dragging');
+      },
+    });
+    this.cleanups.push(dispose);
+  }
+
+  /** 重心固定の uniform rotation ハンドル。drag 中の mouse 角度差分を quad 全体に適用する。 */
+  private setupRotateHandle(): void {
+    const doc = this.doc;
+    const ctrl = this.ctrl;
+    const handle = this.rotateHandle;
+    if (!doc || !ctrl || !handle) return;
+
+    type Snap = {
+      initialQuad: Quad;
+      center: Point;
+      initialAngle: number;
+    };
+    const dispose = draggable<Snap>(handle, doc, {
+      onStart: (e) => {
+        const container = this.croppedContainer;
+        const parent = container?.parentElement;
+        if (!parent) return null;
+        const initialQuad = cloneQuad(ctrl.getActiveQuad());
+        const center = quadCentroid(initialQuad);
+        const mouseCanvas = this.clientToCanvas(e, parent);
+        if (!mouseCanvas) return null;
+        const initialAngle = Math.atan2(mouseCanvas.y - center.y, mouseCanvas.x - center.x);
+        handle.classList.add('dragging');
+        e.stopPropagation();
+        e.preventDefault();
+        return { initialQuad, center, initialAngle };
+      },
+      onMove: (e, snap) => {
+        const container = this.croppedContainer;
+        const parent = container?.parentElement;
+        if (!parent) return;
+        const mouseCanvas = this.clientToCanvas(e, parent);
+        if (!mouseCanvas) return;
+        const angle = Math.atan2(mouseCanvas.y - snap.center.y, mouseCanvas.x - snap.center.x);
+        const delta = angle - snap.initialAngle;
+        ctrl.setActiveQuad(rotateQuadAround(snap.initialQuad, snap.center, delta));
+        this.refreshTransform();
+        ctrl.commit();
+      },
+      onEnd: () => {
+        handle.classList.remove('dragging');
+      },
+    });
+    this.cleanups.push(dispose);
   }
 
   // ── resize observer ───────────────────────────────────────────

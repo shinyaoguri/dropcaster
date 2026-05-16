@@ -44,15 +44,15 @@ export type WebglContextStatus = 'lost' | 'ok';
 export type Unsubscribe = () => void;
 
 /**
- * 出力ウィンドウから通知されるマウスカーソル位置。dev mode の時だけ発火する。
- * xFrac/yFrac は出力ウィンドウ innerWidth/innerHeight に対する 0..1 の比。
- * visible=false の時はマウスがウィンドウ外に出たことを意味し、xFrac/yFrac は読まない。
+ * dev mode のカーソル位置（仮想キャンバス座標、canvas px）。dev mode の時だけ発火する。
+ * 出力ごとの xFrac ではなく canvas 全体の絶対座標で持つことで、全出力に同じ値を放送して
+ * 各出力が自分の bounds に合わせて変換するだけで「跨ぎ表示」が成立する。
+ * visible=false の時はマウスがどこにも居ないことを意味し、canvasX/Y は読まない。
  */
 export interface DevCursorEvent {
-  outputId: string;
-  xFrac: number;
-  yFrac: number;
   visible: boolean;
+  canvasX: number;
+  canvasY: number;
 }
 
 /**
@@ -117,11 +117,11 @@ export interface ControlHost {
   onDevCursorChange(handler: (e: DevCursorEvent) => void): Unsubscribe;
 
   /**
-   * 操作ウィンドウのマッピングプレビュー側でマウスが動いた事を親に通知。
-   * 親は対応する出力ウィンドウに dev-cursor-set を送ってクロスヘアを描かせ、
-   * 同時に inline panel 側にも echo する（双方向同期）。
+   * 操作ウィンドウのマッピングプレビュー側でマウスが動いた事を親に通知（canvas-space）。
+   * 親は全出力ウィンドウに dev-cursor-set を送ってクロスヘアを描かせ、同時に inline panel
+   * 側にも echo する（双方向同期）。
    */
-  requestDevCursor(outputId: string, xFrac: number, yFrac: number, visible: boolean): void;
+  requestDevCursor(canvasX: number, canvasY: number, visible: boolean): void;
 
   // --- 一時的な警告（WebGL context lost） ---
 
