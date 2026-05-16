@@ -2,6 +2,7 @@ import { SketchServiceImpl } from './services/sketchService.js';
 import { OpenProcessingSource, UnsupportedEngineModeError } from './services/OpenProcessingSource.js';
 import { Router } from './routing/router.js';
 import { SketchGalleryView } from './components/SketchGalleryView.js';
+import { OpIdEntryView } from './components/OpIdEntryView.js';
 import { SketchPageController } from './components/SketchPageController.js';
 import { SlideshowController } from './components/SlideshowController.js';
 import { Error404View } from './components/Error404View.js';
@@ -26,10 +27,17 @@ export class App {
   }
 
   private setupRoutes(): void {
-    // ホームページ（ギャラリー）
+    // ホームページ: catalog の有無で顔を切り替える。
+    //   - catalog 空 → OP ID 入力をメインに据えたホスト版風 hero
+    //   - catalog あり → 既存のギャラリー + 上部に小さな OP ID 入力バー
+    const goOp = (id: string) => this.router.navigate(`/op/${id}`);
     this.router.registerRoute('/', () => {
       const sketches = this.sketchService.getAllSketches();
-      SketchGalleryView.render(sketches);
+      if (sketches.length === 0) {
+        OpIdEntryView.renderHero(goOp);
+      } else {
+        SketchGalleryView.render(sketches, goOp);
+      }
     });
 
     // 個別スケッチページ（パラメータ付き）

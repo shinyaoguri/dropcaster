@@ -1,11 +1,12 @@
 import type { Sketch } from '../types/sketch.js';
 import { SketchCard } from '../ui/components/SketchCard.js';
 import { routeHref } from '../utils/paths.js';
+import { OpIdEntryView } from './OpIdEntryView.js';
 
 export class SketchGalleryView {
-  static render(sketches: Sketch[]): void {
+  static render(sketches: Sketch[], onOpIdSubmit?: (id: string) => void): void {
     const app = document.querySelector<HTMLDivElement>('#app')!;
-    
+
     app.innerHTML = `
       <div class="container">
         <header class="header">
@@ -21,15 +22,22 @@ export class SketchGalleryView {
             </a>
           </div>
         </header>
-        
+
+        ${onOpIdSubmit ? `<div class="op-id-inline">${OpIdEntryView.inlineHtml()}</div>` : ''}
+
         <div class="gallery-grid">
           ${sketches.map(sketch => SketchCard.render(sketch)).join('')}
         </div>
-        
+
         <footer class="footer">
           <p>&copy; ${new Date().getFullYear()} dropcaster. All rights reserved.</p>
         </footer>
       </div>
     `;
+
+    if (onOpIdSubmit) {
+      const inline = app.querySelector<HTMLElement>('.op-id-inline');
+      if (inline) OpIdEntryView.wireForm(inline, onOpIdSubmit);
+    }
   }
 }
