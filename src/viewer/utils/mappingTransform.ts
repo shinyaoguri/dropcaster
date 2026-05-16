@@ -23,9 +23,13 @@ export type CornerKey = typeof CORNER_KEYS[number];
 /**
  * 個別マッピング。source crop と destination quad を1組持つ。
  * enabled が false の場合、メイン画面の投影出力からは除外される（コントロール上は編集可能）。
+ *
+ * outputId は所属する出力（OutputDef）の id を指す。quad の座標は当該出力フレームの
+ * 0..100% で表現される（出力ごとに別の解像度・配置を持っても座標系は共通）。
  */
 export interface MappingEntry {
   id: string;
+  outputId: string;
   name?: string;
   enabled?: boolean;
   source: SourceRect;
@@ -37,14 +41,41 @@ export function isMappingEnabled(m: MappingEntry): boolean {
 }
 
 /**
+ * 投影先の出力ウィンドウ／プロジェクタ1台ぶんの定義。
+ *
+ *  - layout: コントロール上で複数出力を同時に並べて見せるための「ステージ座標」。
+ *    実ピクセル相当（典型的には `getScreenDetails()` の screens[].left/top/width/height
+ *    をそのまま流せる）。コントロール側では transform: scale() で縮小表示される。
+ *  - screen: 出力ウィンドウを送り込みたい物理スクリーン情報（任意）。
+ *    placeOnExternalScreen が利用する。
+ *  - pixelSize: 実出力ウィンドウのバッキングストア相当解像度（任意。未指定時は layout の
+ *    width/height を流用）。
+ */
+export interface OutputDef {
+  id: string;
+  name?: string;
+  layout: { x: number; y: number; width: number; height: number };
+  screen?: { left: number; top: number; width: number; height: number; label?: string };
+  pixelSize?: { width: number; height: number };
+}
+
+/**
  * マッピング機能全体の正規状態。
- * mappings は1件以上、activeId は常に mappings 中のいずれかを指す。
+ *
+ *  - outputs は1件以上。複数の出力ウィンドウを同時に扱う場合は最大4件まで（UI 制約）。
+ *  - 各 mapping は outputId で出力フレームに割り当てられ、quad はその出力フレームの
+ *    0..100% で記述される。
+ *  - mappings は1件以上、activeId は常に mappings 中のいずれかを指す。
+ *  - activeOutputId は「出力フレーム自体を選択中」の状態（layout 編集用、未選択なら undefined）。
+ *
  * WindowController が単一の canonical 保持者で、ControlWindow / SketchPageView は
  * これの mirror をレンダリングするだけ。
  */
 export interface MappingsState {
+  outputs: OutputDef[];
   mappings: MappingEntry[];
   activeId: string;
+  activeOutputId?: string;
 }
 
 let _idCounter = 0;
@@ -52,6 +83,18 @@ export function generateMappingId(): string {
   _idCounter += 1;
   return `m${Date.now().toString(36)}_${_idCounter}`;
 }
+
+let _outputIdCounter = 0;
+export function generateOutputId(): string {
+  _outputIdCounter += 1;
+  return `o${Date.now().toString(36)}_${_outputIdCounter}`;
+}
+
+/** 出力解像度の初期値。実スクリーン情報が無い環境（getScreenDetails 未対応など）でのフォールバック。 */
+export const DEFAULT_OUTPUT_WIDTH = 1920;
+export const DEFAULT_OUTPUT_HEIGHT = 1080;
+/** 出力同時表示の上限（UI 制約）。 */
+export const MAX_OUTPUTS = 4;
 
 /**
  * mappings 配列の index から識別色を生成。
@@ -62,18 +105,28 @@ export function mappingColor(index: number): string {
   return `hsl(${hue.toFixed(1)}, 75%, 60%)`;
 }
 
-function defaultEntry(name?: string): MappingEntry {
+/**
+ * 既定の出力1件を生成する。layout は原点に配置（複数並べる場合は呼び出し側で
+ * 適切にオフセットする — 未配置レイアウト計算は本ファイルの責務外）。
+ */
+export function defaultOutput(name?: string): OutputDef {
   return {
-    id: generateMappingId(),
+    id: generateOutputId(),
     name,
-    source: { x: 0, y: 0, width: 100, height: 100 },
-    quad: defaultQuad(),
+    layout: { x: 0, y: 0, width: DEFAULT_OUTPUT_WIDTH, height: DEFAULT_OUTPUT_HEIGHT },
   };
 }
 
 export function defaultMappingsState(): MappingsState {
-  const e = defaultEntry('Mapping 1');
-  return { mappings: [e], activeId: e.id };
+  const out = defaultOutput('Output 1');
+  const e: MappingEntry = {
+    id: generateMappingId(),
+    outputId: out.id,
+    name: 'Mapping 1',
+    source: { x: 0, y: 0, width: 100, height: 100 },
+    quad: defaultQuad(),
+  };
+  return { outputs: [out], mappings: [e], activeId: e.id };
 }
 
 export function getActiveMapping(state: MappingsState): MappingEntry {
@@ -93,12 +146,20 @@ export function withActiveMapping(
   };
 }
 
-/** 新しい mapping を追加して active にする。可視性のため少しずらした quad で生成。 */
+/**
+ * 新しい mapping を追加して active にする。可視性のため少しずらした quad で生成。
+ * 割り当て先は activeOutputId（あれば）→ outputs[0] の順で決まる。
+ */
 export function withAddedMapping(state: MappingsState): MappingsState {
   const offset = (state.mappings.length * 4) % 30; // 4% 刻みで重ならないよう少しずらす
   const id = generateMappingId();
+  const outputId =
+    (state.activeOutputId && state.outputs.some(o => o.id === state.activeOutputId))
+      ? state.activeOutputId
+      : state.outputs[0].id;
   const entry: MappingEntry = {
     id,
+    outputId,
     name: `Mapping ${state.mappings.length + 1}`,
     source: { x: 0, y: 0, width: 100, height: 100 },
     quad: {
@@ -108,7 +169,7 @@ export function withAddedMapping(state: MappingsState): MappingsState {
       bottomLeft:  { x: 25 + offset, y: 75 + offset },
     },
   };
-  return { mappings: [...state.mappings, entry], activeId: id };
+  return { ...state, mappings: [...state.mappings, entry], activeId: id };
 }
 
 /** 指定 id を削除（最後の1個は残す）。active が消えたら先頭を active に。 */
@@ -116,7 +177,7 @@ export function withRemovedMapping(state: MappingsState, id: string): MappingsSt
   if (state.mappings.length <= 1) return state;
   const filtered = state.mappings.filter(m => m.id !== id);
   const activeId = id === state.activeId ? filtered[0].id : state.activeId;
-  return { mappings: filtered, activeId };
+  return { ...state, mappings: filtered, activeId };
 }
 
 /** active 切替（存在しない id なら無視）。 */
@@ -146,9 +207,78 @@ export function withMappingRenamed(state: MappingsState, id: string, name: strin
   };
 }
 
+/** mapping の所属出力を変更する。outputId が無効なら no-op。 */
+export function withMappingReassigned(state: MappingsState, id: string, outputId: string): MappingsState {
+  if (!state.outputs.some(o => o.id === outputId)) return state;
+  return {
+    ...state,
+    mappings: state.mappings.map(m =>
+      m.id === id ? { ...m, outputId } : m
+    ),
+  };
+}
+
+/**
+ * 出力を 1 件追加して activeOutputId に。MAX_OUTPUTS 到達時は no-op。
+ * layout は他出力の右側に水平に並べる。
+ */
+export function withAddedOutput(state: MappingsState): MappingsState {
+  if (state.outputs.length >= MAX_OUTPUTS) return state;
+  const rightmost = state.outputs.reduce(
+    (acc, o) => Math.max(acc, o.layout.x + o.layout.width),
+    0,
+  );
+  const newOut: OutputDef = {
+    id: generateOutputId(),
+    name: `Output ${state.outputs.length + 1}`,
+    layout: { x: rightmost, y: 0, width: DEFAULT_OUTPUT_WIDTH, height: DEFAULT_OUTPUT_HEIGHT },
+  };
+  return { ...state, outputs: [...state.outputs, newOut], activeOutputId: newOut.id };
+}
+
+/**
+ * 出力を 1 件削除。最後の 1 件なら no-op。所属 mapping は残りの先頭出力へ再割当する
+ * （mapping そのものは消えない — ユーザが明示的に消すべき）。
+ * activeOutputId がその出力を指していたら undefined に戻す。
+ */
+export function withRemovedOutput(state: MappingsState, outputId: string): MappingsState {
+  if (state.outputs.length <= 1) return state;
+  const remaining = state.outputs.filter(o => o.id !== outputId);
+  if (remaining.length === state.outputs.length) return state; // 該当なし
+  const fallbackId = remaining[0].id;
+  return {
+    ...state,
+    outputs: remaining,
+    mappings: state.mappings.map(m =>
+      m.outputId === outputId ? { ...m, outputId: fallbackId } : m
+    ),
+    activeOutputId: state.activeOutputId === outputId ? undefined : state.activeOutputId,
+  };
+}
+
+/** 出力をリネーム（空文字なら undefined）。 */
+export function withOutputRenamed(state: MappingsState, outputId: string, name: string): MappingsState {
+  const trimmed = name.trim();
+  return {
+    ...state,
+    outputs: state.outputs.map(o =>
+      o.id === outputId ? { ...o, name: trimmed || undefined } : o
+    ),
+  };
+}
+
+/** activeOutputId を設定。`undefined` で解除、無効 id は no-op。 */
+export function withActiveOutputSet(state: MappingsState, outputId: string | undefined): MappingsState {
+  if (outputId !== undefined && !state.outputs.some(o => o.id === outputId)) return state;
+  return { ...state, activeOutputId: outputId };
+}
+
 /**
  * 任意の値が MappingsState として妥当かチェックして返す（不正なら null）。
  * 保存ファイルや localStorage の読み込み時に使う。
+ *
+ * 旧フォーマット互換: outputs フィールドが無い／空／不正な場合は既定の単一出力を
+ * 生成し、outputId を持たない mapping にはそれを割り当てる（旧データはこの分岐を通る）。
  */
 export function parseMappingsState(data: unknown): MappingsState | null {
   if (!data || typeof data !== 'object') return null;
@@ -159,6 +289,65 @@ export function parseMappingsState(data: unknown): MappingsState | null {
   const isPoint = (p: unknown): p is Point =>
     !!p && typeof (p as Point).x === 'number' && typeof (p as Point).y === 'number';
 
+  // --- outputs を解析（不正な要素は捨て、0 件になったら既定を1つ生やす） ---
+  const validOutputs: OutputDef[] = [];
+  const rawOutputs = obj.outputs;
+  if (Array.isArray(rawOutputs)) {
+    for (const rawOut of rawOutputs) {
+      if (!rawOut || typeof rawOut !== 'object') continue;
+      const o = rawOut as Record<string, unknown>;
+      if (typeof o.id !== 'string') continue;
+      const layout = o.layout as Record<string, unknown> | undefined;
+      if (
+        !layout ||
+        typeof layout.x !== 'number' ||
+        typeof layout.y !== 'number' ||
+        typeof layout.width !== 'number' ||
+        typeof layout.height !== 'number'
+      ) continue;
+      const screenRaw = o.screen as Record<string, unknown> | undefined;
+      const screen =
+        screenRaw &&
+        typeof screenRaw.left === 'number' &&
+        typeof screenRaw.top === 'number' &&
+        typeof screenRaw.width === 'number' &&
+        typeof screenRaw.height === 'number'
+          ? {
+              left: screenRaw.left,
+              top: screenRaw.top,
+              width: screenRaw.width,
+              height: screenRaw.height,
+              label: typeof screenRaw.label === 'string' ? screenRaw.label : undefined,
+            }
+          : undefined;
+      const pixelRaw = o.pixelSize as Record<string, unknown> | undefined;
+      const pixelSize =
+        pixelRaw &&
+        typeof pixelRaw.width === 'number' &&
+        typeof pixelRaw.height === 'number'
+          ? { width: pixelRaw.width, height: pixelRaw.height }
+          : undefined;
+      validOutputs.push({
+        id: o.id,
+        name: typeof o.name === 'string' ? o.name : undefined,
+        layout: {
+          x: layout.x,
+          y: layout.y,
+          width: layout.width,
+          height: layout.height,
+        },
+        screen,
+        pixelSize,
+      });
+    }
+  }
+  if (validOutputs.length === 0) {
+    validOutputs.push(defaultOutput('Output 1'));
+  }
+  const defaultOutputId = validOutputs[0].id;
+  const outputIdSet = new Set(validOutputs.map(o => o.id));
+
+  // --- mappings を解析（outputId が無い／無効なら defaultOutputId を割り当て） ---
   const validMappings: MappingEntry[] = [];
   for (const raw of list) {
     if (!raw || typeof raw !== 'object') return null;
@@ -176,8 +365,12 @@ export function parseMappingsState(data: unknown): MappingsState | null {
     if (!q || !isPoint(q.topLeft) || !isPoint(q.topRight) || !isPoint(q.bottomRight) || !isPoint(q.bottomLeft)) {
       return null;
     }
+    const rawOutputId = typeof m.outputId === 'string' ? m.outputId : null;
+    const outputId =
+      rawOutputId && outputIdSet.has(rawOutputId) ? rawOutputId : defaultOutputId;
     validMappings.push({
       id: m.id,
+      outputId,
       name: typeof m.name === 'string' ? m.name : undefined,
       enabled: typeof m.enabled === 'boolean' ? m.enabled : undefined,
       source: { x: src.x, y: src.y, width: src.width, height: src.height },
@@ -194,7 +387,14 @@ export function parseMappingsState(data: unknown): MappingsState | null {
   if (!validMappings.some(m => m.id === activeId)) {
     activeId = validMappings[0].id;
   }
-  return { mappings: validMappings, activeId };
+
+  let activeOutputId: string | undefined =
+    typeof obj.activeOutputId === 'string' ? obj.activeOutputId : undefined;
+  if (activeOutputId && !outputIdSet.has(activeOutputId)) {
+    activeOutputId = undefined;
+  }
+
+  return { outputs: validOutputs, mappings: validMappings, activeId, activeOutputId };
 }
 
 const MIN_DIMENSION = 0.0001;

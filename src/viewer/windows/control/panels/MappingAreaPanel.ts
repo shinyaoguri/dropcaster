@@ -5,8 +5,10 @@
  *   - active mapping の quad 4 隅 (.quad-handle) を独立に動かしてホモグラフィー変形
  *   - cropped-container 本体のドラッグで quad 全体を平行移動
  *   - #reset-mapping-btn でデフォルト quad に戻す
- *   - #mapping-area の寸法変化（カラムリサイザ追従）に応じた matrix3d 再計算
+ *   - 親 (.dc-mapping-area) の寸法変化（カラムリサイザ追従）に応じた matrix3d 再計算
  *   - クロップ済み <video> へのストリーム bind と source rect クロップの適用
+ *   - **multi-output**: active mapping の outputId に応じて自身の DOM（cropped-container +
+ *     4 quad-handles）を該当する `.dc-mapping-area[data-output-id="..."]` にぶら下げ直す。
  *
  * state mutation は MappingsController 経由。drag は utils/draggable で document
  * listener のリーク対策が組み込まれている。
@@ -36,6 +38,8 @@ export interface MappingAreaPanelAttachOptions {
   onQuadChanged: () => void;
   /** cropped-video の loadedmetadata 時に呼ばれる。親側で videoActualDimensions を反映する用。 */
   onCroppedVideoMetadata?: (dimensions: { width: number; height: number }) => void;
+  /** 指定 outputId の `.dc-mapping-area` 要素を返す（OutputVizPanel が組み立てている）。 */
+  getMappingArea: (outputId: string) => HTMLElement | null;
 }
 
 export class MappingAreaPanel {
@@ -47,8 +51,11 @@ export class MappingAreaPanel {
   private croppedContainer: HTMLDivElement | null = null;
   private croppedVideo: HTMLVideoElement | null = null;
   private mappingVideo: HTMLVideoElement | null = null;
+  /** 4 隅の quad-handle 要素群。cropped-container と一緒に親に動く。 */
+  private handles: HTMLDivElement[] = [];
   private cleanups: Array<() => void> = [];
   private resizeObserver: ResizeObserver | null = null;
+  private observedArea: HTMLElement | null = null;
   private resizeRafId: number | null = null;
   private streamSetupTimeout: number | null = null;
 
@@ -58,23 +65,27 @@ export class MappingAreaPanel {
     this.win = win;
     this.ctrl = ctrl;
     this.opts = opts;
-    this.croppedContainer = scope.querySelector('#cropped-container') as HTMLDivElement | null;
-    this.croppedVideo = scope.querySelector('#cropped-video') as HTMLVideoElement | null;
     this.mappingVideo = scope.querySelector('#mapping-video') as HTMLVideoElement | null;
 
-    if (!this.croppedContainer || !this.croppedVideo) return;
-
+    this.createElements();
     this.wireResetButton();
     this.setupQuadBodyDrag();
     this.setupQuadHandles();
+    this.mountInActiveOutput();
     this.refreshTransform();
-    this.observeAreaResize();
+    this.setupResizeObserver();
 
     // ストリームが MappingStream 経由で届くのを待ってから bind
     this.streamSetupTimeout = win.setTimeout(() => {
       this.streamSetupTimeout = null;
       this.setupCroppedVideoStream();
     }, 1000);
+  }
+
+  /** active mapping の outputId が変わった時に呼ぶ — DOM を該当 output 配下へ動かす。 */
+  refreshActiveMount(): void {
+    this.mountInActiveOutput();
+    this.refreshTransform();
   }
 
   /** quad の matrix3d / mapping color / 4 隅ハンドル位置 / video clip-path を全部最新化。 */
@@ -91,9 +102,7 @@ export class MappingAreaPanel {
     const activeIdx = state.mappings.findIndex(m => m.id === state.activeId);
     const activeColor = mappingColor(activeIdx >= 0 ? activeIdx : 0);
     this.croppedContainer.style.setProperty('--mapping-color', activeColor);
-    scope
-      .querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle')
-      .forEach(h => h.style.setProperty('--mapping-color', activeColor));
+    for (const h of this.handles) h.style.setProperty('--mapping-color', activeColor);
 
     this.updateQuadHandlePositions(quad);
     this.refreshVideoCrop();
@@ -109,7 +118,7 @@ export class MappingAreaPanel {
   }
 
   getCroppedContainer(): HTMLDivElement | null { return this.croppedContainer; }
-  /** InactivePreviewPool の stage 用（cropped-container の親 = #mapping-area）。 */
+  /** InactivePreviewPool が active container の前に挿入する基準点として使う。 */
   getStage(): HTMLElement | null { return this.croppedContainer?.parentElement ?? null; }
   /** ControlWindow が video の videoActualDimensions を更新するために使う。 */
   getCroppedVideo(): HTMLVideoElement | null { return this.croppedVideo; }
@@ -119,6 +128,7 @@ export class MappingAreaPanel {
     this.cleanups = [];
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.observedArea = null;
     if (this.resizeRafId !== null && this.win) {
       this.win.cancelAnimationFrame(this.resizeRafId);
       this.resizeRafId = null;
@@ -127,6 +137,9 @@ export class MappingAreaPanel {
       this.win.clearTimeout(this.streamSetupTimeout);
       this.streamSetupTimeout = null;
     }
+    this.croppedContainer?.remove();
+    for (const h of this.handles) h.remove();
+    this.handles = [];
     this.scope = null;
     this.doc = null;
     this.win = null;
@@ -136,6 +149,56 @@ export class MappingAreaPanel {
     this.croppedVideo = null;
     this.mappingVideo = null;
   }
+
+  // ── DOM 構築・mount ────────────────────────────────────────────
+
+  private createElements(): void {
+    const doc = this.doc;
+    if (!doc) return;
+
+    const container = doc.createElement('div');
+    container.id = 'cropped-container';
+    const video = doc.createElement('video');
+    video.id = 'cropped-video';
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+    container.appendChild(video);
+    this.croppedContainer = container;
+    this.croppedVideo = video;
+
+    this.handles = [];
+    for (const corner of CORNER_KEYS) {
+      const h = doc.createElement('div');
+      h.className = 'quad-handle';
+      h.dataset.corner = corner;
+      this.handles.push(h);
+    }
+  }
+
+  /** active mapping の所属 output の `.dc-mapping-area` に cropped-container + 4 handles を入れ直す。 */
+  private mountInActiveOutput(): void {
+    const ctrl = this.ctrl;
+    const opts = this.opts;
+    const container = this.croppedContainer;
+    if (!ctrl || !opts || !container) return;
+    const state = ctrl.getState();
+    const active = state.mappings.find(m => m.id === state.activeId);
+    if (!active) return;
+    const target = opts.getMappingArea(active.outputId);
+    if (!target) return;
+
+    if (container.parentElement !== target) {
+      target.appendChild(container);
+    }
+    for (const h of this.handles) {
+      if (h.parentElement !== target) target.appendChild(h);
+    }
+    // resize observer の対象も新しい parent に切替
+    this.rebindResizeObserver();
+  }
+
+  // ── reset / drag ────────────────────────────────────────────────
 
   private wireResetButton(): void {
     const scope = this.scope;
@@ -163,7 +226,6 @@ export class MappingAreaPanel {
       onStart: (e) => {
         const target = e.target as HTMLElement;
         if (target.classList.contains('quad-handle')) return null;
-        // 隅ハンドルではなく quad 本体のドラッグ — 隅の矢印キー選択は解除
         opts.clearKeyboardSelection();
         const parent = container.parentElement;
         if (!parent) return null;
@@ -190,19 +252,15 @@ export class MappingAreaPanel {
 
   /** 4 隅ハンドルそれぞれを独立に動かしてホモグラフィー変形を作る。 */
   private setupQuadHandles(): void {
-    const scope = this.scope;
     const doc = this.doc;
     const ctrl = this.ctrl;
     const opts = this.opts;
     const container = this.croppedContainer;
-    if (!scope || !doc || !ctrl || !opts || !container) return;
-    const parent = container.parentElement;
-    if (!parent) return;
+    if (!doc || !ctrl || !opts || !container) return;
 
-    const handles = scope.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle');
-    handles.forEach(handle => {
+    for (const handle of this.handles) {
       const corner = handle.dataset.corner as CornerKey | undefined;
-      if (!corner || !CORNER_KEYS.includes(corner)) return;
+      if (!corner || !CORNER_KEYS.includes(corner)) continue;
 
       type Snap = { startX: number; startY: number; initialPoint: { x: number; y: number } };
       const dispose = draggable<Snap>(handle, doc, {
@@ -218,6 +276,9 @@ export class MappingAreaPanel {
           };
         },
         onMove: (e, snap) => {
+          // parent は active output が切り替わると別要素になるので毎回引く
+          const parent = container.parentElement;
+          if (!parent) return;
           const parentRect = parent.getBoundingClientRect();
           if (parentRect.width <= 0 || parentRect.height <= 0) return;
           const dx = ((e.clientX - snap.startX) / parentRect.width) * 100;
@@ -235,42 +296,46 @@ export class MappingAreaPanel {
         },
       });
       this.cleanups.push(dispose);
-    });
+    }
   }
 
   private updateQuadHandlePositions(quad: Quad): void {
-    const scope = this.scope;
-    if (!scope) return;
-    scope.querySelectorAll<HTMLDivElement>('.mapping-column .quad-handle').forEach(handle => {
+    for (const handle of this.handles) {
       const corner = handle.dataset.corner as CornerKey | undefined;
-      if (!corner || !CORNER_KEYS.includes(corner)) return;
+      if (!corner || !CORNER_KEYS.includes(corner)) continue;
       const p = quad[corner];
       handle.style.left = `${p.x}%`;
       handle.style.top = `${p.y}%`;
-    });
+    }
   }
 
-  /**
-   * #mapping-area の寸法変化を監視して matrix3d を再計算する。カラムリサイザの
-   * 幅変更に追従させるため。matrix3d は親の getBoundingClientRect ベースで毎回
-   * 計算するので、ピクセル寸法が変わったらやり直さないと warp が静止したまま
-   * %ベースのハンドル位置だけずれて見える。
-   */
-  private observeAreaResize(): void {
-    const target = this.scope?.querySelector('#mapping-area') as HTMLElement | null;
-    const win = this.win;
-    if (!target || !win) return;
+  // ── resize observer ───────────────────────────────────────────
 
+  private setupResizeObserver(): void {
+    const win = this.win;
+    if (!win) return;
     this.resizeObserver = new ResizeObserver(() => {
-      // 1 frame に 1 回へコアレス（ドラッグ中の連続発火対策）
       if (this.resizeRafId !== null) return;
       this.resizeRafId = win.requestAnimationFrame(() => {
         this.resizeRafId = null;
         this.refreshTransform();
       });
     });
-    this.resizeObserver.observe(target);
+    this.rebindResizeObserver();
   }
+
+  private rebindResizeObserver(): void {
+    if (!this.resizeObserver || !this.croppedContainer) return;
+    const newArea = this.croppedContainer.parentElement;
+    if (newArea === this.observedArea) return;
+    if (this.observedArea) {
+      try { this.resizeObserver.unobserve(this.observedArea); } catch { /* ignore */ }
+    }
+    if (newArea) this.resizeObserver.observe(newArea);
+    this.observedArea = newArea;
+  }
+
+  // ── stream bind ───────────────────────────────────────────────
 
   /** mapping-video が持つストリームを cropped-video に共有 bind し、clip-path も初期化。 */
   private setupCroppedVideoStream(): void {
@@ -296,3 +361,4 @@ export class MappingAreaPanel {
     this.refreshVideoCrop();
   }
 }
+

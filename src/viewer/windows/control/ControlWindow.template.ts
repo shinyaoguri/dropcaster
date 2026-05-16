@@ -22,9 +22,9 @@ export const CONTROL_PANEL_HTML = `
           </div>
           <div class="tool-content">
             <div class="tool-section">
-              <h3>マッピング一覧</h3>
+              <h3>出力 / マッピング一覧</h3>
               <div id="mappings-list" class="mappings-list"></div>
-              <button id="add-mapping-btn" class="tool-button">＋ 追加</button>
+              <button id="add-output-btn" class="tool-button">＋ 出力を追加</button>
               <div class="io-buttons">
                 <button id="export-mappings-btn" class="tool-button">保存</button>
                 <button id="import-mappings-btn" class="tool-button">読み込み</button>
@@ -69,6 +69,15 @@ export const CONTROL_PANEL_HTML = `
                 <button class="tool-button test-pattern-btn" data-pattern="grid">グリッド</button>
                 <button class="tool-button test-pattern-btn" data-pattern="smpte">カラーバー</button>
               </div>
+            </div>
+
+            <div class="tool-section">
+              <h3>開発モード</h3>
+              <p class="section-hint">出力ウィンドウに各 mapping の枠線とマウス追従クロスヘア（レーザー墨出し器風）を重ねます</p>
+              <button id="dev-mode-toggle" class="tool-button dev-mode-toggle" aria-pressed="false">
+                <span class="dev-mode-dot" aria-hidden="true"></span>
+                <span class="dev-mode-label">OFF</span>
+              </button>
             </div>
 
             <div class="tool-section">
@@ -131,45 +140,12 @@ export const CONTROL_PANEL_HTML = `
             <h2>マッピングプレビュー</h2>
           </div>
           <div class="mapping-container">
-            <div class="display-status">
-              <span class="status-indicator" id="display-mode-indicator"></span>
-              <span class="status-text" id="display-mode">ウィンドウ</span>
-            </div>
-            <div class="display-frame-wrapper">
-              <div class="display-frame" id="display-frame">
-                <div class="window-frame" id="window-frame">
-                  <div class="window-titlebar">
-                    <div class="window-controls">
-                      <span class="window-control close"></span>
-                      <span class="window-control minimize"></span>
-                      <span class="window-control maximize"></span>
-                    </div>
-                    <span class="window-title">Dropcaster</span>
-                  </div>
-                  <div class="window-content">
-                    <video id="mapping-video" autoplay muted playsinline style="display: none;">
-                      <p>MediaStreamの読み込み中...</p>
-                    </video>
-                    <div id="mapping-area">
-                      <div id="cropped-container">
-                        <video id="cropped-video" autoplay muted playsinline></video>
-                      </div>
-                      <div class="quad-handle" data-corner="topLeft"></div>
-                      <div class="quad-handle" data-corner="topRight"></div>
-                      <div class="quad-handle" data-corner="bottomRight"></div>
-                      <div class="quad-handle" data-corner="bottomLeft"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="display-size-info">
-                <span class="size-label">ディスプレイ:</span>
-                <span id="display-size">—</span>
-                <span class="separator">|</span>
-                <span class="size-label">出力ウィンドウ:</span>
-                <span id="window-size">—</span>
-              </div>
-            </div>
+            <!-- 全出力で共有する hidden mapping-video（cropped-video への stream donor） -->
+            <video id="mapping-video" autoplay muted playsinline style="display: none;">
+              <p>MediaStreamの読み込み中...</p>
+            </video>
+            <!-- 出力ごとのフレームが横並びに並ぶステージ。OutputVizPanel が動的に組み立てる -->
+            <div id="output-stage" class="output-stage"></div>
           </div>
         </div>
       </div>

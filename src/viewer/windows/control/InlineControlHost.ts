@@ -11,7 +11,8 @@
 import { type MappingsState } from '../../utils/mappingTransform';
 import type {
   ControlHost,
-  OutputBoundsSnapshot,
+  DevCursorEvent,
+  OutputBoundsMap,
   TestPatternKindOrOff,
   Unsubscribe,
   VideoDimensions,
@@ -55,9 +56,18 @@ export class InlineControlHost implements ControlHost {
 
   // --- output bounds ---
 
-  getOutputBounds(): OutputBoundsSnapshot { return this.wc.events.outputBounds.get(); }
-  onOutputBoundsChange(handler: Listener<OutputBoundsSnapshot>): Unsubscribe {
+  getOutputBounds(): OutputBoundsMap { return this.wc.events.outputBounds.get(); }
+  onOutputBoundsChange(handler: Listener<OutputBoundsMap>): Unsubscribe {
     return this.wc.events.outputBounds.subscribe(handler);
+  }
+
+  // --- output window lifecycle ---
+
+  openOutputWindow(outputId: string): void {
+    this.wc.openOutputWindowFor(outputId);
+  }
+  closeOutputWindow(outputId: string): void {
+    this.wc.closeOutputWindowFor(outputId);
   }
 
   // --- video dimensions ---
@@ -65,6 +75,22 @@ export class InlineControlHost implements ControlHost {
   getVideoDimensions(): VideoDimensions { return this.wc.events.videoDimensions.get(); }
   onVideoDimensionsChange(handler: Listener<VideoDimensions>): Unsubscribe {
     return this.wc.events.videoDimensions.subscribe(handler);
+  }
+
+  // --- dev mode ---
+
+  getDevMode(): boolean { return this.wc.events.devMode.get(); }
+  onDevModeChange(handler: Listener<boolean>): Unsubscribe {
+    return this.wc.events.devMode.subscribe(handler);
+  }
+  requestDevMode(enabled: boolean): void {
+    this.wc.setDevMode(enabled);
+  }
+  onDevCursorChange(handler: Listener<DevCursorEvent>): Unsubscribe {
+    return this.wc.events.devCursor.subscribe(handler);
+  }
+  requestDevCursor(outputId: string, xFrac: number, yFrac: number, visible: boolean): void {
+    this.wc.setDevCursorFromPreview(outputId, xFrac, yFrac, visible);
   }
 
   // --- warnings (WebGL context lost) ---

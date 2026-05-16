@@ -5,10 +5,13 @@ import {
   defaultMappingsState,
   parseMappingsState,
   type MappingsState,
+  type OutputDef,
 } from '../utils/mappingTransform';
 import { ScreenWakeLock } from '../utils/wakeLock';
 import { Emitter } from '../utils/emitter';
 import type {
+  DevCursorEvent,
+  OutputBoundsMap,
   OutputBoundsSnapshot,
   TestPatternKindOrOff,
   VideoDimensions,
@@ -32,16 +35,26 @@ interface ScreenDetailed {
   isInternal?: boolean;
   label?: string;
 }
-interface ScreenDetails { screens: ScreenDetailed[]; currentScreen?: ScreenDetailed; }
+interface ScreenDetails extends EventTarget {
+  screens: ScreenDetailed[];
+  currentScreen?: ScreenDetailed;
+}
 
 export class WindowController {
   private windowManager: WindowManager;
-  private outputWindow: OutputWindow;
+  /** 出力 id → 担当 OutputWindow。openOutputWindowFor で生やし、close で消す。 */
+  private outputWindows = new Map<string, OutputWindow>();
   private activeStreams: MediaStream[] = [];
   private windowMonitoringInterval: number | null = null;
   private saveTimer: number | null = null;
-  /** 直近に通知した出力ウィンドウ寸法（JSON）。同じなら再 emit しない。 */
+  /** 直近に通知した出力寸法群（JSON）。同じなら再 emit しない。 */
   private lastOutputBoundsJson: string | null = null;
+  /**
+   * Window Management API のスナップショット。null = まだ問い合わせていない or 未対応・権限拒否。
+   * 1 度問い合わせれば screenschange で自動更新するので、再 fetch しない。
+   */
+  private screenSnapshot: ScreenDetailed[] | null = null;
+  private screenDetailsPromise: Promise<void> | null = null;
   private canvasResizeObserver: ResizeObserver | null = null;
   private canvasMutationObserver: MutationObserver | null = null;
   /** いまマッピングのソースにしているスケッチ iframe（差し替え可能）。 */
@@ -59,17 +72,32 @@ export class WindowController {
   readonly events = {
     state: new Emitter<MappingsState>(defaultMappingsState()),
     testPattern: new Emitter<TestPatternKindOrOff>('off'),
-    outputBounds: new Emitter<OutputBoundsSnapshot>({
-      innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false,
-    }),
+    outputBounds: new Emitter<OutputBoundsMap>({}),
     videoDimensions: new Emitter<VideoDimensions>({ width: 1, height: 1 }),
     webglContext: new Emitter<WebglContextStatus>('ok'),
+    // 開発モード: 出力ウィンドウに mapping の枠線とマウス追従クロスヘアを重ねる校正用 UI。
+    // セッション限りのフラグで永続化しない（localStorage の MappingsState とは独立）。
+    devMode: new Emitter<boolean>(false),
+    // 出力ウィンドウから push されるマウスカーソル位置（dev mode 時のみ）。
+    // 操作ウィンドウのマッピングプレビューに同じ位置のクロスヘアをミラーする。
+    devCursor: new Emitter<DevCursorEvent>({ outputId: '', xFrac: 0, yFrac: 0, visible: false }),
   };
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
-    // 出力ウィンドウからの `output-needs-stream` のみハンドル。
+    // 出力ウィンドウからの `output-needs-stream` のみハンドル（outputId 指定があれば対象のみ bind）。
     if (event.data?.type === 'output-needs-stream') {
-      this.bindStreamToOutputWindow();
+      const targetId = typeof event.data.outputId === 'string' ? event.data.outputId : undefined;
+      this.bindStreamToOutputWindows(targetId);
+    } else if (event.data?.type === 'dev-cursor') {
+      // 出力ウィンドウ→親 のカーソル位置中継。inline panel が onDevCursorChange で受ける。
+      const d = event.data as Partial<DevCursorEvent> & { type: string };
+      if (typeof d.outputId !== 'string') return;
+      this.events.devCursor.set({
+        outputId: d.outputId,
+        xFrac: typeof d.xFrac === 'number' ? d.xFrac : 0,
+        yFrac: typeof d.yFrac === 'number' ? d.yFrac : 0,
+        visible: !!d.visible,
+      });
     }
   };
 
@@ -85,11 +113,12 @@ export class WindowController {
 
   constructor() {
     this.windowManager = new WindowManager();
-    this.outputWindow = new OutputWindow();
 
     // 前回のマッピング設定を localStorage から復元（あれば）
     const restored = this.loadFromStorage();
     if (restored) this.state = restored;
+    // Emitter の初期値も復元後の state に合わせる
+    this.events.state.set(this.state);
 
     this.setupWindowCommunication();
   }
@@ -124,84 +153,211 @@ export class WindowController {
   }
 
   /**
-   * プロジェクション出力専用のポップアウトウィンドウを開く（プロジェクタの画面に置く想定）。
-   * まず通常位置で開いてから、画面が複数あれば内蔵でない画面へ移動・最大化する
-   * （window.open の gesture を確実に通すため、画面移動は後追い）。
+   * 互換 API: state.outputs[0] のポップアウトを開く。state が複数出力を持っていても
+   * 1 つ目だけ自動で開く（後続は ControlWindow の UI で個別に開く）。
    */
   openOutputWindow(): Window | null {
+    const first = this.state.outputs[0];
+    if (!first) return null;
+    return this.openOutputWindowFor(first.id);
+  }
+
+  /**
+   * 指定 outputId のポップアウトを開く。既に開いていれば focus する。
+   * outputId が state.outputs に無ければ no-op。
+   */
+  openOutputWindowFor(outputId: string): Window | null {
+    const outputDef = this.state.outputs.find(o => o.id === outputId);
+    if (!outputDef) return null;
+
+    // 既に開いていれば focus のみ
+    const existing = this.outputWindows.get(outputId);
+    if (existing) {
+      const w = existing.getWindow();
+      if (w && !w.closed) {
+        w.focus();
+        return w;
+      }
+      this.outputWindows.delete(outputId);
+    }
+
+    // 既存出力ウィンドウの右隣に少しずらして配置（ユーザがすぐ動かしやすいよう）
+    const offset = this.outputWindows.size * 40;
     const outputWin = this.windowManager.openWindow({
-      name: 'output_window',
-      title: 'プロジェクション出力',
+      name: `output_window_${outputId}`,
+      title: outputDef.name ? `出力: ${outputDef.name}` : 'プロジェクション出力',
       width: 960,
       height: 600,
-      left: Math.max(80, window.screenX + 120),
-      top: Math.max(80, window.screenY + 120),
+      left: Math.max(80, window.screenX + 120 + offset),
+      top: Math.max(80, window.screenY + 120 + offset),
       features: ['scrollbars=no', 'resizable=yes'],
     });
     if (!outputWin) return null;
 
-    this.outputWindow.setWindow(outputWin);
-    this.outputWindow.setParentWindow(window);
-    // 出力ウィンドウのサイズ・全画面状態の変化を inline panel の可視化へ伝える
+    const ow = new OutputWindow(outputId);
+    ow.setParentWindow(window);
+    ow.setWindow(outputWin);
+    this.outputWindows.set(outputId, ow);
+
+    // ウィンドウ閉じ通知 — Map からも除く
+    outputWin.addEventListener('beforeunload', () => {
+      this.outputWindows.delete(outputId);
+      this.notifyOutputBounds();
+    });
     outputWin.addEventListener('resize', () => this.notifyOutputBounds());
     outputWin.document.addEventListener('fullscreenchange', () => {
       this.notifyOutputBounds();
-      // 全画面の出入りでビューポートが落ち着くのが遅れることがあるので追い通知
       window.setTimeout(() => this.notifyOutputBounds(), 350);
     });
 
-    void this.placeOnExternalScreen(outputWin);
+    void this.placeOnExternalScreen(outputWin, outputDef);
 
-    // 初期 state を送る ＋ stream が既にあれば bind
     setTimeout(() => {
       this.broadcastStateToOutput();
-      this.bindStreamToOutputWindow();
+      this.bindStreamToOutputWindows(outputId);
       this.notifyOutputBounds();
+      this.broadcastDevModeToOutput(outputId);
     }, 500);
     return outputWin;
   }
 
-  /** Window Management API が使えれば、内蔵でない（＝プロジェクタの）画面へウィンドウを移動・最大化する。 */
-  private async placeOnExternalScreen(win: Window): Promise<void> {
+  /** 指定出力のポップアウトを閉じる。 */
+  closeOutputWindowFor(outputId: string): void {
+    const ow = this.outputWindows.get(outputId);
+    if (ow) ow.close();
+    this.windowManager.closeWindow(`output_window_${outputId}`);
+    this.outputWindows.delete(outputId);
+    this.notifyOutputBounds();
+  }
+
+  /**
+   * Window Management API が使える環境で、出力ウィンドウを既知のスクリーンへ移動・最大化する。
+   *
+   *  - OutputDef.screen が指定されていればそれを優先（位置で screen を引き当て）。
+   *  - 未指定なら、いま開いている他出力に「使われていない」非内蔵スクリーンを順に割り当て。
+   *  - 全部使い切ったら最後の非内蔵スクリーンへ寄せる（重なる）。
+   */
+  private async placeOnExternalScreen(win: Window, outputDef: OutputDef): Promise<void> {
     try {
-      const w = window as unknown as { getScreenDetails?: () => Promise<ScreenDetails> };
-      if (typeof w.getScreenDetails !== 'function') return; // 未対応（Firefox/Safari）— そのまま
-      const details = await w.getScreenDetails();
-      const screens = details.screens ?? [];
-      const target =
-        screens.find(s => s.isInternal === false) ??
-        screens.find(s => s.isPrimary === false) ??
-        null;
+      await this.ensureScreenDetails();
+      const screens = this.screenSnapshot;
+      if (!screens || screens.length === 0) return;
+
+      const claimed = new Set<ScreenDetailed>();
+      // 他出力で既に使っているスクリーンを「使用済み」にする
+      for (const [otherId, otherOw] of this.outputWindows) {
+        if (otherId === outputDef.id) continue;
+        const ow = otherOw.getWindow();
+        if (!ow || ow.closed) continue;
+        const hit = this.findScreenForWindow(ow);
+        if (hit) claimed.add(hit);
+      }
+
+      let target: ScreenDetailed | undefined;
+      const ds = outputDef.screen;
+      if (ds) {
+        target = screens.find(s => s.left === ds.left && s.top === ds.top);
+      }
+      if (!target) {
+        const external = screens.filter(s => s.isInternal === false);
+        target = external.find(s => !claimed.has(s))
+          ?? screens.filter(s => s.isPrimary === false).find(s => !claimed.has(s))
+          ?? external[external.length - 1]
+          ?? screens.find(s => s.isPrimary === false);
+      }
       if (!target || win.closed) return;
       win.moveTo(target.availLeft ?? target.left, target.availTop ?? target.top);
       win.resizeTo(target.availWidth, target.availHeight);
       this.notifyOutputBounds();
     } catch {
-      /* 権限拒否や未対応 — 通常位置のまま（ユーザがプロジェクタへドラッグ） */
+      /* 権限拒否・未対応 — 通常位置のまま（ユーザがプロジェクタへドラッグ） */
     }
   }
 
-  /** 出力ウィンドウ内の全 <video> に現在の stream を bind する（メイン → 子の DOM 直接アクセス）。 */
-  private bindStreamToOutputWindow(): void {
-    const win = this.windowManager.getWindow('output_window');
-    const stream = this.activeStreams[0];
-    if (!win || win.closed || !stream) return;
+  /**
+   * Window Management API のスクリーン一覧を 1 度だけ問い合わせてキャッシュする。
+   * 'screenschange' で外部モニタが付け外しされたら破棄して再取得する。
+   * 未対応 / 権限拒否なら `screenSnapshot` は null のまま — 呼び出し側は fallback する想定。
+   */
+  private async ensureScreenDetails(): Promise<void> {
+    if (this.screenSnapshot) return;
+    if (this.screenDetailsPromise) return this.screenDetailsPromise;
+    this.screenDetailsPromise = (async () => {
+      try {
+        const w = window as unknown as { getScreenDetails?: () => Promise<ScreenDetails> };
+        if (typeof w.getScreenDetails !== 'function') return;
+        const details = await w.getScreenDetails();
+        this.screenSnapshot = [...(details.screens ?? [])];
+        details.addEventListener('screenschange', () => {
+          this.screenSnapshot = [...(details.screens ?? [])];
+          this.notifyOutputBounds(); // ラベル変化を inline panel に反映
+        });
+      } catch {
+        this.screenSnapshot = null;
+      } finally {
+        this.screenDetailsPromise = null;
+      }
+    })();
+    return this.screenDetailsPromise;
+  }
+
+  /**
+   * 指定 popup の現在位置から、それが載っているスクリーン定義を引き当てる。
+   * Window Management API 未対応 / 権限拒否ならキャッシュが空なので null。
+   */
+  private findScreenForWindow(win: Window): ScreenDetailed | null {
+    const screens = this.screenSnapshot;
+    if (!screens || screens.length === 0) return null;
+    if (win.closed) return null;
     try {
-      win.document.querySelectorAll('video').forEach((el) => {
-        const video = el as HTMLVideoElement;
-        if (video.srcObject !== stream) {
-          video.srcObject = stream;
-          video.play().catch(() => { /* ignore */ });
-        }
-      });
-    } catch (error) {
-      console.error('WindowController: 出力ウィンドウへの stream 設定エラー:', error);
+      const x = win.screenX, y = win.screenY;
+      // 完全に包含するものを優先、無ければ中心点で判定（モニタ境界をまたぐとき用）
+      const contains = screens.find(
+        s => x >= s.left && x < s.left + s.width &&
+             y >= s.top  && y < s.top  + s.height,
+      );
+      if (contains) return contains;
+      const cx = x + (win.outerWidth || win.innerWidth) / 2;
+      const cy = y + (win.outerHeight || win.innerHeight) / 2;
+      return screens.find(
+        s => cx >= s.left && cx < s.left + s.width &&
+             cy >= s.top  && cy < s.top  + s.height,
+      ) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 開いている出力ウィンドウの <video> に現在の stream を bind する。
+   * targetOutputId が指定されればその出力のみ、未指定なら全出力。
+   */
+  private bindStreamToOutputWindows(targetOutputId?: string): void {
+    const stream = this.activeStreams[0];
+    if (!stream) return;
+    for (const [outputId, ow] of this.outputWindows) {
+      if (targetOutputId && outputId !== targetOutputId) continue;
+      const win = ow.getWindow();
+      if (!win || win.closed) continue;
+      try {
+        win.document.querySelectorAll('video').forEach((el) => {
+          const video = el as HTMLVideoElement;
+          if (video.srcObject !== stream) {
+            video.srcObject = stream;
+            video.play().catch(() => { /* ignore */ });
+          }
+        });
+      } catch (error) {
+        console.error('WindowController: 出力ウィンドウへの stream 設定エラー:', error);
+      }
     }
   }
 
   closeAllWindows(): void {
     this.stopCanvasStreaming();
     this.windowManager.closeAllWindows();
+    this.outputWindows.clear();
+    this.notifyOutputBounds();
   }
 
   private flushSaveHandler = () => this.flushSave();
@@ -227,9 +383,19 @@ export class WindowController {
     this.state = next;
     this.scheduleSave();
     this.dispatchOverlayUpdate();
+    // 出力が削除されていたら対応するポップアウトを閉じる（残り続けると孤立ウィンドウになる）
+    this.closeOrphanedOutputWindows();
     this.broadcastStateToOutput();
     if (options.broadcastToControl !== false) {
       this.events.state.set(next);
+    }
+  }
+
+  /** state.outputs に存在しなくなった outputId の出力ウィンドウを閉じる。 */
+  private closeOrphanedOutputWindows(): void {
+    const valid = new Set(this.state.outputs.map(o => o.id));
+    for (const outputId of [...this.outputWindows.keys()]) {
+      if (!valid.has(outputId)) this.closeOutputWindowFor(outputId);
     }
   }
 
@@ -239,12 +405,52 @@ export class WindowController {
   }
 
   private broadcastStateToOutput(): void {
-    const outputWin = this.windowManager.getWindow('output_window');
-    if (outputWin && !outputWin.closed) {
-      outputWin.postMessage({
+    for (const ow of this.outputWindows.values()) {
+      const win = ow.getWindow();
+      if (!win || win.closed) continue;
+      win.postMessage({
         type: 'state-update',
         data: this.state,
       }, window.location.origin);
+    }
+  }
+
+  /** 開発モード on/off 切替。inline panel と全出力ウィンドウへ放送する。 */
+  setDevMode(enabled: boolean): void {
+    if (this.events.devMode.get() === enabled) return;
+    this.events.devMode.set(enabled);
+    this.broadcastDevModeToOutput();
+  }
+
+  /** targetOutputId 未指定なら全出力へ、指定なら対象だけへ dev-mode-update を送る。 */
+  private broadcastDevModeToOutput(targetOutputId?: string): void {
+    const enabled = this.events.devMode.get();
+    for (const [outputId, ow] of this.outputWindows) {
+      if (targetOutputId && outputId !== targetOutputId) continue;
+      const win = ow.getWindow();
+      if (!win || win.closed) continue;
+      win.postMessage({ type: 'dev-mode-update', enabled }, window.location.origin);
+    }
+  }
+
+  /**
+   * 操作ウィンドウのマッピングプレビューでマウスが動いた時に呼ばれる、preview→output 方向の中継。
+   * 該当出力ウィンドウへ dev-cursor-set を送ってクロスヘアを描かせ、
+   * 同時に inline panel 側の Emitter にも同じイベントを流して preview のクロスヘアも更新する
+   * （双方向同期: どちらでマウスを動かしても両方に描画される）。
+   */
+  setDevCursorFromPreview(outputId: string, xFrac: number, yFrac: number, visible: boolean): void {
+    if (!this.events.devMode.get()) return;
+    // inline panel 側の preview に反映（既存の onDevCursorChange 経路）
+    this.events.devCursor.set({ outputId, xFrac, yFrac, visible });
+    // 該当出力ウィンドウへも送って向こうのクロスヘアを更新
+    const ow = this.outputWindows.get(outputId);
+    const win = ow?.getWindow();
+    if (!win || win.closed) return;
+    try {
+      win.postMessage({ type: 'dev-cursor-set', xFrac, yFrac, visible }, window.location.origin);
+    } catch {
+      /* ignore */
     }
   }
 
@@ -360,7 +566,7 @@ export class WindowController {
     // inline panel（main の DOM 上）の video 群（clone せず共有 bind）
     this.bindStreamToInlinePanel(stream);
     // 出力ウィンドウの video 群にも同じ stream
-    this.bindStreamToOutputWindow();
+    this.bindStreamToOutputWindows();
     this.dispatchOverlayUpdate();
   }
 
@@ -392,28 +598,39 @@ export class WindowController {
   }
 
   /**
-   * 出力ウィンドウのビューポート／載っているディスプレイの寸法・全画面状態を inline panel に通知。
+   * 開いている全出力ウィンドウのビューポート／ディスプレイ寸法・全画面状態を inline panel に通知。
    * 「ディスプレイに対する出力ウィンドウの大きさ」可視化と、quad の「出力1px」ステップに使う。
    * 1 秒間隔の監視 interval からも呼ばれるので、前回と同じなら no-op。
    */
   private notifyOutputBounds(): void {
-    const outputWin = this.windowManager.getWindow('output_window');
-    if (!outputWin || outputWin.closed) return;
-    try {
-      const data: OutputBoundsSnapshot = {
-        innerWidth: outputWin.innerWidth,
-        innerHeight: outputWin.innerHeight,
-        screenWidth: outputWin.screen.width,
-        screenHeight: outputWin.screen.height,
-        isFullscreen: outputWin.document.fullscreenElement !== null,
-      };
-      const json = JSON.stringify(data);
-      if (json === this.lastOutputBoundsJson) return;
-      this.lastOutputBoundsJson = json;
-      this.events.outputBounds.set(data);
-    } catch (error) {
-      console.error('WindowController: notifyOutputBounds エラー', error);
+    const map: OutputBoundsMap = {};
+    for (const [outputId, ow] of this.outputWindows) {
+      const win = ow.getWindow();
+      if (!win || win.closed) continue;
+      try {
+        // Window Management API のスクリーン情報があれば、popup の位置から「いま載っている
+        // ディスプレイ」を引き当てる。これがあると label / isInternal が取れるほか、
+        // フルスクリーン遷移などで win.screen がプライマリを返してしまうケースの
+        // バックアップにもなる（screen の width/height が物理ディスプレイと一致するよう正規化）。
+        const placedOn = this.findScreenForWindow(win);
+        const data: OutputBoundsSnapshot = {
+          innerWidth: win.innerWidth,
+          innerHeight: win.innerHeight,
+          screenWidth: placedOn?.width ?? win.screen.width,
+          screenHeight: placedOn?.height ?? win.screen.height,
+          isFullscreen: win.document.fullscreenElement !== null,
+          screenLabel: placedOn?.label,
+          screenIsInternal: placedOn?.isInternal,
+        };
+        map[outputId] = data;
+      } catch (error) {
+        console.error('WindowController: notifyOutputBounds エラー', error);
+      }
     }
+    const json = JSON.stringify(map);
+    if (json === this.lastOutputBoundsJson) return;
+    this.lastOutputBoundsJson = json;
+    this.events.outputBounds.set(map);
   }
 
   /**
@@ -568,10 +785,13 @@ export class WindowController {
     }, 1000);
   }
 
-  // 出力ウィンドウがまだ開いているかをチェック
+  // 出力ウィンドウがまだ開いているかをチェック（1 つでも開いてれば true）
   private hasActiveWindows(): boolean {
-    const outputWindow = this.windowManager.getWindow('output_window');
-    return outputWindow !== null && !outputWindow.closed;
+    for (const ow of this.outputWindows.values()) {
+      const w = ow.getWindow();
+      if (w && !w.closed) return true;
+    }
+    return false;
   }
 
   /** canvas からのキャプチャだけを止める（observer 切断 ＋ tracks 停止）。ウィンドウ・監視はそのまま。 */

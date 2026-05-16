@@ -201,6 +201,35 @@ export const CONTROL_PANEL_CSS = `
         border-color: #2563eb;
       }
 
+      /* 開発モードトグル — aria-pressed=true で active 表示に切替 */
+      .dev-mode-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        justify-content: center;
+      }
+      .dev-mode-toggle .dev-mode-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #555;
+        box-shadow: inset 0 0 0 1px #777;
+        transition: background 0.12s ease, box-shadow 0.12s ease;
+      }
+      .dev-mode-toggle[aria-pressed="true"] {
+        background: #16a34a;
+        border-color: #22c55e;
+        color: #fff;
+      }
+      .dev-mode-toggle[aria-pressed="true"]:hover {
+        background: #15803d;
+        border-color: #16a34a;
+      }
+      .dev-mode-toggle[aria-pressed="true"] .dev-mode-dot {
+        background: #d1fadf;
+        box-shadow: 0 0 6px rgba(34, 197, 94, 0.85), inset 0 0 0 1px #fff;
+      }
+
       /* マッピング一覧 */
       .mappings-list {
         display: flex;
@@ -314,6 +343,200 @@ export const CONTROL_PANEL_CSS = `
       .mapping-list-item .remove-btn:disabled {
         color: #555;
         cursor: not-allowed;
+      }
+
+      /* 出力グループヘッダ（MappingsListPanel — 出力ごとに mappings をぶら下げる） */
+      .output-group {
+        margin-bottom: 12px;
+        border: 1px solid #333;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .output-group.active {
+        border-color: #3b82f6;
+      }
+      .output-group-header {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 6px 8px;
+        background: #2a2a2a;
+        font-size: 11px;
+        color: #ccc;
+      }
+      .output-group-header .output-name {
+        flex: 1;
+        font-weight: 500;
+        cursor: pointer;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        user-select: none;
+      }
+      .output-group-header .output-name-input {
+        flex: 1;
+        background: #222;
+        border: 1px solid #3b82f6;
+        color: #fff;
+        font-size: 11px;
+        padding: 1px 4px;
+        border-radius: 3px;
+        outline: none;
+        min-width: 0;
+      }
+      .output-group-header .output-window-status {
+        font-size: 10px;
+        color: #888;
+        margin-right: 2px;
+      }
+      .output-group-header .output-window-status.open {
+        color: #27c93f;
+      }
+      .output-group-header button {
+        background: transparent;
+        border: 1px solid #555;
+        color: #ccc;
+        cursor: pointer;
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 3px;
+        line-height: 1;
+      }
+      .output-group-header button:hover:not(:disabled) {
+        background: #3a3a3a;
+      }
+      .output-group-header button:disabled {
+        color: #555;
+        cursor: not-allowed;
+      }
+      .output-group-header .open-btn.is-open {
+        background: #27c93f33;
+        border-color: #27c93f;
+        color: #27c93f;
+      }
+      .output-group-header .remove-output-btn {
+        color: #888;
+      }
+      .output-group-header .remove-output-btn:hover:not(:disabled) {
+        color: #ff5555;
+        border-color: #ff5555;
+      }
+      .output-group-mappings {
+        padding: 4px;
+        background: #1f1f1f;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .output-group-mappings .add-mapping-here-btn {
+        margin-top: 4px;
+        background: transparent;
+        border: 1px dashed #555;
+        color: #888;
+        padding: 4px;
+        font-size: 11px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .output-group-mappings .add-mapping-here-btn:hover {
+        color: #ccc;
+        border-color: #888;
+      }
+      #add-output-btn {
+        margin-top: 4px;
+      }
+
+      /* 複数出力フレームを並べるステージ */
+      .output-stage {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 10px;
+        box-sizing: border-box;
+        container-type: size;
+      }
+
+      .dc-output-frame {
+        position: relative;
+        flex: 1 1 0;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 100%;
+        cursor: pointer;
+        container-type: size;
+      }
+      .dc-output-frame.is-active .dc-display-frame {
+        outline: 2px solid #3b82f6;
+        outline-offset: 2px;
+      }
+
+      /* 各出力枠のアスペクト固定領域。--output-aspect は OutputVizPanel が要素に設定する。 */
+      .dc-display-frame {
+        position: relative;
+        aspect-ratio: var(--output-aspect, 16 / 9);
+        width: min(100cqw, calc((100cqh - 30px) * var(--output-aspect-num, 1.7777)));
+        height: auto;
+        flex-shrink: 0;
+        max-width: 100%;
+        max-height: calc(100% - 30px);
+        border: 2px solid #444;
+        border-radius: 4px;
+        background: #111;
+        overflow: hidden;
+      }
+
+      /* mapping-area は per-output で生やす。class セレクタで CSS を当てる。 */
+      .dc-mapping-area {
+        width: 100%;
+        height: 100%;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .dc-output-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        color: #aaa;
+        max-width: 100%;
+        overflow: hidden;
+      }
+      .dc-output-header .dc-output-name {
+        color: #ccc;
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dc-output-header .dc-output-size {
+        color: #888;
+        font-size: 10px;
+      }
+      .dc-output-header .dc-output-mode {
+        padding: 1px 6px;
+        border-radius: 8px;
+        font-size: 10px;
+        background: #333;
+      }
+      .dc-output-header .dc-output-mode.open {
+        background: #27c93f33;
+        color: #27c93f;
+      }
+      .dc-output-header .dc-output-mode.fullscreen {
+        background: #3b82f633;
+        color: #3b82f6;
+      }
+      .dc-output-header .dc-output-mode.closed {
+        color: #888;
       }
 
       .display-status {
@@ -440,47 +663,9 @@ export const CONTROL_PANEL_CSS = `
         position: relative;
         overflow: hidden;
         display: flex;
-        align-items: center;
+        align-items: stretch;
         justify-content: center;
-        padding: 20px;
-      }
-
-      .display-frame-wrapper {
-        width: 100%;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        max-height: calc(100% - 40px); /* サイズ情報の高さを考慮 */
-        /* 中の .display-frame が cqh でこの content-box の高さを参照できるようにする */
-        container-type: size;
-      }
-
-      .display-frame {
-        position: relative;
-        /* アスペクト比は --display-aspect / --display-aspect-num として scope に注入される
-           （OutputVizPanel.renderOutputViz が出力ウィンドウの screen 寸法から算出）。
-           width を min(横方向の上限, 縦方向の上限から逆算した幅) で直接決めることで、
-           マッピングカラムの横幅と高さのどちらが制限要因でも常にアスペクトが保たれる。
-           cqh から 40px 引いているのは、wrapper の中に flex sibling として .display-size-info
-           が居るぶんの余白確保（gap 10px + 表示テキスト約 30px）。
-           flex-shrink: 0 で、flex column の縮小アルゴリズムによって height が勝手に
-           詰められて width:height の比が壊れるのを防ぐ。 */
-        aspect-ratio: var(--display-aspect, 16 / 9);
-        width: min(100%, calc((100cqh - 40px) * var(--display-aspect-num, 1.7777)));
-        height: auto;
-        flex-shrink: 0;
-        max-width: 100%;
-        max-height: 100%;
-        border: 2px solid #444;
-        border-radius: 4px;
-        background: #111;
-        overflow: hidden;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        padding: 10px;
       }
 
       /* ウィンドウ枠 */
@@ -509,12 +694,12 @@ export const CONTROL_PANEL_CSS = `
       }
 
       .window-titlebar {
-        height: 28px;
+        height: 18px;
         background: #2a2a2a;
         border-bottom: 1px solid #444;
         display: flex;
         align-items: center;
-        padding: 0 10px;
+        padding: 0 8px;
         flex-shrink: 0;
       }
 
@@ -524,13 +709,12 @@ export const CONTROL_PANEL_CSS = `
 
       .window-controls {
         display: flex;
-        gap: 8px;
-        margin-right: 10px;
+        gap: 4px;
       }
 
       .window-control {
-        width: 12px;
-        height: 12px;
+        width: 6px;
+        height: 6px;
         border-radius: 50%;
         display: inline-block;
       }
@@ -547,13 +731,6 @@ export const CONTROL_PANEL_CSS = `
         background: #27c93f;
       }
 
-      .window-title {
-        font-size: 11px;
-        color: #999;
-        flex: 1;
-        text-align: center;
-      }
-
       .window-content {
         flex: 1;
         position: relative;
@@ -562,32 +739,26 @@ export const CONTROL_PANEL_CSS = `
         padding: 0;  /* paddingを明示的に0に */
       }
 
-      #mapping-area {
-        width: 100%;
-        height: 100%;
-        position: relative;
-        overflow: hidden;
+      /* dev mode: 出力ウィンドウから push されたマウス位置を window-content 全面にミラー。
+         preserveAspectRatio=none + viewBox 0..100 で、コンテンツ領域へ正確にストレッチ。
+         表示はシェル（@scope ルート）の .dc-dev-mode と data-visible=true の両方を満たした時だけ。
+         @scope 内では scope root を :scope で参照する（.dc-control-shell.foo は scope の
+         「中」を探す指定なので scope root 自身にはマッチしない）。 */
+      .dc-dev-crosshair {
+        position: absolute; inset: 0;
+        width: 100%; height: 100%;
+        pointer-events: none;
+        display: none;
+        z-index: 5;
       }
-
-      .display-size-info {
-        font-size: 12px;
-        color: #888;
-        text-align: center;
-        padding: 5px 10px;
-        background: #2a2a2a;
-        border-radius: 4px;
-        border: 1px solid #333;
+      :scope.dc-dev-mode .dc-dev-crosshair[data-visible="true"] {
+        display: block;
       }
-
-      .display-size-info .separator {
-        margin: 0 8px;
-        color: #555;
-      }
-
-      .display-size-info .size-label {
-        color: #aaa;
-        font-weight: 500;
-        margin-right: 4px;
+      .dc-dev-crosshair line {
+        stroke: #ffffff;
+        stroke-width: 1;
+        vector-effect: non-scaling-stroke;
+        shape-rendering: crispEdges;
       }
 
       #mapping-video {

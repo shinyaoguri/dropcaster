@@ -10,12 +10,14 @@ import { SourceCropPanel } from './panels/SourceCropPanel';
 import { MappingAreaPanel } from './panels/MappingAreaPanel';
 import { MappingsController } from './MappingsController';
 import {
+  withActiveOutputSet,
   withActiveSet,
   type MappingsState,
 } from '../../utils/mappingTransform';
 import type {
   ControlHost,
-  OutputBoundsSnapshot,
+  DevCursorEvent,
+  OutputBoundsMap,
   TestPatternKindOrOff,
   Unsubscribe,
   VideoDimensions,
@@ -31,10 +33,11 @@ export class ControlWindow extends BaseWindow {
   };
 
   /**
-   * 出力ウィンドウ（プロジェクション出力用ポップアウト）と、それが載っているディスプレイの寸法・全画面状態。
-   * WindowController から output-dimensions-update で push される。innerWidth/Height は quad の「出力1px」ステップにも使う。
+   * 開いている各出力ウィンドウ（と載っているディスプレイ）の寸法・全画面状態。
+   * WindowController から push される。innerWidth/Height は quad の「出力1px」ステップにも使う。
+   * キーは OutputDef.id。開いていない出力はエントリ無し。
    */
-  private outputBounds = { innerWidth: 0, innerHeight: 0, screenWidth: 0, screenHeight: 0, isFullscreen: false };
+  private outputBounds: OutputBoundsMap = {};
   /** ウィンドウ resize 由来の再レイアウトを 1 フレームに 1 回へ間引くための rAF id。 */
   private resizeRafId: number | null = null;
   /** ホスト環境依存の I/O を集約した seam。null = 未初期化。 */
@@ -90,6 +93,13 @@ export class ControlWindow extends BaseWindow {
   private mount(host: ControlHost): void {
     this.disposeHost(); // 既存 host があれば確実に剥がす
     this.controlHost = host;
+    // 親 (WindowController) が保持している canonical state を即座に取り込む。
+    // これより前に setupControls してしまうと、各 panel は MappingsController が初期化時に
+    // 持っている defaultMappingsState() を読む — その後 source-video loadedmetadata で
+    // SourceCropPanel.initializeAtFull() が ctrl.commit() を投げると、parent には
+    // 「local default の outputs」が届き、closeOrphanedOutputWindows で直前に開いた出力
+    // ウィンドウが orphan 扱いになって閉じられてしまう。state を先に同期して回避する。
+    this.ctrl.applyExternal(host.getState());
     this.setupHostSubscriptions();
     this.setupControls();
     this.setupMessageListener();
@@ -107,7 +117,13 @@ export class ControlWindow extends BaseWindow {
   private refreshAllFromState(): void {
     this.keyboardNudge.clearSelection();
     this.sourceCrop.refresh();
+    // state.outputs / activeOutputId 等の変化に追従するためフレーム DOM を組み直す
+    this.outputViz.refresh();
+    // active mapping の outputId が変わっていれば cropped-container を移動
+    this.mappingArea.refreshActiveMount();
     this.mappingArea.refreshTransform();
+    // 非 active preview も output 振り分けし直す
+    this.inactivePreviews.sync(this.ctrl.getState());
     this.updateToolValues();
     this.mappingsList.rerender();
   }
@@ -130,9 +146,13 @@ export class ControlWindow extends BaseWindow {
     this.hostUnsubs.push(
       h.onStateChange((s: MappingsState) => this.ctrl.applyExternal(s)),
       h.onVideoDimensionsChange((d: VideoDimensions) => this.handleVideoDimensionsUpdate(d)),
-      h.onOutputBoundsChange((b: OutputBoundsSnapshot) => this.handleOutputBoundsUpdate(b)),
+      h.onOutputBoundsChange((b: OutputBoundsMap) => this.handleOutputBoundsUpdate(b)),
       h.onTestPatternChange((k: TestPatternKindOrOff) => this.updateTestPatternUI(k)),
       h.onWebglContextChange((status: WebglContextStatus) => this.updateWebglContextBanner(status)),
+      h.onDevModeChange((enabled: boolean) => this.updateDevModeUI(enabled)),
+      h.onDevCursorChange((e: DevCursorEvent) => this.outputViz.updateDevCursor(
+        e.outputId, e.xFrac, e.yFrac, e.visible,
+      )),
     );
   }
 
@@ -213,6 +233,25 @@ ${CONTROL_PANEL_CSS}
       });
     }
 
+    // 出力ごとのフレーム DOM を組み立てるパネル（mapping-area は OutputVizPanel が
+    // 各出力に 1 個ずつ生やすので、MappingAreaPanel／InactivePreviewPool より先に attach する）
+    this.outputViz.attach(scope, {
+      getOutputBounds: () => this.outputBounds,
+      getVideoDimensions: () => this.videoActualDimensions,
+      getSourceVideo: () => this.sourceVideo,
+      setActiveOutput: (outputId) => {
+        const cur = this.ctrl.getState();
+        if (cur.activeOutputId === outputId) return;
+        this.ctrl.replaceState(withActiveOutputSet(cur, outputId));
+      },
+      onWindowFrameReflow: () => this.mappingArea.refreshTransform(),
+      // dev mode の時だけ、プレビュー上のマウス位置を host 経由で出力ウィンドウへ送る（双方向同期）
+      onPreviewCursor: (outputId, xFrac, yFrac, visible) => {
+        if (!this.controlHost?.getDevMode()) return;
+        this.controlHost.requestDevCursor(outputId, xFrac, yFrac, visible);
+      },
+    }, this.ctrl);
+
     // マッピング領域: quad ドラッグ / 4 隅ハンドル / リセット / resize observer / stream bind
     if (this.hostDoc && this.controlHost) {
       this.mappingArea.attach(scope, this.hostDoc, this.controlHost.window, this.ctrl, {
@@ -223,17 +262,20 @@ ${CONTROL_PANEL_CSS}
           this.updateToolValues();
         },
         onCroppedVideoMetadata: (d) => { this.videoActualDimensions = d; },
+        getMappingArea: (outputId) => this.outputViz.getMappingArea(outputId),
       });
     }
 
-    // 非 active mapping のプレビュー pool を mapping-area に attach
-    const stage = this.mappingArea.getStage();
-    if (stage && this.hostDoc) {
-      this.inactivePreviews.attach(stage, this.hostDoc, {
+    // 非 active mapping のプレビュー pool — 各 mapping を outputId の mapping-area に振り分け
+    if (this.hostDoc) {
+      this.inactivePreviews.attach(this.hostDoc, {
         getSourceVideo: () => this.sourceVideo,
         getActiveContainer: () => this.mappingArea.getCroppedContainer(),
+        getStageFor: (outputId) => this.outputViz.getMappingArea(outputId),
         onActivate: (id) => this.ctrl.replaceState(withActiveSet(this.ctrl.getState(), id)),
       });
+      // 初期同期（state 復元直後の inactive preview を即配置）
+      this.inactivePreviews.sync(this.ctrl.getState());
     }
 
     // ツールボタンの設定
@@ -258,18 +300,14 @@ ${CONTROL_PANEL_CSS}
       this.columnResizers.attach(this.scopeEl, this.hostDoc);
     }
 
-    // 出力ウィンドウ枠 + canvas アスペクト比の可視化
-    this.outputViz.attach(scope, {
-      getOutputBounds: () => this.outputBounds,
-      getVideoDimensions: () => this.videoActualDimensions,
-      getSourceVideo: () => this.sourceVideo,
-      onWindowFrameReflow: () => this.mappingArea.refreshTransform(),
-    });
-
-    // マッピング一覧と add / export / import ボタン
-    if (this.hostDoc) {
+    // マッピング一覧（出力ごとにグループ化）と add / export / import / 出力管理 ボタン
+    if (this.hostDoc && this.controlHost) {
+      const host = this.controlHost;
       this.mappingsList.attach(scope, this.hostDoc, this.ctrl, {
         getHostWin: () => this.hostWin,
+        openOutputWindow: (outputId) => host.openOutputWindow(outputId),
+        closeOutputWindow: (outputId) => host.closeOutputWindow(outputId),
+        isOutputWindowOpen: (outputId) => this.outputBounds[outputId] !== undefined,
       });
     }
 
@@ -294,8 +332,33 @@ ${CONTROL_PANEL_CSS}
       });
     });
 
+    // 開発モードトグル — 押すたびに on/off を反転して host に投げる
+    const devToggle = scope.querySelector('#dev-mode-toggle') as HTMLButtonElement | null;
+    devToggle?.addEventListener('click', () => {
+      const next = !(this.controlHost?.getDevMode() ?? false);
+      // optimistic 表示更新（host から onDevModeChange で再度 push されて確定）
+      this.updateDevModeUI(next);
+      this.controlHost?.requestDevMode(next);
+    });
+    // 初期表示を host の現在値に合わせる
+    if (this.controlHost) this.updateDevModeUI(this.controlHost.getDevMode());
+
     // ディスプレイサイズを更新
     this.outputViz.refreshOutputViz();
+  }
+
+  /** 開発モードトグルの ON/OFF 表示を切り替える（state は host が持っている）。 */
+  private updateDevModeUI(enabled: boolean): void {
+    const scope = this.scopeEl;
+    if (!scope) return;
+    // shell に dc-dev-mode クラスを付けて、各出力プレビュー内の crosshair SVG の表示／非表示を CSS で制御
+    scope.classList.toggle('dc-dev-mode', enabled);
+    if (!enabled) this.outputViz.hideAllDevCursors();
+    const btn = scope.querySelector('#dev-mode-toggle') as HTMLButtonElement | null;
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    const label = btn.querySelector('.dev-mode-label');
+    if (label) label.textContent = enabled ? 'ON' : 'OFF';
   }
 
   /** ホスト要素のオーナードキュメント（要素生成・ファイル取得 UI に使う）。 */
@@ -338,10 +401,17 @@ ${CONTROL_PANEL_CSS}
     if (br) br.textContent = fmt(quad.bottomRight);
   }
 
-  /** quad の「出力1px」の基準サイズ。出力ウィンドウのビューポート → ソース canvas 寸法 → 1920×1080 でフォールバック。 */
+  /**
+   * quad の「出力1px」の基準サイズ。
+   * active mapping が属する出力のビューポート → ソース canvas 寸法 → 1920×1080 の順でフォールバック。
+   */
   private quadStepRefSize(): { width: number; height: number } {
-    const { innerWidth: ow, innerHeight: oh } = this.outputBounds;
-    if (ow > 16 && oh > 16) return { width: ow, height: oh };
+    const state = this.ctrl.getState();
+    const activeMapping = state.mappings.find(m => m.id === state.activeId) ?? state.mappings[0];
+    const b = activeMapping ? this.outputBounds[activeMapping.outputId] : undefined;
+    if (b && b.innerWidth > 16 && b.innerHeight > 16) {
+      return { width: b.innerWidth, height: b.innerHeight };
+    }
     const { width: vw, height: vh } = this.videoActualDimensions;
     if (vw > 16 && vh > 16) return { width: vw, height: vh };
     return { width: 1920, height: 1080 };
@@ -395,10 +465,12 @@ ${CONTROL_PANEL_CSS}
     win.addEventListener('pagehide', () => this.disposeHost());
   }
 
-  /** ControlHost から push される「出力ウィンドウ＋ディスプレイ寸法／全画面状態」を反映。 */
-  private handleOutputBoundsUpdate(b: OutputBoundsSnapshot): void {
+  /** ControlHost から push される「出力 id → 寸法／全画面状態」を反映。 */
+  private handleOutputBoundsUpdate(b: OutputBoundsMap): void {
     this.outputBounds = { ...b };
     this.outputViz.refreshOutputViz();
+    // 開閉に応じて「未起動」表示も切り替わるので mappings list を再描画
+    this.mappingsList.rerender();
   }
 
   private handleVideoDimensionsUpdate(dimensions: VideoDimensions): void {
