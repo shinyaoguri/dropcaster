@@ -5,6 +5,7 @@ import { ColumnResizers } from './panels/ColumnResizers';
 import { OutputVizPanel } from './panels/OutputVizPanel';
 import { InactivePreviewPool } from './panels/InactivePreviewPool';
 import { KeyboardNudge } from './panels/KeyboardNudge';
+import { LayoutPanel } from './panels/LayoutPanel';
 import { MappingsListPanel } from './panels/MappingsListPanel';
 import { SourceCropPanel } from './panels/SourceCropPanel';
 import { MappingAreaPanel } from './panels/MappingAreaPanel';
@@ -50,6 +51,9 @@ export class ControlWindow extends BaseWindow {
   private mappingsList = new MappingsListPanel();
   private sourceCrop = new SourceCropPanel();
   private mappingArea = new MappingAreaPanel();
+  private layoutPanel = new LayoutPanel();
+  /** 現在 active なタブ（'mapping' / 'layout'）。タブ切替時に LayoutPanel.refresh() を駆動。 */
+  private activeTab: 'mapping' | 'layout' = 'mapping';
   // canonical state（および active alias）は MappingsController が所有する。
   // ローカル mutation 後の broadcast 経路（commit）だけ親側から差し込む。
   private ctrl = new MappingsController((state) => this.controlHost?.emitStateMutation(state));
@@ -91,7 +95,8 @@ export class ControlWindow extends BaseWindow {
 
   /** host 確定後のセットアップを行う（mountInline から呼ばれる）。 */
   private mount(host: ControlHost): void {
-    this.disposeHost(); // 既存 host があれば確実に剥がす
+    // 既存 host があれば確実に剥がす（new pane への切替時に listener が残らないように）
+    this.disposeHost();
     this.controlHost = host;
     // 親 (WindowController) が保持している canonical state を即座に取り込む。
     // これより前に setupControls してしまうと、各 panel は MappingsController が初期化時に
@@ -118,6 +123,8 @@ export class ControlWindow extends BaseWindow {
     this.keyboardNudge.clearSelection();
     this.sourceCrop.refresh();
     // state.outputs / activeOutputId 等の変化に追従するためフレーム DOM を組み直す
+    // （rebuildFromState は DOM 構造のみで rect 非依存。renderEachFrame は rect を使うので
+    //  mapping タブ非表示時は 0 寸法で書き込まれる → タブ切替時に setupTabs が再描画する）
     this.outputViz.refresh();
     // active mapping の outputId が変わっていれば cropped-container を移動
     this.mappingArea.refreshActiveMount();
@@ -126,6 +133,8 @@ export class ControlWindow extends BaseWindow {
     this.inactivePreviews.sync(this.ctrl.getState());
     this.updateToolValues();
     this.mappingsList.rerender();
+    // 出力レイアウトタブが表示中なら追従更新（出力をドラッグしてサイズが変わった時など）
+    if (this.activeTab === 'layout') this.layoutPanel.refresh();
   }
 
   /** CSS を host の owner document へ 1 度だけ注入する（inline 起動用）。重複注入を防ぐ。 */
@@ -170,6 +179,7 @@ export class ControlWindow extends BaseWindow {
     this.mappingsList.destroy();
     this.sourceCrop.destroy();
     this.mappingArea.destroy();
+    this.layoutPanel.destroy();
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
@@ -217,6 +227,7 @@ ${CONTROL_PANEL_CSS}
         };
         this.outputViz.refreshAspectRatio();
         this.inactivePreviews.rebindStreams();
+        this.layoutPanel.rebindStreams();
       });
     }
 
@@ -262,16 +273,17 @@ ${CONTROL_PANEL_CSS}
           this.updateToolValues();
         },
         onCroppedVideoMetadata: (d) => { this.videoActualDimensions = d; },
-        getMappingArea: (outputId) => this.outputViz.getMappingArea(outputId),
+        getCanvasMappings: () => this.outputViz.getCanvasMappings(),
+        getCanvasHandles: () => this.outputViz.getCanvasHandles(),
       });
     }
 
-    // 非 active mapping のプレビュー pool — 各 mapping を outputId の mapping-area に振り分け
+    // 非 active mapping のプレビュー pool — 共有 canvas-mappings レイヤに mount
     if (this.hostDoc) {
       this.inactivePreviews.attach(this.hostDoc, {
         getSourceVideo: () => this.sourceVideo,
         getActiveContainer: () => this.mappingArea.getCroppedContainer(),
-        getStageFor: (outputId) => this.outputViz.getMappingArea(outputId),
+        getMappingsLayer: () => this.outputViz.getCanvasMappings(),
         onActivate: (id) => this.ctrl.replaceState(withActiveSet(this.ctrl.getState(), id)),
       });
       // 初期同期（state 復元直後の inactive preview を即配置）
@@ -284,7 +296,7 @@ ${CONTROL_PANEL_CSS}
     // 矢印キーによる微調整
     if (this.hostDoc) {
       this.keyboardNudge.attach(scope, this.hostDoc, this.ctrl, {
-        getQuadRefSize: () => this.quadStepRefSize(),
+        getQuadStepPerScreenPx: () => this.quadStepPerScreenPx(),
         getSourceRefSize: () => this.sourceStepRefSize(),
         getSelectionBox: () => this.sourceCrop.getSelectionBox(),
         onAfterMutate: (type) => {
@@ -294,6 +306,16 @@ ${CONTROL_PANEL_CSS}
         },
       });
     }
+
+    // 出力レイアウト編集タブ（仮想キャンバス上で各 output を 2D ドラッグ・リサイズで配置 + マッピング preview）
+    if (this.hostDoc && this.controlHost) {
+      this.layoutPanel.attach(scope, this.hostDoc, this.controlHost.window, this.ctrl, {
+        getSourceVideo: () => this.sourceVideo,
+      });
+    }
+
+    // タブ切替（マッピング ↔ 出力レイアウト）
+    this.setupTabs();
 
     // カラム間のドラッグリサイザ（前回保存幅の復元含む）
     if (this.scopeEl && this.hostDoc) {
@@ -345,6 +367,50 @@ ${CONTROL_PANEL_CSS}
 
     // ディスプレイサイズを更新
     this.outputViz.refreshOutputViz();
+  }
+
+  /**
+   * タブ切替 UI のハンドラ。クリックで `.dc-tab.is-active` と `.dc-tab-pane.is-active` を
+   * 付け替え、表示されたタブ側を rAF 後に full refresh する。
+   *
+   * rAF を挟む理由: display:none → flex に変わった直後は getBoundingClientRect() が
+   * 0×0 を返すことがあるので、次フレームでブラウザがレイアウトを確定したあとに refresh する。
+   * 非表示の間に発生した state 変更（隠れたタブの再描画は 0 サイズで実行されている可能性）も
+   * このタイミングで正しい寸法で再計算される。
+   */
+  private setupTabs(): void {
+    const scope = this.scopeEl;
+    if (!scope) return;
+    const tabs = scope.querySelectorAll<HTMLButtonElement>('.dc-tab');
+    const panes = scope.querySelectorAll<HTMLElement>('.dc-tab-pane');
+    tabs.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.tab as 'mapping' | 'layout' | undefined;
+        if (!name || name === this.activeTab) return;
+        this.activeTab = name;
+        tabs.forEach(b => {
+          const active = b.dataset.tab === name;
+          b.classList.toggle('is-active', active);
+          b.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        panes.forEach(p => {
+          p.classList.toggle('is-active', p.dataset.tabPane === name);
+        });
+        const win = this.controlHost?.window;
+        const fullRefresh = () => {
+          if (name === 'layout') {
+            this.layoutPanel.refresh();
+          } else {
+            this.outputViz.refresh();
+            this.mappingArea.refreshActiveMount();
+            this.mappingArea.refreshTransform();
+            this.inactivePreviews.sync(this.ctrl.getState());
+          }
+        };
+        if (win) win.requestAnimationFrame(fullRefresh);
+        else fullRefresh();
+      });
+    });
   }
 
   /** 開発モードトグルの ON/OFF 表示を切り替える（state は host が持っている）。 */
@@ -402,19 +468,23 @@ ${CONTROL_PANEL_CSS}
   }
 
   /**
-   * quad の「出力1px」の基準サイズ。
-   * active mapping が属する出力のビューポート → ソース canvas 寸法 → 1920×1080 の順でフォールバック。
+   * 矢印キーの「出力 1 px」ステップを仮想キャンバス px に換算する係数 {x, y}。
+   * out.size.width / out.bounds.innerWidth が、出力ウィンドウ上 1 screen-px が
+   * 仮想キャンバスの何 canvas-px に相当するかを与える。
+   * 出力未起動時は 1（= 1 canvas-px ステップ）にフォールバック。
    */
-  private quadStepRefSize(): { width: number; height: number } {
+  private quadStepPerScreenPx(): { x: number; y: number } {
     const state = this.ctrl.getState();
-    const activeMapping = state.mappings.find(m => m.id === state.activeId) ?? state.mappings[0];
-    const b = activeMapping ? this.outputBounds[activeMapping.outputId] : undefined;
-    if (b && b.innerWidth > 16 && b.innerHeight > 16) {
-      return { width: b.innerWidth, height: b.innerHeight };
-    }
-    const { width: vw, height: vh } = this.videoActualDimensions;
-    if (vw > 16 && vh > 16) return { width: vw, height: vh };
-    return { width: 1920, height: 1080 };
+    const active = state.mappings.find(m => m.id === state.activeId) ?? state.mappings[0];
+    const out = active ? state.outputs.find(o => o.id === active.outputId) : undefined;
+    if (!out) return { x: 1, y: 1 };
+    const b = this.outputBounds[out.id];
+    const screenW = b && b.innerWidth > 16 ? b.innerWidth : out.size.width;
+    const screenH = b && b.innerHeight > 16 ? b.innerHeight : out.size.height;
+    return {
+      x: out.size.width > 0 && screenW > 0 ? out.size.width / screenW : 1,
+      y: out.size.height > 0 && screenH > 0 ? out.size.height / screenH : 1,
+    };
   }
 
   /** source 矩形の「ソース1px」の基準サイズ（= キャプチャ canvas 寸法）。未取得なら 1920×1080。 */
@@ -451,13 +521,19 @@ ${CONTROL_PANEL_CSS}
     const win = this.controlHost?.window;
     if (!win) return;
 
-    // ウィンドウリサイズ時にアスペクト比とホモグラフィー行列を再計算（1 フレーム 1 回に間引く）
+    // ウィンドウリサイズ時に各タブを再描画（1 フレーム 1 回に間引く）。
+    // outputViz.refresh() / layoutPanel.refresh() は stage rect を再計測してフィット scale を
+    // 計算し直すので、サイズ変更で見えなくなることを防ぐ。
     win.addEventListener('resize', () => {
       if (this.resizeRafId !== null) return;
       this.resizeRafId = win.requestAnimationFrame(() => {
         this.resizeRafId = null;
-        this.outputViz.refreshAspectRatio();
-        this.mappingArea.refreshTransform();
+        if (this.activeTab === 'layout') {
+          this.layoutPanel.refresh();
+        } else {
+          this.outputViz.refresh();
+          this.mappingArea.refreshTransform();
+        }
       });
     });
 

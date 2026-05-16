@@ -19,7 +19,7 @@
 
 import {
   CORNER_KEYS,
-  applyQuadTransform,
+  applyQuadCanvas,
   applyVideoCrop,
   cloneQuad,
   defaultQuad,
@@ -38,8 +38,17 @@ export interface MappingAreaPanelAttachOptions {
   onQuadChanged: () => void;
   /** cropped-video の loadedmetadata 時に呼ばれる。親側で videoActualDimensions を反映する用。 */
   onCroppedVideoMetadata?: (dimensions: { width: number; height: number }) => void;
-  /** 指定 outputId の `.dc-mapping-area` 要素を返す（OutputVizPanel が組み立てている）。 */
-  getMappingArea: (outputId: string) => HTMLElement | null;
+  /**
+   * 仮想キャンバス全体の mapping レイヤ（cropped-container の mount 先）。
+   * canvas-host の中にあり、canvas px サイズで scale 適用済みの座標系で動く。
+   */
+  getCanvasMappings: () => HTMLElement | null;
+  /**
+   * 仮想キャンバス全体の handles レイヤ（4 隅ハンドルの mount 先）。
+   * canvas-host 内なので親の scale が適用される — ハンドル本体は --canvas-counter-scale で
+   * 逆スケールしてサイズ 14px を維持する。
+   */
+  getCanvasHandles: () => HTMLElement | null;
 }
 
 export class MappingAreaPanel {
@@ -94,11 +103,16 @@ export class MappingAreaPanel {
     const scope = this.scope;
     if (!ctrl || !scope || !this.croppedContainer) return;
 
+    const state = ctrl.getState();
     const quad = ctrl.getActiveQuad();
-    applyQuadTransform(this.croppedContainer, quad);
+
+    // cropped-container は canvas-mappings 直下に置かれ、サイズは canvas px と一致。matrix3d
+    // は quad（仮想キャンバス px）と canvas 寸法を使う。
+    this.croppedContainer.style.width = `${state.canvas.width}px`;
+    this.croppedContainer.style.height = `${state.canvas.height}px`;
+    applyQuadCanvas(this.croppedContainer, quad, state.canvas.width, state.canvas.height);
 
     // active な mapping の色を CSS 変数として伝播
-    const state = ctrl.getState();
     const activeIdx = state.mappings.findIndex(m => m.id === state.activeId);
     const activeColor = mappingColor(activeIdx >= 0 ? activeIdx : 0);
     this.croppedContainer.style.setProperty('--mapping-color', activeColor);
@@ -176,25 +190,24 @@ export class MappingAreaPanel {
     }
   }
 
-  /** active mapping の所属 output の `.dc-mapping-area` に cropped-container + 4 handles を入れ直す。 */
+  /**
+   * 共有 canvas-mappings に cropped-container、canvas-handles に 4 quad-handles を mount。
+   * 新モデルでは出力ごとの mount-area は無く、mapping は全 output 共通の canvas に描かれる。
+   */
   private mountInActiveOutput(): void {
-    const ctrl = this.ctrl;
     const opts = this.opts;
     const container = this.croppedContainer;
-    if (!ctrl || !opts || !container) return;
-    const state = ctrl.getState();
-    const active = state.mappings.find(m => m.id === state.activeId);
-    if (!active) return;
-    const target = opts.getMappingArea(active.outputId);
-    if (!target) return;
+    if (!opts || !container) return;
+    const canvasMappings = opts.getCanvasMappings();
+    const canvasHandles = opts.getCanvasHandles();
+    if (!canvasMappings || !canvasHandles) return;
 
-    if (container.parentElement !== target) {
-      target.appendChild(container);
+    if (container.parentElement !== canvasMappings) {
+      canvasMappings.appendChild(container);
     }
     for (const h of this.handles) {
-      if (h.parentElement !== target) target.appendChild(h);
+      if (h.parentElement !== canvasHandles) canvasHandles.appendChild(h);
     }
-    // resize observer の対象も新しい parent に切替
     this.rebindResizeObserver();
   }
 
@@ -207,13 +220,21 @@ export class MappingAreaPanel {
     const btn = scope.querySelector('#reset-mapping-btn');
     if (!btn) return;
     btn.addEventListener('click', () => {
-      ctrl.setActiveQuad(defaultQuad());
+      // active mapping の所属出力の中央 25..75% に戻す（仮想キャンバス px）
+      const state = ctrl.getState();
+      const active = state.mappings.find(m => m.id === state.activeId);
+      const out = active ? state.outputs.find(o => o.id === active.outputId) : undefined;
+      ctrl.setActiveQuad(defaultQuad(out));
       this.refreshTransform();
       ctrl.commit();
     });
   }
 
-  /** cropped-container 本体（隅ハンドル以外）のドラッグで quad 全体を平行移動。 */
+  /**
+   * cropped-container 本体（隅ハンドル以外）のドラッグで quad 全体を平行移動。
+   * delta はスクリーン px → canvas px に変換して quad に加算する。
+   * 変換は parentRect（canvas-window の bounding rect）と canvas 寸法から算出。
+   */
   private setupQuadBodyDrag(): void {
     const doc = this.doc;
     const ctrl = this.ctrl;
@@ -221,7 +242,7 @@ export class MappingAreaPanel {
     const container = this.croppedContainer;
     if (!doc || !ctrl || !opts || !container) return;
 
-    type Snap = { startX: number; startY: number; initialQuad: Quad; parent: HTMLElement };
+    type Snap = { startX: number; startY: number; initialQuad: Quad; canvasW: number; canvasH: number; parent: HTMLElement };
     const dispose = draggable<Snap>(container, doc, {
       onStart: (e) => {
         const target = e.target as HTMLElement;
@@ -229,19 +250,23 @@ export class MappingAreaPanel {
         opts.clearKeyboardSelection();
         const parent = container.parentElement;
         if (!parent) return null;
+        const state = ctrl.getState();
         e.preventDefault();
         return {
           startX: e.clientX,
           startY: e.clientY,
           initialQuad: cloneQuad(ctrl.getActiveQuad()),
+          canvasW: state.canvas.width,
+          canvasH: state.canvas.height,
           parent,
         };
       },
       onMove: (e, snap) => {
         const parentRect = snap.parent.getBoundingClientRect();
         if (parentRect.width <= 0 || parentRect.height <= 0) return;
-        const dx = ((e.clientX - snap.startX) / parentRect.width) * 100;
-        const dy = ((e.clientY - snap.startY) / parentRect.height) * 100;
+        // canvas-window の表示サイズと canvas 寸法の比から、スクリーン px → canvas px へ変換
+        const dx = ((e.clientX - snap.startX) / parentRect.width) * snap.canvasW;
+        const dy = ((e.clientY - snap.startY) / parentRect.height) * snap.canvasH;
         ctrl.setActiveQuad(translateQuad(snap.initialQuad, dx, dy));
         this.refreshTransform();
         ctrl.commit();
@@ -262,27 +287,30 @@ export class MappingAreaPanel {
       const corner = handle.dataset.corner as CornerKey | undefined;
       if (!corner || !CORNER_KEYS.includes(corner)) continue;
 
-      type Snap = { startX: number; startY: number; initialPoint: { x: number; y: number } };
+      type Snap = { startX: number; startY: number; initialPoint: { x: number; y: number }; canvasW: number; canvasH: number };
       const dispose = draggable<Snap>(handle, doc, {
         onStart: (e) => {
           handle.classList.add('dragging');
           opts.setKeyboardQuadSelection(corner);
+          const state = ctrl.getState();
           e.stopPropagation();
           e.preventDefault();
           return {
             startX: e.clientX,
             startY: e.clientY,
             initialPoint: { ...ctrl.getActiveQuad()[corner] },
+            canvasW: state.canvas.width,
+            canvasH: state.canvas.height,
           };
         },
         onMove: (e, snap) => {
-          // parent は active output が切り替わると別要素になるので毎回引く
+          // parent（canvas-window）は active output が切り替わると別要素になるので毎回引く
           const parent = container.parentElement;
           if (!parent) return;
           const parentRect = parent.getBoundingClientRect();
           if (parentRect.width <= 0 || parentRect.height <= 0) return;
-          const dx = ((e.clientX - snap.startX) / parentRect.width) * 100;
-          const dy = ((e.clientY - snap.startY) / parentRect.height) * 100;
+          const dx = ((e.clientX - snap.startX) / parentRect.width) * snap.canvasW;
+          const dy = ((e.clientY - snap.startY) / parentRect.height) * snap.canvasH;
           const q = ctrl.getActiveQuad();
           ctrl.setActiveQuad({
             ...q,
@@ -299,13 +327,18 @@ export class MappingAreaPanel {
     }
   }
 
+  /**
+   * 4 隅ハンドルは canvas-handles（canvas-host 内、canvas px サイズ）直下に置かれる。
+   * 位置は仮想キャンバス px そのまま。親の scale でハンドルも縮拡されるが、CSS で
+   * `transform: scale(var(--canvas-counter-scale))` を当てて 14px に保つ。
+   */
   private updateQuadHandlePositions(quad: Quad): void {
     for (const handle of this.handles) {
       const corner = handle.dataset.corner as CornerKey | undefined;
       if (!corner || !CORNER_KEYS.includes(corner)) continue;
       const p = quad[corner];
-      handle.style.left = `${p.x}%`;
-      handle.style.top = `${p.y}%`;
+      handle.style.left = `${p.x}px`;
+      handle.style.top = `${p.y}px`;
     }
   }
 

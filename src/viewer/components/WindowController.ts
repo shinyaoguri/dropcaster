@@ -18,7 +18,8 @@ import type {
   WebglContextStatus,
 } from '../windows/control/ControlHost';
 
-const STATE_STORAGE_KEY = 'dropcaster.mappings.v1';
+// v2: 仮想キャンバス座標系（quad は px、output は position/size）。v1 とは非互換。
+const STATE_STORAGE_KEY = 'dropcaster.mappings.v2';
 const SAVE_DEBOUNCE_MS = 250;
 
 // Window Management API（Chrome/Edge 系のみ）の最小型定義

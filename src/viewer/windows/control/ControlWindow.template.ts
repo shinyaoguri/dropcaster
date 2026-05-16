@@ -137,15 +137,20 @@ export const CONTROL_PANEL_HTML = `
         <!-- マッピングカラム -->
         <div class="column mapping-column">
           <div class="column-header">
-            <h2>マッピングプレビュー</h2>
+            <div class="dc-tab-strip" role="tablist" aria-label="マッピングカラムのビュー切替">
+              <button class="dc-tab is-active" role="tab" aria-selected="true" data-tab="mapping">マッピング</button>
+              <button class="dc-tab" role="tab" aria-selected="false" data-tab="layout">出力レイアウト</button>
+            </div>
           </div>
           <div class="mapping-container">
             <!-- 全出力で共有する hidden mapping-video（cropped-video への stream donor） -->
             <video id="mapping-video" autoplay muted playsinline style="display: none;">
               <p>MediaStreamの読み込み中...</p>
             </video>
-            <!-- 出力ごとのフレームが横並びに並ぶステージ。OutputVizPanel が動的に組み立てる -->
-            <div id="output-stage" class="output-stage"></div>
+            <!-- マッピング編集ビュー: 出力ごとのフレームを横並びに並べたステージ。OutputVizPanel が組み立てる -->
+            <div id="output-stage" class="output-stage dc-tab-pane is-active" data-tab-pane="mapping"></div>
+            <!-- 出力レイアウトビュー: 仮想キャンバス全体を縮小表示して、各出力を 2D ドラッグ・リサイズで配置する -->
+            <div id="layout-stage" class="layout-stage dc-tab-pane" data-tab-pane="layout"></div>
           </div>
         </div>
       </div>

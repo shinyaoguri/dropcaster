@@ -24,8 +24,12 @@ export type CornerKey = typeof CORNER_KEYS[number];
  * 個別マッピング。source crop と destination quad を1組持つ。
  * enabled が false の場合、メイン画面の投影出力からは除外される（コントロール上は編集可能）。
  *
- * outputId は所属する出力（OutputDef）の id を指す。quad の座標は当該出力フレームの
- * 0..100% で表現される（出力ごとに別の解像度・配置を持っても座標系は共通）。
+ * outputId は所属する出力（OutputDef）の id を指す。これは UI 上の primary owner
+ * （一覧グルーピング、追加時のデフォルト所属、削除時の依存追跡）であって、描画上は
+ * outputId に関わらず quad が交差する全出力に描かれる（跨ぎマッピング対応）。
+ *
+ * quad の座標は「仮想キャンバス」座標（px）。仮想キャンバス上の全出力（OutputDef.position
+ * + OutputDef.size の矩形）と quad の交差部分だけが各出力で見える。
  */
 export interface MappingEntry {
   id: string;
@@ -43,18 +47,20 @@ export function isMappingEnabled(m: MappingEntry): boolean {
 /**
  * 投影先の出力ウィンドウ／プロジェクタ1台ぶんの定義。
  *
- *  - layout: コントロール上で複数出力を同時に並べて見せるための「ステージ座標」。
- *    実ピクセル相当（典型的には `getScreenDetails()` の screens[].left/top/width/height
- *    をそのまま流せる）。コントロール側では transform: scale() で縮小表示される。
- *  - screen: 出力ウィンドウを送り込みたい物理スクリーン情報（任意）。
- *    placeOnExternalScreen が利用する。
- *  - pixelSize: 実出力ウィンドウのバッキングストア相当解像度（任意。未指定時は layout の
- *    width/height を流用）。
+ *  - position: 仮想キャンバス上の左上座標（px）。この出力がキャンバスのどこを担当するか。
+ *  - size:     仮想キャンバス上のサイズ（px）。この出力が担当する矩形の幅・高さ。
+ *              （実出力ウィンドウの解像度＝pixelSize とは独立。通常は一致するが、
+ *               論理サイズと物理サイズを別にすることもできる）
+ *  - screen:   出力ウィンドウを送り込みたい物理スクリーン情報（任意）。
+ *              placeOnExternalScreen が利用する。
+ *  - pixelSize: 実出力ウィンドウのバッキングストア相当解像度（任意）。未指定時は
+ *              size をフォールバックに使う。aspect 計算の参考値。
  */
 export interface OutputDef {
   id: string;
   name?: string;
-  layout: { x: number; y: number; width: number; height: number };
+  position: { x: number; y: number };
+  size: { width: number; height: number };
   screen?: { left: number; top: number; width: number; height: number; label?: string };
   pixelSize?: { width: number; height: number };
 }
@@ -62,9 +68,12 @@ export interface OutputDef {
 /**
  * マッピング機能全体の正規状態。
  *
+ *  - version: 現在のスキーマバージョン（2）。v1 から非互換。
+ *  - canvas: 仮想キャンバスのサイズ（px）。全 output と全 quad を包含する座標空間。
+ *    outputs を追加・移動するたびに recomputeCanvasBounds で再計算される。
  *  - outputs は1件以上。複数の出力ウィンドウを同時に扱う場合は最大4件まで（UI 制約）。
- *  - 各 mapping は outputId で出力フレームに割り当てられ、quad はその出力フレームの
- *    0..100% で記述される。
+ *  - 各 mapping の quad は仮想キャンバス px。outputId は primary owner（一覧
+ *    グルーピング・追加時のデフォルト所属用）で、描画は quad の交差判定で行う。
  *  - mappings は1件以上、activeId は常に mappings 中のいずれかを指す。
  *  - activeOutputId は「出力フレーム自体を選択中」の状態（layout 編集用、未選択なら undefined）。
  *
@@ -72,6 +81,8 @@ export interface OutputDef {
  * これの mirror をレンダリングするだけ。
  */
 export interface MappingsState {
+  version: 2;
+  canvas: { width: number; height: number };
   outputs: OutputDef[];
   mappings: MappingEntry[];
   activeId: string;
@@ -106,15 +117,33 @@ export function mappingColor(index: number): string {
 }
 
 /**
- * 既定の出力1件を生成する。layout は原点に配置（複数並べる場合は呼び出し側で
- * 適切にオフセットする — 未配置レイアウト計算は本ファイルの責務外）。
+ * 既定の出力1件を生成する。position は原点（複数並べる場合は呼び出し側で
+ * オフセットする — withAddedOutput が右に詰めて配置する）。
  */
 export function defaultOutput(name?: string): OutputDef {
   return {
     id: generateOutputId(),
     name,
-    layout: { x: 0, y: 0, width: DEFAULT_OUTPUT_WIDTH, height: DEFAULT_OUTPUT_HEIGHT },
+    position: { x: 0, y: 0 },
+    size: { width: DEFAULT_OUTPUT_WIDTH, height: DEFAULT_OUTPUT_HEIGHT },
   };
+}
+
+/**
+ * 全 outputs を包含する仮想キャンバス寸法（最小サイズ）を返す。
+ * outputs が空なら DEFAULT_OUTPUT_WIDTH × DEFAULT_OUTPUT_HEIGHT。
+ */
+export function recomputeCanvasBounds(outputs: OutputDef[]): { width: number; height: number } {
+  if (outputs.length === 0) {
+    return { width: DEFAULT_OUTPUT_WIDTH, height: DEFAULT_OUTPUT_HEIGHT };
+  }
+  let w = 0;
+  let h = 0;
+  for (const o of outputs) {
+    w = Math.max(w, o.position.x + o.size.width);
+    h = Math.max(h, o.position.y + o.size.height);
+  }
+  return { width: w, height: h };
 }
 
 export function defaultMappingsState(): MappingsState {
@@ -124,9 +153,15 @@ export function defaultMappingsState(): MappingsState {
     outputId: out.id,
     name: 'Mapping 1',
     source: { x: 0, y: 0, width: 100, height: 100 },
-    quad: defaultQuad(),
+    quad: defaultQuad(out),
   };
-  return { outputs: [out], mappings: [e], activeId: e.id };
+  return {
+    version: 2,
+    canvas: recomputeCanvasBounds([out]),
+    outputs: [out],
+    mappings: [e],
+    activeId: e.id,
+  };
 }
 
 export function getActiveMapping(state: MappingsState): MappingEntry {
@@ -149,24 +184,32 @@ export function withActiveMapping(
 /**
  * 新しい mapping を追加して active にする。可視性のため少しずらした quad で生成。
  * 割り当て先は activeOutputId（あれば）→ outputs[0] の順で決まる。
+ * quad は所属出力の中央 25..75% 領域を覆い、mapping 数に応じて少しずらして重ならないようにする。
  */
 export function withAddedMapping(state: MappingsState): MappingsState {
-  const offset = (state.mappings.length * 4) % 30; // 4% 刻みで重ならないよう少しずらす
   const id = generateMappingId();
   const outputId =
     (state.activeOutputId && state.outputs.some(o => o.id === state.activeOutputId))
       ? state.activeOutputId
       : state.outputs[0].id;
+  const owner = state.outputs.find(o => o.id === outputId) ?? state.outputs[0];
+  // 同じ出力に既に乗っている mapping の数で 4% 刻みの斜めオフセット
+  const sameOutput = state.mappings.filter(m => m.outputId === owner.id).length;
+  const offsetFrac = (sameOutput * 0.04) % 0.30;
+  const px = (frac: number) => ({
+    x: owner.position.x + (frac + offsetFrac) * owner.size.width,
+    y: owner.position.y + (frac + offsetFrac) * owner.size.height,
+  });
   const entry: MappingEntry = {
     id,
     outputId,
     name: `Mapping ${state.mappings.length + 1}`,
     source: { x: 0, y: 0, width: 100, height: 100 },
     quad: {
-      topLeft:     { x: 25 + offset, y: 25 + offset },
-      topRight:    { x: 75 + offset, y: 25 + offset },
-      bottomRight: { x: 75 + offset, y: 75 + offset },
-      bottomLeft:  { x: 25 + offset, y: 75 + offset },
+      topLeft:     { x: px(0.25).x, y: px(0.25).y },
+      topRight:    { x: px(0.75).x, y: px(0.25).y },
+      bottomRight: { x: px(0.75).x, y: px(0.75).y },
+      bottomLeft:  { x: px(0.25).x, y: px(0.75).y },
     },
   };
   return { ...state, mappings: [...state.mappings, entry], activeId: id };
@@ -220,20 +263,27 @@ export function withMappingReassigned(state: MappingsState, id: string, outputId
 
 /**
  * 出力を 1 件追加して activeOutputId に。MAX_OUTPUTS 到達時は no-op。
- * layout は他出力の右側に水平に並べる。
+ * position は他出力の右側に水平に並べる。canvas も再計算。
  */
 export function withAddedOutput(state: MappingsState): MappingsState {
   if (state.outputs.length >= MAX_OUTPUTS) return state;
   const rightmost = state.outputs.reduce(
-    (acc, o) => Math.max(acc, o.layout.x + o.layout.width),
+    (acc, o) => Math.max(acc, o.position.x + o.size.width),
     0,
   );
   const newOut: OutputDef = {
     id: generateOutputId(),
     name: `Output ${state.outputs.length + 1}`,
-    layout: { x: rightmost, y: 0, width: DEFAULT_OUTPUT_WIDTH, height: DEFAULT_OUTPUT_HEIGHT },
+    position: { x: rightmost, y: 0 },
+    size: { width: DEFAULT_OUTPUT_WIDTH, height: DEFAULT_OUTPUT_HEIGHT },
   };
-  return { ...state, outputs: [...state.outputs, newOut], activeOutputId: newOut.id };
+  const outputs = [...state.outputs, newOut];
+  return {
+    ...state,
+    outputs,
+    canvas: recomputeCanvasBounds(outputs),
+    activeOutputId: newOut.id,
+  };
 }
 
 /**
@@ -249,11 +299,34 @@ export function withRemovedOutput(state: MappingsState, outputId: string): Mappi
   return {
     ...state,
     outputs: remaining,
+    canvas: recomputeCanvasBounds(remaining),
     mappings: state.mappings.map(m =>
       m.outputId === outputId ? { ...m, outputId: fallbackId } : m
     ),
     activeOutputId: state.activeOutputId === outputId ? undefined : state.activeOutputId,
   };
+}
+
+/**
+ * 出力の position（仮想キャンバス内の左上座標）と size（同サイズ）を更新。
+ * 負座標は 0 にクランプ（仮想キャンバスは原点 (0,0) から始まる）。canvas も再計算。
+ */
+export function withOutputLayoutSet(
+  state: MappingsState,
+  outputId: string,
+  patch: { position?: { x: number; y: number }; size?: { width: number; height: number } },
+): MappingsState {
+  const outputs = state.outputs.map(o => {
+    if (o.id !== outputId) return o;
+    const position = patch.position
+      ? { x: Math.max(0, patch.position.x), y: Math.max(0, patch.position.y) }
+      : o.position;
+    const size = patch.size
+      ? { width: Math.max(1, patch.size.width), height: Math.max(1, patch.size.height) }
+      : o.size;
+    return { ...o, position, size };
+  });
+  return { ...state, outputs, canvas: recomputeCanvasBounds(outputs) };
 }
 
 /** 出力をリネーム（空文字なら undefined）。 */
@@ -274,22 +347,22 @@ export function withActiveOutputSet(state: MappingsState, outputId: string | und
 }
 
 /**
- * 任意の値が MappingsState として妥当かチェックして返す（不正なら null）。
- * 保存ファイルや localStorage の読み込み時に使う。
- *
- * 旧フォーマット互換: outputs フィールドが無い／空／不正な場合は既定の単一出力を
- * 生成し、outputId を持たない mapping にはそれを割り当てる（旧データはこの分岐を通る）。
+ * 任意の値が v2 MappingsState として妥当かチェックして返す（不正なら null）。
+ * 保存ファイル / localStorage の読み込み時に使う。v1（quad が%）は受け付けない。
  */
 export function parseMappingsState(data: unknown): MappingsState | null {
   if (!data || typeof data !== 'object') return null;
   const obj = data as Record<string, unknown>;
+  // v1 を弾く（version フィールド無し / 1 はリジェクト）
+  if (obj.version !== 2) return null;
+
   const list = obj.mappings;
   if (!Array.isArray(list) || list.length === 0) return null;
 
   const isPoint = (p: unknown): p is Point =>
     !!p && typeof (p as Point).x === 'number' && typeof (p as Point).y === 'number';
 
-  // --- outputs を解析（不正な要素は捨て、0 件になったら既定を1つ生やす） ---
+  // --- outputs を解析 ---
   const validOutputs: OutputDef[] = [];
   const rawOutputs = obj.outputs;
   if (Array.isArray(rawOutputs)) {
@@ -297,13 +370,11 @@ export function parseMappingsState(data: unknown): MappingsState | null {
       if (!rawOut || typeof rawOut !== 'object') continue;
       const o = rawOut as Record<string, unknown>;
       if (typeof o.id !== 'string') continue;
-      const layout = o.layout as Record<string, unknown> | undefined;
+      const pos = o.position as Record<string, unknown> | undefined;
+      const sz = o.size as Record<string, unknown> | undefined;
       if (
-        !layout ||
-        typeof layout.x !== 'number' ||
-        typeof layout.y !== 'number' ||
-        typeof layout.width !== 'number' ||
-        typeof layout.height !== 'number'
+        !pos || typeof pos.x !== 'number' || typeof pos.y !== 'number' ||
+        !sz || typeof sz.width !== 'number' || typeof sz.height !== 'number'
       ) continue;
       const screenRaw = o.screen as Record<string, unknown> | undefined;
       const screen =
@@ -330,24 +401,27 @@ export function parseMappingsState(data: unknown): MappingsState | null {
       validOutputs.push({
         id: o.id,
         name: typeof o.name === 'string' ? o.name : undefined,
-        layout: {
-          x: layout.x,
-          y: layout.y,
-          width: layout.width,
-          height: layout.height,
-        },
+        position: { x: pos.x, y: pos.y },
+        size: { width: sz.width, height: sz.height },
         screen,
         pixelSize,
       });
     }
   }
-  if (validOutputs.length === 0) {
-    validOutputs.push(defaultOutput('Output 1'));
-  }
+  if (validOutputs.length === 0) return null;
   const defaultOutputId = validOutputs[0].id;
   const outputIdSet = new Set(validOutputs.map(o => o.id));
 
-  // --- mappings を解析（outputId が無い／無効なら defaultOutputId を割り当て） ---
+  // --- canvas: 明示値があれば採用、無ければ outputs から再計算 ---
+  const canvasRaw = obj.canvas as Record<string, unknown> | undefined;
+  const canvas =
+    canvasRaw &&
+    typeof canvasRaw.width === 'number' &&
+    typeof canvasRaw.height === 'number'
+      ? { width: canvasRaw.width, height: canvasRaw.height }
+      : recomputeCanvasBounds(validOutputs);
+
+  // --- mappings を解析 ---
   const validMappings: MappingEntry[] = [];
   for (const raw of list) {
     if (!raw || typeof raw !== 'object') return null;
@@ -394,7 +468,7 @@ export function parseMappingsState(data: unknown): MappingsState | null {
     activeOutputId = undefined;
   }
 
-  return { outputs: validOutputs, mappings: validMappings, activeId, activeOutputId };
+  return { version: 2, canvas, outputs: validOutputs, mappings: validMappings, activeId, activeOutputId };
 }
 
 const MIN_DIMENSION = 0.0001;
@@ -434,12 +508,24 @@ export function applyVideoCrop(video: HTMLVideoElement, source: SourceRect): voi
   video.style.transform = `translate(${-source.x}%, ${-source.y}%)`;
 }
 
-export function defaultQuad(): Quad {
+/**
+ * 既定 quad（仮想キャンバス px）。output を渡せばその中央 25..75% を覆う px 四角形、
+ * 渡さなければ DEFAULT_OUTPUT_WIDTH/HEIGHT の中央。
+ */
+export function defaultQuad(output?: OutputDef): Quad {
+  const base = output ?? {
+    position: { x: 0, y: 0 },
+    size: { width: DEFAULT_OUTPUT_WIDTH, height: DEFAULT_OUTPUT_HEIGHT },
+  };
+  const x0 = base.position.x + base.size.width * 0.25;
+  const x1 = base.position.x + base.size.width * 0.75;
+  const y0 = base.position.y + base.size.height * 0.25;
+  const y1 = base.position.y + base.size.height * 0.75;
   return {
-    topLeft:     { x: 25, y: 25 },
-    topRight:    { x: 75, y: 25 },
-    bottomRight: { x: 75, y: 75 },
-    bottomLeft:  { x: 25, y: 75 },
+    topLeft:     { x: x0, y: y0 },
+    topRight:    { x: x1, y: y0 },
+    bottomRight: { x: x1, y: y1 },
+    bottomLeft:  { x: x0, y: y1 },
   };
 }
 
@@ -504,27 +590,22 @@ function homographyMatrix3d(quad: Quad, width: number, height: number): string {
 }
 
 /**
- * container（親要素 100% × 100% に配置・transform-origin: top left）の単位矩形を
- * quadPercent（親の % 座標）の四角形に写像する matrix3d を適用する。
- * 配置系のスタイル（position/inset/width/height/transform-origin）は呼び出し側 CSS が持つ前提:
- *  - ControlWindow: #cropped-container / .preview-mapping.inactive
+ * container（CSS で canvas.width × canvas.height の px サイズに配置・
+ * transform-origin: top left）の矩形を、quad（仮想キャンバス px 座標）の四角形に
+ * 写像する matrix3d を適用する。container 自身のサイズは canvasWidth × canvasHeight
+ * の CSS px と一致している前提（親の transform: scale() で実画面サイズに縮拡される）。
+ *
+ * 使われる場所:
  *  - OutputWindow: .dc-out-mapping
- * （毎フレーム同じ値を書き直すとレイアウトを汚すので transform だけ更新する）
+ *  - ControlWindow: #cropped-container / .preview-mapping.inactive
+ *  （いずれも親が `.dc-canvas-window` or `#dc-output-canvas` で canvas px サイズ）
  */
-export function applyQuadTransform(container: HTMLElement, quadPercent: Quad): void {
-  const parent = container.parentElement;
-  if (!parent) return;
-  const rect = parent.getBoundingClientRect();
-  const W = rect.width;
-  const H = rect.height;
-  if (W <= 0 || H <= 0) return;
-
-  const pxQuad: Quad = {
-    topLeft:     { x: quadPercent.topLeft.x     / 100 * W, y: quadPercent.topLeft.y     / 100 * H },
-    topRight:    { x: quadPercent.topRight.x    / 100 * W, y: quadPercent.topRight.y    / 100 * H },
-    bottomRight: { x: quadPercent.bottomRight.x / 100 * W, y: quadPercent.bottomRight.y / 100 * H },
-    bottomLeft:  { x: quadPercent.bottomLeft.x  / 100 * W, y: quadPercent.bottomLeft.y  / 100 * H },
-  };
-
-  container.style.transform = homographyMatrix3d(pxQuad, W, H);
+export function applyQuadCanvas(
+  container: HTMLElement,
+  quad: Quad,
+  canvasWidth: number,
+  canvasHeight: number,
+): void {
+  if (canvasWidth <= 0 || canvasHeight <= 0) return;
+  container.style.transform = homographyMatrix3d(quad, canvasWidth, canvasHeight);
 }

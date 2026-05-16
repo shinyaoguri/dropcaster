@@ -1,10 +1,11 @@
 import { BaseWindow } from '../shared/BaseWindow';
 import {
-  applyQuadTransform,
+  applyQuadCanvas,
   applyVideoCrop,
   isMappingEnabled,
   type MappingEntry,
   type MappingsState,
+  type OutputDef,
 } from '../../utils/mappingTransform';
 import { ScreenWakeLock } from '../../utils/wakeLock';
 
@@ -25,6 +26,11 @@ interface OutputChild {
 export class OutputWindow extends BaseWindow {
   private mappings: MappingEntry[] = [];
   private children = new Map<string, OutputChild>();
+  /** 仮想キャンバスの寸法（state.canvas）。初期は 0、setMappings で同期。 */
+  private canvasWidth = 0;
+  private canvasHeight = 0;
+  /** この出力ウィンドウが担当する仮想キャンバス内の矩形（OutputDef.position/size）。 */
+  private outputRect: { x: number; y: number; width: number; height: number } | null = null;
   private boundMessage = (e: MessageEvent) => this.onMessage(e);
   private boundResize = () => this.scheduleReapply();
   private boundKeydown = (e: KeyboardEvent) => this.onKeydown(e);
@@ -66,7 +72,11 @@ export class OutputWindow extends BaseWindow {
   protected getContent(): string {
     return `
       <div id="dc-output-stage">
-        <div id="dc-output-root"></div>
+        <!-- dc-output-canvas は仮想キャンバスのフル寸法（canvas.width × canvas.height）を
+             CSS px で持ち、parent transform で「自身が担当する OutputDef.position+size の
+             矩形」だけがウィンドウに映るようスケール・平行移動する。
+             この中の .dc-out-mapping は仮想キャンバス px 座標で warp される。 -->
+        <div id="dc-output-canvas"></div>
         <svg id="dc-dev-overlay" aria-hidden="true">
           <line id="dc-dev-crosshair-h" x1="0" y1="0" x2="0" y2="0"></line>
           <line id="dc-dev-crosshair-v" x1="0" y1="0" x2="0" y2="0"></line>
@@ -85,9 +95,14 @@ export class OutputWindow extends BaseWindow {
   protected getStyles(): string {
     return `
       html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
-      #dc-output-stage { position: fixed; inset: 0; background: #000; }
-      #dc-output-root { position: absolute; inset: 0; }
-      .dc-out-mapping { position: absolute; inset: 0; overflow: hidden; transform-origin: top left; backface-visibility: hidden; will-change: transform; }
+      #dc-output-stage { position: fixed; inset: 0; background: #000; overflow: hidden; }
+      /* dc-output-canvas は仮想キャンバス全体（canvas.w × canvas.h を CSS px で）の論理サイズを持ち、
+         transform: scale() translate() で「この出力が担当する矩形」がウィンドウ内に収まるよう変換する。
+         実 px サイズと位置はランタイム（OutputWindow.applyCanvasTransform）で書き込む。 */
+      #dc-output-canvas { position: absolute; top: 0; left: 0; transform-origin: top left; will-change: transform; }
+      /* .dc-out-mapping は仮想キャンバスのフル寸法に置かれ、matrix3d で quad（仮想 px）に warp する。
+         親（dc-output-canvas）の scale が反映されて最終的に画面に合うサイズになる。 */
+      .dc-out-mapping { position: absolute; top: 0; left: 0; overflow: hidden; transform-origin: top left; backface-visibility: hidden; will-change: transform; }
       /* video は自動で合成レイヤになるので will-change は不要（warp する親 div だけに付ける） */
       .dc-out-mapping > video { position: absolute; top: 0; left: 0; transform-origin: top left; object-fit: fill; }
       .dc-output-ui { transition: opacity 0.3s ease; }
@@ -176,21 +191,69 @@ export class OutputWindow extends BaseWindow {
     if (e.key === 'f' || e.key === 'F') this.toggleFullscreen();
   }
 
-  /** マッピング設定を受け取り、自身の outputId に紐付く有効なものだけレンダリングする。 */
+  /**
+   * マッピング設定を受け取り、自分の出力 bounds と交差する有効な mapping を描画する。
+   *
+   * **跨ぎマッピング対応**: 旧仕様では `m.outputId === this.outputId` で「自分宛て」だけに
+   * 絞っていたが、quad が複数の出力を跨ぐ場合に片方が描かれない問題があった。新仕様では
+   * outputId は primary owner（操作 UI の所属表示用）に過ぎず、描画は quad の絶対座標が
+   * 自出力の bounds と交差するかで判定する。clip 自体は `#dc-output-stage` の overflow:hidden
+   * と canvas-host の transform が自動で行うので、ここでの交差判定は「無関係な mapping の
+   * <video> を生成しない」性能最適化として機能する。
+   */
   setMappings(state: MappingsState | null | undefined): void {
-    this.mappings = (state?.mappings ?? []).filter(
-      m => isMappingEnabled(m) && m.outputId === this.outputId,
-    );
+    if (!state) {
+      this.mappings = [];
+      this.outputRect = null;
+      this.canvasWidth = 0;
+      this.canvasHeight = 0;
+      this.sync();
+      return;
+    }
+    this.canvasWidth = state.canvas.width;
+    this.canvasHeight = state.canvas.height;
+    const out: OutputDef | undefined = state.outputs.find(o => o.id === this.outputId);
+    this.outputRect = out
+      ? { x: out.position.x, y: out.position.y, width: out.size.width, height: out.size.height }
+      : null;
+    const rect = this.outputRect;
+    this.mappings = rect
+      ? state.mappings.filter(m => isMappingEnabled(m) && this.quadIntersectsRect(m, rect))
+      : [];
     // 新しい <video> を作ったときだけ親へ stream を要求する（既存の video は bind 済み）。
     // quad/source の微調整だけのときは要求しない（毎フレーム postMessage 往復を避ける）。
-    if (this.sync()) this.requestStream();
+    const createdNew = this.sync();
+    this.applyCanvasTransform();
+    if (createdNew) this.requestStream();
+  }
+
+  /** quad の axis-aligned bounding box が rect と交差するかを判定（仮想キャンバス px 同士）。 */
+  private quadIntersectsRect(
+    m: MappingEntry,
+    rect: { x: number; y: number; width: number; height: number },
+  ): boolean {
+    const xs = [m.quad.topLeft.x, m.quad.topRight.x, m.quad.bottomLeft.x, m.quad.bottomRight.x];
+    const ys = [m.quad.topLeft.y, m.quad.topRight.y, m.quad.bottomLeft.y, m.quad.bottomRight.y];
+    let minX = xs[0], maxX = xs[0], minY = ys[0], maxY = ys[0];
+    for (let i = 1; i < 4; i++) {
+      if (xs[i] < minX) minX = xs[i];
+      if (xs[i] > maxX) maxX = xs[i];
+      if (ys[i] < minY) minY = ys[i];
+      if (ys[i] > maxY) maxY = ys[i];
+    }
+    return maxX >= rect.x && minX <= rect.x + rect.width
+        && maxY >= rect.y && minY <= rect.y + rect.height;
   }
 
   /** 子要素を mappings に同期する。新規に <video> を生成したら true（＝ stream の再 bind が必要）。 */
   private sync(): boolean {
     if (!this.window) return false;
-    const root = this.window.document.getElementById('dc-output-root');
-    if (!root) return false;
+    const canvasEl = this.window.document.getElementById('dc-output-canvas');
+    if (!canvasEl) return false;
+
+    // canvas エレメント自身を仮想キャンバスのフル寸法に
+    canvasEl.style.width = `${this.canvasWidth}px`;
+    canvasEl.style.height = `${this.canvasHeight}px`;
 
     let createdNew = false;
     const seen = new Set<string>();
@@ -205,13 +268,16 @@ export class OutputWindow extends BaseWindow {
         video.muted = true;
         video.playsInline = true;
         div.appendChild(video);
-        root.appendChild(div);
+        canvasEl.appendChild(div);
         child = { div, video };
         this.children.set(m.id, child);
         createdNew = true;
       }
+      // mapping div は仮想キャンバスのフル寸法に置く（matrix3d がそこから quad へ写像）
+      child.div.style.width = `${this.canvasWidth}px`;
+      child.div.style.height = `${this.canvasHeight}px`;
       applyVideoCrop(child.video, m.source);
-      applyQuadTransform(child.div, m.quad);
+      applyQuadCanvas(child.div, m.quad, this.canvasWidth, this.canvasHeight);
     }
     for (const [id, child] of this.children) {
       if (!seen.has(id)) {
@@ -220,6 +286,29 @@ export class OutputWindow extends BaseWindow {
       }
     }
     return createdNew;
+  }
+
+  /**
+   * 仮想キャンバス全体 (canvasWidth × canvasHeight) を、自身が担当する出力矩形
+   * （outputRect = OutputDef.position+size）がウィンドウいっぱいに映るよう scale + translate する。
+   * scale: ウィンドウサイズ／出力矩形サイズ。
+   * translate: -outputRect.x, -outputRect.y（scale 前に適用される＝translate は untransformed 座標）。
+   */
+  private applyCanvasTransform(): void {
+    if (!this.window) return;
+    const canvasEl = this.window.document.getElementById('dc-output-canvas');
+    if (!canvasEl) return;
+    const rect = this.outputRect;
+    if (!rect || rect.width <= 0 || rect.height <= 0 || this.canvasWidth <= 0 || this.canvasHeight <= 0) {
+      canvasEl.style.transform = 'none';
+      return;
+    }
+    const sx = this.window.innerWidth / rect.width;
+    const sy = this.window.innerHeight / rect.height;
+    // transform 順序: 文字列右側が先に適用される。 translate(-rect.x, -rect.y) を先に
+    // 行ってから scale(sx, sy) する → 結果として「canvas 座標の (rect.x, rect.y) が画面 (0,0)、
+    // (rect.x+rect.w, rect.y+rect.h) が画面 (innerWidth, innerHeight) に来る」。
+    canvasEl.style.transform = `scale(${sx}, ${sy}) translate(${-rect.x}px, ${-rect.y}px)`;
   }
 
   /** resize イベントの度に同期実行せず、次フレームに 1 回だけ transform を再計算する。 */
@@ -232,10 +321,13 @@ export class OutputWindow extends BaseWindow {
   }
 
   private reapplyTransforms(): void {
+    // mapping の matrix3d は canvas 寸法に依存するので再計算
     for (const m of this.mappings) {
       const child = this.children.get(m.id);
-      if (child) applyQuadTransform(child.div, m.quad);
+      if (child) applyQuadCanvas(child.div, m.quad, this.canvasWidth, this.canvasHeight);
     }
+    // ウィンドウサイズ変更に応じて canvas scale も再計算
+    this.applyCanvasTransform();
   }
 
   private requestStream(): void {

@@ -95,6 +95,42 @@ export const CONTROL_PANEL_CSS = `
         font-weight: 500;
       }
 
+      /* タブストリップ — column-header の中で h2 と差し替えて使う */
+      .dc-tab-strip {
+        display: flex;
+        gap: 4px;
+        align-items: stretch;
+      }
+      .dc-tab {
+        appearance: none;
+        background: transparent;
+        color: #aaa;
+        border: 1px solid transparent;
+        border-bottom: none;
+        border-radius: 6px 6px 0 0;
+        padding: 6px 14px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        margin-bottom: -1px; /* column-header の border-bottom に重ねる */
+        transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+      }
+      .dc-tab:hover {
+        color: #ccc;
+        background: #333;
+      }
+      .dc-tab.is-active {
+        background: #1a1a1a;
+        color: #fff;
+        border-color: #444;
+        border-bottom-color: #1a1a1a;
+      }
+      /* タブで切り替える本体ペイン。is-active のものだけ表示する */
+      .dc-tab-pane { display: none; }
+      .dc-tab-pane.is-active { display: flex; }
+      /* output-stage は元から flex なので is-active 適用で自然にレイアウトされる。
+         layout-stage は専用スタイルを後段に置く。 */
+
       /* ツールカラムのスタイル */
       .tool-content {
         flex: 1;
@@ -446,85 +482,243 @@ export const CONTROL_PANEL_CSS = `
         margin-top: 4px;
       }
 
-      /* 複数出力フレームを並べるステージ */
+      /* マッピング編集タブのステージ: 仮想キャンバスを viewport 内にフィットして表示する。
+         出力フレームは renderEachFrame() で position: absolute, left/top/width/height（screen px）に
+         直接配置される。flex は使わない（仮想キャンバス上の位置関係を保つため）。 */
       .output-stage {
         width: 100%;
         height: 100%;
-        display: flex;
-        flex-direction: row;
-        align-items: center;
-        justify-content: center;
-        gap: 12px;
-        padding: 10px;
+        position: relative;
+        padding: 0;
         box-sizing: border-box;
-        container-type: size;
-      }
-
-      .dc-output-frame {
-        position: relative;
-        flex: 1 1 0;
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
-        height: 100%;
-        cursor: pointer;
-        container-type: size;
-      }
-      .dc-output-frame.is-active .dc-display-frame {
-        outline: 2px solid #3b82f6;
-        outline-offset: 2px;
-      }
-
-      /* 各出力枠のアスペクト固定領域。--output-aspect は OutputVizPanel が要素に設定する。 */
-      .dc-display-frame {
-        position: relative;
-        aspect-ratio: var(--output-aspect, 16 / 9);
-        width: min(100cqw, calc((100cqh - 30px) * var(--output-aspect-num, 1.7777)));
-        height: auto;
-        flex-shrink: 0;
-        max-width: 100%;
-        max-height: calc(100% - 30px);
-        border: 2px solid #444;
-        border-radius: 4px;
-        background: #111;
+        background: #0d0d0d;
         overflow: hidden;
       }
 
-      /* mapping-area は per-output で生やす。class セレクタで CSS を当てる。 */
+      /* 出力レイアウト編集ステージ — 仮想キャンバスを縮小表示する。
+         内側に .dc-layout-canvas（仮想キャンバス全体）が乗り、その中で各出力矩形を 2D ドラッグ。 */
+      .layout-stage {
+        width: 100%;
+        height: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: stretch;
+        padding: 16px;
+        box-sizing: border-box;
+        background: #161616;
+        gap: 8px;
+      }
+      .layout-stage .dc-layout-hint {
+        font-size: 11px;
+        color: #888;
+        line-height: 1.4;
+        flex: 0 0 auto;
+      }
+      .layout-stage .dc-layout-viewport {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+        background:
+          linear-gradient(0deg, transparent calc(100% - 1px), #2a2a2a 100%) 0 0 / 40px 40px,
+          linear-gradient(90deg, transparent calc(100% - 1px), #2a2a2a 100%) 0 0 / 40px 40px,
+          #1c1c1c;
+        border: 1px solid #333;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      /* 仮想キャンバスの矩形を表すレイヤ。
+         transform-origin: top left + JS で left/top/transform: scale() を直接設定して中央寄せする。
+         （top:50% + translate(-50%,-50%) + scale() は transform-origin の解釈で破綻するので使わない） */
+      .dc-layout-canvas {
+        position: absolute;
+        transform-origin: top left;
+        background: #111;
+        border: 1px dashed #444;
+        /* left/top/width/height/transform はランタイムで設定（仮想キャンバス px → viewport にフィット） */
+      }
+      .dc-layout-canvas .dc-layout-output {
+        position: absolute;
+        background: rgba(20, 20, 20, 0.65);
+        border: 2px solid #3b82f6;
+        box-sizing: border-box;
+        color: #fff;
+        cursor: grab;
+        user-select: none;
+        overflow: hidden;
+        /* left/top/width/height はランタイムで設定（canvas px そのまま） */
+      }
+      /* レイアウトタブ内のマッピングプレビュー（canvas-window 直下） — マッピング編集タブの
+         preview-mapping.inactive と同じ式で warp。視覚的にはやや半透明にして「ここはレイアウト
+         編集ビュー」であることを示す。 */
+      .dc-layout-canvas .dc-layout-preview {
+        position: absolute;
+        left: 0;
+        top: 0;
+        overflow: hidden;
+        transform-origin: top left;
+        backface-visibility: hidden;
+        border: 1px solid var(--mapping-color, rgba(255, 0, 255, 0.5));
+        background: transparent;
+        pointer-events: none;
+      }
+      .dc-layout-canvas .dc-layout-preview > video {
+        position: absolute;
+        top: 0;
+        left: 0;
+        transform-origin: top left;
+        object-fit: fill;
+        width: 100%;
+        height: 100%;
+        opacity: 0.6;
+        pointer-events: none;
+      }
+      .dc-layout-canvas .dc-layout-output.is-active {
+        border-color: #f59e0b;
+        background: rgba(245, 158, 11, 0.18);
+        z-index: 2;
+      }
+      .dc-layout-canvas .dc-layout-output.dragging {
+        cursor: grabbing;
+      }
+      .dc-layout-canvas .dc-layout-output .dc-layout-output-label {
+        position: absolute;
+        top: 4px;
+        left: 6px;
+        font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+        padding: 2px 6px;
+        border-radius: 3px;
+        pointer-events: none;
+        white-space: nowrap;
+      }
+      .dc-layout-canvas .dc-layout-output .dc-layout-resize {
+        position: absolute;
+        width: 14px;
+        height: 14px;
+        background: #fff;
+        border: 1px solid #3b82f6;
+        box-sizing: border-box;
+        z-index: 3;
+      }
+      .dc-layout-canvas .dc-layout-output.is-active .dc-layout-resize {
+        border-color: #f59e0b;
+      }
+      .dc-layout-canvas .dc-layout-output .dc-layout-resize.se {
+        right: -7px;
+        bottom: -7px;
+        cursor: nwse-resize;
+      }
+
+      /* canvas-host: 仮想キャンバス全体を canvas px サイズで持ち、scale + offset で
+         #output-stage の viewport にフィットさせる。renderEachFrame() がランタイムで書き込む。 */
+      .dc-canvas-host {
+        position: absolute;
+        transform-origin: top left;
+        will-change: transform;
+        /* width / height / left / top / transform はランタイム */
+      }
+      /* mappings レイヤ: 全 mapping の DOM が乗る。出力境界を超えても見える（overflow なし）。 */
+      .dc-canvas-mappings {
+        position: absolute;
+        top: 0;
+        left: 0;
+        /* width / height はランタイム（canvas px） */
+      }
+      /* handles レイヤ: quad 4 隅ハンドルが乗る（mapping より手前）。 */
+      .dc-canvas-handles {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none; /* ハンドル本体のみ pointer 受ける */
+        /* width / height はランタイム */
+      }
+      .dc-canvas-handles > * { pointer-events: auto; }
+
+      /* マッピング編集タブの出力フレーム — canvas-host 内に絶対配置される「投影範囲オーバーレイ」。
+         mapping は別レイヤ（canvas-mappings）に描かれるので、ここは透明な枠だけを持つ。
+         renderEachFrame() が left/top/width/height（canvas px）を毎回書き込む。
+         border-width などは canvas-host の scale で潰れないよう --canvas-counter-scale で逆補正。
+
+         **pointer-events: none** — フレームはあくまで視覚オーバーレイ。マウスイベントは下の
+         canvas-mappings（cropped-container / preview-mapping）へ通す。これによりフレーム内の
+         どこをクリックしても mapping コンテンツを掴んでドラッグできる。
+         アクティブ出力の選択は中の .dc-output-header（pointer-events: auto）クリックで行う。 */
+      .dc-output-frame {
+        position: absolute;
+        background: transparent;
+        border-style: solid;
+        border-color: rgba(255, 255, 255, 0.35);
+        border-width: calc(2px * var(--canvas-counter-scale, 1));
+        box-sizing: border-box;
+        pointer-events: none;
+      }
+      .dc-output-frame.is-active {
+        border-color: #3b82f6;
+        z-index: 2;
+      }
+
+      /* mapping-area は per-output で生やす。class セレクタで CSS を当てる。
+         内側に .dc-canvas-window（仮想キャンバス全体の論理サイズ）を 1 枚置き、
+         transform で「この出力の担当矩形」が mapping-area いっぱいに収まるようにする。
+         mapping-area は overflow: hidden なので、canvas-window のうち output bounds の外は clip される。 */
       .dc-mapping-area {
         width: 100%;
         height: 100%;
         position: relative;
         overflow: hidden;
       }
+      .dc-canvas-window {
+        position: absolute;
+        top: 0;
+        left: 0;
+        transform-origin: top left;
+        will-change: transform;
+        /* width/height/transform はランタイム（OutputVizPanel.applyCanvasWindow）で書き込む */
+      }
 
+      /* 出力フレーム左上のヘッダ（オーバーレイ） — canvas-host の scale で字が消えないよう
+         位置・font-size・padding を canvas-counter-scale で逆補正する。
+         pointer-events: auto でクリック可能（active output 切替用）。 */
       .dc-output-header {
+        position: absolute;
+        top: calc(4px * var(--canvas-counter-scale, 1));
+        left: calc(4px * var(--canvas-counter-scale, 1));
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 11px;
-        color: #aaa;
-        max-width: 100%;
+        gap: calc(6px * var(--canvas-counter-scale, 1));
+        font-size: calc(10px * var(--canvas-counter-scale, 1));
+        color: #ddd;
+        background: rgba(0, 0, 0, 0.6);
+        padding: calc(2px * var(--canvas-counter-scale, 1)) calc(6px * var(--canvas-counter-scale, 1));
+        border-radius: calc(3px * var(--canvas-counter-scale, 1));
+        max-width: calc(100% - 8px * var(--canvas-counter-scale, 1));
         overflow: hidden;
+        pointer-events: auto;
+        cursor: pointer;
+        z-index: 4;
+      }
+      .dc-output-header:hover {
+        background: rgba(0, 0, 0, 0.8);
       }
       .dc-output-header .dc-output-name {
-        color: #ccc;
+        color: #fff;
         font-weight: 500;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
       .dc-output-header .dc-output-size {
-        color: #888;
-        font-size: 10px;
+        color: #aaa;
+        font-size: calc(9px * var(--canvas-counter-scale, 1));
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .dc-output-header .dc-output-mode {
-        padding: 1px 6px;
-        border-radius: 8px;
-        font-size: 10px;
+        padding: calc(1px * var(--canvas-counter-scale, 1)) calc(5px * var(--canvas-counter-scale, 1));
+        border-radius: calc(8px * var(--canvas-counter-scale, 1));
+        font-size: calc(9px * var(--canvas-counter-scale, 1));
         background: #333;
       }
       .dc-output-header .dc-output-mode.open {
@@ -771,11 +965,10 @@ export const CONTROL_PANEL_CSS = `
         background: transparent;
         cursor: move;
         overflow: hidden;
-        /* 単位矩形を matrix3d で 4 隅に写像する */
+        /* width/height はランタイムで canvas px に設定し、matrix3d で quad（仮想 px）へ写像する。
+           親（.dc-canvas-window）の scale が更に縮拡する。 */
         left: 0;
         top: 0;
-        width: 100%;
-        height: 100%;
         transform-origin: top left;
         backface-visibility: hidden;
         will-change: transform;
@@ -791,7 +984,10 @@ export const CONTROL_PANEL_CSS = `
         border-radius: 50%;
         z-index: 20;
         cursor: grab;
-        /* 4 隅の % 位置に置いた中心が一致するよう中央合わせ */
+        /* canvas-host の scale を打ち消して画面上のサイズを 14px に保つ。
+           transform-origin: center で left/top の指定位置を中心とする。 */
+        transform: scale(var(--canvas-counter-scale, 1));
+        transform-origin: center;
         margin-left: -7px;
         margin-top: -7px;
         box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
@@ -808,13 +1004,11 @@ export const CONTROL_PANEL_CSS = `
         box-shadow: 0 0 0 3px #fff, 0 0 6px rgba(0, 0, 0, 0.8);
       }
 
-      /* 非アクティブ mapping のプレビュー */
+      /* 非アクティブ mapping のプレビュー — width/height はランタイムで canvas px に設定 */
       .preview-mapping.inactive {
         position: absolute;
         left: 0;
         top: 0;
-        width: 100%;
-        height: 100%;
         overflow: hidden;
         transform-origin: top left;
         backface-visibility: hidden;

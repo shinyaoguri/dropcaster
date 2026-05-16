@@ -14,7 +14,12 @@ export type NudgeSelection =
   | null;
 
 export interface KeyboardNudgeAttachOptions {
-  getQuadRefSize: () => { width: number; height: number };
+  /**
+   * quad のステップ係数。「出力ウィンドウ上の 1 screen-px が仮想キャンバスの何 px に
+   * 相当するか」を x/y 別に返す。具体的には `out.size.width / out.bounds.innerWidth` の値。
+   * 出力未起動時は out.size / out.size = 1（= 1 canvas-px ステップ）にフォールバック。
+   */
+  getQuadStepPerScreenPx: () => { x: number; y: number };
   getSourceRefSize: () => { width: number; height: number };
   getSelectionBox: () => HTMLDivElement | null;
   /** mutation 直後に呼ぶ後処理（updateQuadTransform / updateAfterSourceChange + updateToolValues 等）。 */
@@ -95,14 +100,15 @@ export class KeyboardNudge {
 
     if (this.selection.type === 'quad') {
       const corner = this.selection.corner;
-      const ref = opts.getQuadRefSize();
+      const step = opts.getQuadStepPerScreenPx();
       const q = ctrl.getActiveQuad();
       const p = q[corner];
+      // 1 screen-px = step.x canvas-px。pixels（1 or 10）ぶん × step が仮想キャンバス px ステップ。
       ctrl.setActiveQuad({
         ...q,
         [corner]: {
-          x: p.x + (dirX * pixels * 100) / ref.width,
-          y: p.y + (dirY * pixels * 100) / ref.height,
+          x: p.x + dirX * pixels * step.x,
+          y: p.y + dirY * pixels * step.y,
         },
       });
       opts.onAfterMutate('quad');
