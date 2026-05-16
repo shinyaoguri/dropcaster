@@ -14,13 +14,29 @@ npm run dev      # ローカル: http://localhost:8787/user.../X.png
 
 ## デプロイ
 
-Cloudflare アカウントが必要。`wrangler login` 済みであれば:
+### 自動 (main 配下が更新されたとき)
+
+`.github/workflows/deploy-asset-proxy.yml` が main への push で走り、`apps/asset-proxy/**` に変更があれば wrangler でデプロイする。
+
+事前に GitHub リポの **Settings → Secrets and variables → Actions** に以下 2 つを登録:
+
+| Name | 取得方法 |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare Dashboard → My Profile → API Tokens → **Create Token** で "Edit Cloudflare Workers" テンプレートを使う |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Dashboard 右サイドバーの **Account ID** |
+
+ワークフローは `workflow_dispatch` でも手動実行可能。
+
+### 手動 (ローカルから)
 
 ```sh
+cd apps/asset-proxy
+npm install
+npx wrangler login
 npm run deploy
 ```
 
-デプロイ先 URL は `https://dropcaster-asset-proxy.<your-account>.workers.dev`。viewer の設定 (`assetProxyBaseUrl`) にこの URL を入れる。
+デプロイ先 URL は `https://dropcaster-asset-proxy.<workers-subdomain>.workers.dev`。viewer の設定 (`assetProxyBaseUrl`) にこの URL を入れる。
 
 無料枠は 1 日 100,000 リクエスト。エッジキャッシュを 30 日に振っているので、人気スケッチは初回以外ほとんど Cache HIT になる想定。
 
