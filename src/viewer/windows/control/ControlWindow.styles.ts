@@ -82,48 +82,67 @@ export const CONTROL_PANEL_CSS = `
       /* ドラッグ中は cursor とテキスト選択を本体側で抑止する（CSS の @scope 外では
          body セレクタが使えないため、JS で body.style を直書きして対応） */
 
+      /* 3 カラムの上部 header は flex 配置で固定高に揃える。h2 を持つカラム（tool/source）と
+         tab-strip を持つカラム（mapping）で高さが微妙にズレないよう、内容物は中央寄せして
+         column-header 自体に高さを持たせる。 */
       .column-header {
-        padding: 15px;
+        flex: 0 0 auto;
+        height: 44px;
+        padding: 0 16px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
         background: #2a2a2a;
         border-bottom: 1px solid #444;
       }
 
       .column-header h2 {
         margin: 0;
-        font-size: 16px;
+        font-size: 14px;
         color: #fff;
-        font-weight: 500;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        line-height: 1;
       }
 
-      /* タブストリップ — column-header の中で h2 と差し替えて使う */
+      /* タブストリップ — column-header の中で h2 と差し替えて使う。
+         segmented control 風（角丸の枠の中にボタンが並ぶ）。h2 と同じ視覚的なウェイトで、
+         他カラムの header 高さと完全に揃う（content の box-height は 28px ≒ h2 の line-height + 余白）。 */
       .dc-tab-strip {
-        display: flex;
-        gap: 4px;
+        display: inline-flex;
         align-items: stretch;
+        background: #1f1f1f;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        padding: 2px;
+        gap: 2px;
       }
       .dc-tab {
         appearance: none;
         background: transparent;
-        color: #aaa;
-        border: 1px solid transparent;
-        border-bottom: none;
-        border-radius: 6px 6px 0 0;
-        padding: 6px 14px;
-        font-size: 13px;
+        color: #888;
+        border: 0;
+        border-radius: 4px;
+        padding: 4px 12px;
+        font-size: 12px;
         font-weight: 500;
+        letter-spacing: 0.02em;
         cursor: pointer;
-        margin-bottom: -1px; /* column-header の border-bottom に重ねる */
-        transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+        margin: 0;
+        line-height: 1.4;
+        transition: background 0.12s ease, color 0.12s ease;
       }
-      .dc-tab:hover {
-        color: #ccc;
-        background: #333;
+      .dc-tab:hover:not(.is-active) {
+        color: #ddd;
+        background: rgba(255, 255, 255, 0.04);
       }
       .dc-tab.is-active {
-        background: #1a1a1a;
+        background: #3b82f6;
         color: #fff;
-        border-color: #444;
-        border-bottom-color: #1a1a1a;
+      }
+      .dc-tab:focus-visible {
+        outline: 2px solid #60a5fa;
+        outline-offset: 1px;
       }
       /* タブで切り替える本体ペイン。is-active のものだけ表示する */
       .dc-tab-pane { display: none; }
