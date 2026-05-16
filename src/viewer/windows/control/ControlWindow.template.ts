@@ -31,10 +31,6 @@ export const CONTROL_PANEL_HTML = `
               <h3>マッピング</h3>
               <div id="mappings-list" class="mappings-list"></div>
               <button id="add-mapping-btn" class="tool-button">＋ マッピングを追加</button>
-              <div class="io-buttons">
-                <button id="export-mappings-btn" class="tool-button">保存</button>
-                <button id="import-mappings-btn" class="tool-button">読み込み</button>
-              </div>
             </div>
 
             <div class="tool-section">
@@ -127,6 +123,15 @@ export const CONTROL_PANEL_HTML = `
               <button id="reset-mapping-btn" class="tool-button">
                 リセット
               </button>
+            </div>
+
+            <div class="tool-section">
+              <h3>設定の保存と読み込み</h3>
+              <p class="section-hint">出力レイアウト・マッピング・ソース選択を含む全設定を JSON ファイルで書き出し／読み込みできます。読み込むと現在の設定は上書きされます。</p>
+              <div class="io-buttons">
+                <button id="export-settings-btn" class="tool-button">保存</button>
+                <button id="import-settings-btn" class="tool-button">読み込み</button>
+              </div>
             </div>
 
           </div>

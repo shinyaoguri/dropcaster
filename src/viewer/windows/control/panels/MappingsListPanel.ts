@@ -307,12 +307,14 @@ export class MappingsListPanel {
       });
     }
 
-    const exportBtn = scope.querySelector('#export-mappings-btn');
+    // 全設定の保存・読み込み（マッピングだけでなく outputs / source rect / canvas を含む
+     // MappingsState 全体を 1 つの JSON にする）。
+    const exportBtn = scope.querySelector('#export-settings-btn');
     if (exportBtn) {
       exportBtn.addEventListener('click', () => this.exportToFile());
     }
 
-    const importBtn = scope.querySelector('#import-mappings-btn');
+    const importBtn = scope.querySelector('#import-settings-btn');
     if (importBtn) {
       importBtn.addEventListener('click', () => this.importFromFile());
     }
@@ -389,6 +391,8 @@ export class MappingsListPanel {
   }
 
   // ── export / import ───────────────────────────────────────────
+  // ファイルには MappingsState 全体（outputs / canvas / mappings / activeId 等）を入れる。
+  // つまり「マッピング」だけでなく出力レイアウトとソース選択も同じファイルに含まれる。
 
   private exportToFile(): void {
     const doc = this.doc;
@@ -400,7 +404,7 @@ export class MappingsListPanel {
     const a = doc.createElement('a');
     a.href = url;
     const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    a.download = `dropcaster-mappings-${ts}.json`;
+    a.download = `dropcaster-settings-${ts}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }
