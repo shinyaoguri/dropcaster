@@ -1,0 +1,66 @@
+# ホスト版 dropcaster (apps/web) を GitHub Pages に自動デプロイする。
+#
+# main へ push されたとき、apps/web/ または src/viewer / src/core 配下に
+# 変更がある場合のみ走る。ビルド成果物 (apps/web/dist) を Pages にアップロード。
+# カスタムドメイン (dropcaster.soui.dev) は apps/web/public/CNAME で指定済み。
+#
+# 事前準備 (リポジトリ側):
+#   Settings -> Pages -> Source を "GitHub Actions" に切り替え
+#   Settings -> Pages -> Custom domain に dropcaster.soui.dev を入力 (CNAME の DNS 設定後)
+#   Settings -> Pages -> Enforce HTTPS をオン
+
+name: Deploy hosted dropcaster
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'src/viewer/**'
+      - 'src/core/modules/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - '.github/workflows/deploy-hosted.yml'
+  workflow_dispatch:
+
+# 同時実行を 1 つに絞る (古い deploy が新しい deploy を上書きするのを防ぐ)
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build hosted bundle
+        run: npm run build:web
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
