@@ -32,6 +32,8 @@ import {
   type Point,
   type Quad,
 } from '../../../utils/mappingTransform';
+import { CleanupStack } from '../../../utils/cleanupStack';
+import { RafThrottle } from '../../../utils/rafThrottle';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
 
@@ -69,10 +71,11 @@ export class MappingAreaPanel {
   /** 全体スケール（中心固定）と全体回転（中心固定）の追加ハンドル。重心に配置。 */
   private scaleHandle: HTMLDivElement | null = null;
   private rotateHandle: HTMLDivElement | null = null;
-  private cleanups: Array<() => void> = [];
+  private cleanups = new CleanupStack();
   private resizeObserver: ResizeObserver | null = null;
   private observedArea: HTMLElement | null = null;
-  private resizeRafId: number | null = null;
+  /** observedArea の resize → refreshTransform を 1 frame 1 回に間引く throttle。setupResizeObserver で初期化。 */
+  private resizeThrottle: RafThrottle | null = null;
   private streamSetupTimeout: number | null = null;
 
   attach(scope: HTMLElement, doc: Document, win: Window, ctrl: MappingsController, opts: MappingAreaPanelAttachOptions): void {
@@ -143,21 +146,14 @@ export class MappingAreaPanel {
   }
 
   getCroppedContainer(): HTMLDivElement | null { return this.croppedContainer; }
-  /** InactivePreviewPool が active container の前に挿入する基準点として使う。 */
-  getStage(): HTMLElement | null { return this.croppedContainer?.parentElement ?? null; }
-  /** ControlWindow が video の videoActualDimensions を更新するために使う。 */
-  getCroppedVideo(): HTMLVideoElement | null { return this.croppedVideo; }
 
   destroy(): void {
-    this.cleanups.forEach(off => { try { off(); } catch { /* ignore */ } });
-    this.cleanups = [];
+    this.cleanups.runAll();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.observedArea = null;
-    if (this.resizeRafId !== null && this.win) {
-      this.win.cancelAnimationFrame(this.resizeRafId);
-      this.resizeRafId = null;
-    }
+    this.resizeThrottle?.cancel();
+    this.resizeThrottle = null;
     if (this.streamSetupTimeout !== null && this.win) {
       this.win.clearTimeout(this.streamSetupTimeout);
       this.streamSetupTimeout = null;
@@ -509,13 +505,8 @@ export class MappingAreaPanel {
   private setupResizeObserver(): void {
     const win = this.win;
     if (!win) return;
-    this.resizeObserver = new ResizeObserver(() => {
-      if (this.resizeRafId !== null) return;
-      this.resizeRafId = win.requestAnimationFrame(() => {
-        this.resizeRafId = null;
-        this.refreshTransform();
-      });
-    });
+    this.resizeThrottle = new RafThrottle(win, () => this.refreshTransform());
+    this.resizeObserver = new ResizeObserver(() => this.resizeThrottle?.schedule());
     this.rebindResizeObserver();
   }
 

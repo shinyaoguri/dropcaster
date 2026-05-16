@@ -12,6 +12,7 @@
  */
 
 import type { SourceRect } from '../../../utils/mappingTransform';
+import { CleanupStack } from '../../../utils/cleanupStack';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
 
@@ -31,7 +32,7 @@ export class SourceCropPanel {
   private ctrl: MappingsController | null = null;
   private opts: SourceCropPanelAttachOptions | null = null;
   private selectionBox: HTMLDivElement | null = null;
-  private cleanups: Array<() => void> = [];
+  private cleanups = new CleanupStack();
 
   attach(scope: HTMLElement, doc: Document, ctrl: MappingsController, opts: SourceCropPanelAttachOptions): void {
     this.scope = scope;
@@ -71,8 +72,7 @@ export class SourceCropPanel {
   getSelectionBox(): HTMLDivElement | null { return this.selectionBox; }
 
   destroy(): void {
-    this.cleanups.forEach(off => { try { off(); } catch { /* ignore */ } });
-    this.cleanups = [];
+    this.cleanups.runAll();
     this.scope = null;
     this.doc = null;
     this.ctrl = null;

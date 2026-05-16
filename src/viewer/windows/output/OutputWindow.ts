@@ -7,6 +7,7 @@ import {
   type MappingsState,
   type OutputDef,
 } from '../../utils/mappingTransform';
+import { RafThrottle } from '../../utils/rafThrottle';
 import { ScreenWakeLock } from '../../utils/wakeLock';
 
 interface OutputChild {
@@ -32,18 +33,18 @@ export class OutputWindow extends BaseWindow {
   /** この出力ウィンドウが担当する仮想キャンバス内の矩形（OutputDef.position/size）。 */
   private outputRect: { x: number; y: number; width: number; height: number } | null = null;
   private boundMessage = (e: MessageEvent) => this.onMessage(e);
-  private boundResize = () => this.scheduleReapply();
+  private boundResize = () => this.reapplyThrottle?.schedule();
   private boundKeydown = (e: KeyboardEvent) => this.onKeydown(e);
   private boundMouseMove = (e: MouseEvent) => this.onMouseMove(e);
   private boundMouseOut = (e: Event) => this.onMouseOut(e);
   private idleTimer: number | null = null;
   /** 開発モード（mapping 枠線・マウス追従クロスヘア表示）。親から dev-mode-update で push される。 */
   private devMode = false;
-  /** resize 由来の transform 再適用を 1 フレーム 1 回へ間引くための rAF id。 */
-  private reapplyRafId: number | null = null;
+  /** resize 由来の transform 再適用を 1 フレーム 1 回へ間引く throttle。initialize で作成。 */
+  private reapplyThrottle: RafThrottle | null = null;
   /** 出力ウィンドウのディスプレイ（＝プロジェクタ）をスリープさせないための Screen Wake Lock。 */
   private wakeLock: ScreenWakeLock | null = null;
-  /** 自身が担当する出力 id（OutputDef.id）。state.mappings 中の m.outputId と突き合わせる。 */
+  /** 自身が担当する出力 id（OutputDef.id）。state.outputs から自分の bounds を引くのに使う。 */
   private readonly outputId: string;
 
   constructor(outputId: string) {
@@ -57,6 +58,7 @@ export class OutputWindow extends BaseWindow {
     this.render();
     if (!this.window) return;
     try { this.window.document.body.style.background = '#000'; } catch { /* ignore */ }
+    this.reapplyThrottle = new RafThrottle(this.window, () => this.reapplyTransforms());
     this.window.addEventListener('message', this.boundMessage);
     this.window.addEventListener('resize', this.boundResize);
     this.window.addEventListener('keydown', this.boundKeydown);
@@ -197,15 +199,12 @@ export class OutputWindow extends BaseWindow {
   /**
    * マッピング設定を受け取り、有効な mapping を描画する。
    *
-   * **跨ぎマッピング対応**: 旧仕様では `m.outputId === this.outputId` で「自分宛て」だけに
-   * 絞っていたが、quad が複数の出力を跨ぐ場合に片方が描かれない問題があった。新仕様では
-   * outputId は primary owner（操作 UI の所属表示用）に過ぎず、描画は quad の絶対座標が
-   * 自出力の bounds と交差するかで判定する。clip 自体は `#dc-output-stage` の overflow:hidden
-   * と canvas-host の transform が自動で行うので、ここでの交差判定は「無関係な mapping の
-   * <video> を新規生成しない」性能最適化として機能する（intersect しない mapping は
-   * `seen` に入らないので新規 child が作られない）。
+   * 描画判定は「quad の絶対座標が自出力の bounds と交差するか」のみ。クリップ自体は
+   * `#dc-output-stage` の overflow:hidden と canvas-host の transform が自動で行うので、
+   * ここでの交差判定は「無関係な mapping の <video> を新規生成しない」性能最適化として
+   * のみ機能する（intersect しない mapping は seen に入らないので新規 child が作られない）。
    *
-   * ただし intersect 判定は「destroy」には使わない: 出力レイアウトのドラッグ中に
+   * ただし intersect 判定は destroy には使わない: 出力レイアウトのドラッグ中に
    * intersect が true↔false で揺れると、毎フレーム child の create/destroy が起きて
    * 親側に stream 再 bind を要求し、出力ウィンドウが黒くフラッシュする。一度作った
    * child は disabled / 削除されるまで維持する。
@@ -323,15 +322,6 @@ export class OutputWindow extends BaseWindow {
     // 行ってから scale(sx, sy) する → 結果として「canvas 座標の (rect.x, rect.y) が画面 (0,0)、
     // (rect.x+rect.w, rect.y+rect.h) が画面 (innerWidth, innerHeight) に来る」。
     canvasEl.style.transform = `scale(${sx}, ${sy}) translate(${-rect.x}px, ${-rect.y}px)`;
-  }
-
-  /** resize イベントの度に同期実行せず、次フレームに 1 回だけ transform を再計算する。 */
-  private scheduleReapply(): void {
-    if (this.reapplyRafId !== null || !this.window) return;
-    this.reapplyRafId = this.window.requestAnimationFrame(() => {
-      this.reapplyRafId = null;
-      this.reapplyTransforms();
-    });
   }
 
   private reapplyTransforms(): void {
@@ -493,8 +483,8 @@ export class OutputWindow extends BaseWindow {
   private teardown(): void {
     if (this.idleTimer !== null && this.window) this.window.clearTimeout(this.idleTimer);
     this.idleTimer = null;
-    if (this.reapplyRafId !== null && this.window) this.window.cancelAnimationFrame(this.reapplyRafId);
-    this.reapplyRafId = null;
+    this.reapplyThrottle?.cancel();
+    this.reapplyThrottle = null;
     this.wakeLock?.release();
     this.wakeLock = null;
     this.children.clear();

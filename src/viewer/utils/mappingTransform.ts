@@ -24,9 +24,9 @@ export type CornerKey = typeof CORNER_KEYS[number];
  * 個別マッピング。source crop と destination quad を1組持つ。
  * enabled が false の場合、メイン画面の投影出力からは除外される（コントロール上は編集可能）。
  *
- * 出力との関係は「quad の bounds と各出力の bounds の交差」だけで決まる（v2.1 で
- * primary owner 概念は廃止）。出力管理とマッピングは独立した存在で、quad を仮想キャンバス
- * 上のどこに置くかで自然にどの出力に映るかが決まる。
+ * 出力との関係は「quad の bounds と各出力の bounds の交差」だけで自動的に決まる。
+ * mapping と output は独立した概念で、所属関係を持たない — quad を仮想キャンバス上の
+ * どこに置くかで自然にどの出力に映るかが決まる。
  *
  * quad の座標は「仮想キャンバス」座標（px）。仮想キャンバス上の全出力（OutputDef.position
  * + OutputDef.size の矩形）と quad の交差部分だけが各出力で見える。
@@ -71,8 +71,8 @@ export interface OutputDef {
  *  - canvas: 仮想キャンバスのサイズ（px）。全 output と全 quad を包含する座標空間。
  *    outputs を追加・移動するたびに recomputeCanvasBounds で再計算される。
  *  - outputs は1件以上。複数の出力ウィンドウを同時に扱う場合は最大4件まで（UI 制約）。
- *  - 各 mapping の quad は仮想キャンバス px。outputId は primary owner（一覧
- *    グルーピング・追加時のデフォルト所属用）で、描画は quad の交差判定で行う。
+ *  - 各 mapping の quad は仮想キャンバス px。output との関係は quad と output bounds の
+ *    交差判定で自動的に決まる（mapping は output に所属しない）。
  *  - mappings は1件以上、activeId は常に mappings 中のいずれかを指す。
  *  - activeOutputId は「出力フレーム自体を選択中」の状態（layout 編集用、未選択なら undefined）。
  *
@@ -270,9 +270,8 @@ export function withAddedOutput(state: MappingsState): MappingsState {
 
 /**
  * 出力を 1 件削除。最後の 1 件なら no-op。
- * mapping は出力と独立（v2.1 で primary owner 廃止）なので、出力を消しても
- * mapping は仮想キャンバス上にそのまま残る（quad の位置によっては他の出力に映る、
- * またはどこにも映らない状態になる）。
+ * mapping は output と独立した存在なので、出力を消しても mapping は仮想キャンバス上に
+ * そのまま残る（quad の位置によっては他の出力に映る、またはどこにも映らない状態になる）。
  * activeOutputId がその出力を指していたら undefined に戻す。
  */
 export function withRemovedOutput(state: MappingsState, outputId: string): MappingsState {

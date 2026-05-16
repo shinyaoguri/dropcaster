@@ -1,20 +1,30 @@
 /**
  * マッピングカラムの「出力ステージ」を組み立てる panel。
  *
- * state.outputs に基づき、出力ごとに `.dc-output-frame` を生やし、その中に
- * `.dc-display-frame` →（出力ウィンドウ枠を表す）`.window-frame` →
- * `.dc-mapping-area` の階層を作る。`.dc-mapping-area` は MappingAreaPanel と
- * InactivePreviewPool が active／inactive な mapping をぶら下げる宛先になる。
+ * #output-stage の中に仮想キャンバス全体を担う `.dc-canvas-host` を 1 枚置き、その中に
+ * 3 層を積む（下から）:
+ *   - `.dc-canvas-mappings` — 全 mapping の <video> ＋ matrix3d warp の mount 先。
+ *     MappingAreaPanel（active mapping）と InactivePreviewPool（inactive mapping）が
+ *     ここに DOM をぶら下げる。
+ *   - 各出力の `.dc-output-frame` — 出力ウィンドウの投影範囲を示す透明枠オーバーレイ。
+ *     pointer-events: none（マッピングのドラッグを通すため）。アクティブ切替用のヘッダ
+ *     のみ pointer-events: auto。
+ *   - `.dc-canvas-handles` — quad 4 隅 / scale / rotate ハンドルの mount 先。
+ *
+ * canvas-host は #output-stage の viewport にフィットするよう scale + 中央寄せ offset で
+ * 配置する。stage の resize（カラムリサイザ・ウィンドウリサイズ etc.）には自前の
+ * ResizeObserver で追従する（rAF 間引き）。
  *
  * 入力は ControlWindow が保持する state / outputBounds(map) / videoDimensions /
  * sourceVideo のスナップショットで、getter 群で都度読む（mirror しない）。
- * 「window-frame のサイズが変わったので quad の matrix3d を再計算してほしい」という
- * 副次要求は onWindowFrameReflow コールバックで親に通知する。
+ * 「フレームのサイズが変わったので quad の matrix3d を再計算してほしい」という副次要求は
+ * onWindowFrameReflow コールバックで親に通知する。
  *
- * フレーム DOM は state.outputs が変化した時だけ作り直し、その他のタイミングでは
- * 既存要素の inline style と class だけを更新する（active mapping の移動先など）。
+ * フレーム DOM は state.outputs の id 列が変化した時だけ作り直し、それ以外は既存要素の
+ * inline style と class だけを更新する。
  */
 
+import { RafThrottle } from '../../../utils/rafThrottle';
 import type { OutputBoundsMap, VideoDimensions } from '../ControlHost';
 import type { MappingsController } from '../MappingsController';
 
@@ -72,7 +82,8 @@ export class OutputVizPanel {
    * 1 frame に 1 回だけ refresh を呼ぶよう rAF で間引く。
    */
   private resizeObserver: ResizeObserver | null = null;
-  private resizeRafId: number | null = null;
+  /** stage resize → renderAll を 1 frame 1 回に間引く throttle。attach で初期化。 */
+  private resizeThrottle: RafThrottle | null = null;
 
   attach(scope: HTMLElement, opts: OutputVizPanelAttachOptions, ctrl: MappingsController): void {
     this.scope = scope;
@@ -99,25 +110,17 @@ export class OutputVizPanel {
     this.canvasHost.addEventListener('mouseleave', () => this.handleHostMouseLeave());
 
     // stage 自身の resize（カラムリサイザ・ウィンドウリサイズ etc.）でフィット scale を再計算する。
-    // window の resize イベントだけだとカラム幅変更には反応できないので必須。
-    this.resizeObserver = new ResizeObserver(() => this.scheduleResizeRefresh());
-    this.resizeObserver.observe(stage);
+    // window の resize イベントだけだとカラム幅変更には反応できないので必須。renderAll のみで
+    // 十分（rebuildFromState は output 増減でのみ呼ぶ）なので、軽量な renderAll を rAF で間引く。
+    const win = stage.ownerDocument?.defaultView;
+    if (win) {
+      this.resizeThrottle = new RafThrottle(win, () => this.renderAll());
+      this.resizeObserver = new ResizeObserver(() => this.resizeThrottle?.schedule());
+      this.resizeObserver.observe(stage);
+    }
 
     this.rebuildFromState();
     this.refresh();
-  }
-
-  /**
-   * resize 起因の再フィット。renderAll（scale/offset の再計算 + 各 frame の position 更新）のみで
-   * 十分なので rebuildFromState は省略。1 フレームに 1 回まで間引く。
-   */
-  private scheduleResizeRefresh(): void {
-    const win = this.stageEl?.ownerDocument?.defaultView;
-    if (!win || this.resizeRafId !== null) return;
-    this.resizeRafId = win.requestAnimationFrame(() => {
-      this.resizeRafId = null;
-      this.renderAll();
-    });
   }
 
   /**
@@ -156,16 +159,6 @@ export class OutputVizPanel {
     this.renderSourceAspect();
   }
 
-  /** active outputId 変更時にハイライトだけ更新したい時の入口。 */
-  refreshActiveOutput(): void {
-    const state = this.ctrl?.getState();
-    if (!state) return;
-    const active = state.activeOutputId;
-    for (const [id, entry] of this.frames) {
-      entry.root.classList.toggle('is-active', id === active);
-    }
-  }
-
   /**
    * 仮想キャンバスの mapping レイヤ（全 mapping の共通 mount 先）を返す。
    * cropped-container（active mapping）と inactive preview はすべてここに乗る。
@@ -183,11 +176,8 @@ export class OutputVizPanel {
   destroy(): void {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
-    if (this.resizeRafId !== null) {
-      const win = this.stageEl?.ownerDocument?.defaultView;
-      win?.cancelAnimationFrame(this.resizeRafId);
-      this.resizeRafId = null;
-    }
+    this.resizeThrottle?.cancel();
+    this.resizeThrottle = null;
     this.canvasHost?.remove();
     this.canvasHost = null;
     this.canvasMappings = null;

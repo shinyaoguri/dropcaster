@@ -9,11 +9,13 @@
  *     比率を変える。mapping は flex 維持で残りを取る。
  */
 
+import { CleanupStack } from '../../../utils/cleanupStack';
+
 const STORAGE_KEY = 'dropcaster.control.columnWidths.v1';
 
 export class ColumnResizers {
   /** attach 時に追加した listener / 進行中の drag を撤去するためのフック群。 */
-  private cleanups: Array<() => void> = [];
+  private cleanups = new CleanupStack();
 
   attach(scope: HTMLElement, doc: Document): void {
     const toolCol = scope.querySelector<HTMLElement>('.tool-column');
@@ -63,8 +65,8 @@ export class ColumnResizers {
           doc.removeEventListener('mousemove', onMove);
           doc.removeEventListener('mouseup', finish);
           this.persistColumnWidths(toolCol, sourceCol);
-          // drag が綺麗に終わったので cleanups からも外す
-          this.cleanups = this.cleanups.filter(c => c !== finish);
+          // drag が綺麗に終わったので cleanups からも外す（destroy で二重呼びさせない）
+          this.cleanups.remove(finish);
         };
 
         doc.addEventListener('mousemove', onMove);
@@ -80,8 +82,7 @@ export class ColumnResizers {
 
   destroy(): void {
     // 進行中の drag があれば finish() で listener も body style も戻る
-    this.cleanups.forEach(off => { try { off(); } catch { /* ignore */ } });
-    this.cleanups = [];
+    this.cleanups.runAll();
   }
 
   private persistColumnWidths(toolCol: HTMLElement, sourceCol: HTMLElement): void {

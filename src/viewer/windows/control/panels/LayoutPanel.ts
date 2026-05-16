@@ -21,6 +21,8 @@ import {
   withActiveOutputSet,
   type MappingsState,
 } from '../../../utils/mappingTransform';
+import { CleanupStack } from '../../../utils/cleanupStack';
+import { RafThrottle } from '../../../utils/rafThrottle';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
 
@@ -38,7 +40,8 @@ interface OutputEntry {
   canvasWindow: HTMLDivElement;
   /** この出力 frame に乗っている mapping preview 群（mapping.id → entry） */
   previews: Map<string, MappingPreviewEntry>;
-  dispose: Array<() => void>;
+  /** 出力削除 / panel destroy 時に呼ぶ drag 解除関数（本体 drag + resize drag）。 */
+  dispose: CleanupStack;
 }
 
 export interface LayoutPanelAttachOptions {
@@ -57,18 +60,17 @@ export class LayoutPanel {
   private canvasEl: HTMLDivElement | null = null;
   private hintEl: HTMLElement | null = null;
   private doc: Document | null = null;
-  private win: Window | null = null;
   private ctrl: MappingsController | null = null;
   private opts: LayoutPanelAttachOptions | null = null;
   private outputs = new Map<string, OutputEntry>();
   /** viewport の bounding rect から canvas を fit するスケール。refresh で計算。 */
   private fitScale = 1;
   private resizeObserver: ResizeObserver | null = null;
-  private resizeRafId: number | null = null;
+  /** viewport resize → refresh を 1 フレーム 1 回に間引く throttle。attach で初期化。 */
+  private resizeThrottle: RafThrottle | null = null;
 
   attach(scope: HTMLElement, doc: Document, win: Window, ctrl: MappingsController, opts: LayoutPanelAttachOptions): void {
     this.doc = doc;
-    this.win = win;
     this.ctrl = ctrl;
     this.opts = opts;
 
@@ -90,8 +92,9 @@ export class LayoutPanel {
     stage.appendChild(this.hintEl);
     stage.appendChild(this.viewport);
 
-    // viewport の resize でレイアウト全体（fitScale）を再計算
-    this.resizeObserver = new ResizeObserver(() => this.scheduleRefresh());
+    // viewport の resize でレイアウト全体（fitScale）を再計算（rAF で 1 frame 1 回に間引く）
+    this.resizeThrottle = new RafThrottle(win, () => this.refresh());
+    this.resizeObserver = new ResizeObserver(() => this.resizeThrottle?.schedule());
     this.resizeObserver.observe(this.viewport);
   }
 
@@ -144,12 +147,10 @@ export class LayoutPanel {
   destroy(): void {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
-    if (this.resizeRafId !== null && this.win) {
-      this.win.cancelAnimationFrame(this.resizeRafId);
-      this.resizeRafId = null;
-    }
+    this.resizeThrottle?.cancel();
+    this.resizeThrottle = null;
     for (const e of this.outputs.values()) {
-      e.dispose.forEach(off => { try { off(); } catch { /* ignore */ } });
+      e.dispose.runAll();
       e.div.remove();
     }
     this.outputs.clear();
@@ -159,21 +160,11 @@ export class LayoutPanel {
     this.viewport = null;
     this.canvasEl = null;
     this.doc = null;
-    this.win = null;
     this.ctrl = null;
     this.opts = null;
   }
 
   // ── internals ─────────────────────────────────────────────────
-
-  private scheduleRefresh(): void {
-    const win = this.win;
-    if (!win || this.resizeRafId !== null) return;
-    this.resizeRafId = win.requestAnimationFrame(() => {
-      this.resizeRafId = null;
-      this.refresh();
-    });
-  }
 
   private syncOutputs(state: MappingsState): void {
     const doc = this.doc;
@@ -209,7 +200,7 @@ export class LayoutPanel {
     // 消えた出力を片付け
     for (const [id, entry] of this.outputs) {
       if (!seen.has(id)) {
-        entry.dispose.forEach(off => { try { off(); } catch { /* ignore */ } });
+        entry.dispose.runAll();
         entry.div.remove();
         this.outputs.delete(id);
       }
@@ -237,7 +228,7 @@ export class LayoutPanel {
     resizeSE.className = 'dc-layout-resize se';
     div.appendChild(resizeSE);
 
-    const dispose: Array<() => void> = [];
+    const dispose = new CleanupStack();
 
     // クリックで activeOutputId 切替（dragstart 直後にも発火するので、実 drag が無かった時のみ active 化）
     div.addEventListener('click', () => {

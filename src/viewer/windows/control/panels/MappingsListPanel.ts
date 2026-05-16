@@ -1,22 +1,23 @@
 /**
- * 出力ウィンドウとマッピングの一覧 panel。tool カラムに 2 つのセクションを生やす:
+ * tool カラム内の一覧 + アクションをまとめて担当する panel。テンプレートに既に存在する
+ * 以下の DOM をクエリして wire する:
  *
- *   [出力ウィンドウ]
- *     - 出力ごとに 1 行: 名前 / 開閉ボタン / 削除
- *     - + 出力を追加
+ *   - #outputs-list     ← 出力ごとに 1 行（名前 / 開閉ボタン / 削除）を埋める
+ *   - #add-output-btn   ← クリックで withAddedOutput
+ *   - #mappings-list    ← mapping を全件フラットに列挙（色 / 名前 / enable / 削除）
+ *   - #add-mapping-btn  ← クリックで withAddedMapping
+ *   - #export-settings-btn / #import-settings-btn ← 全設定 (MappingsState) の JSON 書出 / 読込
  *
- *   [マッピング]
- *     - 全 mapping をフラットに列挙: 色 / 名前 / enable / 削除
- *     - + マッピングを追加
- *     - export / import
- *
- * 出力管理とマッピング管理は独立した存在として扱う（v2.1 で primary owner 概念を廃止）。
- * マッピングがどの出力に映るかは仮想キャンバス上の quad 座標と各出力の bounds の交差で
- * 自動的に決まるので、UI でも所属関係を表現しない。
+ * 出力管理とマッピング管理は独立した存在として扱う。マッピングがどの出力に映るかは
+ * 仮想キャンバス上の quad 座標と各出力の bounds の交差で自動的に決まるので、UI でも
+ * 所属関係を表現しない。
  *
  * インポート JSON や localStorage 経由で m.id / m.name に細工された文字列が混入しても
  * XSS にならないよう、`innerHTML` テンプレート補間ではなく DOM API（textContent / dataset /
  * style.setProperty）で組み立てる。
+ *
+ * rerender は outputs / mappings 別の signature memoize で間引く。出力レイアウトの drag のように
+ * tool 列の表示に影響しない変化では DOM rebuild が走らない（フリッカ回避）。
  */
 
 import {

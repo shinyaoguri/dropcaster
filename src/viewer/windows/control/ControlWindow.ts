@@ -7,15 +7,16 @@ import { InactivePreviewPool } from './panels/InactivePreviewPool';
 import { KeyboardNudge } from './panels/KeyboardNudge';
 import { LayoutPanel } from './panels/LayoutPanel';
 import { MappingsListPanel } from './panels/MappingsListPanel';
+import { OutputSettingsPanel } from './panels/OutputSettingsPanel';
 import { SourceCropPanel } from './panels/SourceCropPanel';
 import { MappingAreaPanel } from './panels/MappingAreaPanel';
 import { MappingsController } from './MappingsController';
 import {
   withActiveOutputSet,
   withActiveSet,
-  withOutputLayoutSet,
   type MappingsState,
 } from '../../utils/mappingTransform';
+import { RafThrottle } from '../../utils/rafThrottle';
 import type {
   ControlHost,
   DevCursorEvent,
@@ -40,8 +41,8 @@ export class ControlWindow extends BaseWindow {
    * キーは OutputDef.id。開いていない出力はエントリ無し。
    */
   private outputBounds: OutputBoundsMap = {};
-  /** ウィンドウ resize 由来の再レイアウトを 1 フレームに 1 回へ間引くための rAF id。 */
-  private resizeRafId: number | null = null;
+  /** ウィンドウ resize 由来の再レイアウトを 1 フレームに 1 回へ間引く throttle。setupMessageListener で初期化。 */
+  private resizeThrottle: RafThrottle | null = null;
   /** ホスト環境依存の I/O を集約した seam。null = 未初期化。 */
   private controlHost: ControlHost | null = null;
   /** host のイベント購読解除関数。dispose で全部呼ぶ。 */
@@ -53,6 +54,7 @@ export class ControlWindow extends BaseWindow {
   private sourceCrop = new SourceCropPanel();
   private mappingArea = new MappingAreaPanel();
   private layoutPanel = new LayoutPanel();
+  private outputSettings = new OutputSettingsPanel();
   /** 現在 active なタブ（'mapping' / 'layout'）。タブ切替時に LayoutPanel.refresh() を駆動。 */
   private activeTab: 'mapping' | 'layout' = 'mapping';
   // canonical state（および active alias）は MappingsController が所有する。
@@ -86,7 +88,8 @@ export class ControlWindow extends BaseWindow {
    * outer の ownerDocument の head に CSS を 1 度だけ注入する。
    */
   mountInline(outer: HTMLElement, hostBuilder: (shell: HTMLElement) => ControlHost): void {
-    this.resizeRafId = null;
+    this.resizeThrottle?.cancel();
+    this.resizeThrottle = null;
     outer.innerHTML = this.getContent();
     this.injectStylesInto(outer.ownerDocument);
     const shell = outer.querySelector('.dc-control-shell') as HTMLElement | null;
@@ -181,6 +184,7 @@ export class ControlWindow extends BaseWindow {
     this.sourceCrop.destroy();
     this.mappingArea.destroy();
     this.layoutPanel.destroy();
+    this.outputSettings.destroy();
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
@@ -309,18 +313,18 @@ ${CONTROL_PANEL_CSS}
       });
     }
 
+    // 出力設定（X/Y/幅/高さ）入力欄 — outputs[*] のアクティブな 1 件の position/size を編集
+    this.outputSettings.attach(scope, this.ctrl);
+
     // 出力レイアウト編集タブ（仮想キャンバス上で各 output を 2D ドラッグ・リサイズで配置 + マッピング preview）
     if (this.hostDoc && this.controlHost) {
       this.layoutPanel.attach(scope, this.hostDoc, this.controlHost.window, this.ctrl, {
         getSourceVideo: () => this.sourceVideo,
         // drag/resize 中はツール列の「出力設定」入力欄を live 更新する。state mutation は in-place
-        // なので fireChange は走らない（tool 列の rerender は起きない）。ここで入力欄だけ手書きする。
-        onOutputLayoutMutated: () => this.refreshOutputSettingsValues(),
+        // なので fireChange は走らない（tool 列の rerender は起きない）。ここで input だけ書き換える。
+        onOutputLayoutMutated: () => this.outputSettings.refresh(),
       });
     }
-
-    // 出力設定（X/Y/幅/高さ）入力欄の wire 化
-    this.setupOutputSettingsControls();
 
     // タブ切替（マッピング ↔ 出力レイアウト）
     this.setupTabs();
@@ -475,91 +479,7 @@ ${CONTROL_PANEL_CSS}
     if (br) br.textContent = fmt(quad.bottomRight);
 
     // 出力設定: アクティブ出力の position/size を入力欄に反映
-    this.refreshOutputSettingsValues();
-  }
-
-  /**
-   * 出力設定（X/Y/幅/高さ）入力欄の change を購読し、確定時に withOutputLayoutSet で state を
-   * 更新する。setupControls() から一度だけ呼ぶ。listener は dispose せず Control パネルが死ぬ
-   * までついて回るが、scope ごと outerHTML 置換で消える設計なので問題ない。
-   */
-  private setupOutputSettingsControls(): void {
-    const scope = this.scopeEl;
-    if (!scope) return;
-
-    type Field = 'x' | 'y' | 'w' | 'h';
-    const bind = (id: string, field: Field) => {
-      const input = scope.querySelector<HTMLInputElement>(`#output-${id}-input`);
-      if (!input) return;
-      const commit = () => {
-        const target = this.activeOutputForSettings();
-        if (!target) return;
-        const raw = parseFloat(input.value);
-        if (!Number.isFinite(raw)) {
-          this.refreshOutputSettingsValues();
-          return;
-        }
-        const cur = this.ctrl.getState();
-        const out = cur.outputs.find(o => o.id === target);
-        if (!out) return;
-        const next = (() => {
-          if (field === 'x') return { position: { x: raw, y: out.position.y } };
-          if (field === 'y') return { position: { x: out.position.x, y: raw } };
-          if (field === 'w') return { size: { width: raw, height: out.size.height } };
-          return { size: { width: out.size.width, height: raw } };
-        })();
-        this.ctrl.replaceState(withOutputLayoutSet(cur, target, next));
-      };
-      input.addEventListener('change', commit);
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); }
-        else if (e.key === 'Escape') { e.preventDefault(); this.refreshOutputSettingsValues(); (e.currentTarget as HTMLInputElement).blur(); }
-      });
-    };
-    bind('x', 'x'); bind('y', 'y'); bind('w', 'w'); bind('h', 'h');
-  }
-
-  /**
-   * 出力設定の入力欄に、現在のアクティブ出力（無ければ outputs[0]）の値を書き戻す。
-   * focus 中の入力欄はユーザ入力中なので上書きしない。
-   */
-  private refreshOutputSettingsValues(): void {
-    const scope = this.scopeEl;
-    if (!scope) return;
-    const targetId = this.activeOutputForSettings();
-    const state = this.ctrl.getState();
-    const out = targetId ? state.outputs.find(o => o.id === targetId) : undefined;
-    const label = scope.querySelector('#output-settings-target');
-    const xi = scope.querySelector<HTMLInputElement>('#output-x-input');
-    const yi = scope.querySelector<HTMLInputElement>('#output-y-input');
-    const wi = scope.querySelector<HTMLInputElement>('#output-w-input');
-    const hi = scope.querySelector<HTMLInputElement>('#output-h-input');
-    const activeEl = scope.ownerDocument?.activeElement;
-    const setIfNotFocused = (el: HTMLInputElement | null, value: string) => {
-      if (!el) return;
-      if (el === activeEl) return;
-      el.value = value;
-    };
-    if (!out) {
-      if (label) label.textContent = '—';
-      [xi, yi, wi, hi].forEach(el => { if (el) { el.disabled = true; el.value = ''; } });
-      return;
-    }
-    if (label) label.textContent = out.name ?? out.id;
-    [xi, yi, wi, hi].forEach(el => { if (el) el.disabled = false; });
-    setIfNotFocused(xi, String(Math.round(out.position.x)));
-    setIfNotFocused(yi, String(Math.round(out.position.y)));
-    setIfNotFocused(wi, String(Math.round(out.size.width)));
-    setIfNotFocused(hi, String(Math.round(out.size.height)));
-  }
-
-  /** 出力設定 UI が対象とする出力 id を返す。activeOutputId を優先、なければ outputs[0]。 */
-  private activeOutputForSettings(): string | undefined {
-    const state = this.ctrl.getState();
-    if (state.activeOutputId && state.outputs.some(o => o.id === state.activeOutputId)) {
-      return state.activeOutputId;
-    }
-    return state.outputs[0]?.id;
+    this.outputSettings.refresh();
   }
 
   /**
@@ -620,18 +540,15 @@ ${CONTROL_PANEL_CSS}
     // ウィンドウリサイズ時に各タブを再描画（1 フレーム 1 回に間引く）。
     // outputViz.refresh() / layoutPanel.refresh() は stage rect を再計測してフィット scale を
     // 計算し直すので、サイズ変更で見えなくなることを防ぐ。
-    win.addEventListener('resize', () => {
-      if (this.resizeRafId !== null) return;
-      this.resizeRafId = win.requestAnimationFrame(() => {
-        this.resizeRafId = null;
-        if (this.activeTab === 'layout') {
-          this.layoutPanel.refresh();
-        } else {
-          this.outputViz.refresh();
-          this.mappingArea.refreshTransform();
-        }
-      });
+    this.resizeThrottle = new RafThrottle(win, () => {
+      if (this.activeTab === 'layout') {
+        this.layoutPanel.refresh();
+      } else {
+        this.outputViz.refresh();
+        this.mappingArea.refreshTransform();
+      }
     });
+    win.addEventListener('resize', () => this.resizeThrottle?.schedule());
 
     // タブを閉じる直前に host 購読を畳む
     win.addEventListener('pagehide', () => this.disposeHost());
