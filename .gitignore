@@ -13,6 +13,10 @@ dist-ssr
 *.local
 .dropcaster/
 
+# Cloudflare Wrangler のローカルキャッシュ / state / 秘密情報
+apps/web/.wrangler/
+apps/web/.dev.vars
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
