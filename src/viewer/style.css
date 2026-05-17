@@ -968,16 +968,17 @@ body {
 
 /* ─── 言語切替トグル (segmented control 形式) ─────────────────────────────
    構造: <div.dc-lang-toggle><button.dc-lang-toggle-opt × 2></div>
-   現在言語が is-active で塗りつぶされ、もう一方が透明。
-   pill 形状で gallery/hero/error 各所で同じ見た目になる。 */
+   - コンテナはページ背景 (#f8fafc) と明確に区別できる solid グレーで「2 つで 1 セット」と
+     一目でわかるようにする。
+   - active 側は濃い色で塗って白文字、inactive 側は透明で濃いグレー文字。
+   - 中央の縦線で 2 セグメントの境界をはっきり示す。 */
 .dc-lang-toggle {
   display: inline-flex;
   align-items: stretch;
-  padding: 3px;
-  background: rgba(15, 23, 42, 0.06);
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: #e2e8f0;
+  border: 1px solid #cbd5e1;
   border-radius: 999px;
-  gap: 2px;
+  overflow: hidden;
   line-height: 1;
   /* slideshow-btn (height ≈ 40px) に揃える */
   height: 40px;
@@ -988,31 +989,40 @@ body {
   appearance: none;
   background: transparent;
   border: 0;
-  color: #64748b;
+  color: #475569;
   font: inherit;
-  font-weight: 600;
-  font-size: 0.75rem;
-  letter-spacing: 0.06em;
-  padding: 0 12px;
-  min-width: 36px;
-  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  letter-spacing: 0.08em;
+  padding: 0 16px;
+  min-width: 48px;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
+/* セグメント境界 (2 個目以降の左に線を引く) */
+.dc-lang-toggle-opt + .dc-lang-toggle-opt {
+  border-left: 1px solid #cbd5e1;
+}
+
 .dc-lang-toggle-opt:hover:not(.is-active) {
   color: #0f172a;
-  background: rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .dc-lang-toggle-opt.is-active {
-  background: #ffffff;
-  color: #0f172a;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.06);
+  background: #0f172a;
+  color: #ffffff;
   cursor: default;
+}
+
+/* active 側に隣接する区切り線は消す (色が乗ったセグメント側に線が残ると見栄えが悪い) */
+.dc-lang-toggle-opt.is-active + .dc-lang-toggle-opt,
+.dc-lang-toggle-opt:has(+ .dc-lang-toggle-opt.is-active) + .dc-lang-toggle-opt {
+  border-left-color: transparent;
 }
 
 .dc-lang-toggle-opt:focus-visible {
@@ -1028,24 +1038,5 @@ body {
   z-index: 20;
 }
 
-/* dark 背景上 (op-hero / sketch-error) では反転 */
-.op-hero-container .dc-lang-toggle,
-.sketch-error .dc-lang-toggle {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.18);
-}
-.op-hero-container .dc-lang-toggle-opt,
-.sketch-error .dc-lang-toggle-opt {
-  color: rgba(255, 255, 255, 0.7);
-}
-.op-hero-container .dc-lang-toggle-opt:hover:not(.is-active),
-.sketch-error .dc-lang-toggle-opt:hover:not(.is-active) {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-}
-.op-hero-container .dc-lang-toggle-opt.is-active,
-.sketch-error .dc-lang-toggle-opt.is-active {
-  background: rgba(255, 255, 255, 0.95);
-  color: #0f172a;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-}
+/* hero / sketch-error はいずれもライト背景なので、default のライトスタイルをそのまま使う。
+   ダーク背景 (slideshow / output window) には語切替ボタンを置かないので反転スタイルは不要。 */
