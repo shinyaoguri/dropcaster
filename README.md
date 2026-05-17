@@ -2,7 +2,7 @@
 
 > ⚠️ **Alpha Version**: This project is under active development. APIs may change.
 
-OpenProcessingのクリエイティブコーディングスケッチを静的PWAギャラリーとして生成するツール。ブラウザベースのプロジェクションマッピング機能も実装。
+OpenProcessing の作品をブラウザベースの投影マッピング用ビューアとして使うためのツール。**ホスト版 ([dropcaster.soui.dev](https://dropcaster.soui.dev)) で作品 ID を入れればすぐ動かせる**ほか、**ローカル CLI で自分専用のキュレーションギャラリーを作って公開する**こともできる。
 
 > 🔒 **信頼モデル（重要）**
 >
@@ -12,12 +12,33 @@ OpenProcessingのクリエイティブコーディングスケッチを静的PWA
 
 ## 特徴
 
-- 🎨 OpenProcessingからスケッチをインポート
-- 📱 Progressive Web App (PWA) サポート
-- 🖼️ アニメーションプレビューの自動生成
-- 🎭 ブラウザベースのプロジェクションマッピング
-- 🚀 静的サイト生成
-- 📦 簡単なデプロイ
+- 🌐 ホスト版 ([dropcaster.soui.dev](https://dropcaster.soui.dev)) で OpenProcessing 作品 ID を入れて即起動
+- 🎭 ブラウザベースのプロジェクションマッピング（出力ウィンドウ + `matrix3d` ワープ）
+- 📥 `dropcaster fetch <id>` で OP 作品をローカルに取り込み（アセット同梱）
+- 🎨 ローカル CLI でキュレーションギャラリーを生成
+- 🖼️ アニメーションプレビュー GIF の自動生成
+- 📱 Progressive Web App (PWA) サポート（Service Worker による多バケットキャッシュ）
+- 🚀 静的サイト生成、複数ホスティング対応
+
+## 2 つの使い方
+
+### A. ホスト版を使う（インストール不要）
+
+[**https://dropcaster.soui.dev**](https://dropcaster.soui.dev) を開いて、OpenProcessing の作品 ID（または URL）を入れるだけ。投影マッピング機能まで全部使える。
+
+```
+https://dropcaster.soui.dev/                   ← ID 入力 UI
+https://dropcaster.soui.dev/?op=2257553        ← クエリで直接指定（ブックマーク用）
+https://dropcaster.soui.dev/op/2257553         ← パスでも可
+```
+
+- 対応エンジン: 現状 **p5js mode のみ**（段階的に拡張予定）
+- 外部アセット付き作品（`loadImage` 等）は同レポジトリの Cloudflare Worker が `/op-cdn/*` で CORS proxy するので、tainted せず `captureStream` でき投影マッピングが成立
+- 公開作品のみ（OP の `isPrivate: 0`）
+
+### B. ローカル CLI で自分のギャラリーを作る
+
+複数の作品をキュレーションして自分用ギャラリーサイトに公開する用途。プレビュー GIF とスライドショー、`dropcaster.config.js` でのカスタマイズが使える。下記「インストール」以降が CLI 経路の説明。
 
 ## インストール
 
@@ -65,11 +86,27 @@ cd my-gallery
 
 ### 2. スケッチを追加
 
-OpenProcessingのスケッチを `sketches/` ディレクトリに配置:
+#### 方法 1: `dropcaster fetch` で OpenProcessing から自動取り込み（推奨）
+
+```bash
+dropcaster fetch 2257553
+# → sketches/sketch2257553/ にコード + アセット + _op-meta.json を書き出す
+# → loadImage('https://deckard...') は自動で 'assets/.../' に書き換わるので
+#   オフラインでも動く完全自己完結な sketch ディレクトリになる
+
+dropcaster fetch 2862331 -v              # 詳細ログ
+dropcaster fetch 2257553 --overwrite     # 既存ディレクトリを置き換え
+dropcaster fetch 2257553 --no-assets     # アセット同梱をスキップ（OP CDN 依存のまま）
+```
+
+#### 方法 2: 手動で配置
+
+OpenProcessing から書き出した HTML / JS を `sketches/` に手動配置:
 ```
 sketches/
   sketch2257553/
     index.html
+    mySketch.js
   sketch2326097/
     index.html
 ```
@@ -143,6 +180,15 @@ npm run build
 ### `dropcaster init <project-name>`
 新しいギャラリープロジェクトを作成。
 
+### `dropcaster fetch <id> [options]`
+OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む。既存のローカル sketch と同じ形式（`index.html` + 各タブの `.js` + `assets/`）で書き出すので、`npm run scan` がそのまま処理できる。
+
+オプション:
+- `--no-assets` - 外部アセットをダウンロードしない（OP CDN 直参照のまま、オフライン不可）
+- `--overwrite` - 既存ディレクトリを置き換える
+- `--output <dir>` - sketches ベースディレクトリ (デフォルト: "sketches")
+- `-v, --verbose` - 個別ファイルの進捗を表示
+
 ### `dropcaster scan [options]`
 スケッチをスキャンして `public/sketches/` にコピーし、`public/sketches.json` を生成（デフォルトでプレビュー GIF も生成）。
 
@@ -164,11 +210,13 @@ npm run build
 ### `dropcaster dev`
 開発サーバーを起動。
 
+### `dropcaster doctor`
+プレビュー GIF 生成に必要なツール (FFmpeg / Chromium) が揃っているか確認。
+
 ## 設定
 
 `dropcaster.config.js`（`dropcaster init` が生成）でギャラリーをカスタマイズ。
-主に PWA manifest と `<head>` のメタ情報です（凝ったオフライン/キャッシュ設定は廃止 — Service Worker は
-「インストール可能にするだけ」の最小構成）。フルな例は [dropcaster.config.example.js](dropcaster.config.example.js) を参照。
+主に PWA manifest と `<head>` のメタ情報です。Service Worker はアプリシェル / ローカル sketch / OP API メタ / 外部 CDN / runtime の 5 バケットで自動的にキャッシュします。フルな例は [dropcaster.config.example.js](dropcaster.config.example.js) を参照。
 
 ```javascript
 export default {
@@ -182,11 +230,11 @@ export default {
 }
 ```
 
-## プロジェクト構造
+## プロジェクト構造（`dropcaster init` で作る user gallery）
 
 ```
 my-gallery/
-├── sketches/          # OpenProcessingスケッチ
+├── sketches/          # OpenProcessingスケッチ（`dropcaster fetch` が書き出す先でもある）
 ├── public/
 │   ├── sketches/      # コピーされたスケッチ
 │   ├── previews/      # 生成されたGIFプレビュー
@@ -194,6 +242,35 @@ my-gallery/
 ├── dist/              # ビルドファイル
 ├── package.json
 └── dropcaster.config.js
+```
+
+## リポジトリ構造（このリポジトリ自体、開発者向け）
+
+```
+dropcaster/
+├── src/
+│   ├── viewer/        # viewer 本体 (TS)。user gallery / ホスト版で共有
+│   │   ├── runtime/   # SketchFrame, SketchPool（iframe 管理）
+│   │   ├── services/  # OpenProcessingSource, sketchService
+│   │   ├── components/# UI: ギャラリー, ID 入力, エラー画面
+│   │   ├── managers/  # FullscreenManager, CursorManager 等
+│   │   ├── windows/   # 出力ウィンドウ・コントロール
+│   │   └── pwa/       # Service Worker 登録
+│   ├── core/
+│   │   └── modules/   # op-api-client, op-sketch-builder, asset-downloader 等（Node/Browser 共用）
+│   └── cli/           # CLI (init / dev / build / scan / fetch / doctor)
+├── apps/
+│   └── web/           # ホスト版 (dropcaster.soui.dev)
+│       ├── src/
+│       │   └── worker.ts        # Cloudflare Worker (静的配信 + /op-cdn proxy)
+│       ├── public/              # 静的アセット (manifest, icon, sw.js)
+│       ├── index.html           # __DROPCASTER_CONFIG__ 注入
+│       ├── vite.config.ts
+│       └── wrangler.toml        # [assets] + SPA fallback
+├── public/            # user gallery テンプレ用の静的アセット (sw.js 等)
+├── sketches/          # 開発用サンプル sketch
+└── .github/workflows/
+    └── deploy.yml     # main push → Cloudflare Workers にデプロイ
 ```
 
 ## アーキテクチャ
@@ -205,10 +282,16 @@ my-gallery/
 - コンテンツ作者のコードを改変せずにそのまま利用可能
 
 ### ブラウザネイティブなアーキテクチャ
-- PWA（インストール可能な最小 manifest）として配布できる
+- PWA として配布できる。Service Worker は 5 つのキャッシュバケット (app shell / local sketches / OP API meta / 外部 CDN / runtime) に振り分けて、一度開いた作品はオフラインでも再生可能
 - プロジェクションマッピングは `window.open()` + Window Management API でプロジェクタ画面にポップアウト、
   同一オリジンの `window.opener` 参照経由で窓間連携
 - `canvas.captureStream()` を共有 `<video>` 群へ bind し、CSS `matrix3d` でワープ（クローンなし）
+
+### ホスト版の構成
+- Cloudflare Workers (Static Assets) **1 つ**でアプリ本体 (`apps/web/dist/`) と `/op-cdn/*` proxy を兼任
+- `/op-cdn/*` は OpenProcessing CDN (`deckard.openprocessing.org`) への中継。CORS ヘッダを後付けして同一オリジン化することで、`captureStream` が tainted にならないようにしている
+- OpenProcessing API (`/api/sketch/*`) は viewer から直接叩く構造。per-IP 40 req/min の制限はユーザ単位なので、利用者が増えても全体で枯れない
+- レート制限 (HTTP 429) に当たった場合は countdown UI で自動再試行
 
 ## 長時間運用のコツ
 
