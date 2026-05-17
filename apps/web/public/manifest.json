@@ -1,7 +1,7 @@
 {
   "name": "dropcaster",
   "short_name": "dropcaster",
-  "description": "OpenProcessing 作品 ID を入れて投影マッピング用に起動するビューア",
+  "description": "Enter an OpenProcessing sketch ID and launch a viewer for projection mapping.",
   "theme_color": "#000000",
   "background_color": "#ffffff",
   "display": "standalone",

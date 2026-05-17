@@ -6,6 +6,7 @@ import ora from 'ora';
 import prompts from 'prompts';
 import { checkEnv, formatEnvReport } from '../../core/check-env.js';
 import { DEFAULT_CONFIG, DEFAULT_ICON_SVG } from '../utils/config.js';
+import { t } from '../i18n/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,14 +20,14 @@ async function readDropcasterVersion() {
 }
 
 export async function init(options) {
-  console.log(chalk.blue('🚀 Initializing new dropcaster project...'));
-  
+  console.log(chalk.blue(t('init.starting')));
+
   // nameが指定されている場合、対話的プロンプトをスキップ
   let response = {};
-  
+
   if (options.name) {
     // nameが指定されている場合はデフォルト値を使用
-    console.log(chalk.gray(`Creating project: ${options.name}`));
+    console.log(chalk.gray(t('init.creating', { name: options.name })));
     response = {
       name: options.name,
       title: 'My Sketch Gallery',
@@ -39,25 +40,25 @@ export async function init(options) {
       {
         type: 'text',
         name: 'name',
-        message: 'Project name:',
+        message: t('init.prompt.projectName'),
         initial: 'my-sketch-gallery'
       },
       {
         type: 'text',
         name: 'title',
-        message: 'Gallery title:',
+        message: t('init.prompt.galleryTitle'),
         initial: 'My Sketch Gallery'
       },
       {
         type: 'text',
         name: 'description',
-        message: 'Gallery description:',
+        message: t('init.prompt.galleryDescription'),
         initial: 'A collection of creative coding sketches'
       },
       {
         type: 'text',
         name: 'theme_color',
-        message: 'Theme color:',
+        message: t('init.prompt.themeColor'),
         initial: '#000000'
       }
     ]);
@@ -65,8 +66,8 @@ export async function init(options) {
 
   const projectName = options.name || response.name;
   const projectPath = join(process.cwd(), projectName);
-  
-  const spinner = ora('Creating project structure...').start();
+
+  const spinner = ora(t('init.creatingStructure')).start();
   
   try {
     // Create project directory
@@ -251,12 +252,12 @@ function windowResized() {
     await fs.writeFile(join(sampleSketchPath, 'index.html'), sampleHtml, 'utf-8');
     await fs.writeFile(join(sampleSketchPath, 'mySketch.js'), sampleJs, 'utf-8');
     
-    spinner.succeed('Project created successfully!');
-    
+    spinner.succeed(t('init.created'));
+
     console.log();
-    console.log(chalk.green('✨ Your dropcaster project is ready!'));
+    console.log(chalk.green(t('init.ready')));
     console.log();
-    console.log('Next steps:');
+    console.log(t('init.nextSteps'));
     console.log(chalk.cyan(`  cd ${projectName}`));
     console.log(chalk.cyan('  npm install'));
     console.log(chalk.cyan('  npm run scan'));
@@ -266,11 +267,11 @@ function windowResized() {
     // 環境チェック（FFmpeg / Chromium / Node）— プレビュー生成に必要なもの
     try {
       const report = await checkEnv();
-      const envMessage = formatEnvReport(report, { title: '環境チェック（プレビュー生成に必要）' });
+      const envMessage = formatEnvReport(report, { title: t('env.titleInit') });
       if (envMessage) {
         console.log(envMessage);
         if (!report.ffmpeg.ok || !report.chromium.ok) {
-          console.log(chalk.gray('  ※ 不足分はプレビュー GIF 生成にのみ必要です。後から入れてもOK（`dropcaster doctor` で再確認）。'));
+          console.log(chalk.gray(t('init.missingToolsNote')));
         }
         console.log();
       }
@@ -279,7 +280,7 @@ function windowResized() {
     }
 
   } catch (error) {
-    spinner.fail('Failed to create project');
+    spinner.fail(t('init.failed'));
     console.error(chalk.red(error.message));
     process.exit(1);
   }

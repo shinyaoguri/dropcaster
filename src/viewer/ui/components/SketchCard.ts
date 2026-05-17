@@ -1,6 +1,7 @@
 import type { Sketch } from '../../types/sketch.js';
 import { escapeHtml, safeUrl } from '../../utils/html.js';
 import { publicAssetPath, routeHref } from '../../utils/paths.js';
+import { t } from '../../i18n/index.js';
 
 export class SketchCard {
   static render(sketch: Sketch): string {
@@ -19,7 +20,7 @@ export class SketchCard {
     // 安全なプロパティアクセス
     const previewGif = publicAssetPath(sketch.previewGif || 'vite.svg');
     const title = escapeHtml(sketch.title);
-    const userName = escapeHtml(sketch.userData?.userName || 'Unknown User');
+    const userName = escapeHtml(sketch.userData?.userName || t('gallery.card.unknownUser'));
     const sketchUrl = safeUrl(sketch.sketchUrl);
     const userUrl = safeUrl(sketch.userData?.userUrl);
     const sketchHref = routeHref(`/${encodeURIComponent(sketch.id)}`);
@@ -41,14 +42,14 @@ export class SketchCard {
                         class="sketch-title-link"
                         target="_blank"
                         rel="noopener noreferrer"
-                        title="View original on OpenProcessing">
+                        title="${escapeHtml(t('gallery.card.viewOriginal'))}">
                       ${title}
                     </a>` :
                     title
                   }
                 </div>
                 <div class="author-name">
-                  <span class="by-text">by</span>
+                  <span class="by-text">${escapeHtml(t('gallery.card.by'))}</span>
                   <a
                     href="${escapeHtml(userUrl)}"
                     class="user-name-link"
@@ -68,7 +69,7 @@ export class SketchCard {
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                表示 →
+                ${escapeHtml(t('gallery.card.view'))}
               </a>
             </div>
 

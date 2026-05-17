@@ -9,14 +9,19 @@
 // どちらも submit 時に parseOpId() で ID を抽出し、onSubmit(id) を呼ぶ。
 // 入力は数値だけでなく "sketch<id>" や OP の URL もそのまま受ける。
 
-const HERO_HTML = `
+import { t, onLangChange } from '../i18n/index.js';
+import { langSwitcherHtml, wireLangSwitcher } from '../i18n/LanguageSwitcher.js';
+
+function heroHtml(): string {
+  return `
   <div class="container op-hero-container">
+    <div class="dc-lang-corner">${langSwitcherHtml()}</div>
     <header class="op-hero-header">
       <h1 class="op-hero-title">dropcaster</h1>
-      <p class="op-hero-subtitle">OpenProcessing の作品を投影マッピング用に読み込みます。</p>
+      <p class="op-hero-subtitle">${t('op.hero.subtitle')}</p>
     </header>
     <form class="op-id-form op-id-form--hero" novalidate>
-      <label class="op-id-label" for="op-id-input-hero">作品 ID または URL</label>
+      <label class="op-id-label" for="op-id-input-hero">${t('op.label')}</label>
       <div class="op-id-row">
         <input
           id="op-id-input-hero"
@@ -27,25 +32,27 @@ const HERO_HTML = `
           autocomplete="off"
           autocapitalize="off"
           spellcheck="false"
-          placeholder="例: 2257553 / https://openprocessing.org/sketch/2257553"
+          placeholder="${t('op.placeholder.hero')}"
           required
         >
-        <button type="submit" class="op-id-submit">読み込み</button>
+        <button type="submit" class="op-id-submit">${t('op.submit.hero')}</button>
       </div>
-      <p class="op-id-error" hidden>有効な作品 ID または OpenProcessing の URL を入力してください。</p>
+      <p class="op-id-error" hidden>${t('op.error.invalid')}</p>
     </form>
     <footer class="op-hero-footer">
-      <p>p5js モードの作品に対応しています。アセット付き作品は asset proxy 設定で読み込み可能になります。</p>
+      <p>${t('op.hero.footer')}</p>
       <p class="op-hero-credit">
-        &copy; <span data-year></span> Shinya Oguri ·
-        <a href="https://github.com/shinyaoguri/dropcaster/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a> ·
-        <a href="https://github.com/shinyaoguri/dropcaster" target="_blank" rel="noopener">GitHub</a>
+        ${t('footer.copyright', { year: new Date().getFullYear() })} ·
+        <a href="https://github.com/shinyaoguri/dropcaster/blob/main/LICENSE" target="_blank" rel="noopener">${t('footer.license')}</a> ·
+        <a href="https://github.com/shinyaoguri/dropcaster" target="_blank" rel="noopener">${t('footer.github')}</a>
       </p>
     </footer>
   </div>
 `;
+}
 
-const INLINE_HTML = `
+function inlineHtml(): string {
+  return `
   <form class="op-id-form op-id-form--inline" novalidate>
     <input
       class="op-id-input"
@@ -55,35 +62,46 @@ const INLINE_HTML = `
       autocomplete="off"
       autocapitalize="off"
       spellcheck="false"
-      placeholder="OpenProcessing 作品 ID / URL"
+      placeholder="${t('op.placeholder.inline')}"
       required
     >
-    <button type="submit" class="op-id-submit">開く</button>
+    <button type="submit" class="op-id-submit">${t('op.submit.inline')}</button>
   </form>
 `;
+}
 
 export class OpIdEntryView {
+  private static heroLangUnsub: (() => void) | null = null;
+
   /** catalog が空のときのメイン画面として #app 全体を埋める。 */
   static renderHero(onSubmit: (id: string) => void): void {
     const app = document.querySelector<HTMLDivElement>('#app');
     if (!app) return;
-    app.innerHTML = HERO_HTML;
-    const yearEl = app.querySelector<HTMLElement>('[data-year]');
-    if (yearEl) yearEl.textContent = String(new Date().getFullYear());
-    OpIdEntryView.wireForm(app, onSubmit);
-    // フォーカスは hero モードのときだけ自動付与 (inline はギャラリー閲覧を邪魔したくない)
-    app.querySelector<HTMLInputElement>('.op-id-input')?.focus();
+    OpIdEntryView.heroLangUnsub?.();
+    const paint = () => {
+      app.innerHTML = heroHtml();
+      OpIdEntryView.wireForm(app, onSubmit);
+      wireLangSwitcher(app);
+      // フォーカスは hero モードのときだけ自動付与 (inline はギャラリー閲覧を邪魔したくない)
+      app.querySelector<HTMLInputElement>('.op-id-input')?.focus();
+    };
+    paint();
+    OpIdEntryView.heroLangUnsub = onLangChange(() => {
+      // 別 view へ遷移していたら #app の中身が違うので何もしない
+      if (app.querySelector('.op-hero-container')) paint();
+      else OpIdEntryView.heroLangUnsub?.();
+    });
   }
 
   /** ギャラリー UI 内などに小さな入力バーを差し込む。 */
   static renderInline(container: HTMLElement, onSubmit: (id: string) => void): void {
-    container.insertAdjacentHTML('beforeend', INLINE_HTML);
+    container.insertAdjacentHTML('beforeend', inlineHtml());
     OpIdEntryView.wireForm(container, onSubmit);
   }
 
   /** インライン形式の HTML 文字列を返す（既存テンプレに埋め込み用）。 */
   static inlineHtml(): string {
-    return INLINE_HTML;
+    return inlineHtml();
   }
 
   /** scope 内の最後の .op-id-form を 1 つだけ wire する。重複バインドはしない。 */

@@ -9,6 +9,7 @@ import {
 } from '../../utils/mappingTransform';
 import { RafThrottle } from '../../utils/rafThrottle';
 import { ScreenWakeLock } from '../../utils/wakeLock';
+import { t } from '../../i18n/index.js';
 
 interface OutputChild {
   div: HTMLElement;
@@ -48,7 +49,7 @@ export class OutputWindow extends BaseWindow {
   private readonly outputId: string;
 
   constructor(outputId: string) {
-    super(`output_window_${outputId}`, 'プロジェクション出力');
+    super(`output_window_${outputId}`, t('window.projectionOutput'));
     this.outputId = outputId;
   }
 
@@ -88,8 +89,8 @@ export class OutputWindow extends BaseWindow {
           <span class="dc-dev-readout-sep">·</span>
           <span id="dc-dev-readout-pct">—</span>
         </div>
-        <button id="dc-output-fs" class="dc-output-ui" title="全画面 (F / F11 でも可)">⛶ 全画面</button>
-        <div id="dc-output-hint" class="dc-output-ui">ダブルクリックまたは F で全画面 / Esc で解除</div>
+        <button id="dc-output-fs" class="dc-output-ui" title="${t('output.fullscreen')}">⛶ ${t('output.fullscreen')}</button>
+        <div id="dc-output-hint" class="dc-output-ui">${t('output.hint')}</div>
       </div>
     `;
   }

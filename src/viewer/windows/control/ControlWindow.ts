@@ -1,5 +1,6 @@
 import { BaseWindow } from '../shared/BaseWindow';
-import { CONTROL_PANEL_HTML } from './ControlWindow.template';
+import { controlPanelHtml, applyControlTranslations } from './ControlWindow.template';
+import { onLangChange, t } from '../../i18n/index.js';
 import { CONTROL_PANEL_CSS } from './ControlWindow.styles';
 import { ColumnResizers } from './panels/ColumnResizers';
 import { OutputVizPanel } from './panels/OutputVizPanel';
@@ -69,8 +70,11 @@ export class ControlWindow extends BaseWindow {
     return this.controlHost?.host ?? null;
   }
 
+  /** langChange 購読解除関数。disposeHost で剥がす。 */
+  private langUnsub: (() => void) | null = null;
+
   constructor() {
-    super('control_window', '統合操作ウィンドウ');
+    super('control_window', t('window.controlPanel'));
   }
 
   /**
@@ -114,6 +118,16 @@ export class ControlWindow extends BaseWindow {
     this.setupMessageListener();
     // state が丸ごと差し替わった時の UI 一括再描画。disposeHost で外れる。
     this.hostUnsubs.push(this.ctrl.onChange(() => this.refreshAllFromState()));
+    // 言語切替時に静的ラベル（data-i18n-* 属性付き）を再翻訳。
+    // 動的に panel が書き換えている文字列（MappingsListPanel / OutputVizPanel 等）は
+    // 各 panel 側の rerender 経路でも翻訳が反映される。
+    this.langUnsub?.();
+    this.langUnsub = onLangChange(() => {
+      if (this.scopeEl) applyControlTranslations(this.scopeEl);
+      // panel 側にも refresh を促す（dynamic な textContent 更新を巻き直す）
+      this.mappingsList.rerender();
+      this.outputViz.refresh();
+    });
     // 初期化時にアスペクト比を設定（出力ウィンドウの寸法は WindowController から後で push される）
     setTimeout(() => this.outputViz.refresh(), 100);
   }
@@ -173,6 +187,8 @@ export class ControlWindow extends BaseWindow {
   private disposeHost(): void {
     this.hostUnsubs.forEach(u => { try { u(); } catch { /* ignore */ } });
     this.hostUnsubs = [];
+    this.langUnsub?.();
+    this.langUnsub = null;
     // host 実装が listener を抱えていれば外す（InlineControlHost は no-op）
     this.controlHost?.dispose?.();
     this.controlHost = null;
@@ -193,7 +209,7 @@ export class ControlWindow extends BaseWindow {
   }
 
   protected getContent(): string {
-    return CONTROL_PANEL_HTML;
+    return controlPanelHtml();
   }
 
   protected getStyles(): string {
@@ -436,7 +452,11 @@ ${CONTROL_PANEL_CSS}
     if (!btn) return;
     btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
     const label = btn.querySelector('.dev-mode-label');
-    if (label) label.textContent = enabled ? 'ON' : 'OFF';
+    if (label) {
+      const key = enabled ? 'control.devMode.on' : 'control.devMode.off';
+      label.setAttribute('data-i18n', key);
+      label.textContent = t(key);
+    }
   }
 
   /** ホスト要素のオーナードキュメント（要素生成・ファイル取得 UI に使う）。 */

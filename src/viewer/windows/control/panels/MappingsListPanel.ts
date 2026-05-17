@@ -36,6 +36,7 @@ import {
   withRemovedOutput,
 } from '../../../utils/mappingTransform';
 import type { MappingsController } from '../MappingsController';
+import { t } from '../../../i18n/index.js';
 
 export interface MappingsListPanelAttachOptions {
   /** alert ダイアログを出す window（host の defaultView）。読み込み失敗の通知に使う。 */
@@ -154,13 +155,13 @@ export class MappingsListPanel {
       const nameSpan = doc.createElement('span');
       nameSpan.className = 'output-name';
       nameSpan.textContent = out.name ?? out.id;
-      nameSpan.title = '出力名（クリックで選択 / ダブルクリックで編集）';
+      nameSpan.title = t('mappingsList.name.title');
       row.appendChild(nameSpan);
 
       const openBtn = doc.createElement('button');
       openBtn.className = `open-btn${isOpen ? ' is-open' : ''}`;
-      openBtn.textContent = isOpen ? '閉じる' : '開く';
-      openBtn.title = isOpen ? 'この出力ウィンドウを閉じる' : 'この出力をポップアウトで開く';
+      openBtn.textContent = isOpen ? t('mappingsList.close') : t('mappingsList.open');
+      openBtn.title = isOpen ? t('mappingsList.close.title') : t('mappingsList.open.title');
       openBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (opts.isOutputWindowOpen(out.id)) {
@@ -175,7 +176,9 @@ export class MappingsListPanel {
       const removeBtn = doc.createElement('button');
       removeBtn.className = 'remove-output-btn';
       removeBtn.textContent = '×';
-      removeBtn.title = canRemoveOutput ? 'この出力を削除' : '最後の出力は削除できません';
+      removeBtn.title = canRemoveOutput
+        ? t('mappingsList.remove.output.title')
+        : t('mappingsList.remove.output.disabled');
       removeBtn.disabled = !canRemoveOutput;
       removeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -240,7 +243,7 @@ export class MappingsListPanel {
 
       const toggleBtn = doc.createElement('button');
       toggleBtn.className = `toggle-btn${enabled ? ' enabled' : ''}`;
-      toggleBtn.title = enabled ? '出力中（クリックで停止）' : '停止中（クリックで出力）';
+      toggleBtn.title = enabled ? t('mappingsList.enabled.title') : t('mappingsList.disabled.title');
       toggleBtn.textContent = enabled ? '●' : '○';
       toggleBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -250,7 +253,7 @@ export class MappingsListPanel {
 
       const removeBtn = doc.createElement('button');
       removeBtn.className = 'remove-btn';
-      removeBtn.title = '削除';
+      removeBtn.title = t('mappingsList.remove');
       removeBtn.textContent = '×';
       removeBtn.disabled = !canRemoveMapping;
       removeBtn.addEventListener('click', (e) => {
@@ -426,12 +429,12 @@ export class MappingsListPanel {
           try {
             const parsed = parseMappingsState(JSON.parse(text));
             if (!parsed) {
-              opts.getHostWin()?.alert('読み込みに失敗しました（フォーマット不正）');
+              opts.getHostWin()?.alert(t('mappingsList.import.invalid'));
               return;
             }
             ctrl.replaceState(parsed);
           } catch (error) {
-            opts.getHostWin()?.alert('読み込みに失敗しました（JSON 解析失敗）');
+            opts.getHostWin()?.alert(t('mappingsList.import.parseError'));
             console.error('MappingsListPanel: JSON parse error', error);
           }
         })

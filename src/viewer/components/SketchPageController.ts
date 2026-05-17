@@ -148,7 +148,8 @@ export class SketchPageController {
       return;
     }
 
-    const message = 'このページを離れますか？';
+    // モダンブラウザは security 上この message を表示せず汎用文言を出すので、内容は実質無視される
+    const message = 'Leave this page?';
 
     // 標準的なブラウザの離脱警告を表示
     event.preventDefault();

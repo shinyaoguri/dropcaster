@@ -29,7 +29,7 @@ export class TestPatternSource {
     canvas.style.cssText = 'position:fixed; left:-99999px; top:-99999px; width:1px; height:1px; pointer-events:none; opacity:0;';
     document.body.appendChild(canvas);
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('TestPatternSource: 2D context が取れません');
+    if (!ctx) throw new Error('TestPatternSource: failed to acquire 2D context');
     this.canvas = canvas;
     this.ctx = ctx;
   }

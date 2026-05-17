@@ -14,7 +14,7 @@ export class UnsupportedEngineModeError extends Error {
   readonly mode: string;
   readonly sketchId: string;
   constructor(sketchId: string, mode: string) {
-    super(`OpenProcessing engine mode "${mode}" は現在未対応です (sketch ${sketchId})`);
+    super(`OpenProcessing engine mode "${mode}" is not supported yet (sketch ${sketchId})`);
     this.name = 'UnsupportedEngineModeError';
     this.mode = mode;
     this.sketchId = sketchId;

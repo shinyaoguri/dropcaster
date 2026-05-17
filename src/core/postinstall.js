@@ -5,6 +5,7 @@
 // いずれの失敗もインストール全体を止めない（プレビュー生成を使わない使い方もあるため）。
 import { spawnSync } from 'child_process';
 import { checkEnv, formatEnvReport } from './check-env.js';
+import { t } from '../cli/i18n/index.js';
 
 // 1. Chromium をインストール（クロスプラットフォームのためシェル経由。固定コマンドなので安全）
 try {
@@ -13,11 +14,11 @@ try {
     shell: true
   });
   if (result.error || result.status !== 0) {
-    console.warn('⚠️  Playwright の Chromium インストールに失敗しました。');
-    console.warn('   プレビュー生成を使う場合は手動で `npx playwright install chromium` を実行してください。');
+    console.warn(t('postinstall.chromiumFailed'));
+    console.warn(t('postinstall.chromiumManual'));
   }
 } catch (error) {
-  console.warn(`⚠️  Playwright の Chromium インストールを実行できませんでした: ${error.message}`);
+  console.warn(t('postinstall.chromiumException', { error: error.message }));
 }
 
 // 2. 環境チェック（不足しているものだけ表示）
@@ -25,12 +26,12 @@ try {
   const report = await checkEnv();
   const message = formatEnvReport(report, {
     onlyProblems: true,
-    title: 'dropcaster — 環境チェック（不足分）'
+    title: t('postinstall.envCheckTitle')
   });
   if (message) {
     console.warn('\n' + message);
-    console.warn('  ※ プレビュー GIF を生成しない使い方なら無視して構いません（dropcaster scan --no-previews）。');
-    console.warn('  ※ 状態を再確認するには `dropcaster doctor` を実行してください。\n');
+    console.warn(t('postinstall.skipPreviewNote'));
+    console.warn(t('postinstall.doctorNote'));
   }
 } catch {
   // 環境チェックの失敗は致命的ではないので無視

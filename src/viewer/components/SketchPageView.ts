@@ -6,6 +6,7 @@ import {
   mappingColor,
   type MappingEntry,
 } from '../utils/mappingTransform.js';
+import { t, onLangChange } from '../i18n/index.js';
 
 export class SketchPageView {
   private openWindowsToggleCallback: (() => void) | null = null;
@@ -22,6 +23,7 @@ export class SketchPageView {
   private boundMappingOverlayUpdate = this.handleMappingOverlayUpdate.bind(this);
   private boundResize = this.handleResize.bind(this);
   private boundProjectionModeChange = this.handleProjectionModeChange.bind(this);
+  private langUnsub: (() => void) | null = null;
 
   constructor() {
     this.uiController = new UIElementController();
@@ -49,7 +51,7 @@ export class SketchPageView {
         <div class="sketch-info dc-info-panel ui-element">
           <div class="sketch-details">
             <h3 class="sketch-title">${title}</h3>
-            <p class="sketch-author"><span class="author-by">by</span> <span class="author-name">${escapedUserName}</span></p>
+            <p class="sketch-author"><span class="author-by" data-i18n="slideshow.author.by">${t('slideshow.author.by')}</span> <span class="author-name">${escapedUserName}</span></p>
             <p class="sketch-description"${descriptionAttrs}>${descriptionText}</p>
           </div>
         </div>
@@ -58,8 +60,10 @@ export class SketchPageView {
         <button
           id="fullscreen-btn"
           class="fullscreen-button top-right-button ui-element"
-          title="フルスクリーン"
-          aria-label="フルスクリーン"
+          data-i18n-title="sketchPage.fullscreen"
+          data-i18n-aria-label="sketchPage.fullscreen"
+          title="${t('sketchPage.fullscreen')}"
+          aria-label="${t('sketchPage.fullscreen')}"
         >
           <i class="fas fa-expand fullscreen-icon button-icon"></i>
         </button>
@@ -68,8 +72,10 @@ export class SketchPageView {
         <button
           id="open-windows-btn"
           class="open-windows-button top-right-button ui-element"
-          title="ウィンドウを開く"
-          aria-label="ウィンドウを開く"
+          data-i18n-title="sketchPage.openWindows"
+          data-i18n-aria-label="sketchPage.openWindows"
+          title="${t('sketchPage.openWindows')}"
+          aria-label="${t('sketchPage.openWindows')}"
         >
           <i class="fas fa-external-link-alt button-icon"></i>
         </button>
@@ -88,6 +94,26 @@ export class SketchPageView {
     window.addEventListener('projection-mode-change', this.boundProjectionModeChange);
     this.projectionStage = document.getElementById('iframe-content-overlay') as HTMLDivElement;
     this.setupMappingOverlayListener();
+
+    // 言語切替時に data-i18n / data-i18n-title / data-i18n-aria-label の textContent / 属性を更新する
+    this.langUnsub?.();
+    this.langUnsub = onLangChange(() => this.applyTranslations(app));
+  }
+
+  /** data-i18n / data-i18n-title / data-i18n-aria-label 属性を持つ要素を再翻訳。 */
+  private applyTranslations(scope: HTMLElement): void {
+    scope.querySelectorAll<HTMLElement>('[data-i18n]').forEach((el) => {
+      const key = el.getAttribute('data-i18n');
+      if (key) el.textContent = t(key as Parameters<typeof t>[0]);
+    });
+    scope.querySelectorAll<HTMLElement>('[data-i18n-title]').forEach((el) => {
+      const key = el.getAttribute('data-i18n-title');
+      if (key) el.title = t(key as Parameters<typeof t>[0]);
+    });
+    scope.querySelectorAll<HTMLElement>('[data-i18n-aria-label]').forEach((el) => {
+      const key = el.getAttribute('data-i18n-aria-label');
+      if (key) el.setAttribute('aria-label', t(key as Parameters<typeof t>[0]));
+    });
   }
 
   private setupEventListeners(): void {
@@ -102,7 +128,7 @@ export class SketchPageView {
         document.exitFullscreen();
       } else {
         container.requestFullscreen().catch(err => {
-          console.error('フルスクリーン化に失敗しました:', err);
+          console.error(t('sketchPage.fullscreenFailed') + ':', err);
         });
       }
     });
@@ -293,6 +319,8 @@ export class SketchPageView {
     window.removeEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
     window.removeEventListener('resize', this.boundResize);
     window.removeEventListener('projection-mode-change', this.boundProjectionModeChange);
+    this.langUnsub?.();
+    this.langUnsub = null;
     this.openWindowsToggleCallback = null;
   }
 }
