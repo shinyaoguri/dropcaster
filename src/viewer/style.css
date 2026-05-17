@@ -769,6 +769,19 @@ body {
   margin: 0;
 }
 
+/* subtitle 内に埋め込む OpenProcessing 等の外部リンク */
+.op-hero-link {
+  color: #475569;
+  text-decoration: underline;
+  text-decoration-color: rgba(100, 116, 139, 0.4);
+  text-underline-offset: 2px;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+.op-hero-link:hover {
+  color: #1e293b;
+  text-decoration-color: #475569;
+}
+
 .op-hero-footer {
   text-align: center;
   color: #94a3b8;

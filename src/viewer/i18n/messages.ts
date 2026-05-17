@@ -9,7 +9,7 @@ const en = {
   'lang.toggle.title': 'Switch language',
 
   // OP ID 入力 (Hero / Inline)
-  'op.hero.subtitle': 'Load an OpenProcessing sketch for projection mapping.',
+  'op.hero.subtitle': 'Load an <a href="https://openprocessing.org/" target="_blank" rel="noopener noreferrer" class="op-hero-link">OpenProcessing</a> sketch for projection mapping.',
   'op.label': 'Sketch ID or URL',
   'op.placeholder.hero': 'e.g. 2257553 / https://openprocessing.org/sketch/2257553',
   'op.placeholder.inline': 'OpenProcessing sketch ID / URL',
@@ -194,7 +194,7 @@ const ja: Record<keyof typeof en, string> = {
   'lang.ja': '日本語',
   'lang.toggle.title': '言語を切り替える',
 
-  'op.hero.subtitle': 'OpenProcessing の作品を投影マッピング用に読み込みます。',
+  'op.hero.subtitle': '<a href="https://openprocessing.org/" target="_blank" rel="noopener noreferrer" class="op-hero-link">OpenProcessing</a> の作品を投影マッピング用に読み込みます。',
   'op.label': '作品 ID または URL',
   'op.placeholder.hero': '例: 2257553 / https://openprocessing.org/sketch/2257553',
   'op.placeholder.inline': 'OpenProcessing 作品 ID / URL',
