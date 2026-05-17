@@ -10,6 +10,8 @@
 // 視覚スタイルは既存 .container 系を流用しつつ、専用クラスは少しだけ追加。
 
 import { routeHref } from '../utils/paths.js';
+import { t, onLangChange } from '../i18n/index.js';
+import { langSwitcherHtml, wireLangSwitcher } from '../i18n/LanguageSwitcher.js';
 
 export type SketchErrorKind = 'rate-limit' | 'unsupported-mode' | 'not-found';
 
@@ -28,22 +30,39 @@ export interface SketchErrorOptions {
 
 export class SketchErrorView {
   private static countdownTimer: number | null = null;
+  private static langUnsub: (() => void) | null = null;
 
   static render(kind: SketchErrorKind, options: SketchErrorOptions = {}): void {
     SketchErrorView.cancelCountdown();
+    SketchErrorView.langUnsub?.();
     const app = document.querySelector<HTMLDivElement>('#app');
     if (!app) return;
 
-    switch (kind) {
-      case 'rate-limit':
-        SketchErrorView.renderRateLimit(app, options);
-        break;
-      case 'unsupported-mode':
-        SketchErrorView.renderUnsupported(app, options);
-        break;
-      default:
-        SketchErrorView.renderNotFound(app, options);
-    }
+    const paint = () => {
+      switch (kind) {
+        case 'rate-limit':
+          SketchErrorView.renderRateLimit(app, options);
+          break;
+        case 'unsupported-mode':
+          SketchErrorView.renderUnsupported(app, options);
+          break;
+        default:
+          SketchErrorView.renderNotFound(app, options);
+      }
+      wireLangSwitcher(app);
+    };
+
+    paint();
+    SketchErrorView.langUnsub = onLangChange(() => {
+      // countdown は再描画でリセットされる（残り時間は inputに反映されない）が、
+      // 言語切替は稀なので許容する
+      if (app.querySelector('.sketch-error')) {
+        SketchErrorView.cancelCountdown();
+        paint();
+      } else {
+        SketchErrorView.langUnsub?.();
+      }
+    });
   }
 
   /** countdown timer をキャンセル (画面遷移時に呼ばれる)。 */
@@ -58,17 +77,20 @@ export class SketchErrorView {
     const initialSec = Math.max(1, Math.ceil((opts.retryAfterMs ?? 60_000) / 1000));
     app.innerHTML = `
       <div class="container sketch-error">
+        <div class="dc-lang-corner">${langSwitcherHtml()}</div>
         <div class="sketch-error-icon">⏳</div>
-        <h1 class="sketch-error-title">レート制限</h1>
+        <h1 class="sketch-error-title">${t('sketchError.rateLimit.title')}</h1>
         <p class="sketch-error-message">
-          OpenProcessing API の 1 分あたりリクエスト上限 (匿名利用で 40 req/min) に当たりました。
+          ${t('sketchError.rateLimit.message')}
         </p>
         <p class="sketch-error-countdown">
-          <span class="sketch-error-countdown-num" data-countdown>${initialSec}</span> 秒後に自動で再試行します
+          ${t('sketchError.rateLimit.countdown', {
+            sec: `<span class="sketch-error-countdown-num" data-countdown>${initialSec}</span>`,
+          })}
         </p>
         <div class="sketch-error-actions">
-          <button type="button" class="sketch-error-button" data-retry-now>今すぐ再試行</button>
-          <a href="${routeHref('/')}" class="sketch-error-link">ホームに戻る</a>
+          <button type="button" class="sketch-error-button" data-retry-now>${t('sketchError.rateLimit.retryNow')}</button>
+          <a href="${routeHref('/')}" class="sketch-error-link">${t('sketchError.home')}</a>
         </div>
       </div>
     `;
@@ -92,18 +114,20 @@ export class SketchErrorView {
   }
 
   private static renderUnsupported(app: HTMLElement, opts: SketchErrorOptions): void {
-    const modeStr = opts.mode ? `（検出: <code>${escapeHtml(opts.mode)}</code>）` : '';
+    const modeNote = opts.mode
+      ? t('sketchError.unsupported.modeNote', { mode: escapeHtml(opts.mode) })
+      : '';
     app.innerHTML = `
       <div class="container sketch-error">
+        <div class="dc-lang-corner">${langSwitcherHtml()}</div>
         <div class="sketch-error-icon">⚠</div>
-        <h1 class="sketch-error-title">未対応のエンジン</h1>
+        <h1 class="sketch-error-title">${t('sketchError.unsupported.title')}</h1>
         <p class="sketch-error-message">
-          この作品のエンジンには dropcaster がまだ対応していません${modeStr}。
-          現在は <strong>p5js</strong> モードの作品のみ表示できます。
+          ${t('sketchError.unsupported.message', { modeNote })}
         </p>
         <div class="sketch-error-actions">
-          ${opts.sketchUrl ? `<a href="${opts.sketchUrl}" target="_blank" rel="noopener" class="sketch-error-button">OpenProcessing で開く</a>` : ''}
-          <a href="${routeHref('/')}" class="sketch-error-link">ホームに戻る</a>
+          ${opts.sketchUrl ? `<a href="${opts.sketchUrl}" target="_blank" rel="noopener" class="sketch-error-button">${t('sketchError.unsupported.openOnOp')}</a>` : ''}
+          <a href="${routeHref('/')}" class="sketch-error-link">${t('sketchError.home')}</a>
         </div>
       </div>
     `;
@@ -112,15 +136,16 @@ export class SketchErrorView {
   private static renderNotFound(app: HTMLElement, opts: SketchErrorOptions): void {
     app.innerHTML = `
       <div class="container sketch-error">
+        <div class="dc-lang-corner">${langSwitcherHtml()}</div>
         <div class="sketch-error-icon">😵</div>
-        <h1 class="sketch-error-title">スケッチが読み込めませんでした</h1>
+        <h1 class="sketch-error-title">${t('sketchError.notFound.title')}</h1>
         <p class="sketch-error-message">
-          OpenProcessing から作品を取得できませんでした。ID が間違っているか、作品が削除・非公開になっている可能性があります。
+          ${t('sketchError.notFound.message')}
         </p>
         ${opts.detail ? `<p class="sketch-error-detail"><code>${escapeHtml(opts.detail)}</code></p>` : ''}
         <div class="sketch-error-actions">
-          ${opts.sketchUrl ? `<a href="${opts.sketchUrl}" target="_blank" rel="noopener" class="sketch-error-button">OpenProcessing で開いてみる</a>` : ''}
-          <a href="${routeHref('/')}" class="sketch-error-link">ホームに戻る</a>
+          ${opts.sketchUrl ? `<a href="${opts.sketchUrl}" target="_blank" rel="noopener" class="sketch-error-button">${t('sketchError.notFound.tryOnOp')}</a>` : ''}
+          <a href="${routeHref('/')}" class="sketch-error-link">${t('sketchError.home')}</a>
         </div>
       </div>
     `;

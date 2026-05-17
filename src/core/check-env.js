@@ -2,6 +2,7 @@
 // postinstall / dropcaster init / dropcaster doctor / scan-sketches.js から使う。
 import { spawnSync } from 'child_process';
 import { existsSync } from 'fs';
+import { t } from '../cli/i18n/index.js';
 
 export const REQUIRED_NODE = '20.19.0';
 
@@ -23,11 +24,11 @@ function gte(a, b) {
 function ffmpegHint() {
   switch (process.platform) {
     case 'darwin':
-      return 'brew install ffmpeg';
+      return t('env.ffmpegHint.darwin');
     case 'win32':
-      return 'winget install Gyan.FFmpeg  または https://ffmpeg.org/download.html';
+      return t('env.ffmpegHint.win');
     default:
-      return 'sudo apt-get install ffmpeg  (Debian/Ubuntu) / sudo dnf install ffmpeg (Fedora) など';
+      return t('env.ffmpegHint.linux');
   }
 }
 
@@ -54,7 +55,7 @@ export function checkFfmpeg() {
       name: 'FFmpeg',
       ok: false,
       version: null,
-      detail: 'プレビュー GIF の生成に必要',
+      detail: t('env.previewNeeded'),
       hint: ffmpegHint()
     };
   }
@@ -64,7 +65,7 @@ export function checkFfmpeg() {
     name: 'FFmpeg',
     ok: true,
     version: m ? m[1] : 'unknown',
-    detail: 'プレビュー GIF の生成に必要'
+    detail: t('env.previewNeeded')
   };
 }
 
@@ -73,13 +74,13 @@ export async function checkChromium() {
     const { chromium } = await import('playwright');
     const execPath = chromium.executablePath();
     if (execPath && existsSync(execPath)) {
-      return { name: 'Chromium (Playwright)', ok: true, version: null, detail: 'プレビュー GIF の生成に必要' };
+      return { name: 'Chromium (Playwright)', ok: true, version: null, detail: t('env.previewNeeded') };
     }
     return {
       name: 'Chromium (Playwright)',
       ok: false,
       version: null,
-      detail: 'プレビュー GIF の生成に必要',
+      detail: t('env.previewNeeded'),
       hint: 'npx playwright install chromium'
     };
   } catch (error) {
@@ -87,8 +88,8 @@ export async function checkChromium() {
       name: 'Chromium (Playwright)',
       ok: false,
       version: null,
-      detail: `playwright が見つかりません (${error.message})`,
-      hint: 'npm install を実行後 npx playwright install chromium'
+      detail: t('env.playwrightMissing', { error: error.message }),
+      hint: t('env.playwrightHint')
     };
   }
 }
@@ -111,18 +112,19 @@ export async function checkPreviewTools() {
 }
 
 // レポートを人間向けの文字列に整形する。何も出すものが無ければ null。
-export function formatEnvReport(report, { onlyProblems = false, title = '環境チェック' } = {}) {
+export function formatEnvReport(report, { onlyProblems = false, title } = {}) {
+  const resolvedTitle = title ?? t('env.title');
   const items = [report.node, report.ffmpeg, report.chromium];
   const shown = onlyProblems ? items.filter(item => !item.ok) : items;
   if (shown.length === 0) return null;
 
-  const lines = [`${title}:`];
+  const lines = [`${resolvedTitle}:`];
   for (const item of shown) {
     const mark = item.ok ? '✓' : '✗';
     const version = item.version ? ` ${item.version}` : '';
     const detail = item.detail ? ` — ${item.detail}` : '';
     lines.push(`  ${mark} ${item.name}${version}${detail}`);
-    if (!item.ok && item.hint) lines.push(`      インストール方法: ${item.hint}`);
+    if (!item.ok && item.hint) lines.push(`      ${t('env.installHint')}: ${item.hint}`);
   }
   return lines.join('\n');
 }

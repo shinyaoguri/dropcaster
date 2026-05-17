@@ -9,6 +9,7 @@ import {
 } from '../utils/mappingTransform';
 import { ScreenWakeLock } from '../utils/wakeLock';
 import { Emitter } from '../utils/emitter';
+import { t } from '../i18n/index.js';
 import type {
   DevCursorEvent,
   OutputBoundsMap,
@@ -196,7 +197,7 @@ export class WindowController {
     const offset = this.outputWindows.size * 40;
     const outputWin = this.windowManager.openWindow({
       name: `output_window_${outputId}`,
-      title: outputDef.name ? `出力: ${outputDef.name}` : 'プロジェクション出力',
+      title: outputDef.name ? `${outputDef.name} — ${t('window.projectionOutput')}` : t('window.projectionOutput'),
       width: 960,
       height: 600,
       left: Math.max(80, window.screenX + 120 + offset),

@@ -5,6 +5,7 @@ import { existsSync } from 'fs';
 import { promises as fs } from 'fs';
 import chalk from 'chalk';
 import ora from 'ora';
+import { t } from '../i18n/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -18,8 +19,8 @@ export async function scan(options = {}) {
   // sketchesディレクトリの存在確認
   const sketchesDir = resolve(projectRoot, 'sketches');
   if (!existsSync(sketchesDir)) {
-    console.error(chalk.red(`❌ sketchesディレクトリが見つかりません: ${sketchesDir}`));
-    console.log(chalk.yellow('💡 ヒント: dropcasterプロジェクトのルートディレクトリで実行してください'));
+    console.error(chalk.red(t('scan.sketchesNotFound', { dir: sketchesDir })));
+    console.log(chalk.yellow(t('scan.hintRunInProjectRoot')));
     process.exit(1);
   }
   
@@ -136,15 +137,15 @@ export async function scan(options = {}) {
           const sketchesJsonPath = resolve(projectRoot, 'public/sketches.json');
           try {
             const sketches = JSON.parse(await fs.readFile(sketchesJsonPath, 'utf-8'));
-            console.log(chalk.green(`✅ ${sketches.length}個のスケッチをスキャンしました`));
+            console.log(chalk.green(t('scan.scanned', { count: sketches.length })));
 
             const withPreviews = sketches.filter(s => s.previewGif).length;
             if (withPreviews > 0) {
-              console.log(chalk.gray(`   プレビュー生成済み: ${withPreviews}/${sketches.length}`));
+              console.log(chalk.gray(t('scan.previewsGenerated', { ok: withPreviews, total: sketches.length })));
             }
-            console.log(chalk.gray(`   保存先: ${sketchesJsonPath}`));
+            console.log(chalk.gray(t('scan.savedTo', { path: sketchesJsonPath })));
           } catch (e) {
-            console.log(chalk.green('✅ スキャンが完了しました'));
+            console.log(chalk.green(t('scan.completed')));
           }
 
           // stderr の最終確認メッセージ（💾）を表示（📋 は既に表示済み）
@@ -160,7 +161,7 @@ export async function scan(options = {}) {
         fulfill();
       } else {
         // エラー時の処理
-        console.error(chalk.red(`❌ スキャンに失敗しました (exit code: ${code})`));
+        console.error(chalk.red(t('scan.failed', { code })));
         if (stderr) {
           console.error(chalk.red('Error details:'));
           console.error(stderr);
@@ -168,12 +169,12 @@ export async function scan(options = {}) {
         reject(new Error(`Scan failed with exit code ${code}`));
       }
     });
-    
+
     scanProcess.on('error', (err) => {
       if (spinner) {
         spinner.stop();
       }
-      console.error(chalk.red('❌ スキャンプロセスの起動に失敗しました:'), err.message);
+      console.error(chalk.red(t('scan.startFailed')), err.message);
       reject(err);
     });
   });

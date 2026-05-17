@@ -1,6 +1,7 @@
 import { readFile, readdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE } from './constants.js';
+import { t } from '../../cli/i18n/index.js';
 
 /**
  * 個別のスケッチを分析
@@ -55,7 +56,7 @@ async function loadManualMetadata(sketchPath, dirName) {
     const rawMetadata = await readFile(metadataPath, 'utf-8');
     const parsedMetadata = JSON.parse(rawMetadata);
     const normalizedMetadata = normalizeManualMetadata(parsedMetadata);
-    console.error(`📝 手動メタデータを読み込み: ${dirName}/${MANUAL_METADATA_FILE}`);
+    console.error(t('sketchAnalyzer.manualMetadataLoaded', { path: `${dirName}/${MANUAL_METADATA_FILE}` }));
     return normalizedMetadata;
   } catch (error) {
     if (error.code !== 'ENOENT') {

@@ -7,6 +7,7 @@ import { loadConfig } from '../utils/config.js';
 import { generateManifest } from '../utils/manifest.js';
 import { generateServiceWorker } from '../utils/service-worker.js';
 import { promises as fs } from 'fs';
+import { t } from '../i18n/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -14,7 +15,7 @@ const rootDir = resolve(__dirname, '../../..'); // package root (src/cli/command
 
 export async function dev(options) {
   try {
-    console.log(chalk.blue('🚀 Starting development server...'));
+    console.log(chalk.blue(t('dev.starting')));
     
     // Load user config
     const config = await loadConfig(process.cwd());
@@ -52,19 +53,19 @@ export async function dev(options) {
     const url = `http://${options.host}:${options.port}`;
     
     console.log();
-    console.log(chalk.green('✨ Development server started!'));
+    console.log(chalk.green(t('dev.started')));
     console.log();
-    console.log(`  ${chalk.bold('Local:')}   ${chalk.cyan(url)}`);
+    console.log(`${chalk.bold(t('dev.local') + ':')}   ${chalk.cyan(url)}`);
     if (options.host !== 'localhost') {
       const networkUrl = `http://${getNetworkAddress()}:${options.port}`;
-      console.log(`  ${chalk.bold('Network:')} ${chalk.cyan(networkUrl)}`);
+      console.log(`${chalk.bold(t('dev.network') + ':')} ${chalk.cyan(networkUrl)}`);
     }
     console.log();
-    console.log(chalk.gray('Press Ctrl+C to stop'));
+    console.log(chalk.gray(t('preview.pressCtrlC')));
     console.log();
-    
+
   } catch (error) {
-    console.error(chalk.red('Failed to start development server'));
+    console.error(chalk.red(t('dev.failed')));
     console.error(chalk.red(error.message));
     process.exit(1);
   }

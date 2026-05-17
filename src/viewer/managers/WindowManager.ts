@@ -1,3 +1,5 @@
+import { t } from '../i18n/index.js';
+
 export interface WindowConfig {
   name: string;
   title: string;
@@ -34,7 +36,7 @@ export class WindowManager {
     // 空 URL（about:blank）で開くと window.opener が保持される（同一オリジンで親 ↔ 子の DOM が触れる）
     const newWindow = window.open('', name, featuresString);
     if (!newWindow) {
-      console.error(`WindowManager: "${title}" の作成に失敗（ポップアップがブロックされた可能性があります）`);
+      console.error(t('window.createFailed', { title }));
       return null;
     }
 

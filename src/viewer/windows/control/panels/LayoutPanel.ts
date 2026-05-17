@@ -25,6 +25,7 @@ import { CleanupStack } from '../../../utils/cleanupStack';
 import { RafThrottle } from '../../../utils/rafThrottle';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
+import { t } from '../../../i18n/index.js';
 
 interface MappingPreviewEntry {
   div: HTMLDivElement;
@@ -80,7 +81,7 @@ export class LayoutPanel {
     // 説明テキスト + viewport + canvas を組み立てる（テンプレ HTML には空の stage しか居ない）
     this.hintEl = doc.createElement('div');
     this.hintEl.className = 'dc-layout-hint';
-    this.hintEl.textContent = '出力ウィンドウをドラッグで配置／右下角でリサイズ。仮想キャンバスのサイズは全出力を包含する最小矩形に自動拡張されます。';
+    this.hintEl.textContent = t('layout.hint');
 
     this.viewport = doc.createElement('div');
     this.viewport.className = 'dc-layout-viewport';

@@ -1,5 +1,6 @@
 import { preview as vitePreview } from 'vite';
 import chalk from 'chalk';
+import { t } from '../i18n/index.js';
 
 export async function preview(options) {
   try {
@@ -17,16 +18,16 @@ export async function preview(options) {
     const url = `http://${options.host}:${options.port}`;
 
     console.log();
-    console.log(chalk.green('✨ Preview server started!'));
+    console.log(chalk.green(t('preview.starting')));
     console.log();
-    console.log(`  ${chalk.bold('Local:')}   ${chalk.cyan(url)}`);
+    console.log(`${chalk.bold(t('dev.local') + ':')}   ${chalk.cyan(url)}`);
     console.log();
-    console.log(chalk.gray('Press Ctrl+C to stop'));
+    console.log(chalk.gray(t('preview.pressCtrlC')));
     console.log();
 
     return server;
   } catch (error) {
-    console.error(chalk.red('Failed to start preview server'));
+    console.error(chalk.red(t('preview.failed')));
     console.error(chalk.red(error.message));
     process.exit(1);
   }

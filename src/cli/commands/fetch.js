@@ -14,6 +14,7 @@ import {
   downloadAssets,
   rewriteCodeWithAssetMap,
 } from '../../core/modules/asset-downloader.js';
+import { t } from '../i18n/index.js';
 
 const SUPPORTED_MODES = ['p5js'];
 
@@ -126,12 +127,12 @@ export async function fetchCommand(idArg, options = {}) {
   await writeFile(join(outDir, '_op-meta.json'), JSON.stringify(opMeta, null, 2), 'utf-8');
 
   console.log();
-  console.log(chalk.green(`✅ Wrote sketches/sketch${visualID}/`));
+  console.log(chalk.green(t('fetch.completed', { dir: `sketches/sketch${visualID}/` })));
   console.log(chalk.dim(`   ${scriptFiles.length} code file(s), ${assetMap.size} asset(s), index.html, _op-meta.json`));
   console.log();
-  console.log(chalk.cyan('Next:'));
-  console.log(chalk.cyan('  npm run scan        # sketches.json を更新 (プレビュー GIF も生成)'));
-  console.log(chalk.cyan('  npm run dev         # ブラウザでギャラリーを開いて確認'));
+  console.log(chalk.cyan(t('fetch.nextSteps')));
+  console.log(chalk.cyan(t('fetch.scanHint')));
+  console.log(chalk.cyan(t('fetch.devHint')));
 }
 
 function normalizeId(value) {

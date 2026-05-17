@@ -1,6 +1,7 @@
 import type { Sketch } from '../types/sketch.js';
 import { SlideshowView } from './SlideshowView';
 import { routeHref } from '../utils/paths.js';
+import { t } from '../i18n/index.js';
 
 export class SlideshowController {
   private view: SlideshowView;
@@ -38,8 +39,8 @@ export class SlideshowController {
         background: #000;
         color: #fff;
       ">
-        <h2 style="margin-bottom: 20px;">スケッチがありません</h2>
-        <p style="margin-bottom: 30px; color: #888;">表示できるスケッチが見つかりませんでした</p>
+        <h2 style="margin-bottom: 20px;">${t('slideshow.empty.title')}</h2>
+        <p style="margin-bottom: 30px; color: #888;">${t('slideshow.empty.message')}</p>
         <button onclick="window.location.href='${routeHref('/')}'" style="
           padding: 12px 24px;
           background: #333;
@@ -49,7 +50,7 @@ export class SlideshowController {
           cursor: pointer;
           font-size: 16px;
         ">
-          ギャラリーに戻る
+          ${t('slideshow.empty.back')}
         </button>
       </div>
     `;

@@ -4,6 +4,7 @@ import { SketchPool } from '../runtime/SketchPool.js';
 import { WindowController } from './WindowController';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import { InlineControlHost } from '../windows/control/InlineControlHost';
+import { t, onLangChange } from '../i18n/index.js';
 
 export class SlideshowView {
   private currentIndex: number = 0;
@@ -22,6 +23,7 @@ export class SlideshowView {
   private boundCloseProjectionWindows = () => this.windowController?.closeAllWindows();
   /** projection 中だけ #dc-inline-editor 内にマウントする ControlWindow（inline 経路）。 */
   private inlinePanel: ControlWindow | null = null;
+  private langUnsub: (() => void) | null = null;
 
   render(sketchIds: string[], sketches: Sketch[]): void {
     this.sketchIds = sketchIds;
@@ -40,19 +42,19 @@ export class SlideshowView {
                 <polyline points="12 6 12 12 16 14"/>
               </svg>
               <input type="number" id="interval-input" min="5" max="300" value="${this.SLIDE_INTERVAL / 1000}" />
-              <span>秒</span>
+              <span data-i18n="slideshow.unit.sec">${t('slideshow.unit.sec')}</span>
             </div>
           </div>
           <div class="slideshow-info">
             <span id="current-sketch-number">${this.currentIndex + 1}</span> / ${sketchIds.length}
           </div>
           <div class="slideshow-controls">
-            <button id="prev-btn" class="control-btn" title="前へ">
+            <button id="prev-btn" class="control-btn" data-i18n-title="slideshow.prev" title="${t('slideshow.prev')}">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M15 18l-6-6 6-6"/>
               </svg>
             </button>
-            <button id="play-pause-btn" class="control-btn" title="一時停止">
+            <button id="play-pause-btn" class="control-btn" data-i18n-title="slideshow.pause" title="${t('slideshow.pause')}">
               <svg id="pause-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="6" y="4" width="4" height="16"/>
                 <rect x="14" y="4" width="4" height="16"/>
@@ -61,17 +63,17 @@ export class SlideshowView {
                 <polygon points="5 3 19 12 5 21 5 3"/>
               </svg>
             </button>
-            <button id="next-btn" class="control-btn" title="次へ">
+            <button id="next-btn" class="control-btn" data-i18n-title="slideshow.next" title="${t('slideshow.next')}">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M9 18l6-6-6-6"/>
               </svg>
             </button>
-            <button id="fullscreen-btn" class="control-btn" title="フルスクリーン">
+            <button id="fullscreen-btn" class="control-btn" data-i18n-title="slideshow.fullscreen" title="${t('slideshow.fullscreen')}">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
               </svg>
             </button>
-            <button id="mapping-btn" class="control-btn" title="プロジェクションマッピング">
+            <button id="mapping-btn" class="control-btn" data-i18n-title="slideshow.mapping" title="${t('slideshow.mapping')}">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2"/>
                 <path d="M8 21h8M12 17v4"/>
@@ -87,7 +89,7 @@ export class SlideshowView {
           <div id="sketch-info" class="sketch-info dc-info-panel">
             <div class="sketch-details">
               <h3 id="sketch-title" class="sketch-title"></h3>
-              <p id="sketch-author" class="sketch-author"><span class="author-by">by</span> <span class="author-name"></span></p>
+              <p id="sketch-author" class="sketch-author"><span class="author-by">${t('slideshow.author.by')}</span> <span class="author-name"></span></p>
               <p id="sketch-description" class="sketch-description" hidden></p>
             </div>
           </div>
@@ -96,6 +98,9 @@ export class SlideshowView {
         </div>
       </div>
     `;
+    this.applyTranslations(app);
+    this.langUnsub?.();
+    this.langUnsub = onLangChange(() => this.applyTranslations(app));
 
     this.addStyles();
     this.setupEventListeners();
@@ -433,7 +438,7 @@ export class SlideshowView {
 
     if (authorNameElement) {
       // userDataが存在する場合はユーザ名を使用
-      authorNameElement.textContent = sketch.userData?.userName || 'Anonymous';
+      authorNameElement.textContent = sketch.userData?.userName || t('slideshow.author.anonymous');
     }
 
     if (descriptionElement) {
@@ -522,19 +527,40 @@ export class SlideshowView {
 
   private togglePlayPause(): void {
     this.isPaused = !this.isPaused;
-    
+
     const pauseIcon = document.getElementById('pause-icon');
     const playIcon = document.getElementById('play-icon');
-    
+    const playPauseBtn = document.getElementById('play-pause-btn');
+
     if (this.isPaused) {
       this.stopAutoPlay();
       if (pauseIcon) pauseIcon.style.display = 'none';
       if (playIcon) playIcon.style.display = 'block';
+      if (playPauseBtn) {
+        playPauseBtn.setAttribute('data-i18n-title', 'slideshow.play');
+        playPauseBtn.title = t('slideshow.play');
+      }
     } else {
       this.startAutoPlay();
       if (pauseIcon) pauseIcon.style.display = 'block';
       if (playIcon) playIcon.style.display = 'none';
+      if (playPauseBtn) {
+        playPauseBtn.setAttribute('data-i18n-title', 'slideshow.pause');
+        playPauseBtn.title = t('slideshow.pause');
+      }
     }
+  }
+
+  /** data-i18n / data-i18n-title 属性を持つ要素に現在の翻訳を再適用する。 */
+  private applyTranslations(scope: HTMLElement): void {
+    scope.querySelectorAll<HTMLElement>('[data-i18n]').forEach((el) => {
+      const key = el.getAttribute('data-i18n');
+      if (key) el.textContent = t(key as Parameters<typeof t>[0]);
+    });
+    scope.querySelectorAll<HTMLElement>('[data-i18n-title]').forEach((el) => {
+      const key = el.getAttribute('data-i18n-title');
+      if (key) el.title = t(key as Parameters<typeof t>[0]);
+    });
   }
 
   private toggleFullscreen(): void {
@@ -640,5 +666,7 @@ export class SlideshowView {
     this.mappingActive = false;
     this.pool?.destroy();
     this.pool = null;
+    this.langUnsub?.();
+    this.langUnsub = null;
   }
 }

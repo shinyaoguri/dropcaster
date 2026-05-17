@@ -36,6 +36,7 @@ import { CleanupStack } from '../../../utils/cleanupStack';
 import { RafThrottle } from '../../../utils/rafThrottle';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
+import { t } from '../../../i18n/index.js';
 
 export interface MappingAreaPanelAttachOptions {
   setKeyboardQuadSelection: (corner: CornerKey) => void;
@@ -205,11 +206,11 @@ export class MappingAreaPanel {
     // 載せて、重心の少し上に表示される。
     this.scaleHandle = doc.createElement('div');
     this.scaleHandle.className = 'quad-handle quad-handle-scale';
-    this.scaleHandle.title = '全体を拡大縮小（形は維持）';
+    this.scaleHandle.title = t('mappingArea.scale.title');
 
     this.rotateHandle = doc.createElement('div');
     this.rotateHandle.className = 'quad-handle quad-handle-rotate';
-    this.rotateHandle.title = '全体を回転（形は維持）';
+    this.rotateHandle.title = t('mappingArea.rotate.title');
   }
 
   /**

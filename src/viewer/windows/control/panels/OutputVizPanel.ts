@@ -27,6 +27,7 @@
 import { RafThrottle } from '../../../utils/rafThrottle';
 import type { OutputBoundsMap, VideoDimensions } from '../ControlHost';
 import type { MappingsController } from '../MappingsController';
+import { t } from '../../../i18n/index.js';
 
 export interface OutputVizPanelAttachOptions {
   getOutputBounds: () => OutputBoundsMap;
@@ -371,28 +372,28 @@ export class OutputVizPanel {
       if (bounds && bounds.screenWidth > 0 && bounds.screenHeight > 0) {
         const size = `${bounds.screenWidth}×${bounds.screenHeight}`;
         if (bounds.screenLabel) {
-          const internalMark = bounds.screenIsInternal ? '（内蔵）' : '';
+          const internalMark = bounds.screenIsInternal ? t('outputViz.display.internalSuffix') : '';
           entry.headerSize.textContent = `${bounds.screenLabel}${internalMark} ${size}`;
         } else {
           entry.headerSize.textContent = size;
         }
         entry.headerSize.title = bounds.screenLabel
-          ? `${bounds.screenLabel}${bounds.screenIsInternal ? '（内蔵ディスプレイ）' : '（外部ディスプレイ）'} / ${size}`
-          : `ディスプレイサイズ ${size}`;
+          ? `${bounds.screenLabel}${bounds.screenIsInternal ? t('outputViz.display.internalLabel') : t('outputViz.display.externalLabel')} / ${size}`
+          : t('outputViz.display.sizeOnly', { size });
       } else {
         entry.headerSize.textContent = `${Math.round(out.size.width)}×${Math.round(out.size.height)}`;
-        entry.headerSize.title = '想定解像度（出力ウィンドウ未起動）';
+        entry.headerSize.title = t('outputViz.size.unstartedTitle');
       }
       entry.headerMode.classList.remove('open', 'fullscreen', 'closed');
       if (!isOpen) {
         entry.headerMode.classList.add('closed');
-        entry.headerMode.textContent = '未起動';
+        entry.headerMode.textContent = t('outputViz.mode.unstarted');
       } else if (isFullscreen) {
         entry.headerMode.classList.add('fullscreen');
-        entry.headerMode.textContent = 'フルスクリーン';
+        entry.headerMode.textContent = t('outputViz.mode.fullscreen');
       } else {
         entry.headerMode.classList.add('open');
-        entry.headerMode.textContent = 'ウィンドウ';
+        entry.headerMode.textContent = t('outputViz.mode.windowed');
       }
 
       // フレーム（オーバーレイ）を canvas-host 内の (position, size) に絶対配置（canvas px のまま）

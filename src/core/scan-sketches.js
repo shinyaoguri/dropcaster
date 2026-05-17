@@ -9,6 +9,7 @@ import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists, file
 import { generateSketchPreview } from './modules/preview-generator.js';
 import { checkPreviewTools } from './check-env.js';
 import { DEFAULT_DESCRIPTION_SUFFIX, MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './modules/constants.js';
+import { t } from '../cli/i18n/index.js';
 
 // プロジェクトルートの解決:
 //   1. DROPCASTER_PROJECT_ROOT 環境変数（dropcaster CLI から呼ばれた場合に設定される）
@@ -78,19 +79,19 @@ async function scanSketches(options = {}) {
       const { ok, missing } = await checkPreviewTools();
       if (!ok) {
         previewToolsOk = false;
-        console.error('\n⚠️  プレビュー GIF の生成に必要なツールが見つからないため、プレビュー生成をスキップします:');
+        console.error(t('scan.missingPreviewTools'));
         for (const item of missing) {
           console.error(`   ✗ ${item.name}${item.detail ? ` — ${item.detail}` : ''}`);
-          if (item.hint) console.error(`     インストール方法: ${item.hint}`);
+          if (item.hint) console.error(t('scan.missingPreviewToolsInstall', { hint: item.hint }));
         }
-        console.error('   （メタデータのスキャンとスケッチのコピーは続行します。状態は `dropcaster doctor` で確認できます）\n');
+        console.error(t('scan.continueWithoutPreviews'));
       }
     }
 
     // --reset: public/sketches と public/previews を一度まるごと削除してから作り直す
     // （userData / title を保持したいので public/sketches.json は残す。--sketch との併用時は全消ししない）
     if (reset && !targetSketch) {
-      console.error('🧹 --reset: public/sketches と public/previews を削除して作り直します');
+      console.error(t('scan.resetting'));
       await rm(publicSketchesDir, { recursive: true, force: true });
       await rm(previewsDir, { recursive: true, force: true });
     }
@@ -137,7 +138,7 @@ async function scanSketches(options = {}) {
 
       if (watchMode && !existingSketches.has(entry.name)) {
         newSketches.push(entry.name);
-        console.error(`🆕 新しいスケッチを検出: ${entry.name}`);
+        console.error(t('scan.newSketchDetected', { name: entry.name }));
       }
 
       // 数値（または "sketch" + 数値）のディレクトリ名は OpenProcessing のスケッチ ID とみなす
@@ -154,7 +155,7 @@ async function scanSketches(options = {}) {
           const previewPath = await generateSketchPreview(entry.name, sketchPath, previewsDir, forceRegenerate);
           if (previewPath) sketchInfo.previewGif = previewPath;
         } catch (error) {
-          console.warn(`Warning: ${entry.name} のプレビュー生成に失敗: ${error.message}`);
+          console.warn(t('scan.previewFailed', { name: entry.name, error: error.message }));
         }
       }
     }
@@ -166,7 +167,7 @@ async function scanSketches(options = {}) {
 
     // OpenProcessing Public API からタイトル・ユーザー情報を取得して統合
     if (fetchUserData && sketchIds.length > 0) {
-      console.error(`🔍 OpenProcessing Public API からメタデータを取得中... (${sketchIds.length}件)`);
+      console.error(t('scan.fetchingMetadata', { count: sketchIds.length }));
       const padTotal = String(sketchIds.length).length;
       try {
         const userDataResults = await fetchUserDataForSketches(sketchIds, {
@@ -209,14 +210,14 @@ async function scanSketches(options = {}) {
           }
           updated++;
         }
-        console.error(`   メタデータ統合: 成功 ${updated} / 失敗 ${errors} / 合計 ${userDataResults.length}`);
+        console.error(t('scan.metadataResult', { ok: updated, ng: errors, total: userDataResults.length }));
       } catch (error) {
-        console.error(`❌ メタデータの取得に失敗しました: ${error.message}`);
+        console.error(t('scan.metadataFetchFailed', { error: error.message }));
       }
     }
 
     if (watchMode && newSketches.length > 0) {
-      console.error(`📝 新規スケッチ ${newSketches.length} 件: ${newSketches.join(', ')}`);
+      console.error(t('scan.newCount', { count: newSketches.length, names: newSketches.join(', ') }));
     }
 
     // --sketch で 1 件だけ走査したときは、その 1 件を既存リストにマージする（他のスケッチを消さない）
@@ -229,14 +230,14 @@ async function scanSketches(options = {}) {
     }
 
     const withUserData = outputSketches.filter(s => s.userData).length;
-    console.error(`📋 ${outputSketches.length} 個のスケッチをスキャン（うち ${withUserData} 件にメタデータ）`);
+    console.error(t('scan.scannedCount', { count: outputSketches.length, withMeta: withUserData }));
 
     if (fetchUserData || writeFileOutput) {
       try {
         await writeFile(sketchesJsonPath, JSON.stringify(outputSketches, null, 2), 'utf-8');
-        console.error(`💾 ${sketchesJsonPath} を生成`);
+        console.error(t('scan.wroteJson', { path: sketchesJsonPath }));
       } catch (error) {
-        console.error(`❌ public/sketches.json の書き込みに失敗: ${error.message}`);
+        console.error(t('scan.writeJsonFailed', { error: error.message }));
         process.exitCode = 1;
       }
     } else {
@@ -295,8 +296,8 @@ async function writeManualMetadataTemplate(sketchId, reason) {
     userData: { userId: '', userName: '', userUrl: '' },
   };
   await writeFile(templatePath, `${JSON.stringify(template, null, 2)}\n`, 'utf-8');
-  console.error(`📝 OpenProcessing 取得失敗（${reason}）。手動メタデータ雛形を作成: ${sketchName}/${MANUAL_METADATA_TEMPLATE_FILE}`);
-  console.error(`   ${MANUAL_METADATA_FILE} にリネームして値を埋めると次回 scan で反映されます`);
+  console.error(t('scan.manualTemplateCreated', { reason, path: `${sketchName}/${MANUAL_METADATA_TEMPLATE_FILE}` }));
+  console.error(t('scan.manualTemplateRename', { file: MANUAL_METADATA_FILE }));
 }
 
 async function findSketchDirectoryName(sketchId) {
