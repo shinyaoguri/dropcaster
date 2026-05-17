@@ -1,11 +1,14 @@
 import { SketchServiceImpl } from './services/sketchService.js';
 import { OpenProcessingSource, UnsupportedEngineModeError } from './services/OpenProcessingSource.js';
+import { OpenProcessingRateLimitError } from '../core/modules/op-api-client.js';
 import { Router } from './routing/router.js';
 import { SketchGalleryView } from './components/SketchGalleryView.js';
 import { OpIdEntryView } from './components/OpIdEntryView.js';
 import { SketchPageController } from './components/SketchPageController.js';
 import { SlideshowController } from './components/SlideshowController.js';
 import { Error404View } from './components/Error404View.js';
+import { SketchErrorView } from './components/SketchErrorView.js';
+import { API_CONFIG } from '../core/modules/constants.js';
 
 export class App {
   private sketchService: SketchServiceImpl;
@@ -67,17 +70,31 @@ export class App {
         this.sketchPageController.destroy();
         this.sketchPageController = null;
       }
+      // 既に表示中の countdown timer があれば止める
+      SketchErrorView.cancelCountdown();
+
       try {
         const sketch = await this.opSource.resolve(opId);
         this.sketchPageController = new SketchPageController();
         await this.sketchPageController.renderSketch(sketch);
       } catch (err) {
-        if (err instanceof UnsupportedEngineModeError) {
+        const sketchUrl = `${API_CONFIG.baseUrl}/sketch/${opId}`;
+        if (err instanceof OpenProcessingRateLimitError) {
           console.warn(err.message);
+          SketchErrorView.render('rate-limit', {
+            retryAfterMs: err.retryAfterMs,
+            onRetry: () => this.router.navigate(`/op/${opId}`),
+          });
+        } else if (err instanceof UnsupportedEngineModeError) {
+          console.warn(err.message);
+          SketchErrorView.render('unsupported-mode', { mode: err.mode, sketchUrl });
         } else {
           console.error('OpenProcessing sketch の取得に失敗:', err);
+          SketchErrorView.render('not-found', {
+            sketchUrl,
+            detail: err instanceof Error ? err.message : undefined,
+          });
         }
-        Error404View.render();
       }
     });
 

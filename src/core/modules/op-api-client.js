@@ -11,21 +11,40 @@ import { API_CONFIG, DEFAULTS } from './constants.js';
 
 const IS_BROWSER = typeof window !== 'undefined' && typeof document !== 'undefined';
 
+// Browser コンテキストでは 1 リクエスト 0.5s ペースに自前 throttle (連打を平準化)。
+// OP の per-IP 40 req/min 制限 (≒ 1.5s/req) より緩いが、SW キャッシュもあるので普段の操作で
+// 当たることはまず無い。CLI (Node) はバッチ scan するので 1.5s を維持。
+const DEFAULT_API_INTERVAL_MS = IS_BROWSER ? 500 : 1500;
+
 const API_TOKEN_ENV_NAMES = [
   'OPENPROCESSING_API_TOKEN',
   'OP_API_TOKEN',
   'DROPCASTER_OPENPROCESSING_API_TOKEN',
 ];
 
+/**
+ * OP の per-IP レート制限 (40 req/min) に当たったときに throw される。
+ * `retryAfterMs` は Retry-After ヘッダから抽出した待機時間 (ヘッダ無しの場合は 60s デフォルト)。
+ * 呼び出し側 (App.ts) はこれを catch して UI に「N 秒後に再試行できます」を出す。
+ */
+export class OpenProcessingRateLimitError extends Error {
+  constructor(retryAfterMs, message) {
+    super(message || `OpenProcessing API rate-limited (per-IP). Retry after ${Math.ceil(retryAfterMs / 1000)}s.`);
+    this.name = 'OpenProcessingRateLimitError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 export class OpenProcessingApiClient {
   constructor(options = {}) {
     this.lastApiRequestAt = 0;
     this.userCache = new Map();
     this.apiToken = options.apiToken || findApiToken();
-    this.apiRequestIntervalMs = Math.max(
-      Number(options.apiRequestIntervalMs || API_CONFIG.apiRequestIntervalMs || 1500),
-      0
-    );
+    // options.apiRequestIntervalMs を明示指定したらそれを使う。未指定なら DEFAULT_API_INTERVAL_MS。
+    const interval = options.apiRequestIntervalMs !== undefined
+      ? Number(options.apiRequestIntervalMs)
+      : DEFAULT_API_INTERVAL_MS;
+    this.apiRequestIntervalMs = Math.max(interval, 0);
   }
 
   /** 1 スケッチぶんのメタデータを取得する（{ userId, userName, userUrl, sketchTitle, sketchDescription, sketchId, sketchUrl } か { error, sketchId }）。 */
@@ -88,6 +107,13 @@ export class OpenProcessingApiClient {
     this.lastApiRequestAt = Date.now();
 
     const status = response.status;
+
+    // 429: per-IP レート制限。専用エラーを throw して上位の UI で countdown を出させる。
+    if (status === 429) {
+      const retryAfterMs = parseRetryAfterMs(response.headers.get('Retry-After'));
+      throw new OpenProcessingRateLimitError(retryAfterMs);
+    }
+
     const text = await response.text();
     // 一旦 JSON へパースを試みる（失敗したら text のまま）。エラーボディも JSON のことが多いので
     // 4xx/5xx の前にやっておく。
@@ -185,6 +211,23 @@ function normalizeId(value) {
 function normalizeString(value) {
   if (value === null || value === undefined) return '';
   return String(value).trim();
+}
+
+/**
+ * Retry-After ヘッダを ms に変換する。秒の整数値、または HTTP-date のいずれかを許容。
+ * 解釈できなければ 60s デフォルト。
+ */
+function parseRetryAfterMs(retryAfter) {
+  if (!retryAfter) return 60_000;
+  const trimmed = String(retryAfter).trim();
+  if (/^\d+$/.test(trimmed)) {
+    return Math.max(0, parseInt(trimmed, 10) * 1000);
+  }
+  const date = Date.parse(trimmed);
+  if (!Number.isNaN(date)) {
+    return Math.max(0, date - Date.now());
+  }
+  return 60_000;
 }
 
 function formatApiError(response) {
