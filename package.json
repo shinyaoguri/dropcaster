@@ -48,6 +48,7 @@
     "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node src/core/scan-sketches.js --watch-mode --write-file\""
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260517.1",
     "nodemon": "^3.0.2",
     "typescript": "^6.0.3"
   },

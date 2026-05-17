@@ -18,12 +18,15 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <title>dropcaster - hosted</title>
     <script>
-      // ホスト版の DropcasterConfig。assetProxyBaseUrl は Cloudflare Worker のデプロイ後に書き換える。
-      // 空のままでもアセット無しの p5js 作品 (生成的なコードのみ) は完全に動く。
+      // ホスト版の DropcasterConfig。
+      // assetProxyBaseUrl は同一オリジン下のパス ('/op-cdn') を指す。
+      // 実体は同じ Worker (apps/web/src/worker.ts) が deckard.openprocessing.org への
+      // proxy として捌く。これにより iframe (about:srcdoc) 内のアセット参照は
+      // 全て同一オリジンとなり、crossOrigin・SW・キャッシュの取り扱いがシンプルになる。
       window.__DROPCASTER_CONFIG__ = {
-        assetProxyBaseUrl: '',
+        assetProxyBaseUrl: '/op-cdn',
         enablePwa: true,
-        cacheVersion: '0.1.0',
+        cacheVersion: '0.2.0',
         supportedOpModes: ['p5js'],
       };
     </script>

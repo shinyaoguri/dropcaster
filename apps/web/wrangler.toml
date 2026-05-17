@@ -1,0 +1,32 @@
+# dropcaster 統合 Worker — Static Assets + /op-cdn proxy を 1 つに。
+#
+# ビルド前提:
+#   `npm run build:web` (root) で apps/web/dist に viewer の静的ファイルが入る。
+#   wrangler はそれを Static Assets としてアップロードしつつ、未マッチ要求と
+#   /op-cdn/* を src/worker.ts に渡す。
+#
+# カスタムドメインを当てるには:
+#   1. soui.dev のゾーンを Cloudflare に追加 (NS 移管 or DNS 設定)
+#   2. 下の [[routes]] を有効化して `wrangler deploy`
+#   3. もしくは Cloudflare Dashboard -> Workers & Pages -> dropcaster -> Settings ->
+#      Triggers -> Add Custom Domain で `dropcaster.soui.dev` を追加
+#   custom_domain = true 経路だと wrangler が証明書発行まで面倒見る。
+
+name = "dropcaster"
+main = "src/worker.ts"
+compatibility_date = "2026-05-01"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+# /op/<id> のような未マッチパスを index.html (SPA shell) で受ける。
+# /op-cdn/* は worker の fetch handler が先に拾うのでこの fallback は通らない。
+not_found_handling = "single-page-application"
+
+[observability]
+enabled = true
+
+# 本番ドメインを当てるとき (ゾーンを Cloudflare に置いた後):
+# [[routes]]
+# pattern = "dropcaster.soui.dev/*"
+# custom_domain = true
