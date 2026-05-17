@@ -30,7 +30,11 @@ export class SketchGalleryView {
         </div>
 
         <footer class="footer">
-          <p>&copy; ${new Date().getFullYear()} dropcaster. All rights reserved.</p>
+          <p>
+            &copy; ${new Date().getFullYear()} Shinya Oguri ·
+            <a href="https://github.com/shinyaoguri/dropcaster/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a> ·
+            <a href="https://github.com/shinyaoguri/dropcaster" target="_blank" rel="noopener">GitHub</a>
+          </p>
         </footer>
       </div>
     `;

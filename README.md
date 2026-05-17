@@ -256,3 +256,7 @@ FFmpeg / Chromium が無い環境ではプレビュー生成だけスキップ�
 ## 貢献
 
 Pull Requestを歓迎します！問題や提案がある場合は [Issues](https://github.com/shinyaoguri/dropcaster/issues) にお願いします。
+
+## ライセンス
+
+[MIT License](LICENSE) — Copyright (c) 2026 Shinya Oguri

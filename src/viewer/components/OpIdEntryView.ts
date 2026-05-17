@@ -36,6 +36,11 @@ const HERO_HTML = `
     </form>
     <footer class="op-hero-footer">
       <p>p5js モードの作品に対応しています。アセット付き作品は asset proxy 設定で読み込み可能になります。</p>
+      <p class="op-hero-credit">
+        &copy; <span data-year></span> Shinya Oguri ·
+        <a href="https://github.com/shinyaoguri/dropcaster/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a> ·
+        <a href="https://github.com/shinyaoguri/dropcaster" target="_blank" rel="noopener">GitHub</a>
+      </p>
     </footer>
   </div>
 `;
@@ -63,6 +68,8 @@ export class OpIdEntryView {
     const app = document.querySelector<HTMLDivElement>('#app');
     if (!app) return;
     app.innerHTML = HERO_HTML;
+    const yearEl = app.querySelector<HTMLElement>('[data-year]');
+    if (yearEl) yearEl.textContent = String(new Date().getFullYear());
     OpIdEntryView.wireForm(app, onSubmit);
     // フォーカスは hero モードのときだけ自動付与 (inline はギャラリー閲覧を邪魔したくない)
     app.querySelector<HTMLInputElement>('.op-id-input')?.focus();
