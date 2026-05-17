@@ -721,6 +721,13 @@ body {
   margin: 0;
 }
 
+.footer a {
+  color: #64748b;
+  text-decoration: none;
+}
+
+.footer a:hover { color: #1e293b; text-decoration: underline; }
+
 /* ===== OpenProcessing ID 入力 UI ===== */
 
 /* catalog 空時のホスト版 hero */
@@ -757,9 +764,19 @@ body {
   text-align: center;
   color: #94a3b8;
   font-size: 0.8125rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .op-hero-footer p { margin: 0; }
+
+.op-hero-credit a {
+  color: #64748b;
+  text-decoration: none;
+}
+
+.op-hero-credit a:hover { color: #1e293b; text-decoration: underline; }
 
 /* フォーム共通 */
 .op-id-form {
