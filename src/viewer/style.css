@@ -46,8 +46,12 @@ body {
 .slideshow-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   padding: 10px 20px;
+  /* 言語切替で "Slideshow" ↔ "スライドショー" と幅が変わってもレイアウトが
+     ずれないよう、長い方 (日本語) を収められる固定幅にする。 */
+  min-width: 168px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   text-decoration: none;
@@ -966,22 +970,19 @@ body {
 
 .sketch-error-link:hover { color: #1e293b; text-decoration: underline; }
 
-/* ─── 言語切替トグル (segmented control 形式) ─────────────────────────────
+/* ─── 言語切替トグル (iOS 風 segmented control) ──────────────────────────
    構造: <div.dc-lang-toggle><button.dc-lang-toggle-opt × 2></div>
-   - コンテナはページ背景 (#f8fafc) と明確に区別できる solid グレーで「2 つで 1 セット」と
-     一目でわかるようにする。
-   - active 側は濃い色で塗って白文字、inactive 側は透明で濃いグレー文字。
-   - 中央の縦線で 2 セグメントの境界をはっきり示す。 */
+   - 控えめなライトグレーのピル状コンテナに、active 側だけ白い "thumb"
+     カードが乗って影で浮き上がる macOS / iOS 系の見せ方。
+   - 主要 CTA (slideshow-btn) と競合しない控えめな存在感に振る。 */
 .dc-lang-toggle {
   display: inline-flex;
-  align-items: stretch;
-  background: #e2e8f0;
-  border: 1px solid #cbd5e1;
+  align-items: center;
+  padding: 3px;
+  background: #eef1f5;
   border-radius: 999px;
-  overflow: hidden;
-  line-height: 1;
-  /* slideshow-btn (height ≈ 40px) に揃える */
-  height: 40px;
+  /* 主要 CTA より低い高さ。"メタ操作" 感を出す */
+  height: 32px;
   box-sizing: border-box;
 }
 
@@ -989,40 +990,31 @@ body {
   appearance: none;
   background: transparent;
   border: 0;
-  color: #475569;
+  color: #94a3b8;
   font: inherit;
-  font-weight: 700;
-  font-size: 0.8125rem;
-  letter-spacing: 0.08em;
-  padding: 0 16px;
-  min-width: 48px;
+  font-weight: 600;
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  padding: 0 12px;
+  height: 100%;
+  min-width: 36px;
+  border-radius: 999px;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-/* セグメント境界 (2 個目以降の左に線を引く) */
-.dc-lang-toggle-opt + .dc-lang-toggle-opt {
-  border-left: 1px solid #cbd5e1;
-}
-
 .dc-lang-toggle-opt:hover:not(.is-active) {
-  color: #0f172a;
-  background: rgba(255, 255, 255, 0.5);
+  color: #475569;
 }
 
 .dc-lang-toggle-opt.is-active {
-  background: #0f172a;
-  color: #ffffff;
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
   cursor: default;
-}
-
-/* active 側に隣接する区切り線は消す (色が乗ったセグメント側に線が残ると見栄えが悪い) */
-.dc-lang-toggle-opt.is-active + .dc-lang-toggle-opt,
-.dc-lang-toggle-opt:has(+ .dc-lang-toggle-opt.is-active) + .dc-lang-toggle-opt {
-  border-left-color: transparent;
 }
 
 .dc-lang-toggle-opt:focus-visible {
