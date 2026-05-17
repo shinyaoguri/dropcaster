@@ -8,8 +8,8 @@
 
 export interface DropcasterConfig {
   /**
-   * OpenProcessing の CDN (deckard.openprocessing.org) を proxy する same-origin な base URL。
-   * 例: 'https://dropcaster-asset-proxy.example.workers.dev'
+   * OpenProcessing の CDN (deckard.openprocessing.org) を proxy するベース。
+   * 同一オリジン下のパス指定を推奨 (例: '/op-cdn')。絶対 URL も受け付ける。
    * 未設定なら deckard URL は書き換えない (アセット直配信、taint で投影マッピング不可)
    */
   assetProxyBaseUrl?: string;

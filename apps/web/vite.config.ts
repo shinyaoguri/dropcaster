@@ -26,6 +26,23 @@ export default defineConfig({
       // src/viewer / src/core (project root 配下) を参照させるため明示的に許可
       allow: [__dirname, projectRoot],
     },
+    // dev (npm run dev:web) では Worker が居ないので、本番と同じく /op-cdn/* を
+    // deckard.openprocessing.org に proxy しつつ Access-Control-Allow-Origin を
+    // 付ける。本番では同じ URL が Worker の fetch handler に当たる。
+    proxy: {
+      '/op-cdn': {
+        target: 'https://deckard.openprocessing.org',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/op-cdn/, ''),
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes) => {
+            proxyRes.headers['access-control-allow-origin'] = '*';
+            proxyRes.headers['access-control-allow-methods'] = 'GET, HEAD, OPTIONS';
+            delete proxyRes.headers['vary'];
+          });
+        },
+      },
+    },
   },
   build: {
     target: 'esnext',

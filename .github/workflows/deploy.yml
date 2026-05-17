@@ -1,0 +1,62 @@
+# dropcaster (静的アセット + /op-cdn proxy を兼ねた 1 つの Worker) を
+# main への push で Cloudflare Workers にデプロイする。
+#
+# 必須 secrets (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN    "Edit Cloudflare Workers" 権限を持つ API トークン。
+#   CLOUDFLARE_ACCOUNT_ID   Cloudflare Dashboard 右サイドバーの Account ID。
+#
+# デプロイ先: https://dropcaster.<workers-subdomain>.workers.dev
+# カスタムドメイン (dropcaster.soui.dev) は wrangler.toml の [[routes]] を
+# 有効化するか、Cloudflare Dashboard で手動 attach する。
+
+name: Deploy dropcaster
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'src/viewer/**'
+      - 'src/core/modules/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck viewer
+        run: npx tsc --noEmit
+
+      - name: Typecheck worker
+        run: npx tsc --noEmit -p apps/web/tsconfig.json
+
+      - name: Build static site
+        run: npm run build:web
+
+      - name: Deploy via wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/web
+          command: deploy

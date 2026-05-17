@@ -89,6 +89,12 @@ self.addEventListener('fetch', (event) => {
 
   // 同一オリジン: パスで分岐
   if (sameOrigin) {
+    // /op-cdn/* は dropcaster Worker が OpenProcessing CDN への proxy として返す。
+    // URL に content hash (h<32hex>) が乗るので immutable 扱いで CacheFirst。
+    if (url.pathname.startsWith('/op-cdn/')) {
+      event.respondWith(cacheFirst(req, OP_CDN_CACHE));
+      return;
+    }
     // local sketch 系 (/sketches.json, /sketches/*)
     if (matchSegment(url.pathname, 'sketches')) {
       event.respondWith(staleWhileRevalidate(req, LOCAL_CACHE));
@@ -115,7 +121,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 外部 CDN / asset proxy (jsdelivr, workers.dev, deckard など) は CacheFirst。
+  // 外部 CDN (jsdelivr, fonts, deckard など) は CacheFirst。
   // URL に content hash が乗っている前提で immutable 扱い。
   if (isExternalImmutableCdn(url)) {
     event.respondWith(cacheFirst(req, OP_CDN_CACHE));
@@ -215,14 +221,13 @@ const IMMUTABLE_CDN_HOSTS = new Set([
   'unpkg.com',
   'fonts.googleapis.com',
   'fonts.gstatic.com',
+  // deckard.openprocessing.org を直接叩く経路は通常無い (同一オリジン /op-cdn/ 経由)。
+  // 古いユーザ template や proxy 未設定構成のフォールバックとして残す。
   'deckard.openprocessing.org',
 ]);
 
 function isExternalImmutableCdn(url) {
   if (IMMUTABLE_CDN_HOSTS.has(url.host)) return true;
-  // .workers.dev は dropcaster の asset proxy の置き場として一般的
-  if (url.host.endsWith('.workers.dev')) return true;
-  // 任意のカスタム proxy ドメインを足したいときは config 経由で extra hosts を渡せると良いが、
-  // 当面は URL に content hash が見えるパターン (例: /h<32hex>/) を見て判定する経路を別途追加。
+  // OP の S3 で使われる content hash パス (例: /h<32hex>/) を持つレスポンスは immutable 扱い
   return /\/h[0-9a-f]{20,}\//i.test(url.pathname);
 }
