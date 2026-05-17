@@ -23,6 +23,12 @@ export class OpenProcessingApiClient {
   getUser(userId: string | number): Promise<Record<string, unknown> | null>;
 }
 
+export class OpenProcessingRateLimitError extends Error {
+  readonly name: 'OpenProcessingRateLimitError';
+  readonly retryAfterMs: number;
+  constructor(retryAfterMs: number, message?: string);
+}
+
 export function fetchUserDataForSketches(
   sketchIds: Array<string | number>,
   options?: OpenProcessingApiClientOptions & {

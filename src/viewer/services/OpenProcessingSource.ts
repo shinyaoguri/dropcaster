@@ -28,8 +28,9 @@ export class OpenProcessingSource {
     const cfg = getConfig();
     this.client = new OpenProcessingApiClient({
       apiToken: cfg.openProcessingApiToken,
-      // Browser ではレート緩和は SW キャッシュ側で持つ。ここではガード最小。
-      apiRequestIntervalMs: 0,
+      // apiRequestIntervalMs はクライアント側のデフォルト (Browser=500ms) に任せる。
+      // 連打を平準化する程度で普段の操作には影響しない。SW の OP_META_CACHE も効くので
+      // 同じスケッチの再表示では API を叩かない。
     });
   }
 
