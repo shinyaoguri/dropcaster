@@ -136,14 +136,16 @@ export class OpIdEntryView {
 
 /**
  * 入力文字列から OpenProcessing の作品 ID (数値) を抽出する。
- * 数値そのもの、"sketch<id>"、OP の作品 URL (https://openprocessing.org/sketch/<id>) を受け付ける。
+ * 数値そのもの、"sketch<id>"、OP の作品 URL を受け付ける。
+ * URL は旧形式 (https://openprocessing.org/sketch/<id>) と
+ * 新形式 (https://openprocessing.org/@<username>/<id>) の両方に対応。
  * 抽出不能なら null。
  */
 export function parseOpId(raw: string): string | null {
   const t = String(raw ?? '').trim();
   if (!t) return null;
-  // OP の URL から抽出 (path 中の /sketch/<digits>)
-  const urlMatch = t.match(/openprocessing\.org\/sketch\/(\d+)/i);
+  // OP の URL から抽出: /sketch/<digits> または /@<username>/<digits>
+  const urlMatch = t.match(/openprocessing\.org\/(?:sketch\/|@[^/]+\/)(\d+)/i);
   if (urlMatch) return urlMatch[1];
   // "sketch<id>" 形式
   const prefixMatch = t.match(/^sketch(\d+)$/i);

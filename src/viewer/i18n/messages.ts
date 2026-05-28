@@ -11,7 +11,7 @@ const en = {
   // OP ID 入力 (Hero / Inline)
   'op.hero.subtitle': 'Load an <a href="https://openprocessing.org/" target="_blank" rel="noopener noreferrer" class="op-hero-link">OpenProcessing</a> sketch for projection mapping.',
   'op.label': 'Sketch ID or URL',
-  'op.placeholder.hero': 'e.g. 2257553 / https://openprocessing.org/sketch/2257553',
+  'op.placeholder.hero': 'e.g. 2257553 / https://openprocessing.org/@username/2257553',
   'op.placeholder.inline': 'OpenProcessing sketch ID / URL',
   'op.submit.hero': 'Load',
   'op.submit.inline': 'Open',
@@ -196,7 +196,7 @@ const ja: Record<keyof typeof en, string> = {
 
   'op.hero.subtitle': '<a href="https://openprocessing.org/" target="_blank" rel="noopener noreferrer" class="op-hero-link">OpenProcessing</a> の作品を投影マッピング用に読み込みます。',
   'op.label': '作品 ID または URL',
-  'op.placeholder.hero': '例: 2257553 / https://openprocessing.org/sketch/2257553',
+  'op.placeholder.hero': '例: 2257553 / https://openprocessing.org/@username/2257553',
   'op.placeholder.inline': 'OpenProcessing 作品 ID / URL',
   'op.submit.hero': '読み込み',
   'op.submit.inline': '開く',
