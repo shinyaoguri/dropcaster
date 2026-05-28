@@ -69,8 +69,15 @@ export class OpenProcessingSource {
       },
     });
 
-    const userId = normalizeString(meta.userID ?? meta.userId ?? meta.user?.userID);
-    const username = normalizeString(meta.username ?? meta.user?.username ?? meta.user?.fullname);
+    // OP の URL ハンドル (@xxxxx の xxxxx) を userId として扱う。
+    const handle = normalizeString(meta.username ?? meta.user?.username);
+    // 表示名 (fullname)。無ければハンドルを fallback として userName に詰める。
+    const displayName = normalizeString(meta.fullname ?? meta.user?.fullname);
+    const numericUserId = normalizeString(meta.userID ?? meta.userId ?? meta.user?.userID);
+    const userUrl = handle
+      ? `${API_CONFIG.baseUrl}/@${handle}`
+      : numericUserId ? `${API_CONFIG.baseUrl}/user/${numericUserId}/` : '';
+    const hasUser = !!(handle || numericUserId);
 
     return {
       id: `op-${id}`,
@@ -82,10 +89,10 @@ export class OpenProcessingSource {
       interactiveElements: [],
       lastModified: normalizeString(meta.updatedOn) || normalizeString(meta.createdOn),
       sketchUrl: `${API_CONFIG.baseUrl}/sketch/${id}`,
-      userData: userId ? {
-        userId,
-        userName: username || userId,
-        userUrl: `${API_CONFIG.baseUrl}/user/${userId}/`,
+      userData: hasUser ? {
+        userId: handle,
+        userName: displayName || handle || '',
+        userUrl,
       } : undefined,
       srcdoc: html,
       meta: {

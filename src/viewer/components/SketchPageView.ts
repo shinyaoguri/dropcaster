@@ -34,8 +34,12 @@ export class SketchPageView {
 
     // userDataの存在チェックとデフォルト値の設定
     const userName = sketch.userData?.userName || 'Unknown User';
+    const userId = sketch.userData?.userId ?? '';
     const title = escapeHtml(sketch.title);
     const escapedUserName = escapeHtml(userName);
+    const userIdHtml = userId
+      ? ` <span class="author-id">(@${escapeHtml(userId)})</span>`
+      : '';
     // 説明文: 空 or sketch-analyzer のデフォルト ("<id> スケッチ") の場合は非表示扱い
     const rawDescription = (sketch.description ?? '').trim();
     const defaultDescription = `${sketch.id} スケッチ`;
@@ -51,7 +55,7 @@ export class SketchPageView {
         <div class="sketch-info dc-info-panel ui-element">
           <div class="sketch-details">
             <h3 class="sketch-title">${title}</h3>
-            <p class="sketch-author"><span class="author-by" data-i18n="slideshow.author.by">${t('slideshow.author.by')}</span> <span class="author-name">${escapedUserName}</span></p>
+            <p class="sketch-author"><span class="author-by" data-i18n="slideshow.author.by">${t('slideshow.author.by')}</span> <span class="author-name">${escapedUserName}</span>${userIdHtml}</p>
             <p class="sketch-description"${descriptionAttrs}>${descriptionText}</p>
           </div>
         </div>

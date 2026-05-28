@@ -146,18 +146,27 @@ export class OpenProcessingApiClient {
 
   toSketchInfo(requestedSketchId, sketch, user) {
     const visualId = normalizeString(sketch.visualID ?? sketch.visualId ?? sketch.id) || requestedSketchId;
-    const userId = normalizeString(
+    // OP の URL ハンドル (@xxxxx の xxxxx)。これを userId として扱う。
+    const handle = normalizeString(
+      user?.username ?? sketch.username ?? sketch.user?.username
+    );
+    // 表示名 (アカウントの fullname)。userName として扱う。fullname が無ければハンドルを fallback。
+    const displayName = normalizeString(
+      user?.fullname ?? user?.fullName ?? user?.name ??
+      sketch.fullname ?? sketch.userFullname ??
+      sketch.user?.fullname
+    );
+    // 旧データ移行用 / handle 不明時の fallback URL に使う数値 ID。
+    const numericUserId = normalizeString(
       user?.userID ?? user?.userId ?? user?.id ?? sketch.userID ?? sketch.userId ?? sketch.user?.userID
     );
-    const userName = normalizeString(
-      user?.fullname ?? user?.fullName ?? user?.name ?? user?.username ??
-      sketch.fullname ?? sketch.userFullname ?? sketch.username ??
-      sketch.user?.fullname ?? sketch.user?.username
-    ) || DEFAULTS.unknownUser;
+    const userUrl = handle
+      ? `${API_CONFIG.baseUrl}/@${handle}`
+      : numericUserId ? `${API_CONFIG.baseUrl}/user/${numericUserId}/` : '';
     return {
-      userId,
-      userName,
-      userUrl: userId ? `${API_CONFIG.baseUrl}/user/${userId}/` : '',
+      userId: handle,
+      userName: displayName || handle || DEFAULTS.unknownUser,
+      userUrl,
       sketchTitle: normalizeString(sketch.title) || DEFAULTS.unknownTitle,
       sketchDescription: normalizeString(sketch.description),
       sketchId: visualId,

@@ -89,7 +89,7 @@ export class SlideshowView {
           <div id="sketch-info" class="sketch-info dc-info-panel">
             <div class="sketch-details">
               <h3 id="sketch-title" class="sketch-title"></h3>
-              <p id="sketch-author" class="sketch-author"><span class="author-by">${t('slideshow.author.by')}</span> <span class="author-name"></span></p>
+              <p id="sketch-author" class="sketch-author"><span class="author-by">${t('slideshow.author.by')}</span> <span class="author-name"></span> <span class="author-id"></span></p>
               <p id="sketch-description" class="sketch-description" hidden></p>
             </div>
           </div>
@@ -430,6 +430,7 @@ export class SlideshowView {
 
     const titleElement = document.getElementById('sketch-title') as HTMLHeadingElement;
     const authorNameElement = document.querySelector('.author-name') as HTMLSpanElement;
+    const authorIdElement = document.querySelector('.author-id') as HTMLSpanElement;
     const descriptionElement = document.getElementById('sketch-description') as HTMLParagraphElement;
 
     if (titleElement) {
@@ -439,6 +440,11 @@ export class SlideshowView {
     if (authorNameElement) {
       // userDataが存在する場合はユーザ名を使用
       authorNameElement.textContent = sketch.userData?.userName || t('slideshow.author.anonymous');
+    }
+
+    if (authorIdElement) {
+      const uid = sketch.userData?.userId;
+      authorIdElement.textContent = uid ? `(@${uid})` : '';
     }
 
     if (descriptionElement) {

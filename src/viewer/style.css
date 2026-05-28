@@ -508,6 +508,10 @@ body {
   text-shadow: none; /* global .author-name の影を打ち消す */
 }
 
+.dc-info-panel .author-id {
+  color: rgba(20, 20, 28, 0.5);
+}
+
 .dc-info-panel .sketch-description {
   margin: 10px 0 0 0;
   font-family: inherit;
