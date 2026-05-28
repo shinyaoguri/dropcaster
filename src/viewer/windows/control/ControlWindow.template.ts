@@ -33,8 +33,12 @@ export function controlPanelHtml(): string {
 
             <div class="tool-section">
               <h3 data-i18n="control.mappings.title">${t('control.mappings.title')}</h3>
+              <p class="section-hint" data-i18n="control.mappings.reorderHint">${t('control.mappings.reorderHint')}</p>
               <div id="mappings-list" class="mappings-list"></div>
-              <button id="add-mapping-btn" class="tool-button" data-i18n="control.mappings.add">${t('control.mappings.add')}</button>
+              <div class="mappings-add-buttons">
+                <button id="add-mapping-btn" class="tool-button" data-i18n="control.mappings.add">${t('control.mappings.add')}</button>
+                <button id="add-mask-btn" class="tool-button" data-i18n="control.mappings.addMask">${t('control.mappings.addMask')}</button>
+              </div>
             </div>
 
             <div class="tool-section">

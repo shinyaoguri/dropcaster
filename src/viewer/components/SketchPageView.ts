@@ -3,8 +3,9 @@ import { UIElementController } from '../ui/services/UIElementController';
 import { escapeHtml } from '../utils/html.js';
 import {
   isMappingEnabled,
+  isMaskEntry,
   mappingColor,
-  type MappingEntry,
+  type MappingItem,
 } from '../utils/mappingTransform.js';
 import { t, onLangChange } from '../i18n/index.js';
 
@@ -14,7 +15,7 @@ export class SketchPageView {
   // 投影中、各マッピングのソース切り抜き範囲を示すワイヤーフレーム枠（.dc-source-crop-box）はここに生成される
   private projectionStage: HTMLDivElement | null = null;
   // 直近の mapping-overlay-update の payload を保持（resize / 投影開始時の再描画に使う）
-  private lastMappings: MappingEntry[] = [];
+  private lastMappings: MappingItem[] = [];
   private lastActiveId: string | null = null;
   private isProjecting = false;
   private cropRefreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -170,7 +171,7 @@ export class SketchPageView {
 
   private handleMappingOverlayUpdate(event: Event): void {
     const detail = (event as CustomEvent).detail;
-    this.lastMappings = (detail?.mappings as MappingEntry[]) ?? [];
+    this.lastMappings = (detail?.mappings as MappingItem[]) ?? [];
     this.lastActiveId = (detail?.activeId as string | undefined) ?? null;
     this.renderSourceCropBoxes();
   }
@@ -217,7 +218,8 @@ export class SketchPageView {
     const r = (n: number) => Math.round(n * 100) / 100;
     const parts: string[] = [];
     this.lastMappings.forEach((m, idx) => {
-      if (!isMappingEnabled(m)) return; // 色は配列内 index に依存するので idx も含める
+      if (!isMappingEnabled(m)) return;
+      if (isMaskEntry(m)) return; // mask には source crop が無い
       parts.push(`${idx}:${m.id}:${r(m.source.x)},${r(m.source.y)},${r(m.source.width)},${r(m.source.height)}:${m.name ?? ''}`);
     });
     const signature = `${r(canvasRect.left)},${r(canvasRect.top)},${r(canvasRect.width)},${r(canvasRect.height)}|${this.lastActiveId ?? ''}|${parts.join(';')}`;
@@ -233,6 +235,7 @@ export class SketchPageView {
     const seen = new Set<string>();
     this.lastMappings.forEach((mapping, idx) => {
       if (!isMappingEnabled(mapping)) return;
+      if (isMaskEntry(mapping)) return;
       seen.add(mapping.id);
       const color = mappingColor(idx);
 

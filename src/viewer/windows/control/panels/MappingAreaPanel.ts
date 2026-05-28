@@ -23,6 +23,7 @@ import {
   applyVideoCrop,
   cloneQuad,
   defaultQuad,
+  isMaskEntry,
   mappingColor,
   quadCentroid,
   rotateQuadAround,
@@ -117,6 +118,19 @@ export class MappingAreaPanel {
     if (!ctrl || !scope || !this.croppedContainer) return;
 
     const state = ctrl.getState();
+    const activeItem = state.mappings.find(m => m.id === state.activeId);
+    // active が mask の場合は mapping 編集 UI（cropped-container + 4 隅 + scale/rotate）を非表示にする。
+    // mask の編集は MaskEditPanel が canvas-handles 上に vertex ハンドルだけ出す。
+    const isMaskActive = !!activeItem && isMaskEntry(activeItem);
+    this.croppedContainer.style.display = isMaskActive ? 'none' : '';
+    for (const h of this.handles) h.style.display = isMaskActive ? 'none' : '';
+    if (this.scaleHandle) this.scaleHandle.style.display = isMaskActive ? 'none' : '';
+    if (this.rotateHandle) this.rotateHandle.style.display = isMaskActive ? 'none' : '';
+    if (isMaskActive) {
+      this.opts?.onQuadChanged();
+      return;
+    }
+
     const quad = ctrl.getActiveQuad();
 
     // cropped-container は canvas-mappings 直下に置かれ、サイズは canvas px と一致。matrix3d

@@ -3,9 +3,13 @@ import {
   applyQuadCanvas,
   applyVideoCrop,
   isMappingEnabled,
+  isMaskEntry,
+  mappingColor,
   type MappingEntry,
+  type MaskEntry,
   type MappingsState,
   type OutputDef,
+  type Point,
 } from '../../utils/mappingTransform';
 import { RafThrottle } from '../../utils/rafThrottle';
 import { ScreenWakeLock } from '../../utils/wakeLock';
@@ -14,6 +18,12 @@ import { t } from '../../i18n/index.js';
 interface OutputChild {
   div: HTMLElement;
   video: HTMLVideoElement;
+}
+
+interface OutputMaskChild {
+  div: HTMLElement;
+  svg: SVGSVGElement;
+  polygon: SVGPolygonElement;
 }
 
 /**
@@ -26,8 +36,16 @@ interface OutputChild {
  * 'output-needs-stream' を投げて stream を bind し直してもらう。
  */
 export class OutputWindow extends BaseWindow {
+  /** mapping のみ（mask は除く）。video child を持つので分けて管理する。 */
   private mappings: MappingEntry[] = [];
+  /** mask のみ。SVG polygon child を持つ。 */
+  private masks: MaskEntry[] = [];
+  /** 描画順（state.mappings の配列順）の id 列。children の DOM 順を揃えるのに使う。 */
+  private renderOrder: string[] = [];
+  /** id → リスト上の色（mappingColor(idx)）。mask の dev-mode 枠線色に使う。 */
+  private itemColors = new Map<string, string>();
   private children = new Map<string, OutputChild>();
+  private maskChildren = new Map<string, OutputMaskChild>();
   /** 仮想キャンバスの寸法（state.canvas）。初期は 0、setMappings で同期。 */
   private canvasWidth = 0;
   private canvasHeight = 0;
@@ -108,6 +126,10 @@ export class OutputWindow extends BaseWindow {
       .dc-out-mapping { position: absolute; top: 0; left: 0; overflow: hidden; transform-origin: top left; backface-visibility: hidden; will-change: transform; }
       /* video は自動で合成レイヤになるので will-change は不要（warp する親 div だけに付ける） */
       .dc-out-mapping > video { position: absolute; top: 0; left: 0; transform-origin: top left; object-fit: fill; }
+      /* 黒い多角形マスク。canvas 全体サイズの SVG 上に viewBox 座標で polygon を描く。
+         translate/scale は不要 — 親の dc-output-canvas が transform で出力矩形をフィットさせる。 */
+      .dc-out-mask { position: absolute; top: 0; left: 0; pointer-events: none; }
+      .dc-out-mask > svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: visible; }
       .dc-output-ui { transition: opacity 0.3s ease; }
       #dc-output-fs {
         position: fixed; top: 16px; right: 16px; z-index: 10;
@@ -128,6 +150,13 @@ export class OutputWindow extends BaseWindow {
         box-sizing: border-box;
         border: 2px solid #ff3b30;
         box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+      }
+      /* dev mode 時の mask 枠線。塗りつぶしは黒のまま残し、リスト上の色で輪郭を描き足す。
+         vector-effect: non-scaling-stroke で出力解像度や transform の scale に依存しない一定幅。 */
+      #dc-output-stage.dc-dev-mode .dc-out-mask polygon {
+        stroke: var(--mask-color, #ff3b30);
+        stroke-width: 3;
+        vector-effect: non-scaling-stroke;
       }
       /* SVG クロスヘア・寸法表示は通常時は非表示。
          dc-dev-mode（ON）かつ dc-cursor-active（マウス位置が確定済み）の両方で表示。
@@ -213,6 +242,8 @@ export class OutputWindow extends BaseWindow {
   setMappings(state: MappingsState | null | undefined): void {
     if (!state) {
       this.mappings = [];
+      this.masks = [];
+      this.renderOrder = [];
       this.outputRect = null;
       this.canvasWidth = 0;
       this.canvasHeight = 0;
@@ -226,14 +257,41 @@ export class OutputWindow extends BaseWindow {
       ? { x: out.position.x, y: out.position.y, width: out.size.width, height: out.size.height }
       : null;
     const rect = this.outputRect;
+
     // 有効 mapping のうち「rect と交差する」or「既に child を持っている」ものを残す。
     // 既存 child を維持することで、出力ドラッグ中の intersect 揺れによる destroy/recreate
     // ＝ stream 再 bind 由来の黒フラッシュを防ぐ。
-    this.mappings = rect
-      ? state.mappings.filter(m =>
-          isMappingEnabled(m) && (this.children.has(m.id) || this.quadIntersectsRect(m, rect)),
-        )
-      : [];
+    const mappingItems: MappingEntry[] = [];
+    const maskItems: MaskEntry[] = [];
+    if (rect) {
+      for (const item of state.mappings) {
+        if (!isMappingEnabled(item)) continue;
+        if (isMaskEntry(item)) {
+          // drafting 中（点数 < 3 or drafting フラグ）は出力に描画しない
+          if (item.drafting || item.points.length < 3) continue;
+          if (this.maskChildren.has(item.id) || this.maskIntersectsRect(item.points, rect)) {
+            maskItems.push(item);
+          }
+        } else {
+          if (this.children.has(item.id) || this.quadIntersectsRect(item, rect)) {
+            mappingItems.push(item);
+          }
+        }
+      }
+    }
+    this.mappings = mappingItems;
+    this.masks = maskItems;
+    // 描画順 (state.mappings の並び順) を覚える。配列の先頭が前面 = DOM 順では最後に来る。
+    this.renderOrder = state.mappings
+      .filter(m => isMappingEnabled(m))
+      .map(m => m.id);
+    // dev mode 時に mask の枠線をリスト上の色と揃えるための索引。
+    // mappingColor は state.mappings 内の index に依存（list と同じ式）。
+    this.itemColors.clear();
+    for (let i = 0; i < state.mappings.length; i++) {
+      this.itemColors.set(state.mappings[i].id, mappingColor(i));
+    }
+
     // 新しい <video> を作ったときだけ親へ stream を要求する（既存の video は bind 済み）。
     // quad/source の微調整だけのときは要求しない（毎フレーム postMessage 往復を避ける）。
     const createdNew = this.sync();
@@ -259,25 +317,47 @@ export class OutputWindow extends BaseWindow {
         && maxY >= rect.y && minY <= rect.y + rect.height;
   }
 
-  /** 子要素を mappings に同期する。新規に <video> を生成したら true（＝ stream の再 bind が必要）。 */
+  /** mask 多角形の AABB が rect と交差するかを判定。 */
+  private maskIntersectsRect(
+    points: Point[],
+    rect: { x: number; y: number; width: number; height: number },
+  ): boolean {
+    if (points.length === 0) return false;
+    let minX = points[0].x, maxX = points[0].x, minY = points[0].y, maxY = points[0].y;
+    for (let i = 1; i < points.length; i++) {
+      const p = points[i];
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    return maxX >= rect.x && minX <= rect.x + rect.width
+        && maxY >= rect.y && minY <= rect.y + rect.height;
+  }
+
+  /**
+   * 子要素を mappings + masks に同期する。新規 <video> を作ったら true。
+   * DOM 順 = 描画順（後ろほど前面）。state.mappings は配列の先頭ほど前面なので、
+   * 逆順で appendChild することで「配列先頭 = DOM 最後 = 一番手前」になる。
+   */
   private sync(): boolean {
     if (!this.window) return false;
     const canvasEl = this.window.document.getElementById('dc-output-canvas');
     if (!canvasEl) return false;
+    const doc = this.window.document;
 
-    // canvas エレメント自身を仮想キャンバスのフル寸法に
     canvasEl.style.width = `${this.canvasWidth}px`;
     canvasEl.style.height = `${this.canvasHeight}px`;
 
     let createdNew = false;
-    const seen = new Set<string>();
+    const seenMappings = new Set<string>();
     for (const m of this.mappings) {
-      seen.add(m.id);
+      seenMappings.add(m.id);
       let child = this.children.get(m.id);
       if (!child) {
-        const div = this.window.document.createElement('div');
+        const div = doc.createElement('div');
         div.className = 'dc-out-mapping';
-        const video = this.window.document.createElement('video');
+        const video = doc.createElement('video');
         video.autoplay = true;
         video.muted = true;
         video.playsInline = true;
@@ -287,18 +367,62 @@ export class OutputWindow extends BaseWindow {
         this.children.set(m.id, child);
         createdNew = true;
       }
-      // mapping div は仮想キャンバスのフル寸法に置く（matrix3d がそこから quad へ写像）
       child.div.style.width = `${this.canvasWidth}px`;
       child.div.style.height = `${this.canvasHeight}px`;
       applyVideoCrop(child.video, m.source);
       applyQuadCanvas(child.div, m.quad, this.canvasWidth, this.canvasHeight);
     }
     for (const [id, child] of this.children) {
-      if (!seen.has(id)) {
+      if (!seenMappings.has(id)) {
         child.div.remove();
         this.children.delete(id);
       }
     }
+
+    const svgNs = 'http://www.w3.org/2000/svg';
+    const seenMasks = new Set<string>();
+    for (const k of this.masks) {
+      seenMasks.add(k.id);
+      let child = this.maskChildren.get(k.id);
+      if (!child) {
+        const div = doc.createElement('div');
+        div.className = 'dc-out-mask';
+        const svg = doc.createElementNS(svgNs, 'svg') as SVGSVGElement;
+        svg.setAttribute('preserveAspectRatio', 'none');
+        const polygon = doc.createElementNS(svgNs, 'polygon') as SVGPolygonElement;
+        polygon.setAttribute('fill', '#000');
+        svg.appendChild(polygon);
+        div.appendChild(svg);
+        canvasEl.appendChild(div);
+        child = { div, svg, polygon };
+        this.maskChildren.set(k.id, child);
+      }
+      child.div.style.width = `${this.canvasWidth}px`;
+      child.div.style.height = `${this.canvasHeight}px`;
+      // dev mode 時の枠線色はリスト index 由来の color にする
+      const color = this.itemColors.get(k.id);
+      if (color) child.div.style.setProperty('--mask-color', color);
+      child.svg.setAttribute('viewBox', `0 0 ${this.canvasWidth} ${this.canvasHeight}`);
+      child.svg.setAttribute('width', `${this.canvasWidth}`);
+      child.svg.setAttribute('height', `${this.canvasHeight}`);
+      child.polygon.setAttribute('points', k.points.map(p => `${p.x},${p.y}`).join(' '));
+    }
+    for (const [id, child] of this.maskChildren) {
+      if (!seenMasks.has(id)) {
+        child.div.remove();
+        this.maskChildren.delete(id);
+      }
+    }
+
+    // DOM 順を renderOrder の逆順に並べ替える（配列先頭 = 前面 = DOM 最後）。
+    // 描画対象（this.mappings + this.masks）に含まれない id（rect 外で children を持たない）は
+    // そもそも DOM に居ないので、スキップしても問題ない。
+    const reversed = this.renderOrder.slice().reverse();
+    for (const id of reversed) {
+      const m = this.children.get(id)?.div ?? this.maskChildren.get(id)?.div;
+      if (m && m.parentElement === canvasEl) canvasEl.appendChild(m);
+    }
+
     return createdNew;
   }
 
@@ -489,5 +613,6 @@ export class OutputWindow extends BaseWindow {
     this.wakeLock?.release();
     this.wakeLock = null;
     this.children.clear();
+    this.maskChildren.clear();
   }
 }

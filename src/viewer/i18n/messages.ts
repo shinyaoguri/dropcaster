@@ -94,6 +94,8 @@ const en = {
   // ツール: マッピング
   'control.mappings.title': 'Mappings',
   'control.mappings.add': '+ Add mapping',
+  'control.mappings.addMask': '+ Add mask',
+  'control.mappings.reorderHint': 'Drag a row to change order (top = front-most)',
 
   // ツール: 出力設定
   'control.outputSettings.title': 'Output settings',
@@ -159,6 +161,9 @@ const en = {
   'mappingsList.disabled.title': 'Stopped (click to output)',
   'mappingsList.import.invalid': 'Failed to load (invalid format)',
   'mappingsList.import.parseError': 'Failed to load (JSON parse error)',
+  'mappingsList.maskKind': 'mask',
+  'mappingsList.drag.title': 'Drag to reorder (top = front-most)',
+  'mappingsList.locked.title': 'Locked while drawing the active mask (press Enter to finish, Esc to cancel)',
 
   // OutputVizPanel
   'outputViz.size.unstartedTitle': 'Expected resolution (output window not started)',
@@ -177,6 +182,12 @@ const en = {
   // MappingAreaPanel
   'mappingArea.scale.title': 'Uniformly scale (keep shape)',
   'mappingArea.rotate.title': 'Rotate (keep shape)',
+
+  // MaskEditPanel
+  'maskEdit.vertex.title': 'Drag to move vertex / Alt+click or right-click to remove',
+  'maskEdit.edge.title': 'Click to insert a vertex on this edge',
+  'maskEdit.translate.title': 'Drag to move the whole mask',
+  'maskEdit.pen.hint': 'Click to plot vertices · Click the first vertex or press Enter to close · Backspace removes the last · Esc cancels',
 
   // フッタ (共通)
   'footer.copyright': '© {year} Shinya Oguri',
@@ -268,6 +279,8 @@ const ja: Record<keyof typeof en, string> = {
 
   'control.mappings.title': 'マッピング',
   'control.mappings.add': '＋ マッピングを追加',
+  'control.mappings.addMask': '＋ マスクを追加',
+  'control.mappings.reorderHint': '行をドラッグで並び順を変更（一番上 = 最前面）',
 
   'control.outputSettings.title': '出力設定',
   'control.outputSettings.hint': 'アクティブな出力の位置とサイズを数値で編集（仮想キャンバス px）',
@@ -322,6 +335,9 @@ const ja: Record<keyof typeof en, string> = {
   'mappingsList.disabled.title': '停止中（クリックで出力）',
   'mappingsList.import.invalid': '読み込みに失敗しました（フォーマット不正）',
   'mappingsList.import.parseError': '読み込みに失敗しました（JSON 解析失敗）',
+  'mappingsList.maskKind': 'マスク',
+  'mappingsList.drag.title': 'ドラッグで並び替え（一番上 = 最前面）',
+  'mappingsList.locked.title': 'マスク描画中はロック中（Enter で確定 / Esc で取消）',
 
   'outputViz.size.unstartedTitle': '想定解像度（出力ウィンドウ未起動）',
   'outputViz.mode.unstarted': '未起動',
@@ -337,6 +353,11 @@ const ja: Record<keyof typeof en, string> = {
 
   'mappingArea.scale.title': '全体を拡大縮小（形は維持）',
   'mappingArea.rotate.title': '全体を回転（形は維持）',
+
+  'maskEdit.vertex.title': '頂点をドラッグで移動 / Alt+クリック or 右クリックで削除',
+  'maskEdit.edge.title': 'クリックでこの辺に頂点を追加',
+  'maskEdit.translate.title': 'ドラッグでマスク全体を移動',
+  'maskEdit.pen.hint': 'クリックで頂点を追加 ・ 最初の頂点をクリック or Enter で閉じる ・ Backspace で 1 つ戻る ・ Esc でキャンセル',
 
   'footer.copyright': '© {year} Shinya Oguri',
   'footer.license': 'MIT License',

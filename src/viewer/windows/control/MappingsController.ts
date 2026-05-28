@@ -20,7 +20,10 @@
 import {
   defaultMappingsState,
   getActiveMapping,
+  getActiveMask,
   recomputeCanvasBounds,
+  withMaskPointsSet,
+  type Point,
   type Quad,
   type SourceRect,
   type MappingsState,
@@ -42,24 +45,67 @@ export class MappingsController {
   // ── read accessors ─────────────────────────────────────────────
 
   getState(): MappingsState { return this.state; }
-  getActiveSource(): SourceRect { return getActiveMapping(this.state).source; }
-  getActiveQuad(): Quad { return getActiveMapping(this.state).quad; }
+  /**
+   * active item が mapping のときの source。active item が mask のときは「空の matrix3d」になる
+   * フォールバック値（0,0,100,100）を返す。呼び出し側は基本的に MappingArea 系の panel で
+   * mask 中は非表示のため、フォールバック値は描画に使われない想定。
+   */
+  getActiveSource(): SourceRect {
+    return getActiveMapping(this.state)?.source ?? { x: 0, y: 0, width: 100, height: 100 };
+  }
+  /**
+   * active item が mapping のときの quad。mask 時はフォールバック quad（原点周辺の単位矩形）。
+   * mask 時は MappingAreaPanel が非表示／pointer-events:none で隠れるため、この値は描画に使われない。
+   */
+  getActiveQuad(): Quad {
+    return getActiveMapping(this.state)?.quad ?? {
+      topLeft: { x: 0, y: 0 }, topRight: { x: 1, y: 0 },
+      bottomRight: { x: 1, y: 1 }, bottomLeft: { x: 0, y: 1 },
+    };
+  }
+  /** active item が mask のときの頂点配列。mapping 時は undefined。 */
+  getActiveMaskPoints(): Point[] | undefined {
+    return getActiveMask(this.state)?.points;
+  }
 
   // ── in-place mutation（drag/resize/nudge 用 — onChange は発火しない）──
 
-  /** active source の中身を fn で in-place 書き換え（alias 参照は維持）。 */
+  /** active source の中身を fn で in-place 書き換え（alias 参照は維持、mask 時は no-op）。 */
   mutateActiveSource(fn: (source: SourceRect) => void): void {
-    fn(this.getActiveSource());
+    const m = getActiveMapping(this.state);
+    if (m) fn(m.source);
   }
 
-  /** active source をまるごと差し替える（reset / 初期全選択など）。 */
+  /** active source をまるごと差し替える（mask 時は no-op）。 */
   setActiveSource(source: SourceRect): void {
-    getActiveMapping(this.state).source = source;
+    const m = getActiveMapping(this.state);
+    if (m) m.source = source;
   }
 
-  /** active quad をまるごと差し替える。 */
+  /** active quad をまるごと差し替える（mask 時は no-op）。 */
   setActiveQuad(quad: Quad): void {
-    getActiveMapping(this.state).quad = quad;
+    const m = getActiveMapping(this.state);
+    if (m) m.quad = quad;
+  }
+
+  /**
+   * active mask の頂点列を差し替える（mapping 時は no-op）。
+   * 連続 drag では mask の points を直接 in-place 書き換えるが、明示置換が必要な操作（vertex 追加 /
+   * 削除）はこの API を経由して新しい配列を作る。
+   */
+  setActiveMaskPoints(points: Point[]): void {
+    const k = getActiveMask(this.state);
+    if (!k) return;
+    this.state = withMaskPointsSet(this.state, k.id, points);
+  }
+
+  /**
+   * active mask の頂点を in-place 書き換える（drag 連続中の最適化用、onChange は発火しない）。
+   * fn は配列を直接書き換える（push/splice/index 更新 OK）。mapping 時は no-op。
+   */
+  mutateActiveMaskPoints(fn: (points: Point[]) => void): void {
+    const k = getActiveMask(this.state);
+    if (k) fn(k.points);
   }
 
   /**
