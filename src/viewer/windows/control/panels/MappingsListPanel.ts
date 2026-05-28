@@ -23,13 +23,16 @@
 import {
   MAX_OUTPUTS,
   isMappingEnabled,
+  isMaskEntry,
   mappingColor,
   parseMappingsState,
   withActiveOutputSet,
   withActiveSet,
   withAddedMapping,
+  withAddedMask,
   withAddedOutput,
   withMappingRenamed,
+  withMappingReordered,
   withMappingToggled,
   withOutputRenamed,
   withRemovedMapping,
@@ -110,10 +113,20 @@ export class MappingsListPanel {
     const ctrl = this.ctrl;
     if (!ctrl) return '';
     const state = ctrl.getState();
+    // drafting フラグも sig に含める — ペン描画開始 / 終了で行のロック表示が切替わる必要があるため。
     const mappings = state.mappings
-      .map(m => `${m.id}:${m.name ?? ''}:${isMappingEnabled(m) ? 1 : 0}`)
+      .map(m => `${isMaskEntry(m) ? (m.drafting ? 'd' : 'k') : 'm'}:${m.id}:${m.name ?? ''}:${isMappingEnabled(m) ? 1 : 0}`)
       .join('|');
     return `${state.activeId}|${state.mappings.length}|${mappings}`;
+  }
+
+  /** ペン描画（drafting マスクが active）中かを返す。 */
+  private isPenDrafting(): boolean {
+    const ctrl = this.ctrl;
+    if (!ctrl) return false;
+    const state = ctrl.getState();
+    const active = state.mappings.find(m => m.id === state.activeId);
+    return !!active && isMaskEntry(active) && !!active.drafting;
   }
 
   destroy(): void {
@@ -220,26 +233,53 @@ export class MappingsListPanel {
     listEl.replaceChildren();
 
     const canRemoveMapping = state.mappings.length > 1;
+    const penDrafting = this.isPenDrafting();
+    // 同 kind 内での通し番号（"Mapping 1, 2, ..." / "Mask 1, 2, ..."）を作るためのカウンタ
+    let mappingNum = 0;
+    let maskNum = 0;
 
     state.mappings.forEach((m, idx) => {
+      const mask = isMaskEntry(m);
+      if (mask) maskNum += 1; else mappingNum += 1;
       const isActive = m.id === state.activeId;
       const enabled = isMappingEnabled(m);
-      const displayName = m.name ?? `Mapping ${idx + 1}`;
+      const fallbackName = mask ? `Mask ${maskNum}` : `Mapping ${mappingNum}`;
+      const displayName = m.name ?? fallbackName;
       const color = mappingColor(idx);
 
       const item = doc.createElement('div');
-      item.className = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}`;
+      item.className = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}${mask ? ' is-mask' : ''}`;
       item.dataset.id = m.id;
+      item.dataset.index = String(idx);
       item.style.setProperty('--mapping-color', color);
+      // ペン描画中は他項目への切替・並び替えをロック（active な drafting マスクは draggable のまま）。
+      const isLocked = penDrafting && !isActive;
+      item.draggable = !isLocked;
+      item.title = isLocked
+        ? t('mappingsList.locked.title')
+        : t('mappingsList.drag.title');
+
+      const handle = doc.createElement('span');
+      handle.className = 'drag-handle';
+      handle.textContent = '⋮⋮';
+      handle.setAttribute('aria-hidden', 'true');
+      item.appendChild(handle);
 
       const chip = doc.createElement('span');
-      chip.className = 'color-chip';
+      chip.className = `color-chip${mask ? ' mask' : ''}`;
       item.appendChild(chip);
 
       const nameSpan = doc.createElement('span');
       nameSpan.className = 'name';
       nameSpan.textContent = displayName;
       item.appendChild(nameSpan);
+
+      if (mask) {
+        const kindBadge = doc.createElement('span');
+        kindBadge.className = 'kind-badge';
+        kindBadge.textContent = t('mappingsList.maskKind');
+        item.appendChild(kindBadge);
+      }
 
       const toggleBtn = doc.createElement('button');
       toggleBtn.className = `toggle-btn${enabled ? ' enabled' : ''}`;
@@ -262,12 +302,16 @@ export class MappingsListPanel {
       });
       item.appendChild(removeBtn);
 
-      // 行クリックで active mapping 切替
+      // 行クリックで active 切替（ペン描画中は他項目へ切替えない）
       item.addEventListener('click', (e) => {
         const target = e.target as HTMLElement;
         if (target.classList.contains('remove-btn')) return;
         if (target.classList.contains('toggle-btn')) return;
         if (target.tagName === 'INPUT') return;
+        if (this.isPenDrafting()) {
+          const cur = ctrl.getState();
+          if (m.id !== cur.activeId) return; // 別項目への切替はブロック
+        }
         const cur = ctrl.getState();
         if (m.id !== cur.activeId) {
           ctrl.replaceState(withActiveSet(cur, m.id));
@@ -278,6 +322,57 @@ export class MappingsListPanel {
       nameSpan.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         this.startInlineMappingRename(nameSpan, m.id);
+      });
+
+      // --- HTML5 drag and drop による並べ替え ---
+      item.addEventListener('dragstart', (e) => {
+        // ペン描画中は他項目へのドラッグ操作もキャンセル（自身が drafting active なら通す）
+        if (this.isPenDrafting() && !isActive) {
+          e.preventDefault();
+          return;
+        }
+        const dt = e.dataTransfer;
+        if (dt) {
+          dt.effectAllowed = 'move';
+          // text/plain を入れないと Firefox は drag を始めないので、id を入れておく
+          dt.setData('text/plain', m.id);
+        }
+        item.classList.add('dragging');
+        listEl.classList.add('reordering');
+      });
+      item.addEventListener('dragend', () => {
+        item.classList.remove('dragging');
+        listEl.classList.remove('reordering');
+        listEl.querySelectorAll('.drop-target').forEach((el) => el.classList.remove('drop-target', 'before', 'after'));
+      });
+      item.addEventListener('dragover', (e) => {
+        if (this.isPenDrafting()) return; // ペン描画中は drop を受けない
+        e.preventDefault(); // drop を有効にするためには必須
+        const dt = e.dataTransfer;
+        if (dt) dt.dropEffect = 'move';
+        const rect = item.getBoundingClientRect();
+        const before = (e.clientY - rect.top) < rect.height / 2;
+        // 視覚的フィードバック: 行の上半分 = before、下半分 = after
+        listEl.querySelectorAll('.drop-target').forEach((el) => el.classList.remove('drop-target', 'before', 'after'));
+        item.classList.add('drop-target', before ? 'before' : 'after');
+      });
+      item.addEventListener('dragleave', () => {
+        item.classList.remove('drop-target', 'before', 'after');
+      });
+      item.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const fromId = e.dataTransfer?.getData('text/plain');
+        if (!fromId || fromId === m.id) return;
+        const rect = item.getBoundingClientRect();
+        const before = (e.clientY - rect.top) < rect.height / 2;
+        const cur = ctrl.getState();
+        const fromIdx = cur.mappings.findIndex(x => x.id === fromId);
+        if (fromIdx < 0) return;
+        let toIdx = idx;
+        if (!before) toIdx = idx + 1;
+        // 自分より前から自分の後ろに移すときは、from を抜いた後の index を補正
+        if (fromIdx < toIdx) toIdx -= 1;
+        ctrl.replaceState(withMappingReordered(cur, fromId, toIdx));
       });
 
       listEl.appendChild(item);
@@ -308,6 +403,13 @@ export class MappingsListPanel {
     if (addMappingBtn) {
       addMappingBtn.addEventListener('click', () => {
         ctrl.replaceState(withAddedMapping(ctrl.getState()));
+      });
+    }
+
+    const addMaskBtn = scope.querySelector('#add-mask-btn');
+    if (addMaskBtn) {
+      addMaskBtn.addEventListener('click', () => {
+        ctrl.replaceState(withAddedMask(ctrl.getState()));
       });
     }
 

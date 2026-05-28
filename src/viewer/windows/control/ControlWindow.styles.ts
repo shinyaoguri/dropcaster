@@ -332,6 +332,14 @@ export const CONTROL_PANEL_CSS = `
         margin-bottom: 10px;
       }
 
+      .mappings-add-buttons {
+        display: flex;
+        gap: 6px;
+      }
+      .mappings-add-buttons .tool-button {
+        flex: 1;
+      }
+
       .io-buttons {
         display: flex;
         gap: 6px;
@@ -437,6 +445,285 @@ export const CONTROL_PANEL_CSS = `
       .mapping-list-item .remove-btn:disabled {
         color: #555;
         cursor: not-allowed;
+      }
+
+      /* drag-reorder のハンドルと drop-target インジケータ */
+      .mapping-list-item .drag-handle {
+        color: #666;
+        font-size: 11px;
+        line-height: 1;
+        letter-spacing: -2px;
+        cursor: grab;
+        flex-shrink: 0;
+        user-select: none;
+        padding: 0 2px;
+      }
+      .mapping-list-item.dragging {
+        opacity: 0.4;
+      }
+      .mapping-list-item.drop-target {
+        position: relative;
+      }
+      .mapping-list-item.drop-target.before::before,
+      .mapping-list-item.drop-target.after::after {
+        content: '';
+        position: absolute;
+        left: 4px;
+        right: 4px;
+        height: 2px;
+        background: #3b82f6;
+        border-radius: 2px;
+        pointer-events: none;
+      }
+      .mapping-list-item.drop-target.before::before { top: -2px; }
+      .mapping-list-item.drop-target.after::after { bottom: -2px; }
+      .mappings-list.reordering .mapping-list-item { cursor: grabbing; }
+
+      /* mask 行: 色チップを黒い◇に、kind バッジを薄く右に表示 */
+      .mapping-list-item.is-mask .color-chip.mask {
+        background: #000;
+        border: 1px solid #888;
+      }
+      .mapping-list-item .kind-badge {
+        font-size: 9px;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border: 1px solid #555;
+        border-radius: 2px;
+        padding: 0 4px;
+        flex-shrink: 0;
+      }
+      .mapping-list-item.is-mask.active {
+        border-color: #fff;
+      }
+
+      /* マッピング column 内の mask preview */
+      .preview-mask {
+        position: absolute;
+        top: 0; left: 0;
+        pointer-events: auto;
+        transform-origin: top left;
+      }
+      .preview-mask > svg {
+        position: absolute;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        overflow: visible;
+      }
+      /* commit 後（drafting 無し）: 黒で塗りつぶし、白い枠線。polyline の fill は implicit closing
+         edge を埋めるので polygon と同じ視覚になる。 */
+      .preview-mask > svg polyline {
+        fill: rgba(0, 0, 0, 0.92);
+        stroke: rgba(255, 255, 255, 0.5);
+        stroke-width: 1;
+        vector-effect: non-scaling-stroke;
+        cursor: pointer;
+      }
+      .preview-mask.active > svg polyline {
+        stroke: #fff;
+        stroke-width: 2;
+      }
+      /* drafting 中: 塗りつぶしなしの開いた折れ線。polyline は stroke で closing edge を
+         描かないので、最終頂点 → 最初の頂点は接続されず、ペンツール的に見える。 */
+      .preview-mask.drafting > svg polyline {
+        fill: none;
+        stroke: #ffe082;
+        stroke-width: 2;
+        stroke-linejoin: round;
+        stroke-linecap: round;
+        vector-effect: non-scaling-stroke;
+        cursor: default;
+      }
+
+      /* dev mode: mask の輪郭をリスト上の色で強調表示する（操作プレビュー側）。
+         commit 済み（drafting でない）にだけ適用 — drafting は元の黄ステッチを優先。
+         scope root（shell）に dc-dev-mode が付いているときだけ有効。 */
+      :scope.dc-dev-mode .preview-mask:not(.drafting) > svg polyline {
+        stroke: var(--mask-color, #fff);
+        stroke-width: 3;
+      }
+      /* レイアウトタブ内 mask preview にも同様の枠を当てる */
+      :scope.dc-dev-mode .dc-layout-mask polyline {
+        stroke: var(--mask-color, #fff);
+        stroke-width: 2;
+        vector-effect: non-scaling-stroke;
+      }
+
+      /* ペンツールモードの canvas-host: cursor を crosshair に */
+      .dc-canvas-host.mask-pen-mode { cursor: crosshair; }
+
+      /* ペン描画中（shell に .mask-drafting）はマスク以外の項目に触れないようにする。
+         クリックが canvas-host へ通って頂点プロットになるよう pointer-events を落とす。
+         drafting マスク自身は別途 .preview-mask.drafting に pointer-events: none を当てている。 */
+      :scope.mask-drafting .preview-mapping {
+        pointer-events: none;
+      }
+      :scope.mask-drafting .preview-mask:not(.drafting) {
+        pointer-events: none;
+      }
+      :scope.mask-drafting #cropped-container {
+        pointer-events: none;
+      }
+      /* 出力フレームのヘッダは active output 切替トリガなので、描画中は無効化 */
+      :scope.mask-drafting .dc-output-header {
+        pointer-events: none;
+      }
+      /* ツール列のマッピングリスト: drafting マスク以外の行は activate / drag をロック。
+         × / 有効化トグル / 名前ダブルクリック編集は引き続き効くよう、行内のボタンは
+         例外として pointer-events を残す。 */
+      :scope.mask-drafting .mapping-list-item:not(.active) {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      :scope.mask-drafting .mapping-list-item:not(.active) .name,
+      :scope.mask-drafting .mapping-list-item:not(.active) .color-chip,
+      :scope.mask-drafting .mapping-list-item:not(.active) .kind-badge,
+      :scope.mask-drafting .mapping-list-item:not(.active) .drag-handle {
+        pointer-events: none;
+      }
+      /* 出力一覧の行（active 切替も含めて） */
+      :scope.mask-drafting .output-item .output-name {
+        pointer-events: none;
+        opacity: 0.6;
+      }
+      /* 「+ マッピング追加」「+ 出力追加」はクリックすると new mapping が active になり
+         ペン描画が中断される。「+ マスク」も新しい drafting に切り替わってしまうので、
+         描画中は3つとも無効化する。 */
+      :scope.mask-drafting #add-mapping-btn,
+      :scope.mask-drafting #add-mask-btn,
+      :scope.mask-drafting #add-output-btn,
+      :scope.mask-drafting #import-settings-btn,
+      :scope.mask-drafting #reset-mapping-btn,
+      :scope.mask-drafting #reset-source-btn {
+        opacity: 0.5;
+        pointer-events: none;
+      }
+
+      /* 描画済み頂点のドット（pen-mode）。最初の頂点は close ターゲットとして強調する。 */
+      .mask-pen-dot {
+        position: absolute;
+        width: 10px; height: 10px;
+        margin-left: -5px; margin-top: -5px;
+        background: #ffe082;
+        border: 2px solid #000;
+        border-radius: 50%;
+        cursor: crosshair;
+        transform: scale(var(--canvas-counter-scale, 1));
+        transform-origin: center;
+        z-index: 1010;
+        pointer-events: auto;
+      }
+      .mask-pen-dot.first {
+        width: 14px; height: 14px;
+        margin-left: -7px; margin-top: -7px;
+        background: #fff;
+        cursor: pointer;
+        box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.25);
+      }
+      .mask-pen-dot.first:hover {
+        background: #4ade80;
+        box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.35);
+      }
+
+      /* rubber-band line（最後の頂点 → カーソル） */
+      svg.mask-pen-rubber {
+        position: absolute;
+        top: 0; left: 0;
+        overflow: visible;
+        pointer-events: none;
+        z-index: 1005;
+      }
+      svg.mask-pen-rubber line {
+        stroke: #ffe082;
+        stroke-width: 2;
+        stroke-dasharray: 6 4;
+        vector-effect: non-scaling-stroke;
+      }
+
+      /* ペンツールモードのヒントバッジ（canvas-host 内に重ねる） */
+      .mask-pen-hint {
+        position: absolute;
+        top: 12px; left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.78);
+        color: #ffe082;
+        font-size: 12px;
+        line-height: 1.4;
+        padding: 6px 10px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 224, 130, 0.5);
+        pointer-events: none;
+        z-index: 1100;
+        max-width: 90%;
+        white-space: nowrap;
+      }
+
+      /* mask 頂点ハンドル / 辺中点（+）ハンドル — canvas-handles 内に配置。
+         親 scale を打ち消すために --canvas-counter-scale を使って screen-px 一定にする。 */
+      .mask-vertex-handle {
+        position: absolute;
+        width: 14px; height: 14px;
+        margin-left: -7px; margin-top: -7px;
+        background: #fff;
+        border: 2px solid #000;
+        border-radius: 50%;
+        cursor: grab;
+        transform: scale(var(--canvas-counter-scale, 1));
+        transform-origin: center;
+        z-index: 1000;
+      }
+      .mask-vertex-handle:hover { background: #ffe082; }
+      .mask-vertex-handle.dragging { cursor: grabbing; background: #ffe082; }
+      .mask-edge-handle {
+        position: absolute;
+        width: 14px; height: 14px;
+        margin-left: -7px; margin-top: -7px;
+        background: rgba(255, 255, 255, 0.4);
+        border: 1px dashed rgba(255, 255, 255, 0.6);
+        border-radius: 50%;
+        color: #000;
+        font-size: 11px;
+        line-height: 10px;
+        text-align: center;
+        cursor: pointer;
+        transform: scale(var(--canvas-counter-scale, 1));
+        transform-origin: center;
+        z-index: 999;
+        user-select: none;
+      }
+      .mask-edge-handle:hover { background: #fff; }
+      .mask-translate-handle {
+        position: absolute;
+        width: 22px; height: 22px;
+        margin-left: -11px; margin-top: -11px;
+        background: rgba(255, 255, 255, 0.92);
+        border: 2px solid #000;
+        border-radius: 50%;
+        color: #000;
+        font-size: 13px;
+        line-height: 18px;
+        text-align: center;
+        cursor: grab;
+        transform: scale(var(--canvas-counter-scale, 1));
+        transform-origin: center;
+        z-index: 1001;
+        user-select: none;
+      }
+      .mask-translate-handle.dragging { cursor: grabbing; background: #ffe082; }
+
+      /* layout タブ内の mask preview（出力フレーム内） */
+      .dc-layout-mask {
+        position: absolute;
+        top: 0; left: 0;
+        pointer-events: none;
+        transform-origin: top left;
+      }
+      .dc-layout-mask > svg {
+        position: absolute;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        overflow: visible;
       }
 
       /* 出力一覧（MappingsListPanel — 出力管理セクション） */

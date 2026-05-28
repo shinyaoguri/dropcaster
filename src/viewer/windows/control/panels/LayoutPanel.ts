@@ -17,6 +17,7 @@ import {
   applyQuadCanvas,
   applyVideoCrop,
   isMappingEnabled,
+  isMaskEntry,
   mappingColor,
   withActiveOutputSet,
   type MappingsState,
@@ -29,7 +30,10 @@ import { t } from '../../../i18n/index.js';
 
 interface MappingPreviewEntry {
   div: HTMLDivElement;
-  video: HTMLVideoElement;
+  /** mapping preview にのみ存在。 */
+  video?: HTMLVideoElement;
+  /** mask preview にのみ存在。polyline で drafting / committed の両方を扱う。 */
+  polyline?: SVGPolylineElement;
   sig: string;
 }
 
@@ -141,7 +145,9 @@ export class LayoutPanel {
   /** ソース stream が後から確定したら呼ぶ。各出力プレビューの video に bind し直す。 */
   rebindStreams(): void {
     for (const e of this.outputs.values()) {
-      for (const p of e.previews.values()) this.bindStream(p.video);
+      for (const p of e.previews.values()) {
+        if (p.video) this.bindStream(p.video);
+      }
     }
   }
 
@@ -256,8 +262,10 @@ export class LayoutPanel {
 
     const enabled = state.mappings.filter(m => isMappingEnabled(m));
     const enabledIds = new Set(enabled.map(m => m.id));
+    const N = state.mappings.length;
+    const svgNs = 'http://www.w3.org/2000/svg';
 
-    // 消えた／無効化された mapping の preview を削除
+    // 消えた／無効化された preview を削除
     for (const [id, p] of entry.previews) {
       if (!enabledIds.has(id)) {
         p.div.remove();
@@ -265,12 +273,53 @@ export class LayoutPanel {
       }
     }
 
-    for (let i = 0; i < state.mappings.length; i++) {
+    for (let i = 0; i < N; i++) {
       const m = state.mappings[i];
       if (!isMappingEnabled(m)) continue;
+      // 先頭ほど前面 — z-index で順位を保つ
+      const z = N - i;
 
       let p = entry.previews.get(m.id);
-      if (!p) {
+      if (isMaskEntry(m)) {
+        // drafting 中の mask は layout タブには出さない（commit 後だけ反映）
+        if (m.drafting) {
+          if (p) { p.div.remove(); entry.previews.delete(m.id); }
+          continue;
+        }
+        if (!p || !p.polyline) {
+          if (p) p.div.remove();
+          const pDiv = doc.createElement('div');
+          pDiv.className = 'dc-layout-mask';
+          const svg = doc.createElementNS(svgNs, 'svg') as SVGSVGElement;
+          svg.setAttribute('preserveAspectRatio', 'none');
+          const polyline = doc.createElementNS(svgNs, 'polyline') as SVGPolylineElement;
+          polyline.setAttribute('fill', '#000');
+          svg.appendChild(polyline);
+          pDiv.appendChild(svg);
+          entry.canvasWindow.appendChild(pDiv);
+          p = { div: pDiv, polyline, sig: '' };
+          entry.previews.set(m.id, p);
+        }
+        const sig = `mask|${state.canvas.width}x${state.canvas.height}|${i}|${m.points.map(pt => `${pt.x},${pt.y}`).join(';')}`;
+        if (sig !== p.sig) {
+          p.sig = sig;
+          p.div.style.zIndex = String(z);
+          p.div.style.width = `${state.canvas.width}px`;
+          p.div.style.height = `${state.canvas.height}px`;
+          p.div.style.setProperty('--mask-color', mappingColor(i));
+          const svg = p.div.querySelector('svg') as SVGSVGElement | null;
+          if (svg) {
+            svg.setAttribute('viewBox', `0 0 ${state.canvas.width} ${state.canvas.height}`);
+            svg.setAttribute('width', `${state.canvas.width}`);
+            svg.setAttribute('height', `${state.canvas.height}`);
+          }
+          p.polyline!.setAttribute('points', m.points.map(pt => `${pt.x},${pt.y}`).join(' '));
+        }
+        continue;
+      }
+
+      if (!p || !p.video) {
+        if (p) p.div.remove();
         const pDiv = doc.createElement('div');
         pDiv.className = 'dc-layout-preview';
         const video = doc.createElement('video');
@@ -287,10 +336,11 @@ export class LayoutPanel {
       if (sig !== p.sig) {
         p.sig = sig;
         p.div.style.setProperty('--mapping-color', mappingColor(i));
+        p.div.style.zIndex = String(z);
         p.div.style.width = `${state.canvas.width}px`;
         p.div.style.height = `${state.canvas.height}px`;
         applyQuadCanvas(p.div, m.quad, state.canvas.width, state.canvas.height);
-        applyVideoCrop(p.video, m.source);
+        applyVideoCrop(p.video!, m.source);
       }
     }
   }

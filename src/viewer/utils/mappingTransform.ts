@@ -30,8 +30,11 @@ export type CornerKey = typeof CORNER_KEYS[number];
  *
  * quad の座標は「仮想キャンバス」座標（px）。仮想キャンバス上の全出力（OutputDef.position
  * + OutputDef.size の矩形）と quad の交差部分だけが各出力で見える。
+ *
+ * kind は省略時 'mapping' として扱う（既存ファイルとの後方互換）。
  */
 export interface MappingEntry {
+  kind?: 'mapping';
   id: string;
   name?: string;
   enabled?: boolean;
@@ -39,7 +42,38 @@ export interface MappingEntry {
   quad: Quad;
 }
 
-export function isMappingEnabled(m: MappingEntry): boolean {
+/**
+ * マスク（黒い多角形）。enabled な mask は最前面に置かれて映像を隠す。
+ * points は仮想キャンバス px 座標。state.mappings 配列内の順序が描画順（先頭ほど前面）を
+ * 決める — mapping / mask の区別なく同じ並び順で扱う。
+ *
+ * drafting=true の間はペンツールで頂点を追加中の状態。点数 < 3 でも合法とし、出力には
+ * 描画しない（プレビューでは未閉合のポリラインを表示する）。closed されると drafting は
+ * 落ち、通常編集モードに移行する。
+ */
+export interface MaskEntry {
+  kind: 'mask';
+  id: string;
+  name?: string;
+  enabled?: boolean;
+  /** 多角形頂点（仮想キャンバス px 座標）。drafting 中は空〜任意点数を許容。 */
+  points: Point[];
+  /** ペンツールで描画中フラグ。true の間は出力に描画されず、プレビューはポリライン表示。 */
+  drafting?: boolean;
+}
+
+/** mapping と mask を統一的に扱う union（state.mappings の要素型）。 */
+export type MappingItem = MappingEntry | MaskEntry;
+
+export function isMaskEntry(item: MappingItem): item is MaskEntry {
+  return item.kind === 'mask';
+}
+
+export function isMappingEntry(item: MappingItem): item is MappingEntry {
+  return item.kind !== 'mask';
+}
+
+export function isMappingEnabled(m: MappingItem): boolean {
   return m.enabled !== false;
 }
 
@@ -83,7 +117,8 @@ export interface MappingsState {
   version: 2;
   canvas: { width: number; height: number };
   outputs: OutputDef[];
-  mappings: MappingEntry[];
+  /** 描画項目（mapping / mask）の統一リスト。配列の先頭ほど前面（z-index 高）。 */
+  mappings: MappingItem[];
   activeId: string;
   activeOutputId?: string;
 }
@@ -92,6 +127,12 @@ let _idCounter = 0;
 export function generateMappingId(): string {
   _idCounter += 1;
   return `m${Date.now().toString(36)}_${_idCounter}`;
+}
+
+let _maskIdCounter = 0;
+export function generateMaskId(): string {
+  _maskIdCounter += 1;
+  return `k${Date.now().toString(36)}_${_maskIdCounter}`;
 }
 
 let _outputIdCounter = 0;
@@ -162,41 +203,50 @@ export function defaultMappingsState(): MappingsState {
   };
 }
 
-export function getActiveMapping(state: MappingsState): MappingEntry {
+/**
+ * 現 active item を返す。mapping / mask いずれも含む union を返すので、
+ * 呼び出し側は isMappingEntry / isMaskEntry で絞る必要がある。
+ * mappings が空のときは undefined を返す。
+ */
+export function getActiveItem(state: MappingsState): MappingItem | undefined {
   return state.mappings.find(m => m.id === state.activeId) ?? state.mappings[0];
 }
 
-/** active な entry に partial を適用した新しい state を返す（純関数）。 */
-export function withActiveMapping(
-  state: MappingsState,
-  patch: Partial<Pick<MappingEntry, 'source' | 'quad' | 'name'>>
-): MappingsState {
-  return {
-    ...state,
-    mappings: state.mappings.map(m =>
-      m.id === state.activeId ? { ...m, ...patch } : m
-    ),
-  };
+/**
+ * active item が mapping（kind !== 'mask'）なら返す。mask の時 / item が無い時は undefined。
+ * source / quad を操作する呼び出し側はこれで絞ってから読む。
+ */
+export function getActiveMapping(state: MappingsState): MappingEntry | undefined {
+  const item = getActiveItem(state);
+  return item && isMappingEntry(item) ? item : undefined;
+}
+
+/** active item が mask なら返す。mapping の時は undefined。 */
+export function getActiveMask(state: MappingsState): MaskEntry | undefined {
+  const item = getActiveItem(state);
+  return item && isMaskEntry(item) ? item : undefined;
 }
 
 /**
  * 新しい mapping を追加して active にする。可視性のため少しずらした quad で生成。
  * 配置位置は activeOutputId（あれば）の中央 → outputs[0] の中央 にフォールバック。
- * 既存 mapping 数に応じて 4% 刻みの斜めオフセットで重ならないようにする。
+ * 既存項目数に応じて 4% 刻みの斜めオフセットで重ならないようにする。
+ * 配列の先頭ほど前面なので新規 mapping は先頭に挿入する（追加直後に最前面で編集できる）。
  */
 export function withAddedMapping(state: MappingsState): MappingsState {
   const id = generateMappingId();
   const targetOut =
     state.outputs.find(o => o.id === state.activeOutputId)
       ?? state.outputs[0];
-  const offsetFrac = (state.mappings.length * 0.04) % 0.30;
+  const mappingCount = state.mappings.filter(isMappingEntry).length;
+  const offsetFrac = (mappingCount * 0.04) % 0.30;
   const px = (frac: number) => ({
     x: targetOut.position.x + (frac + offsetFrac) * targetOut.size.width,
     y: targetOut.position.y + (frac + offsetFrac) * targetOut.size.height,
   });
   const entry: MappingEntry = {
     id,
-    name: `Mapping ${state.mappings.length + 1}`,
+    name: `Mapping ${mappingCount + 1}`,
     source: { x: 0, y: 0, width: 100, height: 100 },
     quad: {
       topLeft:     { x: px(0.25).x, y: px(0.25).y },
@@ -205,15 +255,95 @@ export function withAddedMapping(state: MappingsState): MappingsState {
       bottomLeft:  { x: px(0.25).x, y: px(0.75).y },
     },
   };
-  return { ...state, mappings: [...state.mappings, entry], activeId: id };
+  return { ...state, mappings: [entry, ...state.mappings], activeId: id };
+}
+
+/**
+ * 新しい mask を追加して active にする。初期は drafting=true の空ポリゴンで、ペンツールで
+ * 頂点を打って完成させる前提（MaskEditPanel が click ハンドラを張る）。配列の先頭ほど
+ * 前面なので mask も先頭に挿入する（masks は最前面で映像を隠す用途のため、デフォルトで
+ * 最も手前に置く）。
+ */
+export function withAddedMask(state: MappingsState): MappingsState {
+  const id = generateMaskId();
+  // 連打で 0 点の drafting マスクが累積するのを避ける（visible に何も無い空草稿は破棄）。
+  // 2 点以上打ってる途中の中断は保存する（意図的な部分作業）。
+  const cleaned = state.mappings.filter(m => !(isMaskEntry(m) && m.drafting && m.points.length === 0));
+  const maskCount = cleaned.filter(isMaskEntry).length;
+  const entry: MaskEntry = {
+    kind: 'mask',
+    id,
+    name: `Mask ${maskCount + 1}`,
+    points: [],
+    drafting: true,
+  };
+  return { ...state, mappings: [entry, ...cleaned], activeId: id };
+}
+
+/** drafting mask に頂点を末尾追加する。drafting でない / mask でない時は no-op。 */
+export function withMaskPointAppended(state: MappingsState, id: string, point: Point): MappingsState {
+  return {
+    ...state,
+    mappings: state.mappings.map(m =>
+      m.id === id && isMaskEntry(m) && m.drafting
+        ? { ...m, points: [...m.points, { x: point.x, y: point.y }] }
+        : m
+    ),
+  };
+}
+
+/**
+ * drafting mask を「閉じる」（drafting=false）。3 頂点未満なら state そのまま（呼び出し側で
+ * Esc/auto-discard する想定）。
+ */
+export function withMaskDraftingCommitted(state: MappingsState, id: string): MappingsState {
+  const target = state.mappings.find(m => m.id === id);
+  if (!target || !isMaskEntry(target) || !target.drafting) return state;
+  if (target.points.length < 3) return state;
+  return {
+    ...state,
+    mappings: state.mappings.map(m =>
+      m.id === id && isMaskEntry(m) ? { ...m, drafting: false } : m
+    ),
+  };
 }
 
 /** 指定 id を削除（最後の1個は残す）。active が消えたら先頭を active に。 */
 export function withRemovedMapping(state: MappingsState, id: string): MappingsState {
   if (state.mappings.length <= 1) return state;
   const filtered = state.mappings.filter(m => m.id !== id);
+  if (filtered.length === state.mappings.length) return state;
   const activeId = id === state.activeId ? filtered[0].id : state.activeId;
   return { ...state, mappings: filtered, activeId };
+}
+
+/**
+ * 項目を targetIndex の位置に移動した state を返す（drag-reorder 用）。
+ * targetIndex はクランプされる。同一位置なら no-op。
+ */
+export function withMappingReordered(
+  state: MappingsState,
+  id: string,
+  targetIndex: number,
+): MappingsState {
+  const from = state.mappings.findIndex(m => m.id === id);
+  if (from < 0) return state;
+  const clamped = Math.max(0, Math.min(state.mappings.length - 1, targetIndex));
+  if (from === clamped) return state;
+  const next = state.mappings.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(clamped, 0, item);
+  return { ...state, mappings: next };
+}
+
+/** mask の頂点列を差し替えた state を返す（rename 等と同様の純関数）。 */
+export function withMaskPointsSet(state: MappingsState, id: string, points: Point[]): MappingsState {
+  return {
+    ...state,
+    mappings: state.mappings.map(m =>
+      m.id === id && isMaskEntry(m) ? { ...m, points: points.map(p => ({ x: p.x, y: p.y })) } : m
+    ),
+  };
 }
 
 /** active 切替（存在しない id なら無視）。 */
@@ -399,12 +529,30 @@ export function parseMappingsState(data: unknown): MappingsState | null {
       ? { width: canvasRaw.width, height: canvasRaw.height }
       : recomputeCanvasBounds(validOutputs);
 
-  // --- mappings を解析 ---
-  const validMappings: MappingEntry[] = [];
+  // --- mappings を解析（mapping / mask の混在配列） ---
+  const validMappings: MappingItem[] = [];
   for (const raw of list) {
     if (!raw || typeof raw !== 'object') return null;
     const m = raw as Record<string, unknown>;
     if (typeof m.id !== 'string') return null;
+    const name = typeof m.name === 'string' ? m.name : undefined;
+    const enabled = typeof m.enabled === 'boolean' ? m.enabled : undefined;
+
+    if (m.kind === 'mask') {
+      const rawPoints = m.points;
+      if (!Array.isArray(rawPoints)) return null;
+      const drafting = m.drafting === true;
+      // drafting なら点数 0〜2 も合法（ペンツールで描画中の保存ファイルを許容）。
+      if (!drafting && rawPoints.length < 3) return null;
+      const points: Point[] = [];
+      for (const p of rawPoints) {
+        if (!isPoint(p)) return null;
+        points.push({ x: p.x, y: p.y });
+      }
+      validMappings.push({ kind: 'mask', id: m.id, name, enabled, points, drafting: drafting || undefined });
+      continue;
+    }
+
     const src = m.source as Record<string, unknown> | undefined;
     if (!src) return null;
     if (
@@ -419,8 +567,8 @@ export function parseMappingsState(data: unknown): MappingsState | null {
     }
     validMappings.push({
       id: m.id,
-      name: typeof m.name === 'string' ? m.name : undefined,
-      enabled: typeof m.enabled === 'boolean' ? m.enabled : undefined,
+      name,
+      enabled,
       source: { x: src.x, y: src.y, width: src.width, height: src.height },
       quad: {
         topLeft:     { x: q.topLeft.x,     y: q.topLeft.y },

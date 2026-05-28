@@ -11,8 +11,10 @@ import { MappingsListPanel } from './panels/MappingsListPanel';
 import { OutputSettingsPanel } from './panels/OutputSettingsPanel';
 import { SourceCropPanel } from './panels/SourceCropPanel';
 import { MappingAreaPanel } from './panels/MappingAreaPanel';
+import { MaskEditPanel } from './panels/MaskEditPanel';
 import { MappingsController } from './MappingsController';
 import {
+  isMaskEntry,
   withActiveOutputSet,
   withActiveSet,
   type MappingsState,
@@ -54,6 +56,7 @@ export class ControlWindow extends BaseWindow {
   private mappingsList = new MappingsListPanel();
   private sourceCrop = new SourceCropPanel();
   private mappingArea = new MappingAreaPanel();
+  private maskEdit = new MaskEditPanel();
   private layoutPanel = new LayoutPanel();
   private outputSettings = new OutputSettingsPanel();
   /** 現在 active なタブ（'mapping' / 'layout'）。タブ切替時に LayoutPanel.refresh() を駆動。 */
@@ -147,12 +150,29 @@ export class ControlWindow extends BaseWindow {
     // active mapping の outputId が変わっていれば cropped-container を移動
     this.mappingArea.refreshActiveMount();
     this.mappingArea.refreshTransform();
+    // active mask が変わったら頂点ハンドルを作り直す
+    this.maskEdit.refresh();
+    // ペン描画中フラグを shell レベルに反映（CSS で他項目をクリック不可にロックするのに使う）
+    this.updateDraftingShellFlag();
     // 非 active preview も output 振り分けし直す
     this.inactivePreviews.sync(this.ctrl.getState());
     this.updateToolValues();
     this.mappingsList.rerender();
     // 出力レイアウトタブが表示中なら追従更新（出力をドラッグしてサイズが変わった時など）
     if (this.activeTab === 'layout') this.layoutPanel.refresh();
+  }
+
+  /**
+   * shell に `.mask-drafting` クラスを付けて、CSS で「ペン描画中は他項目に触れないように
+   * ロック」する。preview / output frame / list 行に対する pointer-events 制御がここに引っかかる。
+   */
+  private updateDraftingShellFlag(): void {
+    const scope = this.scopeEl;
+    if (!scope) return;
+    const state = this.ctrl.getState();
+    const active = state.mappings.find(m => m.id === state.activeId);
+    const drafting = !!active && isMaskEntry(active) && !!active.drafting;
+    scope.classList.toggle('mask-drafting', drafting);
   }
 
   /** CSS を host の owner document へ 1 度だけ注入する（inline 起動用）。重複注入を防ぐ。 */
@@ -199,6 +219,7 @@ export class ControlWindow extends BaseWindow {
     this.mappingsList.destroy();
     this.sourceCrop.destroy();
     this.mappingArea.destroy();
+    this.maskEdit.destroy();
     this.layoutPanel.destroy();
     this.outputSettings.destroy();
   }
@@ -297,6 +318,16 @@ ${CONTROL_PANEL_CSS}
         onCroppedVideoMetadata: (d) => { this.videoActualDimensions = d; },
         getCanvasMappings: () => this.outputViz.getCanvasMappings(),
         getCanvasHandles: () => this.outputViz.getCanvasHandles(),
+      });
+    }
+
+    // active mask の頂点編集ハンドル群（mapping 時は何も出さない）
+    if (this.hostDoc) {
+      this.maskEdit.attach(this.hostDoc, this.ctrl, {
+        getCanvasHandles: () => this.outputViz.getCanvasHandles(),
+        onMaskChanged: () => {
+          this.inactivePreviews.sync(this.ctrl.getState());
+        },
       });
     }
 
