@@ -65,5 +65,5 @@ npx /path/to/dropcaster init my-gallery
 ## 注意点 / 既知の TODO
 
 - `src/cli/` と `src/core/` は plain JS で、TypeScript チェックも ESLint も入っていない（要検討）。
-- 自動テストはまだ無い（変更後は `npm run build` ＋ 主要フローの手動確認で）。
+- 自動テスト: `npm test` で `node --test` ベースの最小回帰テストが走る（`tests/`）。現状カバーしているのは Service Worker 生成（`generateServiceWorker`）と scan の description 保持。新機能を入れたら、回帰しやすい純粋関数・生成物は同様に追加してほしい。
 - `dropcaster doctor` で FFmpeg / Chromium / Node の有無を確認できる。

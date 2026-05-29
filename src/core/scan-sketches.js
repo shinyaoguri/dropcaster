@@ -63,6 +63,7 @@ async function scanSketches(options = {}) {
         existingSketchData[sketch.id] = {
           userData: sketch.userData,
           title: sketch.title,
+          description: sketch.description,
           sketchUrl: sketch.sketchUrl,
           previewGif: sketch.previewGif,
         };

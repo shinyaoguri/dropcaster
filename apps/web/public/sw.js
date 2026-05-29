@@ -17,6 +17,9 @@
 //
 // キャッシュ世代管理: CACHE_VERSION を変えれば古い bucket を activate 時に一掃。
 // クォータ管理は browser に委ねる (HTTP cache のように LRU evict される)。
+//
+// このファイルは src/cli/utils/sw-template.js の正本。public/sw.js と
+// apps/web/public/sw.js は scripts/sync-sw.js でここから生成される。
 
 /* eslint-env serviceworker */
 /* global self, caches, fetch, Response */

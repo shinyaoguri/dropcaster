@@ -102,7 +102,7 @@ export async function build(options) {
       scope: config.scope || options.base
     }, outputDir);
     
-    // Generate (minimal) Service Worker
+    // Generate Service Worker (multi-bucket cache; template at src/cli/utils/sw-template.js)
     spinner.text = 'Generating Service Worker...';
     await generateServiceWorker(outputDir);
     

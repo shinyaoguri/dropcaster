@@ -45,8 +45,11 @@ export class SourceCropPanel {
 
     const sourceVideo = opts.getSourceVideo();
     if (sourceVideo) {
+      // metadata 発火時は selectionBox を最新 state に追随させるだけ。
+      // 新規 mapping の source 初期値は withAddedMapping() が {0,0,100,100} を入れているので、
+      // ここで再初期化すると保存済みクロップを上書きしてしまう。
       const onLoadedMeta = () => {
-        this.initializeAtFull();
+        this.refresh();
       };
       sourceVideo.addEventListener('loadedmetadata', onLoadedMeta);
       this.cleanups.push(() => sourceVideo.removeEventListener('loadedmetadata', onLoadedMeta));
@@ -93,17 +96,6 @@ export class SourceCropPanel {
       opts.onSourceChanged();
       ctrl.commit();
     });
-  }
-
-  /** ビデオ loaded 時の初期全選択。 */
-  private initializeAtFull(): void {
-    const ctrl = this.ctrl;
-    const opts = this.opts;
-    if (!ctrl || !opts) return;
-    ctrl.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
-    this.refresh();
-    opts.onSourceChanged();
-    ctrl.commit();
   }
 
   /** ボックス本体（ハンドル除く）のドラッグで平行移動。 */

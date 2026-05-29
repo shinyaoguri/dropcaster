@@ -111,10 +111,8 @@ export class ControlWindow extends BaseWindow {
     this.controlHost = host;
     // 親 (WindowController) が保持している canonical state を即座に取り込む。
     // これより前に setupControls してしまうと、各 panel は MappingsController が初期化時に
-    // 持っている defaultMappingsState() を読む — その後 source-video loadedmetadata で
-    // SourceCropPanel.initializeAtFull() が ctrl.commit() を投げると、parent には
-    // 「local default の outputs」が届き、closeOrphanedOutputWindows で直前に開いた出力
-    // ウィンドウが orphan 扱いになって閉じられてしまう。state を先に同期して回避する。
+    // 持っている defaultMappingsState() を読むことになり、初期描画が一瞬 default に振れる。
+    // state を先に同期して、panel が最初から正しい mapping/output を見るようにする。
     this.ctrl.applyExternal(host.getState());
     this.setupHostSubscriptions();
     this.setupControls();

@@ -24,11 +24,12 @@ export async function dev(options) {
     // Ensure public directory exists
     await fs.mkdir(publicDir, { recursive: true });
     
-    // Generate manifest.json + (minimal) service worker in public directory.
+    // Generate manifest.json + multi-bucket service worker in public directory.
     // ※ dev は localhost なので main.ts は SW を登録しない（--host で LAN IP 経由のときだけ登録される）。
-    //   そのためのファイルとして置いておくだけ。
+    //   そのためのファイルとして置いておくだけ。dev は毎回新しい cacheVersion で出して、
+    //   古いキャッシュを activate 時に確実に捨てる。
     await generateManifest(config, publicDir);
-    await generateServiceWorker(publicDir);
+    await generateServiceWorker(publicDir, { cacheVersion: `dev-${Date.now()}` });
     
     // Create Vite server
     const server = await createServer({

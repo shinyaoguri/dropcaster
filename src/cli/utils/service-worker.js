@@ -1,23 +1,33 @@
 import { promises as fs } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 
-// 最小限の Service Worker。
-// 目的は「installable な PWA にする」ことだけ（ホームに追加できる / Chrome レスのウィンドウで開ける）。
-// キャッシュは一切しない — 更新は即反映され、オフライン対応もしない（HTTP キャッシュはブラウザ任せ）。
-// 以前あった offline_mode / cache_strategy の凝った設定は廃止した。
-const SERVICE_WORKER_SOURCE = `// dropcaster — minimal service worker (installable 用、キャッシュなし)
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
-self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
-  const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin) return; // 外部リソースはそのまま通す
-  event.respondWith(fetch(event.request));
-});
-`;
+// dropcaster の Service Worker 生成。
+// 多バケットキャッシュ SW の本体は ./sw-template.js (正本)。public/sw.js と
+// apps/web/public/sw.js は scripts/sync-sw.js でテンプレと同期される。
+// build / dev 経由でも、ここで同じテンプレを読んで CACHE_VERSION を差し替えて出力する。
 
-export async function generateServiceWorker(outputDir) {
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const TEMPLATE_PATH = join(__dirname, 'sw-template.js');
+const PACKAGE_JSON_PATH = join(__dirname, '..', '..', '..', 'package.json');
+
+async function readDefaultCacheVersion() {
+  try {
+    const pkg = JSON.parse(await fs.readFile(PACKAGE_JSON_PATH, 'utf-8'));
+    return pkg.version || 'v1';
+  } catch {
+    return 'v1';
+  }
+}
+
+export async function generateServiceWorker(outputDir, options = {}) {
+  const cacheVersion = options.cacheVersion ?? await readDefaultCacheVersion();
+  const template = await fs.readFile(TEMPLATE_PATH, 'utf-8');
+  const source = template.replace(
+    /const CACHE_VERSION = '[^']*';/,
+    `const CACHE_VERSION = ${JSON.stringify(cacheVersion)};`,
+  );
   const swPath = join(outputDir, 'sw.js');
-  await fs.writeFile(swPath, SERVICE_WORKER_SOURCE, 'utf-8');
+  await fs.writeFile(swPath, source, 'utf-8');
   return swPath;
 }

@@ -38,14 +38,17 @@
     "postinstall": "node src/core/postinstall.js",
     "prepublishOnly": "npm run build",
     "dev": "vite",
+    "prebuild": "node scripts/sync-sw.js",
     "build": "tsc && vite build",
     "preview": "vite preview dist",
     "dev:web": "vite --config apps/web/vite.config.ts",
+    "prebuild:web": "node scripts/sync-sw.js",
     "build:web": "tsc && vite build --config apps/web/vite.config.ts",
     "preview:web": "vite preview --config apps/web/vite.config.ts",
     "scan": "node src/core/scan-sketches.js --generate-previews --fetch-userdata --write-file",
     "scan:reset": "node src/core/scan-sketches.js --generate-previews --fetch-userdata --write-file --reset",
-    "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node src/core/scan-sketches.js --watch-mode --write-file\""
+    "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node src/core/scan-sketches.js --watch-mode --write-file\"",
+    "test": "node --test \"tests/**/*.test.js\""
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260517.1",
