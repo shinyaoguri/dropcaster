@@ -327,7 +327,7 @@ FFmpeg / Chromium が無い環境ではプレビュー生成だけスキップ�
 
 ## システム要件
 
-- Node.js 20.19+
+- Node.js 24+
 - FFmpeg (GIF生成用)
 - Chromium (Playwright経由で自動インストール)
 
