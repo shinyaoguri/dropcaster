@@ -16,7 +16,7 @@
 
 const OP_CDN_PREFIX = '/op-cdn/';
 const UPSTREAM_ORIGIN = 'https://deckard.openprocessing.org';
-const ALLOWED_UPSTREAM_PREFIX = 'user'; // S3 の /user{id}/visual{id}/... 配下のみ許可
+const ALLOWED_UPSTREAM_PATTERN = /^user\d+\//; // S3 の /user{id}/visual{id}/... 配下のみ許可
 const ALLOWED_METHODS = 'GET, HEAD, OPTIONS';
 const CACHE_TTL_BROWSER = 86400;            // 1 日 (ブラウザ side max-age)
 const CACHE_TTL_EDGE = 60 * 60 * 24 * 30;   // 30 日 (Cloudflare エッジ s-maxage)
@@ -46,7 +46,7 @@ async function proxyOpCdn(req: Request, url: URL, ctx: ExecutionContext): Promis
   }
 
   const tail = url.pathname.slice(OP_CDN_PREFIX.length);
-  if (!tail.startsWith(ALLOWED_UPSTREAM_PREFIX)) {
+  if (!ALLOWED_UPSTREAM_PATTERN.test(tail)) {
     return new Response('Not Found', { status: 404, headers: corsHeaders() });
   }
 
@@ -56,19 +56,27 @@ async function proxyOpCdn(req: Request, url: URL, ctx: ExecutionContext): Promis
 
   let res = await cache.match(cacheKey);
   if (!res) {
-    const upstream = await fetch(upstreamUrl, {
-      cf: { cacheTtl: CACHE_TTL_EDGE, cacheEverything: true },
-    });
+    // fetch 層の cf キャッシュ指定（cacheTtl + cacheEverything）は使わない:
+    // status を問わず TTL が効くため、上流の一時的な 404/5xx までエッジに固着していた。
+    // エッジキャッシュは下の caches.default.put（res.ok 時のみ・s-maxage 付き）で行う。
+    const upstream = await fetch(upstreamUrl);
     const headers = new Headers(upstream.headers);
     applyCorsHeaders(headers);
-    headers.set('Cache-Control', `public, max-age=${CACHE_TTL_BROWSER}, s-maxage=${CACHE_TTL_EDGE}, immutable`);
+    if (upstream.ok) {
+      headers.set('Cache-Control', `public, max-age=${CACHE_TTL_BROWSER}, s-maxage=${CACHE_TTL_EDGE}, immutable`);
+    } else {
+      // エラーをブラウザに 1 日キャッシュさせない（上流復旧後も失敗し続けるのを防ぐ）
+      headers.set('Cache-Control', 'no-store');
+    }
     headers.delete('Vary'); // ACAO=* なら Origin によるバリアントは不要
     res = new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers,
     });
-    if (res.ok || res.status === 304) {
+    // 304 は条件付きリクエストを上流へ転送していない以上返らないし、
+    // ボディ無し応答を cache.put すると以後の GET にそのまま返ってしまうので ok のみ
+    if (res.ok) {
       ctx.waitUntil(cache.put(cacheKey, res.clone()));
     }
   } else {
