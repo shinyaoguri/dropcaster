@@ -4,6 +4,9 @@ export class MouseEventHandler {
   private readonly events = ['mousemove', 'mousedown', 'wheel', 'mouseenter', 'keydown', 'keyup'];
   private boundCallback: ((event: Event) => void) | null = null;
   private isActive = false;
+  /** iframe に張った load リスナの除去用参照（外し忘れると停止後のリロードで勝手に再購読する）。 */
+  private iframeLoadTarget: HTMLIFrameElement | null = null;
+  private onIframeLoad: (() => void) | null = null;
 
   initialize(callback: (event: Event) => void): void {
     this.boundCallback = callback.bind(this);
@@ -47,11 +50,18 @@ export class MouseEventHandler {
     if (iframe.contentDocument?.readyState === 'complete') {
       setupIframeEvents();
     } else {
+      this.iframeLoadTarget = iframe;
+      this.onIframeLoad = setupIframeEvents;
       iframe.addEventListener('load', setupIframeEvents);
     }
   }
 
   private removeIframeEventListeners(): void {
+    if (this.iframeLoadTarget && this.onIframeLoad) {
+      this.iframeLoadTarget.removeEventListener('load', this.onIframeLoad);
+      this.iframeLoadTarget = null;
+      this.onIframeLoad = null;
+    }
     const iframe = document.getElementById('sketch-iframe') as HTMLIFrameElement;
     if (!iframe || !this.boundCallback) return;
     try {
