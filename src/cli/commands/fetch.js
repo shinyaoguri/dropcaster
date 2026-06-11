@@ -24,7 +24,7 @@ export async function fetchCommand(idArg, options = {}) {
 
   const visualID = normalizeId(idArg);
   if (!/^\d+$/.test(visualID)) {
-    console.error(chalk.red(`❌ Invalid sketch ID: "${idArg}"`));
+    console.error(chalk.red(`❌ ${t('fetch.invalidId', { id: `"${idArg}"` })}`));
     process.exit(1);
   }
 
@@ -44,15 +44,15 @@ export async function fetchCommand(idArg, options = {}) {
   fetchSpin.succeed(`Fetched "${meta.title || '(untitled)'}" by ${meta.username || 'unknown'}`);
 
   if (!SUPPORTED_MODES.includes(meta.mode)) {
-    console.error(chalk.yellow(`⚠ Mode "${meta.mode}" is not yet supported by dropcaster fetch (supported: ${SUPPORTED_MODES.join(', ')}).`));
+    console.error(chalk.yellow(`⚠ ${t('fetch.modeNotSupported', { mode: meta.mode })}`));
     process.exit(1);
   }
 
   const outDir = resolve(sketchesDir, `sketch${visualID}`);
   if (await pathExists(outDir)) {
     if (!options.overwrite) {
-      console.error(chalk.red(`❌ Directory already exists: ${outDir}`));
-      console.error(chalk.yellow('   Use --overwrite to replace it.'));
+      console.error(chalk.red(`❌ ${t('fetch.directoryExists', { dir: outDir })}`));
+      console.error(chalk.yellow(`   ${t('fetch.useOverwrite')}`));
       process.exit(1);
     }
     await rm(outDir, { recursive: true, force: true });
@@ -81,7 +81,10 @@ export async function fetchCommand(idArg, options = {}) {
   const scriptFiles = [];
   const usedNames = new Set();
   for (const tab of sorted) {
-    const base = sanitizeFilename(tab.title || `tab${tab.orderID ?? scriptFiles.length}`);
+    // OP のタブ名は "mySketch.js" のように拡張子付きのことがあるので、
+    // .js を二重に付けない（mySketch.js.js になっていた）
+    const base = sanitizeFilename(tab.title || `tab${tab.orderID ?? scriptFiles.length}`)
+      .replace(/\.js$/i, '') || 'untitled';
     let name = `${base}.js`;
     // 衝突回避 (同名タブが OP 上にあった場合に備える)
     let suffix = 2;

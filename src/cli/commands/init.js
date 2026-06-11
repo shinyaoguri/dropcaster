@@ -138,6 +138,11 @@ export async function init(options) {
 node_modules/
 dist/
 
+# dev サーバの一時生成物 (\`dropcaster build\` が出力先に再生成するのでコミット不要。
+# 特に sw.js は起動ごとに cacheVersion が変わり差分ノイズになる)
+public/sw.js
+public/manifest.json
+
 # OS / エディタ
 .DS_Store
 *.log
