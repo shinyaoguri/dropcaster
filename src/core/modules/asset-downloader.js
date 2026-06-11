@@ -6,7 +6,7 @@
 // 戻り値の Map<absUrl, relPath> を使って、呼び出し側でコード中の URL を一括置換する。
 
 import { mkdir, writeFile } from 'fs/promises';
-import { dirname, join } from 'path';
+import { dirname, resolve, sep } from 'path';
 
 const DECKARD_HOST = 'https://deckard.openprocessing.org/';
 
@@ -34,9 +34,19 @@ export function extractDeckardUrls(codeTabs) {
  */
 export function localPathForUrl(absUrl) {
   if (!absUrl.startsWith(DECKARD_HOST)) return null;
-  // host 以降のパス。末尾 / は念のため落とす
-  const tail = absUrl.slice(DECKARD_HOST.length).replace(/\?.*$/, '');
-  return `assets/${tail}`;
+  // URL として解釈してパスを正規化する（`../` や `%2e%2e` はここでドット
+  // セグメントとして解決される）。生文字列をそのまま join に渡すと
+  // outDir 外への書き込み (パストラバーサル) が成立してしまう。
+  let pathname;
+  try {
+    pathname = new URL(absUrl).pathname;
+  } catch {
+    return null;
+  }
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length === 0) return null;
+  if (segments.some((s) => s === '.' || s === '..' || s.includes('\0'))) return null;
+  return `assets/${segments.join('/')}`;
 }
 
 /**
@@ -51,8 +61,10 @@ export async function downloadAssets(urls, outDir, opts = {}) {
   const map = new Map();
   for (const url of urls) {
     const rel = localPathForUrl(url);
-    if (!rel) continue; // deckard 以外は無視
-    const absPath = join(outDir, rel);
+    if (!rel) continue; // deckard 以外・不正パスは無視
+    const absPath = resolve(outDir, rel);
+    // 念のための最終防衛: 解決後パスが outDir/assets 配下に収まることを確認
+    if (!absPath.startsWith(resolve(outDir, 'assets') + sep)) continue;
     try {
       await mkdir(dirname(absPath), { recursive: true });
       const res = await fetch(url);

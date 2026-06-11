@@ -777,5 +777,14 @@ export function applyQuadCanvas(
   canvasHeight: number,
 ): void {
   if (canvasWidth <= 0 || canvasHeight <= 0) return;
-  container.style.transform = homographyMatrix3d(quad, canvasWidth, canvasHeight);
+  const transform = homographyMatrix3d(quad, canvasWidth, canvasHeight);
+  if (transform === 'none') {
+    // 退化 quad（共線・面積0）。transform: none をそのまま適用すると
+    // 未変形のフルキャンバス寸法の映像が出力に表示されてしまうので、
+    // 「面積 0 → 何も見えない」に合わせて非表示にする。
+    container.style.visibility = 'hidden';
+    return;
+  }
+  container.style.visibility = '';
+  container.style.transform = transform;
 }

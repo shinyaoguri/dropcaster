@@ -20,7 +20,7 @@
 ## このリポジトリで開発する
 
 ```bash
-npm install              # 依存をインストール（postinstall で playwright chromium も）
+npm install              # 依存をインストール（Chromium は自動 DL しない。プレビュー生成には `npx dropcaster doctor --install`）
 npm run dev              # ビューワを Vite dev サーバで起動（ポート競合時は別ポートに）
 npm run build            # tsc + vite build → dist/
 npm run scan             # sketches/ をスキャン（プレビュー生成 ＋ OpenProcessing メタ取得）

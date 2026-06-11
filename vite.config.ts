@@ -7,7 +7,14 @@ const sketchesJsonWatcher = () => ({
   name: 'sketches-json-watcher',
   configureServer(server) {
     const sketchesJsonPath = resolve(process.cwd(), 'public/sketches.json')
-    
+
+    // clone 直後など sketches.json 未生成の状態では fs.watch が ENOENT を
+    // throw して dev サーバーが起動できないため、存在チェックで守る
+    if (!existsSync(sketchesJsonPath)) {
+      console.log('ℹ️ public/sketches.json がまだありません。`npm run scan` で生成すると自動リロード監視が有効になります')
+      return
+    }
+
     // sketches.jsonの変更を監視
     let isFirstLoad = true
     const watcher = watch(sketchesJsonPath, (eventType) => {

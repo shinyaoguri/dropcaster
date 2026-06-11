@@ -329,7 +329,7 @@ FFmpeg / Chromium が無い環境ではプレビュー生成だけスキップ�
 
 - Node.js 24+
 - FFmpeg (GIF生成用)
-- Chromium (Playwright経由で自動インストール)
+- Chromium (プレビュー生成にのみ必要。`dropcaster doctor --install` または `npx playwright install chromium` で導入)
 
 ## 開発
 

@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE } from './constants.js';
 import { t } from '../../cli/i18n/index.js';
 
@@ -169,9 +169,6 @@ function extractMetadata(htmlContent, dirName) {
 function detectSketchType(htmlContent, sketchPath) {
   // HTMLコンテンツからライブラリを検出
   if (htmlContent.includes('p5.js') || htmlContent.includes('p5.min.js')) {
-    if (htmlContent.includes('WEBGL') || htmlContent.toLowerCase().includes('webgl')) {
-      return 'p5.js';
-    }
     return 'p5.js';
   }
 
@@ -179,11 +176,11 @@ function detectSketchType(htmlContent, sketchPath) {
     return 'Three.js';
   }
 
-  if (htmlContent.includes('webgpu') || htmlContent.toLowerCase().includes('webgpu')) {
+  if (htmlContent.toLowerCase().includes('webgpu')) {
     return 'WebGPU';
   }
 
-  if (htmlContent.includes('webgl') || htmlContent.toLowerCase().includes('webgl')) {
+  if (htmlContent.toLowerCase().includes('webgl')) {
     return 'WebGL';
   }
 
@@ -217,7 +214,9 @@ export async function detectInteractiveElements(sketchPath, htmlContent) {
     for (const src of scriptSrcs) {
       if (!src.startsWith('http')) { // 外部CDNは除外
         try {
-          const jsPath = join(sketchPath, src);
+          const jsPath = resolve(sketchPath, src);
+          // `../` を含む src でスケッチディレクトリ外を読まないようにする
+          if (!jsPath.startsWith(resolve(sketchPath) + sep)) continue;
           const jsContent = await readFile(jsPath, 'utf-8');
           detectInteractivePatterns(jsContent, elements);
         } catch (error) {

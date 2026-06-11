@@ -52,10 +52,12 @@ export async function detectGraphicsMode(sketchPath) {
     }
     
     // WebGL関連のキーワードをチェック
+    // 注意: 全て単純な文字列検索。以前は `(` を含むキーワードを new RegExp() に
+    // 渡していたが、未終端グループで必ず throw し、catch 経由で全スケッチが
+    // webgl 判定になるバグがあった。`createCanvas(...WEBGL)` 系は 'WEBGL'
+    // リテラルの検出に包含されるため個別パターンは不要。
     const webglKeywords = [
       'WEBGL',
-      'createCanvas(.*WEBGL',
-      'createGraphics(.*WEBGL',
       'setAttributes',
       'shader(',
       'loadShader',
@@ -71,22 +73,11 @@ export async function detectGraphicsMode(sketchPath) {
       'debugMode',
       'noDebugMode'
     ];
-    
-    // WebGLチェック（正規表現も含む）
+
     for (const keyword of webglKeywords) {
-      if (keyword.includes('(')) {
-        // 正規表現パターン
-        const regex = new RegExp(keyword);
-        if (regex.test(combinedContent)) {
-          console.error(`   🎨 WebGL detected in sketch (found pattern "${keyword}")`);
-          return 'webgl';
-        }
-      } else {
-        // 通常の文字列検索
-        if (combinedContent.includes(keyword)) {
-          console.error(`   🎨 WebGL detected in sketch (found "${keyword}")`);
-          return 'webgl';
-        }
+      if (combinedContent.includes(keyword)) {
+        console.error(`   🎨 WebGL detected in sketch (found "${keyword}")`);
+        return 'webgl';
       }
     }
     

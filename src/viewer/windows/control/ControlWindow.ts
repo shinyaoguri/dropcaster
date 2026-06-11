@@ -76,6 +76,16 @@ export class ControlWindow extends BaseWindow {
   /** langChange 購読解除関数。disposeHost で剥がす。 */
   private langUnsub: (() => void) | null = null;
 
+  /**
+   * setupMessageListener で window に張ったリスナの除去用参照。
+   * inline マウント時の win は main の window なので、外し忘れると
+   * mount/unmount（投影モードの開始/終了）を繰り返すたびにリスナと
+   * 破棄済みパネルへのクロージャが蓄積する。
+   */
+  private listenerWin: Window | null = null;
+  private resizeHandler = () => this.resizeThrottle?.schedule();
+  private pagehideHandler = () => this.disposeHost();
+
   constructor() {
     super('control_window', t('window.controlPanel'));
   }
@@ -203,6 +213,13 @@ export class ControlWindow extends BaseWindow {
 
   /** 購読を全部外して host 自体も dispose する。inline 解除時に呼ぶ。 */
   private disposeHost(): void {
+    if (this.listenerWin) {
+      this.listenerWin.removeEventListener('resize', this.resizeHandler);
+      this.listenerWin.removeEventListener('pagehide', this.pagehideHandler);
+      this.listenerWin = null;
+    }
+    this.resizeThrottle?.cancel();
+    this.resizeThrottle = null;
     this.hostUnsubs.forEach(u => { try { u(); } catch { /* ignore */ } });
     this.hostUnsubs = [];
     this.langUnsub?.();
@@ -597,10 +614,11 @@ ${CONTROL_PANEL_CSS}
         this.mappingArea.refreshTransform();
       }
     });
-    win.addEventListener('resize', () => this.resizeThrottle?.schedule());
+    this.listenerWin = win;
+    win.addEventListener('resize', this.resizeHandler);
 
     // タブを閉じる直前に host 購読を畳む
-    win.addEventListener('pagehide', () => this.disposeHost());
+    win.addEventListener('pagehide', this.pagehideHandler);
   }
 
   /** ControlHost から push される「出力 id → 寸法／全画面状態」を反映。 */

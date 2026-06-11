@@ -1,8 +1,20 @@
 import chalk from 'chalk';
-import { checkEnv, formatEnvReport, REQUIRED_NODE } from '../../core/check-env.js';
+import { checkEnv, checkChromium, formatEnvReport, REQUIRED_NODE } from '../../core/check-env.js';
+import { installChromium } from '../../core/install-chromium.js';
 import { t } from '../i18n/index.js';
 
-export async function doctor() {
+export async function doctor(options = {}) {
+  if (options.install) {
+    const chromium = await checkChromium();
+    if (chromium.ok) {
+      console.log(chalk.green(t('doctor.chromiumAlreadyInstalled')));
+    } else {
+      console.log(t('doctor.installingChromium'));
+      const ok = installChromium();
+      if (!ok) process.exitCode = 1;
+    }
+  }
+
   const report = await checkEnv();
   const message = formatEnvReport(report, { title: t('doctor.title') });
   console.log('\n' + message + '\n');

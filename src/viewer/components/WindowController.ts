@@ -771,7 +771,15 @@ export class WindowController {
         // 復帰してなければ強制リロード（state は失われるが、フリーズしっぱなしよりまし）
         if (this.currentSourceIframe === iframe) {
           console.warn('WindowController: WebGL context が復帰しないため iframe をリロード');
-          try { iframe.src = iframe.src; } catch { /* ignore */ }
+          // srcdoc 属性がある場合（OP 経路）は src の再代入ではナビゲーションが
+          // 起きないので、srcdoc 自体を再代入してリロードを起こす。
+          try {
+            if (iframe.hasAttribute('srcdoc')) {
+              iframe.srcdoc = iframe.srcdoc;
+            } else {
+              iframe.src = iframe.src;
+            }
+          } catch { /* ignore */ }
         }
       }, 2000);
     };
