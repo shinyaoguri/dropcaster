@@ -29,12 +29,31 @@ export class App {
     this.router.handleRoute();
   }
 
+  /**
+   * ルート遷移前に、前のページが残したものを全て片付ける。
+   * ここを通さないルートがあると、リスナ（beforeunload / keydown）や
+   * interval（スライドショー自動進行、レート制限カウントダウン）、
+   * MediaStream が前のページから残留する。
+   */
+  private teardownCurrent(): void {
+    if (this.sketchPageController) {
+      this.sketchPageController.destroy();
+      this.sketchPageController = null;
+    }
+    if (this.slideshowController) {
+      this.slideshowController.destroy();
+      this.slideshowController = null;
+    }
+    SketchErrorView.cancelCountdown();
+  }
+
   private setupRoutes(): void {
     // ホームページ: catalog の有無で顔を切り替える。
     //   - catalog 空 → OP ID 入力をメインに据えたホスト版風 hero
     //   - catalog あり → 既存のギャラリー + 上部に小さな OP ID 入力バー
     const goOp = (id: string) => this.router.navigate(`/op/${id}`);
     this.router.registerRoute('/', () => {
+      this.teardownCurrent();
       const sketches = this.sketchService.getAllSketches();
       if (sketches.length === 0) {
         OpIdEntryView.renderHero(goOp);
@@ -47,31 +66,20 @@ export class App {
     this.router.registerRoute('/:sketchId', async (sketchId: string) => {
       const sketch = this.sketchService.getSketchById(sketchId);
       if (sketch) {
-        // 既存のコントローラーを破棄
-        if (this.sketchPageController) {
-          this.sketchPageController.setInternalNavigation(true);
-          this.sketchPageController.destroy();
-          this.sketchPageController = null;
-        }
+        this.teardownCurrent();
 
         // 新しいコントローラーを作成してスケッチを表示
         this.sketchPageController = new SketchPageController();
         await this.sketchPageController.renderSketch(sketch);
       } else {
+        this.teardownCurrent();
         Error404View.render();
       }
     });
 
     // OpenProcessing 経路: /op/<id> または /?op=<id>
     this.router.registerRoute('/op/:id', async (opId: string) => {
-      // 既存のコントローラーを破棄
-      if (this.sketchPageController) {
-        this.sketchPageController.setInternalNavigation(true);
-        this.sketchPageController.destroy();
-        this.sketchPageController = null;
-      }
-      // 既に表示中の countdown timer があれば止める
-      SketchErrorView.cancelCountdown();
+      this.teardownCurrent();
 
       try {
         const sketch = await this.opSource.resolve(opId);
@@ -100,15 +108,8 @@ export class App {
 
     // スライドショーページ
     this.router.registerRoute('/slideshow', () => {
-      // 既存のコントローラーを破棄
-      if (this.sketchPageController) {
-        this.sketchPageController.destroy();
-        this.sketchPageController = null;
-      }
-      if (this.slideshowController) {
-        this.slideshowController.destroy();
-      }
-      
+      this.teardownCurrent();
+
       // スライドショーを開始
       const sketches = this.sketchService.getAllSketches();
       this.slideshowController = new SlideshowController();
@@ -117,6 +118,7 @@ export class App {
 
     // 404エラーページ
     this.router.registerRoute('/404', () => {
+      this.teardownCurrent();
       Error404View.render();
     });
   }
