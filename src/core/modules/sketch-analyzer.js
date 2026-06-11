@@ -169,9 +169,6 @@ function extractMetadata(htmlContent, dirName) {
 function detectSketchType(htmlContent, sketchPath) {
   // HTMLコンテンツからライブラリを検出
   if (htmlContent.includes('p5.js') || htmlContent.includes('p5.min.js')) {
-    if (htmlContent.includes('WEBGL') || htmlContent.toLowerCase().includes('webgl')) {
-      return 'p5.js';
-    }
     return 'p5.js';
   }
 
@@ -179,11 +176,11 @@ function detectSketchType(htmlContent, sketchPath) {
     return 'Three.js';
   }
 
-  if (htmlContent.includes('webgpu') || htmlContent.toLowerCase().includes('webgpu')) {
+  if (htmlContent.toLowerCase().includes('webgpu')) {
     return 'WebGPU';
   }
 
-  if (htmlContent.includes('webgl') || htmlContent.toLowerCase().includes('webgl')) {
+  if (htmlContent.toLowerCase().includes('webgl')) {
     return 'WebGL';
   }
 
