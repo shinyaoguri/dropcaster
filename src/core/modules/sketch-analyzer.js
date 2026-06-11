@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE } from './constants.js';
 import { t } from '../../cli/i18n/index.js';
 
@@ -217,7 +217,9 @@ export async function detectInteractiveElements(sketchPath, htmlContent) {
     for (const src of scriptSrcs) {
       if (!src.startsWith('http')) { // 外部CDNは除外
         try {
-          const jsPath = join(sketchPath, src);
+          const jsPath = resolve(sketchPath, src);
+          // `../` を含む src でスケッチディレクトリ外を読まないようにする
+          if (!jsPath.startsWith(resolve(sketchPath) + sep)) continue;
           const jsContent = await readFile(jsPath, 'utf-8');
           detectInteractivePatterns(jsContent, elements);
         } catch (error) {
