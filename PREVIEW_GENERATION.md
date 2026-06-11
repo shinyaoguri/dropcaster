@@ -14,7 +14,7 @@
 ## 必要なツール
 
 ```bash
-npx playwright install chromium   # Chromium（`npm install` の postinstall でも実行される）
+npx playwright install chromium   # Chromium（`dropcaster doctor --install` でも可。`npm install` では自動 DL されない）
 brew install ffmpeg               # macOS
 sudo apt-get install -y ffmpeg    # Ubuntu/Debian
 ```

@@ -6,6 +6,8 @@ const en = {
   'doctor.allGood': 'All dependencies are in place.',
   'doctor.nodeRequired': 'Node.js v{required} or later is required (currently {current}).',
   'doctor.missingPreviewTools': 'Without FFmpeg / Chromium, preview GIFs cannot be generated (equivalent to `dropcaster scan --no-previews`).',
+  'doctor.installingChromium': 'Installing Playwright Chromium (needed for preview generation)...',
+  'doctor.chromiumAlreadyInstalled': 'Playwright Chromium is already installed.',
 
   // check-env
   'env.title': 'Environment check',
@@ -107,6 +109,8 @@ const ja = {
   'doctor.allGood': 'すべて揃っています。',
   'doctor.nodeRequired': 'Node.js v{required} 以上が必要です（現在 {current}）。',
   'doctor.missingPreviewTools': 'FFmpeg / Chromium が無い場合、プレビュー GIF は生成されません（`dropcaster scan --no-previews` 相当の動作）。',
+  'doctor.installingChromium': 'Playwright の Chromium をインストールします（プレビュー生成に必要）...',
+  'doctor.chromiumAlreadyInstalled': 'Playwright の Chromium はインストール済みです。',
 
   'env.title': '環境チェック',
   'env.titleInit': '環境チェック（プレビュー生成に必要）',

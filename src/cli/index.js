@@ -75,6 +75,7 @@ program
 program
   .command('doctor')
   .description('Check that required tools (FFmpeg, Chromium, Node) are available')
+  .option('--install', 'Install Playwright Chromium if missing (needed for preview generation)')
   .action(doctor);
 
 program
