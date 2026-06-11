@@ -18,6 +18,11 @@ on:
       - 'apps/web/**'
       - 'src/viewer/**'
       - 'src/core/modules/**'
+      # SW はテンプレから sync-sw.js / stamp-sw-version.js 経由で dist に入るので、
+      # テンプレだけの変更でもデプロイを走らせる
+      - 'src/cli/utils/sw-template.js'
+      - 'scripts/sync-sw.js'
+      - 'scripts/stamp-sw-version.js'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'

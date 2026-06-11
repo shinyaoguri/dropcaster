@@ -140,9 +140,13 @@ self.addEventListener('fetch', (event) => {
 async function navigationStrategy(req) {
   try {
     const networkRes = await fetch(req);
-    // navigate が成功したら shell キャッシュも更新しておく (オフライン時の fallback 用)
-    const clone = networkRes.clone();
-    caches.open(SHELL_CACHE).then(c => c.put(OFFLINE_NAVIGATION_FALLBACK, clone)).catch(() => {});
+    // navigate が成功したら shell キャッシュも更新しておく (オフライン時の fallback 用)。
+    // 2xx のみ: サーバの 404/500 ページで '/' の fallback を上書きすると、
+    // 以後オフライン時にエラーページが出続けてしまう。
+    if (networkRes.ok) {
+      const clone = networkRes.clone();
+      caches.open(SHELL_CACHE).then(c => c.put(OFFLINE_NAVIGATION_FALLBACK, clone)).catch(() => {});
+    }
     return networkRes;
   } catch {
     const fallback = await caches.match(OFFLINE_NAVIGATION_FALLBACK);
@@ -181,8 +185,8 @@ async function opMetaStrategy(req) {
   if (cached) {
     const ts = parseInt(cached.headers.get('x-dc-cached-at') || '0', 10);
     if (Date.now() - ts < OP_META_FRESH_MS) return cached;
-    // 期限切れだけど stale を返しつつ裏で更新
-    refreshOpMeta(req, cache);
+    // 期限切れだけど stale を返しつつ裏で更新（失敗は無視 — unhandled rejection 防止）
+    refreshOpMeta(req, cache).catch(() => {});
     return cached;
   }
   // 未キャッシュは普通にネット → 保存して返す
