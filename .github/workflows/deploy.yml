@@ -39,9 +39,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
@@ -59,7 +59,8 @@ jobs:
         run: npm run build:web
 
       - name: Deploy via wrangler
-        uses: cloudflare/wrangler-action@v3
+        # v4 はデフォルトの Wrangler が v4 系になる (wrangler.toml は [assets] 構成なので互換)
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
