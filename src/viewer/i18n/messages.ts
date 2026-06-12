@@ -16,22 +16,25 @@ const en = {
   'op.submit.hero': 'Load',
   'op.submit.inline': 'Open',
   'op.error.invalid': 'Enter a valid sketch ID or an OpenProcessing URL.',
-  // assetProxyBaseUrl 設定済み（ホスト版など）: アセットは proxy 経由で読めるのでその旨を伝える
-  'op.hero.footer': 'p5js sketches are supported, including ones that use assets (images, sounds) uploaded to OpenProcessing.',
+  // assetProxyBaseUrl 設定済み（ホスト版など）: アセットは proxy 経由で読めるのでその旨を伝える。
+  // 「mode」は OP のエディタのエンジン種別（p5js / pjs / applet ...）であって p5 を使うかどうかではない。
+  // 読者に OP 内部の mode 概念を要求しないよう、除外されるもの（古い Processing(Java) 形式）を直接言う。
+  'op.hero.footer': 'Most sketches load as-is, including ones that use assets (images, sounds) uploaded to OpenProcessing. Old Processing (Java) sketches are not supported.',
   // assetProxyBaseUrl 未設定: アセット付き作品は読み込めない可能性があることを伝える
-  'op.hero.footer.noProxy': 'p5js sketches are supported. Sketches that use uploaded assets (images, sounds) may fail to load because no asset proxy is configured.',
+  'op.hero.footer.noProxy': 'Sketches that use uploaded assets (images, sounds) may fail to load because no asset proxy is configured. Old Processing (Java) sketches are not supported.',
   'op.hero.help.label': 'About sketches that cannot be loaded',
   // ツールチップは <p> 内に入るのでインライン要素 (<strong>/<br>) のみ使う
   'op.hero.help.cases':
     '<strong>Sketches that may not load or run correctly:</strong><br>' +
-    '・Non-p5js engine modes (Processing(Java), applets, etc.)<br>' +
+    '・Old Processing (Java) sketches (OpenProcessing engine modes other than p5js, e.g. pjs / applet)<br>' +
     '・Sketches loading assets directly from sites outside OpenProcessing (unless that site allows CORS)<br>' +
     '・Sketches that build asset URLs dynamically in code<br>' +
-    '・Private or deleted sketches',
+    '・Private or deleted sketches<br>' +
+    '* Sketches that skip p5.js and use the raw Canvas API / WebGL / WebGPU still work, as long as they were created in the p5.js editor.',
   'op.hero.help.cases.noProxy':
     '<strong>Sketches that may not load or run correctly:</strong><br>' +
     '・Sketches using uploaded assets in general (no asset proxy configured)<br>' +
-    '・Non-p5js engine modes (Processing(Java), applets, etc.)<br>' +
+    '・Old Processing (Java) sketches (OpenProcessing engine modes other than p5js, e.g. pjs / applet)<br>' +
     '・Sketches loading assets directly from sites outside OpenProcessing (unless that site allows CORS)<br>' +
     '・Private or deleted sketches',
 
@@ -229,19 +232,20 @@ const ja: Record<keyof typeof en, string> = {
   'op.submit.hero': '読み込み',
   'op.submit.inline': '開く',
   'op.error.invalid': '有効な作品 ID または OpenProcessing の URL を入力してください。',
-  'op.hero.footer': 'p5js モードの作品に対応しています。OpenProcessing にアップロードされたアセット（画像・音声など）を使う作品もそのまま読み込めます。',
-  'op.hero.footer.noProxy': 'p5js モードの作品に対応しています。アセット（画像・音声など）を使う作品は、asset proxy が未設定のため読み込めない場合があります。',
+  'op.hero.footer': 'ほとんどの作品は、OpenProcessing にアップロードされたアセット（画像・音声など）も含めてそのまま読み込めます。古い Processing(Java) 形式の作品には対応していません。',
+  'op.hero.footer.noProxy': 'アセット（画像・音声など）を使う作品は、asset proxy が未設定のため読み込めない場合があります。古い Processing(Java) 形式の作品には対応していません。',
   'op.hero.help.label': '読み込めない作品について',
   'op.hero.help.cases':
     '<strong>読み込めない・正しく動かない場合:</strong><br>' +
-    '・p5js 以外のモードの作品（Processing(Java) など）<br>' +
+    '・古い Processing(Java) 形式の作品（OpenProcessing のエンジンモードが p5js 以外: pjs / applet など）<br>' +
     '・OpenProcessing 外のサイトから直接アセットを読む作品（読み込み先が CORS を許可していない場合）<br>' +
     '・コード内で URL を動的に組み立ててアセットを読む作品<br>' +
-    '・非公開・削除済みの作品',
+    '・非公開・削除済みの作品<br>' +
+    '※ p5.js を使わず Canvas API / WebGL / WebGPU を直接使う作品も、p5.js エディタで作られたものなら読み込めます',
   'op.hero.help.cases.noProxy':
     '<strong>読み込めない・正しく動かない場合:</strong><br>' +
     '・アップロードされたアセットを使う作品全般（asset proxy 未設定のため）<br>' +
-    '・p5js 以外のモードの作品（Processing(Java) など）<br>' +
+    '・古い Processing(Java) 形式の作品（OpenProcessing のエンジンモードが p5js 以外: pjs / applet など）<br>' +
     '・OpenProcessing 外のサイトから直接アセットを読む作品（読み込み先が CORS を許可していない場合）<br>' +
     '・非公開・削除済みの作品',
 
