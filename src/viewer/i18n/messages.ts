@@ -19,9 +19,10 @@ const en = {
   // assetProxyBaseUrl 設定済み（ホスト版など）: アセットは proxy 経由で読めるのでその旨を伝える。
   // 「mode」は OP のエディタのエンジン種別（p5js / pjs / applet ...）であって p5 を使うかどうかではない。
   // 読者に OP 内部の mode 概念を要求しないよう、除外されるもの（古い Processing(Java) 形式）を直接言う。
-  'op.hero.footer': 'Most sketches load as-is, including ones that use assets (images, sounds) uploaded to OpenProcessing. Old Processing (Java) sketches are not supported.',
+  // フッターは一文に留め、詳細（読み込めないケース一覧）は「?」ツールチップに集約する
+  'op.hero.footer': 'Most sketches load as-is, assets included.',
   // assetProxyBaseUrl 未設定: アセット付き作品は読み込めない可能性があることを伝える
-  'op.hero.footer.noProxy': 'Sketches that use uploaded assets (images, sounds) may fail to load because no asset proxy is configured. Old Processing (Java) sketches are not supported.',
+  'op.hero.footer.noProxy': 'Sketches that use uploaded assets may fail to load.',
   'op.hero.help.label': 'About sketches that cannot be loaded',
   // ツールチップは <p> 内に入るのでインライン要素 (<strong>/<br>) のみ使う
   'op.hero.help.cases':
@@ -232,8 +233,8 @@ const ja: Record<keyof typeof en, string> = {
   'op.submit.hero': '読み込み',
   'op.submit.inline': '開く',
   'op.error.invalid': '有効な作品 ID または OpenProcessing の URL を入力してください。',
-  'op.hero.footer': 'ほとんどの作品は、OpenProcessing にアップロードされたアセット（画像・音声など）も含めてそのまま読み込めます。古い Processing(Java) 形式の作品には対応していません。',
-  'op.hero.footer.noProxy': 'アセット（画像・音声など）を使う作品は、asset proxy が未設定のため読み込めない場合があります。古い Processing(Java) 形式の作品には対応していません。',
+  'op.hero.footer': 'ほとんどの作品はアセット込みでそのまま読み込めます。',
+  'op.hero.footer.noProxy': 'アセットを使う作品は読み込めない場合があります。',
   'op.hero.help.label': '読み込めない作品について',
   'op.hero.help.cases':
     '<strong>読み込めない・正しく動かない場合:</strong><br>' +
