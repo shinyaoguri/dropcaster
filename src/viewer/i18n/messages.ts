@@ -16,7 +16,10 @@ const en = {
   'op.submit.hero': 'Load',
   'op.submit.inline': 'Open',
   'op.error.invalid': 'Enter a valid sketch ID or an OpenProcessing URL.',
-  'op.hero.footer': 'p5js sketches are supported. Sketches with assets require an asset proxy.',
+  // assetProxyBaseUrl 設定済み（ホスト版など）: アセットは proxy 経由で読めるのでその旨を伝える
+  'op.hero.footer': 'p5js sketches are supported, including ones that use assets (images, sounds) uploaded to OpenProcessing.',
+  // assetProxyBaseUrl 未設定: アセット付き作品は読み込めない可能性があることを伝える
+  'op.hero.footer.noProxy': 'p5js sketches are supported. Sketches that use uploaded assets (images, sounds) may fail to load because no asset proxy is configured.',
 
   // ギャラリー
   'gallery.title': 'Sketch Gallery',
@@ -212,7 +215,8 @@ const ja: Record<keyof typeof en, string> = {
   'op.submit.hero': '読み込み',
   'op.submit.inline': '開く',
   'op.error.invalid': '有効な作品 ID または OpenProcessing の URL を入力してください。',
-  'op.hero.footer': 'p5js モードの作品に対応しています。アセット付き作品は asset proxy 設定で読み込み可能になります。',
+  'op.hero.footer': 'p5js モードの作品に対応しています。OpenProcessing にアップロードされたアセット（画像・音声など）を使う作品もそのまま読み込めます。',
+  'op.hero.footer.noProxy': 'p5js モードの作品に対応しています。アセット（画像・音声など）を使う作品は、asset proxy が未設定のため読み込めない場合があります。',
 
   'gallery.title': 'スケッチギャラリー',
   'gallery.slideshow': 'スライドショー',
