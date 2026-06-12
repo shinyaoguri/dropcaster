@@ -41,7 +41,10 @@ function heroHtml(): string {
       <p class="op-id-error" hidden>${t('op.error.invalid')}</p>
     </form>
     <footer class="op-hero-footer">
-      <p>${t(getConfig().assetProxyBaseUrl ? 'op.hero.footer' : 'op.hero.footer.noProxy')}</p>
+      <p>${t(getConfig().assetProxyBaseUrl ? 'op.hero.footer' : 'op.hero.footer.noProxy')}
+        <span class="op-hero-help" tabindex="0" aria-label="${t('op.hero.help.label')}">?<span
+          class="op-hero-help-tip" role="tooltip">${t(getConfig().assetProxyBaseUrl ? 'op.hero.help.cases' : 'op.hero.help.cases.noProxy')}</span></span>
+      </p>
       <p class="op-hero-credit">
         ${t('footer.copyright', { year: new Date().getFullYear() })} ·
         <a href="https://github.com/shinyaoguri/dropcaster/blob/main/LICENSE" target="_blank" rel="noopener">${t('footer.license')}</a> ·

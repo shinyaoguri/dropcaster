@@ -804,6 +804,61 @@ body {
 
 .op-hero-credit a:hover { color: #1e293b; text-decoration: underline; }
 
+/* hero フッターの「?」ヘルプマーカー。hover / キーボードフォーカスで詳細を出す */
+.op-hero-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  margin-left: 0.25rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+  color: #94a3b8;
+  font-size: 0.6875rem;
+  line-height: 1;
+  vertical-align: -0.125em;
+  cursor: help;
+  user-select: none;
+}
+
+.op-hero-help:hover,
+.op-hero-help:focus-visible {
+  color: #475569;
+  border-color: #94a3b8;
+}
+
+.op-hero-help-tip {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(24rem, 85vw);
+  padding: 0.625rem 0.75rem;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #cbd5e1;
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1.7;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.op-hero-help-tip strong { color: #fff; }
+
+.op-hero-help:hover .op-hero-help-tip,
+.op-hero-help:focus .op-hero-help-tip,
+.op-hero-help:focus-visible .op-hero-help-tip {
+  opacity: 1;
+  visibility: visible;
+}
+
 /* フォーム共通 */
 .op-id-form {
   display: flex;
