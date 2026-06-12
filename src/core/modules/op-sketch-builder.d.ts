@@ -44,6 +44,11 @@ export interface AssembleOpSketchHtmlParams {
 }
 
 export function assembleOpSketchHtml(params: AssembleOpSketchHtmlParams): string;
+export function assembleHtmlModeOpSketchHtml(params: {
+  meta: OpSketchMeta;
+  codeTabs: OpCodeTab[];
+  options?: { assetProxyBaseUrl?: string };
+}): string;
 export function rewriteAssetUrls(text: string, assetProxyBaseUrl?: string): string;
 export function sortAndJoinCode(codeTabs: OpCodeTab[]): string;
 export function hasExternalDeckardAsset(codeTabs: OpCodeTab[]): boolean;

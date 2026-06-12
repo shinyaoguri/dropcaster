@@ -27,7 +27,7 @@ const en = {
   // ツールチップは <p> 内に入るのでインライン要素 (<strong>/<br>) のみ使う
   'op.hero.help.cases':
     '<strong>Sketches that may not load or run correctly:</strong><br>' +
-    '・Old Processing (Java) sketches (OpenProcessing engine modes other than p5js, e.g. pjs / applet)<br>' +
+    '・Old Processing (Java) sketches (OpenProcessing engine modes pjs / applet, etc.)<br>' +
     '・Sketches loading assets directly from sites outside OpenProcessing (unless that site allows CORS)<br>' +
     '・Sketches that build asset URLs dynamically in code<br>' +
     '・Private or deleted sketches<br>' +
@@ -35,7 +35,7 @@ const en = {
   'op.hero.help.cases.noProxy':
     '<strong>Sketches that may not load or run correctly:</strong><br>' +
     '・Sketches using uploaded assets in general (no asset proxy configured)<br>' +
-    '・Old Processing (Java) sketches (OpenProcessing engine modes other than p5js, e.g. pjs / applet)<br>' +
+    '・Old Processing (Java) sketches (OpenProcessing engine modes pjs / applet, etc.)<br>' +
     '・Sketches loading assets directly from sites outside OpenProcessing (unless that site allows CORS)<br>' +
     '・Private or deleted sketches',
 
@@ -60,7 +60,7 @@ const en = {
   'sketchError.rateLimit.retryNow': 'Retry now',
   'sketchError.unsupported.title': 'Unsupported engine',
   'sketchError.unsupported.message':
-    'dropcaster does not yet support this sketch engine{modeNote}. Only <strong>p5js</strong> sketches can be displayed.',
+    'dropcaster does not yet support this sketch engine{modeNote}. Only <strong>p5js</strong> and <strong>html</strong> sketches can be displayed.',
   'sketchError.unsupported.modeNote': ' (detected: <code>{mode}</code>)',
   'sketchError.unsupported.openOnOp': 'Open on OpenProcessing',
   'sketchError.notFound.title': 'Could not load sketch',
@@ -238,7 +238,7 @@ const ja: Record<keyof typeof en, string> = {
   'op.hero.help.label': '読み込めない作品について',
   'op.hero.help.cases':
     '<strong>読み込めない・正しく動かない場合:</strong><br>' +
-    '・古い Processing(Java) 形式の作品（OpenProcessing のエンジンモードが p5js 以外: pjs / applet など）<br>' +
+    '・古い Processing(Java) 形式の作品（OpenProcessing のエンジンモードが pjs / applet など）<br>' +
     '・OpenProcessing 外のサイトから直接アセットを読む作品（読み込み先が CORS を許可していない場合）<br>' +
     '・コード内で URL を動的に組み立ててアセットを読む作品<br>' +
     '・非公開・削除済みの作品<br>' +
@@ -246,7 +246,7 @@ const ja: Record<keyof typeof en, string> = {
   'op.hero.help.cases.noProxy':
     '<strong>読み込めない・正しく動かない場合:</strong><br>' +
     '・アップロードされたアセットを使う作品全般（asset proxy 未設定のため）<br>' +
-    '・古い Processing(Java) 形式の作品（OpenProcessing のエンジンモードが p5js 以外: pjs / applet など）<br>' +
+    '・古い Processing(Java) 形式の作品（OpenProcessing のエンジンモードが pjs / applet など）<br>' +
     '・OpenProcessing 外のサイトから直接アセットを読む作品（読み込み先が CORS を許可していない場合）<br>' +
     '・非公開・削除済みの作品',
 
@@ -268,7 +268,7 @@ const ja: Record<keyof typeof en, string> = {
   'sketchError.rateLimit.retryNow': '今すぐ再試行',
   'sketchError.unsupported.title': '未対応のエンジン',
   'sketchError.unsupported.message':
-    'この作品のエンジンには dropcaster がまだ対応していません{modeNote}。現在は <strong>p5js</strong> モードの作品のみ表示できます。',
+    'この作品のエンジンには dropcaster がまだ対応していません{modeNote}。現在は <strong>p5js</strong> / <strong>html</strong> モードの作品のみ表示できます。',
   'sketchError.unsupported.modeNote': '（検出: <code>{mode}</code>）',
   'sketchError.unsupported.openOnOp': 'OpenProcessing で開く',
   'sketchError.notFound.title': 'スケッチが読み込めませんでした',

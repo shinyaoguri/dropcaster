@@ -5,7 +5,7 @@
 // 同期的なリスト機能 (gallery 用) は持たない (ID は呼び出し側が知っている前提)。
 
 import { OpenProcessingApiClient } from '../../core/modules/op-api-client.js';
-import { assembleOpSketchHtml, hasExternalDeckardAsset } from '../../core/modules/op-sketch-builder.js';
+import { assembleOpSketchHtml, assembleHtmlModeOpSketchHtml, hasExternalDeckardAsset } from '../../core/modules/op-sketch-builder.js';
 import { getConfig } from '../config.js';
 import { API_CONFIG } from '../../core/modules/constants.js';
 import type { Sketch } from '../types/sketch.js';
@@ -43,7 +43,7 @@ export class OpenProcessingSource {
     if (!/^\d+$/.test(id)) throw new Error(`invalid OpenProcessing sketch id: "${sketchId}"`);
 
     const cfg = getConfig();
-    const supportedModes = cfg.supportedOpModes ?? ['p5js'];
+    const supportedModes = cfg.supportedOpModes ?? ['p5js', 'html'];
 
     const [meta, codeTabs] = await Promise.all([
       this.client.getSketch(id),
@@ -56,18 +56,26 @@ export class OpenProcessingSource {
     }
 
     const proxiedAssets = !!cfg.assetProxyBaseUrl;
-    const html = assembleOpSketchHtml({
-      meta,
-      codeTabs,
-      options: {
-        assetProxyBaseUrl: cfg.assetProxyBaseUrl,
-        // proxy 経由なら同一オリジン扱いになるので cors shim は不要だが、
-        // proxy 未設定 (degraded) の場合に最低限の動作確認 (canvas は taint するが setup は走る) を
-        // させるため shim は OFF にしておく。OP の挙動に近くなる。
-        injectCorsShim: false,
-        injectErrorShim: false,
-      },
-    });
+    // html モードはマルチファイル構成（index.html + CSS/JS/GLSL タブ）なので専用の
+    // 組み立てを使う。p5js モードの経路は従来のまま。
+    const html = mode === 'html'
+      ? assembleHtmlModeOpSketchHtml({
+          meta,
+          codeTabs,
+          options: { assetProxyBaseUrl: cfg.assetProxyBaseUrl },
+        })
+      : assembleOpSketchHtml({
+          meta,
+          codeTabs,
+          options: {
+            assetProxyBaseUrl: cfg.assetProxyBaseUrl,
+            // proxy 経由なら同一オリジン扱いになるので cors shim は不要だが、
+            // proxy 未設定 (degraded) の場合に最低限の動作確認 (canvas は taint するが setup は走る) を
+            // させるため shim は OFF にしておく。OP の挙動に近くなる。
+            injectCorsShim: false,
+            injectErrorShim: false,
+          },
+        });
 
     // OP の URL ハンドル (@xxxxx の xxxxx) を userId として扱う。
     const handle = normalizeString(meta.username ?? meta.user?.username);

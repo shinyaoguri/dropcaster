@@ -26,13 +26,13 @@ export interface DropcasterConfig {
   /** Service Worker のキャッシュ名サフィックス。デプロイごとに変えると古い shell が消える。 */
   cacheVersion?: string;
 
-  /** OpenProcessingSource が許容する mode のリスト。既定は p5js のみ。 */
+  /** OpenProcessingSource が許容する mode のリスト。既定は p5js と html。 */
   supportedOpModes?: string[];
 }
 
 const DEFAULTS: Required<Pick<DropcasterConfig, 'enablePwa' | 'supportedOpModes'>> = {
   enablePwa: true,
-  supportedOpModes: ['p5js'],
+  supportedOpModes: ['p5js', 'html'],
 };
 
 declare global {
