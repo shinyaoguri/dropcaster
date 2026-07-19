@@ -57,3 +57,10 @@ export function assembleLocalOpSketchHtml(params: {
   libraries?: OpSketchLibrary[];
   scriptFiles: string[];
 }): string;
+export function planHtmlModeLocalFiles(params: {
+  codeTabs: OpCodeTab[];
+}): {
+  files: Array<{ name: string; content: string }>;
+  indexName: string;
+  renames: Array<{ from: string; to: string }>;
+};

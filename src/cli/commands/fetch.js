@@ -8,7 +8,7 @@ import { mkdir, writeFile, access, rm } from 'fs/promises';
 import chalk from 'chalk';
 import ora from 'ora';
 import { OpenProcessingApiClient } from '../../core/modules/op-api-client.js';
-import { assembleLocalOpSketchHtml } from '../../core/modules/op-sketch-builder.js';
+import { assembleLocalOpSketchHtml, planHtmlModeLocalFiles } from '../../core/modules/op-sketch-builder.js';
 import {
   extractDeckardUrls,
   downloadAssets,
@@ -16,7 +16,7 @@ import {
 } from '../../core/modules/asset-downloader.js';
 import { t } from '../i18n/index.js';
 
-const SUPPORTED_MODES = ['p5js'];
+const SUPPORTED_MODES = ['p5js', 'html'];
 
 export async function fetchCommand(idArg, options = {}) {
   const projectRoot = process.cwd();
@@ -76,36 +76,60 @@ export async function fetchCommand(idArg, options = {}) {
     console.log(chalk.yellow(`⚠ Skipping ${assetUrls.length} external asset(s) (--no-assets). The sketch will require network access to OpenProcessing CDN.`));
   }
 
-  // code タブを別ファイルに書き出す。orderID 昇順。
+  // code タブをファイルに書き出す。orderID 昇順。
+  //   p5js: 各タブを .js に揃え、テンプレートの index.html から <script src> で参照する
+  //   html: タブ構成がそのままファイル構成なので原形で書き出す (index タブ → index.html)。
+  //         タブが実ファイルになるため、viewer 版のようなインライン展開や fetch shim は不要
   const sorted = [...codeTabs].sort((a, b) => (a.orderID ?? 0) - (b.orderID ?? 0));
-  const scriptFiles = [];
-  const usedNames = new Set();
-  for (const tab of sorted) {
-    // OP のタブ名は "mySketch.js" のように拡張子付きのことがあるので、
-    // .js を二重に付けない（mySketch.js.js になっていた）
-    const base = sanitizeFilename(tab.title || `tab${tab.orderID ?? scriptFiles.length}`)
-      .replace(/\.js$/i, '') || 'untitled';
-    let name = `${base}.js`;
-    // 衝突回避 (同名タブが OP 上にあった場合に備える)
-    let suffix = 2;
-    while (usedNames.has(name)) {
-      name = `${base}_${suffix}.js`;
-      suffix++;
+  let writtenFiles;
+  if (meta.mode === 'html') {
+    let plan;
+    try {
+      plan = planHtmlModeLocalFiles({ codeTabs: sorted });
+    } catch {
+      console.error(chalk.red(`❌ ${t('fetch.noIndexTab')}`));
+      process.exit(1);
     }
-    usedNames.add(name);
-    const rewritten = rewriteCodeWithAssetMap(tab.code || '', assetMap);
-    await writeFile(join(outDir, name), rewritten, 'utf-8');
-    scriptFiles.push(name);
-    if (options.verbose) console.log(chalk.green(`  ✓ ${name}`));
-  }
+    for (const { from, to } of plan.renames) {
+      console.log(chalk.yellow(`⚠ ${t('fetch.tabRenamed', { from, to })}`));
+    }
+    for (const file of plan.files) {
+      const rewritten = rewriteCodeWithAssetMap(file.content, assetMap);
+      await writeFile(join(outDir, file.name), rewritten, 'utf-8');
+      if (options.verbose) console.log(chalk.green(`  ✓ ${file.name}`));
+    }
+    writtenFiles = plan.files.map(f => f.name);
+  } else {
+    const scriptFiles = [];
+    const usedNames = new Set();
+    for (const tab of sorted) {
+      // OP のタブ名は "mySketch.js" のように拡張子付きのことがあるので、
+      // .js を二重に付けない（mySketch.js.js になっていた）
+      const base = sanitizeFilename(tab.title || `tab${tab.orderID ?? scriptFiles.length}`)
+        .replace(/\.js$/i, '') || 'untitled';
+      let name = `${base}.js`;
+      // 衝突回避 (同名タブが OP 上にあった場合に備える)
+      let suffix = 2;
+      while (usedNames.has(name)) {
+        name = `${base}_${suffix}.js`;
+        suffix++;
+      }
+      usedNames.add(name);
+      const rewritten = rewriteCodeWithAssetMap(tab.code || '', assetMap);
+      await writeFile(join(outDir, name), rewritten, 'utf-8');
+      scriptFiles.push(name);
+      if (options.verbose) console.log(chalk.green(`  ✓ ${name}`));
+    }
 
-  // index.html を書く (既存ローカル sketch と同じ形式)
-  const html = assembleLocalOpSketchHtml({
-    engineURL: meta.engineURL,
-    libraries: meta.libraries,
-    scriptFiles,
-  });
-  await writeFile(join(outDir, 'index.html'), html, 'utf-8');
+    // index.html を書く (既存ローカル sketch と同じ形式)
+    const html = assembleLocalOpSketchHtml({
+      engineURL: meta.engineURL,
+      libraries: meta.libraries,
+      scriptFiles,
+    });
+    await writeFile(join(outDir, 'index.html'), html, 'utf-8');
+    writtenFiles = [...scriptFiles, 'index.html'];
+  }
 
   // _op-meta.json: scan が userData に流用できる、また再 fetch / 更新検出用
   const opMeta = {
@@ -131,7 +155,7 @@ export async function fetchCommand(idArg, options = {}) {
 
   console.log();
   console.log(chalk.green(t('fetch.completed', { dir: `sketches/sketch${visualID}/` })));
-  console.log(chalk.dim(`   ${scriptFiles.length} code file(s), ${assetMap.size} asset(s), index.html, _op-meta.json`));
+  console.log(chalk.dim(`   ${writtenFiles.length} file(s) (incl. index.html), ${assetMap.size} asset(s), _op-meta.json`));
   console.log();
   console.log(chalk.cyan(t('fetch.nextSteps')));
   console.log(chalk.cyan(t('fetch.scanHint')));

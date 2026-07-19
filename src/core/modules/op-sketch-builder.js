@@ -266,6 +266,116 @@ function buildTabFetchShim(files) {
 }
 
 /**
+ * OP の HTML モード作品を、ローカル sketch ディレクトリのファイル群として
+ * 書き出すための計画を立てる。`dropcaster fetch` の html モード経路が使う。
+ *
+ * viewer 用の assembleHtmlModeOpSketchHtml と違い、ローカルではタブを
+ * 実ファイルとして書き出せるため、インライン展開も fetch/XHR shim も不要 —
+ * 作者の `<script src="mySketch.js">` や `loadShader('vert.glsl')` は
+ * ファイルがそこにあれば素で解決する。この関数はファイル名の決定
+ * （安全化・衝突回避）だけを担い、アセット URL の書き換えは呼び出し側が
+ * rewriteCodeWithAssetMap で行う。
+ *
+ * 規則:
+ *   - index タブ（findIndexTabName と同じ規則）は常に `index.html` として
+ *     書き出す（ローカル sketch 形式で scan が必須とする名前）
+ *   - 他のタブは原形保存が基本。パス区切り・制御文字などの危険名と、
+ *     予約名（`_op-meta.json`）・大文字小文字無視での衝突だけ付け替える
+ *     （大文字小文字を無視するのは case-insensitive なファイルシステム対策）
+ *   - 付け替えが起きたら全タブ内容中の旧名参照を新名に置換し、renames で返す。
+ *     ただし旧名が最終的なファイル名集合にも残っている場合（同名タブの重複など）
+ *     は参照先が曖昧なので書き換えない
+ *
+ * @param {object} params
+ * @param {Array} params.codeTabs   /api/sketch/{id}/code のレスポンス
+ * @returns {{ files: Array<{name: string, content: string}>, indexName: string,
+ *            renames: Array<{from: string, to: string}> }}
+ * @throws {Error} index.html 相当のタブが見つからない場合
+ */
+export function planHtmlModeLocalFiles({ codeTabs }) {
+  const tabs = [];
+  const namesForIndexLookup = new Map();
+  for (const tab of Array.isArray(codeTabs) ? codeTabs : []) {
+    const name = String(tab?.title ?? '').trim();
+    if (!name) continue;
+    tabs.push({ name, code: String(tab?.code ?? '') });
+    if (!namesForIndexLookup.has(name)) namesForIndexLookup.set(name, true);
+  }
+
+  const indexName = findIndexTabName(namesForIndexLookup);
+  if (!indexName) {
+    throw new Error('html-mode sketch has no index.html tab');
+  }
+
+  // 生成物と衝突する名前は付け替える (index.html は index タブが確保する)
+  const usedLower = new Set(['index.html', '_op-meta.json']);
+  const renames = [];
+  const files = [];
+  let indexAssigned = false;
+  for (const tab of tabs) {
+    let outName;
+    if (!indexAssigned && tab.name === indexName) {
+      outName = 'index.html';
+      indexAssigned = true;
+    } else {
+      outName = safeLocalTabName(tab.name);
+      if (usedLower.has(outName.toLowerCase())) {
+        const { stem, ext } = splitTabExt(outName);
+        let suffix = 2;
+        do {
+          outName = `${stem}_${suffix}${ext}`;
+          suffix++;
+        } while (usedLower.has(outName.toLowerCase()));
+      }
+      usedLower.add(outName.toLowerCase());
+    }
+    if (outName !== tab.name) renames.push({ from: tab.name, to: outName });
+    files.push({ name: outName, content: tab.code });
+  }
+
+  // 付け替えたタブへの参照 (<script src> や loadShader の引数など) を新名に揃える。
+  // 逐次置換だと前の置換結果を後の短い from (例: '..') が再置換して壊すので、
+  // 最長マッチ優先の 1 パス同時置換にする。
+  const finalNamesLower = new Set(files.map(f => f.name.toLowerCase()));
+  const rewritable = renames
+    .filter(r => !finalNamesLower.has(r.from.toLowerCase()))
+    .sort((a, b) => b.from.length - a.from.length);
+  if (rewritable.length > 0) {
+    const toByFrom = new Map(rewritable.map(r => [r.from, r.to]));
+    const pattern = new RegExp(rewritable.map(r => escapeRegExp(r.from)).join('|'), 'g');
+    for (const file of files) {
+      file.content = file.content.replace(pattern, m => toByFrom.get(m));
+    }
+  }
+
+  return { files, indexName, renames };
+}
+
+/**
+ * タブ名をローカル書き出しに安全なフラットなファイル名へ変換する。
+ * 原形保存が基本 — 典型的なタブ名 (mySketch.js, vert.glsl) はそのまま通り、
+ * パス区切り・制御文字・Windows で使えない文字だけ '_' に置き換える。
+ * '.' / '..' そのものはディレクトリ参照になるので固定名に落とす。
+ */
+function safeLocalTabName(name) {
+  const cleaned = String(name)
+    .replace(/[\\/]+/g, '_')
+    .replace(/[\x00-\x1f<>:"|?*]+/g, '_');
+  if (!cleaned || /^\.+$/.test(cleaned)) return '_tab';
+  return cleaned;
+}
+
+/** 'foo.min.js' → { stem: 'foo.min', ext: '.js' }。拡張子なしは ext ''。 */
+function splitTabExt(name) {
+  const m = /^(.+?)(\.[^.]*)?$/.exec(name);
+  return { stem: (m && m[1]) || name, ext: (m && m[2]) || '' };
+}
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * 既存のローカル sketch ディレクトリ形式の index.html を組み立てる。
  * `dropcaster fetch` がローカルに書き出すときに使う (各タブを別ファイルにし
  * <script src="*.js"> で参照、エンジンとライブラリは CDN URL のまま)。

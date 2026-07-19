@@ -32,7 +32,7 @@ https://dropcaster.soui.dev/?op=2257553        ← クエリで直接指定（�
 https://dropcaster.soui.dev/op/2257553         ← パスでも可
 ```
 
-- 対応エンジン: 現状 **p5js mode のみ**（段階的に拡張予定）
+- 対応エンジン: **p5js / html mode**（pjs / applet — 古い Processing (Java) スケッチ — は非対応）
 - 外部アセット付き作品（`loadImage` 等）は同レポジトリの Cloudflare Worker が `/op-cdn/*` で CORS proxy するので、tainted せず `captureStream` でき投影マッピングが成立
 - 公開作品のみ（OP の `isPrivate: 0`）
 
@@ -94,10 +94,17 @@ dropcaster fetch 2257553
 # → loadImage('https://deckard...') は自動で 'assets/.../' に書き換わるので
 #   オフラインでも動く完全自己完結な sketch ディレクトリになる
 
+dropcaster fetch 2960706                 # html モードの作品もそのまま取り込める
 dropcaster fetch 2862331 -v              # 詳細ログ
 dropcaster fetch 2257553 --overwrite     # 既存ディレクトリを置き換え
 dropcaster fetch 2257553 --no-assets     # アセット同梱をスキップ（OP CDN 依存のまま）
 ```
+
+対応モードは **p5js / html**。html モードはタブ構成（index.html + JS / CSS / GLSL 等）を
+そのままファイルとして書き出すので、`loadShader('vert.glsl')` のようなタブ参照は
+ローカルファイルで解決されます（index タブは `index.html` として書き出し）。
+既知の制限: 同梱されるのはコード中に **deckard の絶対 URL** で書かれたアセットのみです。
+`loadImage('photo.jpg')` のような fileBase 相対参照のアセットは取得できません（p5js モードも同様）。
 
 #### 方法 2: 手動で配置
 
@@ -181,7 +188,7 @@ npm run build
 新しいギャラリープロジェクトを作成。
 
 ### `dropcaster fetch <id> [options]`
-OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む。既存のローカル sketch と同じ形式（`index.html` + 各タブの `.js` + `assets/`）で書き出すので、`npm run scan` がそのまま処理できる。
+OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（対応モード: p5js / html）。既存のローカル sketch と同じ形式（`index.html` + 各タブのファイル + `assets/`）で書き出すので、`npm run scan` がそのまま処理できる。
 
 オプション:
 - `--no-assets` - 外部アセットをダウンロードしない（OP CDN 直参照のまま、オフライン不可）
