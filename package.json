@@ -46,6 +46,7 @@
     "build:web": "tsc && tsc -p apps/web/tsconfig.json && vite build --config apps/web/vite.config.ts",
     "postbuild:web": "node scripts/stamp-sw-version.js",
     "preview:web": "vite preview --config apps/web/vite.config.ts",
+    "check": "tsc -p tsconfig.node.json",
     "scan": "node src/core/scan-sketches.js --generate-previews --fetch-userdata --write-file",
     "scan:reset": "node src/core/scan-sketches.js --generate-previews --fetch-userdata --write-file --reset",
     "scan:watch": "nodemon --watch sketches --ext html,js,css --exec \"node src/core/scan-sketches.js --watch-mode --write-file\"",
@@ -53,6 +54,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260517.1",
+    "@types/node": "^24.0.0",
     "nodemon": "^3.0.2",
     "typescript": "^6.0.3"
   },

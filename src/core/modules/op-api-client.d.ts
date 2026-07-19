@@ -15,11 +15,19 @@ export interface OpSketchUserInfo {
   sketchUrl: string;
 }
 
+export interface OpSketchUserInfoError {
+  error: string;
+  sketchId: string;
+}
+
+/** `'error' in result` で失敗アームへ narrow する (strictNullChecks が off でも機能する in-narrowing)。 */
+export type OpSketchUserInfoResult = OpSketchUserInfo | OpSketchUserInfoError;
+
 export class OpenProcessingApiClient {
   constructor(options?: OpenProcessingApiClientOptions);
   getSketch(sketchId: string | number): Promise<OpSketchMeta>;
   getSketchCode(sketchId: string | number): Promise<OpCodeTab[]>;
-  getSketchUserInfo(sketchId: string | number): Promise<OpSketchUserInfo | { error: string; sketchId: string }>;
+  getSketchUserInfo(sketchId: string | number): Promise<OpSketchUserInfoResult>;
   getUser(userId: string | number): Promise<Record<string, unknown> | null>;
 }
 
@@ -32,6 +40,6 @@ export class OpenProcessingRateLimitError extends Error {
 export function fetchUserDataForSketches(
   sketchIds: Array<string | number>,
   options?: OpenProcessingApiClientOptions & {
-    onProgress?: (info: { index: number; total: number; sketchId: string | number; result: unknown }) => void;
+    onProgress?: (info: { index: number; total: number; sketchId: string | number; result: OpSketchUserInfoResult }) => void;
   }
-): Promise<Array<OpSketchUserInfo | { error: string; sketchId: string }>>;
+): Promise<OpSketchUserInfoResult[]>;

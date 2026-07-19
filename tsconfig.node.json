@@ -1,0 +1,20 @@
+{
+  // Node 側 plain JS (cli / core / scripts / tests) の型チェック用 (`npm run check`)。
+  // JSDoc + checkJs 方式 — src/core/modules/ の手書き .d.ts がそのまま型情報になる。
+  // viewer (TS) は tsconfig.json、worker は apps/web/tsconfig.json が担う。
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src/cli/**/*.js", "src/core/**/*.js", "scripts/**/*.js", "tests/**/*.js"],
+  // sw-template.js は Service Worker コンテキストで実行されるコードの正本なので
+  // Node の型世界では検査しない (self / caches / FetchEvent 等が前提)
+  "exclude": ["src/cli/utils/sw-template.js"]
+}

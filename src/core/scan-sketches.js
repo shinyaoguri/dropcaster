@@ -175,7 +175,7 @@ async function scanSketches(options = {}) {
           ...fetchOptions,
           onProgress: ({ index, total, sketchId, result }) => {
             const counter = `[${String(index).padStart(padTotal, ' ')}/${total}]`;
-            if (result.error) {
+            if ('error' in result) {
               console.error(`   ${counter} sketch${sketchId} → ❌ ${result.error}`);
             } else {
               const author = result.userName || '(unknown)';
@@ -188,7 +188,7 @@ async function scanSketches(options = {}) {
         let updated = 0;
         let errors = 0;
         for (const userData of userDataResults) {
-          if (userData.error) {
+          if ('error' in userData) {
             await writeManualMetadataTemplate(userData.sketchId, userData.error);
             errors++;
             continue;
