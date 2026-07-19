@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   assembleOpSketchHtml,
   assembleHtmlModeOpSketchHtml,
+  planHtmlModeLocalFiles,
 } from '../src/core/modules/op-sketch-builder.js';
 
 const PROXY = '/op-cdn';
@@ -66,6 +67,81 @@ test('html mode: throws when there is no index.html tab', () => {
   const fx = htmlModeFixture();
   fx.codeTabs = fx.codeTabs.filter(t => t.title !== 'index.html');
   assert.throws(() => assembleHtmlModeOpSketchHtml({ ...fx, options: {} }), /index\.html/);
+});
+
+// --- planHtmlModeLocalFiles (`dropcaster fetch` の html モード用ローカル書き出し計画) ---
+
+test('html-mode local plan: tabs become files verbatim, index tab becomes index.html', () => {
+  const { codeTabs } = htmlModeFixture();
+  const plan = planHtmlModeLocalFiles({ codeTabs });
+
+  const names = plan.files.map(f => f.name).sort();
+  assert.deepEqual(names, ['frag.glsl', 'index.html', 'mySketch.js', 'style.css', 'vert.glsl']);
+  assert.equal(plan.indexName, 'index.html');
+  assert.equal(plan.renames.length, 0);
+  // 作者のドキュメントはそのまま (viewer 版と違いインライン化しない)
+  const index = plan.files.find(f => f.name === 'index.html');
+  assert.ok(index.content.includes('<script src="mySketch.js"></script>'), 'tab script src kept as-is');
+  assert.ok(index.content.includes('href="style.css"'), 'stylesheet link kept as-is');
+});
+
+test('html-mode local plan: first .html tab is renamed to index.html and references follow', () => {
+  const codeTabs = [
+    { title: 'main.html', orderID: 0, code: '<html><head><script src="app.js"></script></head></html>' },
+    { title: 'app.js', orderID: 1, code: "fetch('main.html')" },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs });
+
+  assert.equal(plan.indexName, 'main.html');
+  assert.deepEqual(plan.renames, [{ from: 'main.html', to: 'index.html' }]);
+  const app = plan.files.find(f => f.name === 'app.js');
+  assert.ok(app.content.includes("fetch('index.html')"), 'reference to renamed document rewritten');
+});
+
+test('html-mode local plan: throws when there is no html tab', () => {
+  assert.throws(
+    () => planHtmlModeLocalFiles({ codeTabs: [{ title: 'a.js', orderID: 0, code: '' }] }),
+    /index\.html/,
+  );
+});
+
+test('html-mode local plan: unsafe and reserved tab names are made safe, references rewritten', () => {
+  const codeTabs = [
+    { title: 'index.html', orderID: 0, code: '<script src="../evil.js"></script><a href="_op-meta.json">m</a>' },
+    { title: '../evil.js', orderID: 1, code: 'x' },
+    { title: '_op-meta.json', orderID: 2, code: '{}' },
+    { title: '..', orderID: 3, code: 'y' },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs });
+
+  const names = plan.files.map(f => f.name);
+  assert.ok(names.includes('.._evil.js'), 'path separator flattened');
+  assert.ok(names.includes('_op-meta_2.json'), 'reserved name suffixed');
+  assert.ok(names.includes('_tab'), 'dot-only name replaced');
+  // どの名前もディレクトリ参照にならない
+  for (const n of names) {
+    assert.ok(!n.includes('/') && !n.includes('\\') && n !== '..' && n !== '.', `safe name: ${n}`);
+  }
+  // 参照書き換えが index.html にも効いている
+  const index = plan.files.find(f => f.name === 'index.html');
+  assert.ok(index.content.includes('src=".._evil.js"'), 'unsafe script ref rewritten');
+  assert.ok(index.content.includes('href="_op-meta_2.json"'), 'reserved-name ref rewritten');
+});
+
+test('html-mode local plan: duplicate tab names are deduped case-insensitively, ambiguous refs untouched', () => {
+  const codeTabs = [
+    { title: 'index.html', orderID: 0, code: '<script src="sketch.js"></script>' },
+    { title: 'Sketch.js', orderID: 1, code: 'a' },
+    { title: 'sketch.js', orderID: 2, code: 'b' },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs });
+
+  const names = plan.files.map(f => f.name);
+  assert.ok(names.includes('Sketch.js'), 'first occurrence keeps its name');
+  assert.ok(names.includes('sketch_2.js'), 'case-insensitive duplicate suffixed');
+  // 'sketch.js' は Sketch.js として存在し続ける (case-insensitive FS) ため、参照は書き換えない
+  const index = plan.files.find(f => f.name === 'index.html');
+  assert.ok(index.content.includes('src="sketch.js"'), 'ambiguous reference left untouched');
 });
 
 test('p5js mode: assembleOpSketchHtml is unchanged by the html-mode addition', () => {
