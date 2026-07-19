@@ -62,6 +62,14 @@ npx /path/to/dropcaster init my-gallery
 - npm へ公開する場合: `prepublishOnly` が `npm run build` を走らせる（成果物の dist はパッケージには
   含めず、消費側 Vite がビルドする方針 — `package.json` の `files` を参照）。
 
+## CI
+
+- `.github/workflows/ci.yml` — PR と main push で `npm test` と両ビルド
+  （`npm run build` / `npm run build:web`、それぞれ tsc を含む）を検証する。
+  PR は CI が green であることを merge の前提とする。
+- `.github/workflows/deploy.yml` — main への push（対象パス変更時）で
+  Cloudflare Workers へデプロイする。
+
 ## 検討して断念した方向
 
 将来同じ検討を繰り返さないための記録。再挑戦するときはまずここを読む。
