@@ -234,8 +234,16 @@ export default {
   display: 'standalone',               // 'standalone' | 'fullscreen' | 'minimal-ui' | 'browser'
   start_url: '/',
   // base: '/my-gallery/',             // GitHub Pages のサブパスなど（dropcaster build --base でも可）
+  // assetProxyBaseUrl: '/op-cdn',     // OP CDN の CORS proxy（下記参照）
 }
 ```
+
+`assetProxyBaseUrl` を設定すると、viewer は OpenProcessing 作品のアセット URL
+（`deckard.openprocessing.org`）をその proxy 経由に書き換えます。`fetch --no-assets` した
+作品や手動配置の OP 作品でも `captureStream` が tainted にならず投影マッピングできます
+（fetch のデフォルトはアセット同梱なので通常は不要）。proxy 本体は自分でデプロイして
+ください — ホスト版の [apps/web/src/worker.ts](apps/web/src/worker.ts) の `/op-cdn` 実装が
+そのまま参考になります。
 
 ## プロジェクト構造（`dropcaster init` で作る user gallery）
 

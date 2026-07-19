@@ -33,6 +33,15 @@ export default {
   // dropcaster build --base <path> でも指定可。未指定なら '/'。
   // base: '/',
 
+  // OpenProcessing CDN (deckard.openprocessing.org) の CORS proxy ベース URL。
+  // 設定すると viewer は OP 作品のアセット URL をこの proxy 経由に書き換え、
+  // captureStream が tainted にならず投影マッピングできるようになります
+  // （`dropcaster fetch --no-assets` した作品や手動配置の OP 作品向け。
+  //   fetch のデフォルトはアセット同梱なので通常は不要）。
+  // 同一オリジン下のパス推奨（例: '/op-cdn'）。proxy 本体は自分でデプロイして
+  // ください（ホスト版の apps/web/src/worker.ts の /op-cdn 実装が参考になります）。
+  // assetProxyBaseUrl: '/op-cdn',
+
   // カスタムアイコン: public/icon.png（512x512）または public/icon.svg を置けば
   // 自動で manifest に組み込まれます。どちらも無ければデフォルトの SVG が生成されます。
 };
