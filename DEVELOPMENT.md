@@ -62,8 +62,21 @@ npx /path/to/dropcaster init my-gallery
 - npm へ公開する場合: `prepublishOnly` が `npm run build` を走らせる（成果物の dist はパッケージには
   含めず、消費側 Vite がビルドする方針 — `package.json` の `files` を参照）。
 
+## 検討して断念した方向
+
+将来同じ検討を繰り返さないための記録。再挑戦するときはまずここを読む。
+
+- **カメラ校正による投影面同期（2026-07-18 断念）** — Web カメラ + グレイコード構造化光で
+  「画面ピクセル ↔ 物理投影面」を校正し、出力段を CSS `matrix3d` から WebGL mesh warp に
+  作り替えて、投影面の写真空間でオフライン制作する構想。PoC まで実施し、WebGL mesh warp の
+  性能自体は成立を確認（実測 2026-06-16: 4K ソース 1 枚 = 120fps、3 枚 = 約 20fps）したが、
+  校正パイプライン（グレイコード投影 → 撮影 → 密対応 → メッシュ生成）の実装難度が高く断念。
+  関連ブランチ `feat/projection-calibration` は削除済み（最終コミット `62d3de1`。PoC 2 本
+  `poc/webgl-mesh-warp/`・`poc/graycode-calibration/` と `src/viewer/calibration/` を含む）。
+  現行の手動コーナーピン（CSS `matrix3d`）を維持する。
+
 ## 注意点 / 既知の TODO
 
-- `src/cli/` と `src/core/` は plain JS で、TypeScript チェックも ESLint も入っていない（要検討）。
+- `src/cli/` と `src/core/` は plain JS で、TypeScript チェックも ESLint も入っていない（[#33](https://github.com/shinyaoguri/dropcaster/issues/33)）。
 - 自動テスト: `npm test` で `node --test` ベースの最小回帰テストが走る（`tests/`）。現状カバーしているのは Service Worker 生成（`generateServiceWorker`）と scan の description 保持。新機能を入れたら、回帰しやすい純粋関数・生成物は同様に追加してほしい。
 - `dropcaster doctor` で FFmpeg / Chromium / Node の有無を確認できる。
