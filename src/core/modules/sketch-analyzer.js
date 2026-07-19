@@ -6,6 +6,29 @@ import { t } from '../../cli/i18n/index.js';
 /**
  * 個別のスケッチを分析
  */
+/**
+ * @typedef {object} SketchInfo
+ * @property {string} id
+ * @property {string} title
+ * @property {string} description
+ * @property {string} path
+ * @property {string} type
+ * @property {string[]} tags
+ * @property {string[]} interactiveElements
+ * @property {string} lastModified
+ * @property {string} [sketchUrl]
+ * @property {string} [previewGif]
+ * @property {object} [userData]
+ * @property {Set<string>} [__manualMetadataFields]  手動メタデータで明示指定された
+ *   フィールド名 (defineProperty で付与される non-enumerable な内部フィールド。
+ *   sketches.json には出力されない)
+ */
+
+/**
+ * @param {string} dirName
+ * @param {string} sketchPath
+ * @returns {Promise<SketchInfo | null>}
+ */
 export async function analyzeSketch(dirName, sketchPath) {
   try {
     const indexPath = join(sketchPath, 'index.html');

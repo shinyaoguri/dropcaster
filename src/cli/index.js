@@ -53,7 +53,7 @@ program
   .option('-p, --port <port>', 'Port to use', '4173')
   .option('-h, --host <host>', 'Host to use', 'localhost')
   .option('-o, --output <dir>', 'Output directory', 'dist')
-  .action(preview);
+  .action(async (options) => { await preview(options); });
 
 program
   .command('scan')

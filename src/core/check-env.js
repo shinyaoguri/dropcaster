@@ -111,7 +111,12 @@ export async function checkPreviewTools() {
   return { ok: missing.length === 0, missing, ffmpeg, chromium };
 }
 
-// レポートを人間向けの文字列に整形する。何も出すものが無ければ null。
+/**
+ * レポートを人間向けの文字列に整形する。何も出すものが無ければ null。
+ * @param {{ node: any, ffmpeg: any, chromium: any }} report
+ * @param {{ onlyProblems?: boolean, title?: string }} [options]
+ * @returns {string | null}
+ */
 export function formatEnvReport(report, { onlyProblems = false, title } = {}) {
   const resolvedTitle = title ?? t('env.title');
   const items = [report.node, report.ffmpeg, report.chromium];

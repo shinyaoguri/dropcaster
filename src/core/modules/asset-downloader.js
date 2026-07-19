@@ -54,7 +54,7 @@ export function localPathForUrl(absUrl) {
  * @param {string[]} urls
  * @param {string} outDir
  * @param {object} [opts]
- * @param {(info: { url: string, size: number, localPath: string }) => void} [opts.onProgress]
+ * @param {(info: { url: string, size: number, localPath: string, error?: string }) => void} [opts.onProgress]
  * @returns {Promise<Map<string,string>>}  abs URL -> ローカル相対パスの Map
  */
 export async function downloadAssets(urls, outDir, opts = {}) {

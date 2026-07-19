@@ -26,6 +26,10 @@ async function runScan(projectRoot, extraArgs = []) {
   });
 }
 
+/**
+ * @param {string} projectRoot
+ * @param {{ dirName?: string, html?: string, manualMetadata?: object | null }} [options]
+ */
 async function setupSketch(projectRoot, { dirName = 'foo', html, manualMetadata = null } = {}) {
   const sketchDir = join(projectRoot, 'sketches', dirName);
   await mkdir(sketchDir, { recursive: true });
