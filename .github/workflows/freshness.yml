@@ -1,0 +1,78 @@
+# 週次の陳腐化検知。PR CI では捉えられない「時間経過で壊れるもの」を拾う:
+#   1. Markdown のリンク切れ (README/DEVELOPMENT が指す外部ドキュメント・Issue・ホスト版 URL)
+#   2. npm audit の高深刻度 (overrides での抑え込みが効いているかの確認 — DEVELOPMENT.md 参照)
+# 検知したら label:freshness の Issue へ自動起票する (open が既にあればコメント追記)。
+name: Freshness
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # 毎週月曜 09:00 JST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # overrides で undici を引き上げているのが効かなくなったら気付きたい。
+      # 落としてしまうと以降のステップが走らないので continue-on-error。
+      - name: 脆弱性チェック (npm audit)
+        id: audit
+        continue-on-error: true
+        run: npm audit --audit-level=high 2>&1 | tee audit-report.txt
+
+      - name: リンク切れチェック (lychee)
+        id: lychee
+        uses: lycheeverse/lychee-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          args: --no-progress './**/*.md'
+          output: lychee-report.md
+          fail: false
+
+      - name: ドリフトを Issue へ起票
+        if: steps.audit.outcome == 'failure' || steps.lychee.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "週次 freshness チェックがドリフトを検知した。"
+            echo
+            echo "## 脆弱性チェック (npm audit --audit-level=high)"
+            echo '```'
+            cat audit-report.txt 2>/dev/null || echo "(green)"
+            echo '```'
+            echo
+            echo "## リンクチェック (lychee)"
+            cat lychee-report.md 2>/dev/null || echo "(green)"
+            echo
+            echo "workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > issue-body.md
+          gh label create freshness --description "陳腐化・ドリフトの検知/報告" --color C2E0C6 --force
+          # 相乗り防止: 自動レポート Issue (タイトル完全一致) だけを重複判定の対象にする。
+          # label:freshness 全体でマッチさせると、手動起票のドリフト報告に週次レポートが追記されてしまう
+          existing=$(gh issue list --label freshness --state open --json number,title \
+            --jq '[.[] | select(.title == "freshness: 週次チェックがドリフトを検知")][0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            gh issue create --title "freshness: 週次チェックがドリフトを検知" --label freshness --body-file issue-body.md
+          fi
+
+      - name: 検知があれば run を赤にする
+        if: steps.audit.outcome == 'failure' || steps.lychee.outputs.exit_code != '0'
+        run: exit 1
