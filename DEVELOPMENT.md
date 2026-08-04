@@ -81,10 +81,15 @@ peerOptional `@cloudflare/workers-types` が major 更新されるたびに ERES
 - CI の `wrangler deploy --dry-run`（API トークン不要）で、デプロイ経路の破損を PR 時点で検出する
 - `@cloudflare/workers-types` は wrangler の peer に合わせて上げる（現在 v5 系）
 
-代償として wrangler の推移的依存（miniflare → undici）が `npm audit` に出る。CI でしか
-実行されない devDependency で、配布物（`package.json` の `files`）にも入らないため許容する。
-undici は wrangler 側が上げるまでこちらでは解消できない（`npm audit fix --force` は
-wrangler のダウングレードを提案してくるので実行しないこと）。
+wrangler を入れると推移的依存の undici（wrangler → miniflare → undici）が付いてくる。
+miniflare が `undici: "7.28.0"` と exact pin していて advisory の patched（>= 7.29.0）に
+届かないので、`package.json` の `overrides` で `undici: ^7.29.0` に引き上げている。
+これがないと `npm audit` に 3 件出るうえ、dependabot の security update が
+「推移的依存なので上げられない」と毎回失敗し、その失敗が常態化してしまう。
+
+- override を消してよいのは、wrangler / miniflare 側が undici の patched 版に追いついたとき
+- `npm audit fix --force` は wrangler のダウングレードを提案してくるので実行しないこと
+- override 下でも `wrangler dev`（miniflare 経由）が起動して 200 を返すことは確認済み
 
 ## 検討して断念した方向
 
