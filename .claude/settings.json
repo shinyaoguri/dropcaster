@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(npm test:*)",
+      "Bash(npm run check)",
+      "Bash(npm run build)",
+      "Bash(npm run build:web)",
+      "Bash(npm run scan)",
+      "Bash(npm run scan:*)",
+      "Bash(npm ls:*)",
+      "Bash(npm outdated:*)",
+      "Bash(npm audit)",
+      "Bash(npm audit --audit-level:*)",
+      "Bash(npx tsc --noEmit:*)",
+      "Bash(node --check:*)",
+      "Bash(node --test:*)",
+      "Bash(node src/cli/index.js --help)",
+      "Bash(node src/cli/index.js doctor)",
+      "Bash(node src/cli/index.js scan --help)",
+      "Bash(./scripts/check-pr-title.sh)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)",
+      "Bash(git fetch:*)",
+      "Bash(git stash list)",
+      "Bash(git check-ignore:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh workflow list:*)"
+    ]
+  }
+}
