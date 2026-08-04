@@ -66,43 +66,31 @@ npx /path/to/dropcaster init my-gallery
 
 - `.github/workflows/ci.yml` — PR と main push で `npm test` と両ビルド
   （`npm run build` / `npm run build:web`、それぞれ tsc を含む）、加えて
-  `wrangler deploy --dry-run` を検証する。PR は CI が green であることを merge の前提とする。
+  `wrangler deploy --dry-run` を検証する。PR は CI が green であることを merge の前提とする
+  （`verify` ジョブは main のブランチ保護で必須チェックに設定済み）。
+  PR 時は `pr-policy` ジョブが `scripts/check-pr-title.sh` で PR タイトルの
+  Conventional Commits 形式も検査する（squash merge でタイトルがそのまま履歴に残るため）。
 - `.github/workflows/deploy.yml` — main への push（対象パス変更時）で
   Cloudflare Workers へデプロイする。
+- `.github/workflows/freshness.yml` — 週次（月曜 09:00 JST）で `npm audit` と
+  Markdown のリンク切れを検査し、検知したら label:freshness の Issue へ自動起票する。
+- `.github/dependabot.yml` — npm と GitHub Actions の定期 version update（cooldown 7 日）。
 
 ### wrangler は devDependency で固定し、直接呼ぶ
 
-デプロイは `cloudflare/wrangler-action` ではなく `npx wrangler deploy` を直接実行する。
-action は自前で `npm i wrangler@4` を走らせて毎回最新版を引くため、wrangler の
-peerOptional `@cloudflare/workers-types` が major 更新されるたびに ERESOLVE で落ちる。
-実際 2026-07-19〜08-04 の 6 回、CI は green のままデプロイだけが失敗し続けた（[#44](https://github.com/shinyaoguri/dropcaster/issues/44)）。
+デプロイは `cloudflare/wrangler-action` ではなく `npx wrangler deploy` を直接実行し、
+wrangler は `devDependencies` に置いて lockfile で版を固定する。`@cloudflare/workers-types`
+は wrangler の peer に合わせて上げる（現在 v5 系）。推移的依存の undici は
+`package.json` の `overrides` で `^7.29.0` に引き上げてある。
 
-- wrangler は `devDependencies` に置き、版は lockfile と dependabot PR + CI で管理する
-- CI の `wrangler deploy --dry-run`（API トークン不要）で、デプロイ経路の破損を PR 時点で検出する
-- `@cloudflare/workers-types` は wrangler の peer に合わせて上げる（現在 v5 系）
+**この override を消さないこと**、`npm audit fix --force` を実行しないこと。
+背景と、消したときに何が起きるかは
+[ADR 0004](docs/decisions/0004-wrangler-as-pinned-devdependency.md) を参照。
 
-wrangler を入れると推移的依存の undici（wrangler → miniflare → undici）が付いてくる。
-miniflare が `undici: "7.28.0"` と exact pin していて advisory の patched（>= 7.29.0）に
-届かないので、`package.json` の `overrides` で `undici: ^7.29.0` に引き上げている。
-これがないと `npm audit` に 3 件出るうえ、dependabot の security update が
-「推移的依存なので上げられない」と毎回失敗し、その失敗が常態化してしまう。
+## 設計判断の記録
 
-- override を消してよいのは、wrangler / miniflare 側が undici の patched 版に追いついたとき
-- `npm audit fix --force` は wrangler のダウングレードを提案してくるので実行しないこと
-- override 下でも `wrangler dev`（miniflare 経由）が起動して 200 を返すことは確認済み
-
-## 検討して断念した方向
-
-将来同じ検討を繰り返さないための記録。再挑戦するときはまずここを読む。
-
-- **カメラ校正による投影面同期（2026-07-18 断念）** — Web カメラ + グレイコード構造化光で
-  「画面ピクセル ↔ 物理投影面」を校正し、出力段を CSS `matrix3d` から WebGL mesh warp に
-  作り替えて、投影面の写真空間でオフライン制作する構想。PoC まで実施し、WebGL mesh warp の
-  性能自体は成立を確認（実測 2026-06-16: 4K ソース 1 枚 = 120fps、3 枚 = 約 20fps）したが、
-  校正パイプライン（グレイコード投影 → 撮影 → 密対応 → メッシュ生成）の実装難度が高く断念。
-  関連ブランチ `feat/projection-calibration` は削除済み（最終コミット `62d3de1`。PoC 2 本
-  `poc/webgl-mesh-warp/`・`poc/graycode-calibration/` と `src/viewer/calibration/` を含む）。
-  現行の手動コーナーピン（CSS `matrix3d`）を維持する。
+確定した設計判断・検討して断念した方向は [docs/decisions/](docs/decisions/) に
+1 判断 1 ファイルで置く。再挑戦・方針変更のときはまずここを読む。
 
 ## 注意点 / 既知の TODO
 
@@ -112,3 +100,7 @@ miniflare が `undici: "7.28.0"` と exact pin していて advisory の patched
   `sw-template.js` は SW コンテキストのコードなので検査対象外（tsconfig.node.json の exclude 参照）。
 - 自動テスト: `npm test` で `node --test` ベースの最小回帰テストが走る（`tests/`）。現状カバーしているのは Service Worker 生成（`generateServiceWorker`）と scan の description 保持。新機能を入れたら、回帰しやすい純粋関数・生成物は同様に追加してほしい。
 - `dropcaster doctor` で FFmpeg / Chromium / Node の有無を確認できる。
+- `.claude/settings.json` はこのリポジトリで頻繁に使う**読み取り・検証系コマンドだけ**を
+  Claude Code に許可する。書き込み / 破壊系（`npm install`・`git push`・`gh pr create`・
+  `wrangler deploy` など）は都度確認させるため意図的に入れていない。個人の一時的な許可は
+  gitignore 済みの `.claude/settings.local.json` 側に置く。
