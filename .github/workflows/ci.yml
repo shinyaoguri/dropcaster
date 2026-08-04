@@ -38,3 +38,11 @@ jobs:
 
       - name: Build hosted web app
         run: npm run build:web
+
+      # デプロイ経路の破損を PR 時点で検出する (#44 は CI が緑のまま deploy.yml だけが
+      # 1.5 ヶ月落ち続けていた)。--dry-run は API トークン不要でバンドルまで実行する。
+      - name: Dry-run deploy (Cloudflare Workers)
+        working-directory: apps/web
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        run: npx wrangler deploy --dry-run --outdir="${RUNNER_TEMP}/wrangler-dry-run"
