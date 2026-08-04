@@ -1,0 +1,36 @@
+# 依存と CI 設定の陳腐化防止。security update（脆弱性公表時の即時 PR）は
+# リポジトリ設定側の automated security fixes が担うので、ここは定期の version update だけ。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    # リリース公開から PR 起票までの待機。悪意あるリリースや壊れた版が取り下げられる猶予。
+    # 週次スケジュールなので実質の遅延はほぼない。security update には適用されない
+    # （脆弱性公表時は cooldown を無視して即座に PR が出る）
+    cooldown:
+      default-days: 7
+    # PR タイトルは scripts/check-pr-title.sh（Conventional Commits）を通す必要がある。
+    # 未指定だと Dependabot はコミット履歴からの推測で prefix を決めるため、明示して固定する
+    commit-message:
+      prefix: chore
+    groups:
+      # 個別 PR にすると PR 数が膨らむうえ、vite / tsc 周りは相互にバージョンが絡む
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+    ignore:
+      # wrangler は @cloudflare/workers-types との peer 整合が絡むので手動で上げる
+      # （DEVELOPMENT.md「wrangler は devDependency で固定し、直接呼ぶ」参照）
+      - dependency-name: wrangler
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci

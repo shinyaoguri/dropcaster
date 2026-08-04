@@ -14,7 +14,7 @@ dropcaster — OpenProcessing 作品をブラウザベースの投影マッピ�
 | 課題・タスク・アイデア | GitHub Issue。`.github/ISSUE_TEMPLATE/task.yml` の構成（目的・完了条件・優先度）に合わせて自己完結に書く。起票前に `gh issue list --search` で重複確認 |
 | 作業の進捗・中断時の状態 | 対象 Issue / PR のコメント（何をどこまで・次に何を・詰まった点） |
 | 実装の意図・変更内容・確認方法 | PR 本文。WIP でも Draft PR を早めに開いて経過を残す |
-| 設計判断・検討して断念した方向 | DEVELOPMENT.md |
+| 設計判断・検討して断念した方向 | `docs/decisions/`（軽量 ADR。1 判断 1 ファイル、状態 / 文脈 / 決定 / 影響の 4 節） |
 | 使い方・仕様の変化 | README.md |
 
 - 作業を中断・終了するときは、再開に必要な文脈を上記いずれかに書き残してから終える
@@ -28,8 +28,9 @@ dropcaster — OpenProcessing 作品をブラウザベースの投影マッピ�
 ## 壊してはいけない前提
 
 - スケッチは**同一オリジン・sandbox なし iframe** で実行する。`captureStream` を tainted に
-  しないための意図的設計（README「信頼モデル」）。変更するなら [#35](https://github.com/shinyaoguri/dropcaster/issues/35) の検討を経ること
+  しないための意図的設計（[ADR 0001](docs/decisions/0001-same-origin-sandboxless-iframe.md)）。
+  変更するなら [#35](https://github.com/shinyaoguri/dropcaster/issues/35) の検討を経ること
 - 投影出力の画質は canvas バッキングストア解像度だけで決まる設計。表示ウィンドウ側の
-  解像度に依存させない（README「推奨設定」）
+  解像度に依存させない（[ADR 0002](docs/decisions/0002-canvas-backing-store-decides-quality.md)）
 - `src/viewer/` はユーザーギャラリーとホスト版（`apps/web/`）で共有。viewer の変更は両方の
   経路で確認する

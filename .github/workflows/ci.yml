@@ -4,6 +4,8 @@ name: CI
 
 on:
   pull_request:
+    # edited も対象: pr-policy は PR タイトルを検査するので、タイトル修正で再検査が要る
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
@@ -46,3 +48,18 @@ jobs:
         env:
           WRANGLER_SEND_METRICS: 'false'
         run: npx wrangler deploy --dry-run --outdir="${RUNNER_TEMP}/wrangler-dry-run"
+
+  # squash merge + squash_merge_commit_title=PR_TITLE 設定なので、PR タイトルが
+  # そのまま main のコミットメッセージになる。verify とは失敗の性質が違うので別ジョブ。
+  pr-policy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PR_TITLE: ${{ github.event.pull_request.title }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: PR タイトルの Conventional Commits lint
+        run: ./scripts/check-pr-title.sh
