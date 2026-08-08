@@ -10,6 +10,17 @@ import { t } from '../i18n/index.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+/**
+ * sketches/ を走査して public/sketches.json を更新する（子プロセスで scan-sketches.js を実行）。
+ * @param {object} [options] commander から渡る scan コマンドのオプション
+ * @param {string} [options.sketch]        指定名のスケッチだけ走査する
+ * @param {boolean} [options.previews]     false（--no-previews）ならプレビュー生成を省く
+ * @param {boolean} [options.forcePreview] 最新のプレビューでも再生成する
+ * @param {boolean} [options.reset]        既存プレビューを捨てて作り直す
+ * @param {boolean} [options.fetchUserdata] OpenProcessing Public API で作者・タイトルを取得する
+ * @param {boolean} [options.verbose]      子プロセスの出力をそのまま流す
+ * @returns {Promise<void>} 子プロセスが正常終了したら解決、非 0 終了なら reject
+ */
 export async function scan(options = {}) {
   console.log(chalk.cyan('\n🔍 Scanning sketches...\n'));
 
