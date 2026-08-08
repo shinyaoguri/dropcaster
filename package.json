@@ -56,7 +56,7 @@
     "@cloudflare/workers-types": "^5.20260804.1",
     "@types/node": "^26.1.2",
     "nodemon": "^3.0.2",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "wrangler": "^4.118.0"
   },
   "dependencies": {
