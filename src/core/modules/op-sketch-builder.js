@@ -18,11 +18,15 @@
 
 const DECKARD_HOST = 'https://deckard.openprocessing.org/';
 
+// 型は隣の op-sketch-builder.d.ts が正本（JSDoc からはこの typedef 経由で参照する）
+/** @typedef {import('./op-sketch-builder.js').OpSketchMeta} OpSketchMeta */
+/** @typedef {import('./op-sketch-builder.js').OpCodeTab} OpCodeTab */
+
 /**
  * 指定オプションで HTML を組み立てる。
  * @param {object} params
- * @param {object} params.meta            /api/sketch/{id} のレスポンス
- * @param {Array} params.codeTabs         /api/sketch/{id}/code のレスポンス
+ * @param {OpSketchMeta} params.meta      /api/sketch/{id} のレスポンス
+ * @param {OpCodeTab[]} params.codeTabs   /api/sketch/{id}/code のレスポンス
  * @param {object} [params.options]
  * @param {string} [params.options.assetProxyBaseUrl]
  * @param {boolean} [params.options.injectCorsShim=true]
@@ -103,8 +107,8 @@ export function rewriteAssetUrls(text, assetProxyBaseUrl) {
  * <style> や shim 類（CORS/エラー転送）は注入しない。
  *
  * @param {object} params
- * @param {object} params.meta       /api/sketch/{id} のレスポンス（fileBase を使う）
- * @param {Array} params.codeTabs    /api/sketch/{id}/code のレスポンス
+ * @param {OpSketchMeta} params.meta  /api/sketch/{id} のレスポンス（fileBase を使う）
+ * @param {OpCodeTab[]} params.codeTabs /api/sketch/{id}/code のレスポンス
  * @param {object} [params.options]
  * @param {string} [params.options.assetProxyBaseUrl]
  * @returns {string} iframe.srcdoc にそのまま代入できる HTML
