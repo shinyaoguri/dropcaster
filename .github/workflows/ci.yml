@@ -19,7 +19,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
@@ -59,7 +59,7 @@ jobs:
     env:
       PR_TITLE: ${{ github.event.pull_request.title }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: PR タイトルの Conventional Commits lint
         run: ./scripts/check-pr-title.sh
