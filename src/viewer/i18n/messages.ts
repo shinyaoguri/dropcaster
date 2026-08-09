@@ -8,14 +8,14 @@ const en = {
   'lang.ja': '日本語',
   'lang.toggle.title': 'Switch language',
 
-  // OP ID 入力 (Hero / Inline)
-  'op.hero.subtitle': 'Load an <a href="https://openprocessing.org/" target="_blank" rel="noopener noreferrer" class="op-hero-link">OpenProcessing</a> sketch for projection mapping.',
+  // 作品参照の入力 (Hero / Inline)。OpenProcessing の作品 ID と公開 Gist の両方を受ける
+  'op.hero.subtitle': 'Load an <a href="https://openprocessing.org/" target="_blank" rel="noopener noreferrer" class="op-hero-link">OpenProcessing</a> sketch or a public <a href="https://gist.github.com/" target="_blank" rel="noopener noreferrer" class="op-hero-link">Gist</a> for projection mapping.',
   'op.label': 'Sketch ID or URL',
-  'op.placeholder.hero': 'e.g. 2257553 / https://openprocessing.org/@username/2257553',
-  'op.placeholder.inline': 'OpenProcessing sketch ID / URL',
+  'op.placeholder.hero': 'e.g. 2257553 / https://gist.github.com/username/<gist id>',
+  'op.placeholder.inline': 'OpenProcessing ID / Gist URL',
   'op.submit.hero': 'Load',
   'op.submit.inline': 'Open',
-  'op.error.invalid': 'Enter a valid sketch ID or an OpenProcessing URL.',
+  'op.error.invalid': 'Enter a valid OpenProcessing sketch ID / URL, or a public Gist URL.',
   // assetProxyBaseUrl 設定済み（ホスト版など）: アセットは proxy 経由で読めるのでその旨を伝える。
   // 「mode」は OP のエディタのエンジン種別（p5js / pjs / applet ...）であって p5 を使うかどうかではない。
   // 読者に OP 内部の mode 概念を要求しないよう、除外されるもの（古い Processing(Java) 形式）を直接言う。
@@ -31,13 +31,15 @@ const en = {
     '・Sketches loading assets directly from sites outside OpenProcessing (unless that site allows CORS)<br>' +
     '・Sketches that build asset URLs dynamically in code<br>' +
     '・Private or deleted sketches<br>' +
+    '・Gists without an <code>index.html</code>, and secret or deleted gists<br>' +
     '* Sketches that skip p5.js and use the raw Canvas API / WebGL / WebGPU still work, as long as they were created in the p5.js editor.',
   'op.hero.help.cases.noProxy':
     '<strong>Sketches that may not load or run correctly:</strong><br>' +
     '・Sketches using uploaded assets in general (no asset proxy configured)<br>' +
     '・Old Processing (Java) sketches (OpenProcessing engine modes pjs / applet, etc.)<br>' +
     '・Sketches loading assets directly from sites outside OpenProcessing (unless that site allows CORS)<br>' +
-    '・Private or deleted sketches',
+    '・Private or deleted sketches<br>' +
+    '・Gists without an <code>index.html</code>, and secret or deleted gists',
 
   // ギャラリー
   'gallery.title': 'Sketch Gallery',
@@ -56,6 +58,8 @@ const en = {
   'sketchError.rateLimit.title': 'Rate limit reached',
   'sketchError.rateLimit.message':
     'You have hit the OpenProcessing API rate limit (40 requests/min for anonymous use).',
+  'sketchError.rateLimit.message.gist':
+    'You have hit the GitHub API rate limit (60 requests/hour per IP for anonymous use).',
   'sketchError.rateLimit.countdown': 'Retrying automatically in {sec} seconds',
   'sketchError.rateLimit.retryNow': 'Retry now',
   'sketchError.unsupported.title': 'Unsupported engine',
@@ -63,10 +67,16 @@ const en = {
     'dropcaster does not yet support this sketch engine{modeNote}. Only <strong>p5js</strong> and <strong>html</strong> sketches can be displayed.',
   'sketchError.unsupported.modeNote': ' (detected: <code>{mode}</code>)',
   'sketchError.unsupported.openOnOp': 'Open on OpenProcessing',
+  'sketchError.invalidFormat.title': 'Not a runnable sketch',
+  'sketchError.invalidFormat.message':
+    'The gist was found, but it cannot be run as a sketch. dropcaster needs a gist that contains an <code>index.html</code> — for example one exported from canvastage.',
   'sketchError.notFound.title': 'Could not load sketch',
   'sketchError.notFound.message':
     'Failed to fetch the sketch from OpenProcessing. The ID may be wrong, or the sketch may have been deleted or made private.',
+  'sketchError.notFound.message.gist':
+    'Failed to fetch the gist from GitHub. The ID may be wrong, or the gist may be secret or deleted.',
   'sketchError.notFound.tryOnOp': 'Try opening on OpenProcessing',
+  'sketchError.openGist': 'Open the gist on GitHub',
   'sketchError.home': 'Back to home',
 
   // スライドショー
@@ -226,13 +236,13 @@ const ja: Record<keyof typeof en, string> = {
   'lang.ja': '日本語',
   'lang.toggle.title': '言語を切り替える',
 
-  'op.hero.subtitle': '<a href="https://openprocessing.org/" target="_blank" rel="noopener noreferrer" class="op-hero-link">OpenProcessing</a> の作品を投影マッピング用に読み込みます。',
+  'op.hero.subtitle': '<a href="https://openprocessing.org/" target="_blank" rel="noopener noreferrer" class="op-hero-link">OpenProcessing</a> の作品や公開 <a href="https://gist.github.com/" target="_blank" rel="noopener noreferrer" class="op-hero-link">Gist</a> を投影マッピング用に読み込みます。',
   'op.label': '作品 ID または URL',
-  'op.placeholder.hero': '例: 2257553 / https://openprocessing.org/@username/2257553',
-  'op.placeholder.inline': 'OpenProcessing 作品 ID / URL',
+  'op.placeholder.hero': '例: 2257553 / https://gist.github.com/username/<gist id>',
+  'op.placeholder.inline': 'OpenProcessing の ID / Gist の URL',
   'op.submit.hero': '読み込み',
   'op.submit.inline': '開く',
-  'op.error.invalid': '有効な作品 ID または OpenProcessing の URL を入力してください。',
+  'op.error.invalid': 'OpenProcessing の作品 ID / URL、または公開 Gist の URL を入力してください。',
   'op.hero.footer': 'ほとんどの作品はアセット込みでそのまま読み込めます。',
   'op.hero.footer.noProxy': 'アセットを使う作品は読み込めない場合があります。',
   'op.hero.help.label': '読み込めない作品について',
@@ -242,13 +252,15 @@ const ja: Record<keyof typeof en, string> = {
     '・OpenProcessing 外のサイトから直接アセットを読む作品（読み込み先が CORS を許可していない場合）<br>' +
     '・コード内で URL を動的に組み立ててアセットを読む作品<br>' +
     '・非公開・削除済みの作品<br>' +
+    '・<code>index.html</code> を含まない Gist、Secret / 削除済みの Gist<br>' +
     '※ p5.js を使わず Canvas API / WebGL / WebGPU を直接使う作品も、p5.js エディタで作られたものなら読み込めます',
   'op.hero.help.cases.noProxy':
     '<strong>読み込めない・正しく動かない場合:</strong><br>' +
     '・アップロードされたアセットを使う作品全般（asset proxy 未設定のため）<br>' +
     '・古い Processing(Java) 形式の作品（OpenProcessing のエンジンモードが pjs / applet など）<br>' +
     '・OpenProcessing 外のサイトから直接アセットを読む作品（読み込み先が CORS を許可していない場合）<br>' +
-    '・非公開・削除済みの作品',
+    '・非公開・削除済みの作品<br>' +
+    '・<code>index.html</code> を含まない Gist、Secret / 削除済みの Gist',
 
   'gallery.title': 'スケッチギャラリー',
   'gallery.slideshow': 'スライドショー',
@@ -264,6 +276,8 @@ const ja: Record<keyof typeof en, string> = {
   'sketchError.rateLimit.title': 'レート制限',
   'sketchError.rateLimit.message':
     'OpenProcessing API の 1 分あたりリクエスト上限 (匿名利用で 40 req/min) に当たりました。',
+  'sketchError.rateLimit.message.gist':
+    'GitHub API のリクエスト上限 (匿名利用で 60 req/時・IP 単位) に当たりました。',
   'sketchError.rateLimit.countdown': '{sec} 秒後に自動で再試行します',
   'sketchError.rateLimit.retryNow': '今すぐ再試行',
   'sketchError.unsupported.title': '未対応のエンジン',
@@ -271,10 +285,16 @@ const ja: Record<keyof typeof en, string> = {
     'この作品のエンジンには dropcaster がまだ対応していません{modeNote}。現在は <strong>p5js</strong> / <strong>html</strong> モードの作品のみ表示できます。',
   'sketchError.unsupported.modeNote': '（検出: <code>{mode}</code>）',
   'sketchError.unsupported.openOnOp': 'OpenProcessing で開く',
+  'sketchError.invalidFormat.title': 'スケッチとして実行できません',
+  'sketchError.invalidFormat.message':
+    'Gist は見つかりましたが、スケッチとして実行できませんでした。dropcaster は <code>index.html</code> を含む Gist (canvastage から書き出したものなど) を読み込めます。',
   'sketchError.notFound.title': 'スケッチが読み込めませんでした',
   'sketchError.notFound.message':
     'OpenProcessing から作品を取得できませんでした。ID が間違っているか、作品が削除・非公開になっている可能性があります。',
+  'sketchError.notFound.message.gist':
+    'GitHub から Gist を取得できませんでした。ID が間違っているか、Gist が Secret・削除済みになっている可能性があります。',
   'sketchError.notFound.tryOnOp': 'OpenProcessing で開いてみる',
+  'sketchError.openGist': 'GitHub で Gist を開く',
   'sketchError.home': 'ホームに戻る',
 
   'slideshow.unit.sec': '秒',

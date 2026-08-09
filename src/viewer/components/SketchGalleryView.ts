@@ -1,14 +1,14 @@
 import type { Sketch } from '../types/sketch.js';
 import { SketchCard } from '../ui/components/SketchCard.js';
 import { routeHref } from '../utils/paths.js';
-import { OpIdEntryView } from './OpIdEntryView.js';
+import { OpIdEntryView, type SketchRef } from './OpIdEntryView.js';
 import { t, onLangChange } from '../i18n/index.js';
 import { langSwitcherHtml, wireLangSwitcher } from '../i18n/LanguageSwitcher.js';
 
 export class SketchGalleryView {
   private static langUnsub: (() => void) | null = null;
 
-  static render(sketches: Sketch[], onOpIdSubmit?: (id: string) => void): void {
+  static render(sketches: Sketch[], onSketchRefSubmit?: (ref: SketchRef) => void): void {
     const app = document.querySelector<HTMLDivElement>('#app')!;
     SketchGalleryView.langUnsub?.();
 
@@ -30,7 +30,7 @@ export class SketchGalleryView {
           </div>
         </header>
 
-        ${onOpIdSubmit ? `<div class="op-id-inline">${OpIdEntryView.inlineHtml()}</div>` : ''}
+        ${onSketchRefSubmit ? `<div class="op-id-inline">${OpIdEntryView.inlineHtml()}</div>` : ''}
 
         <div class="gallery-grid">
           ${sketches.map(sketch => SketchCard.render(sketch)).join('')}
@@ -46,9 +46,9 @@ export class SketchGalleryView {
       </div>
     `;
 
-      if (onOpIdSubmit) {
+      if (onSketchRefSubmit) {
         const inline = app.querySelector<HTMLElement>('.op-id-inline');
-        if (inline) OpIdEntryView.wireForm(inline, onOpIdSubmit);
+        if (inline) OpIdEntryView.wireForm(inline, onSketchRefSubmit);
       }
       wireLangSwitcher(app);
     };

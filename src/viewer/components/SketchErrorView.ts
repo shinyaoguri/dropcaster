@@ -1,10 +1,12 @@
 // スケッチ読み込み失敗時のエラー画面 (404 より細かい原因表示)。
 //
 // 出し分け:
-//   - kind: 'rate-limit'        OpenProcessing per-IP 制限。Retry-After を秒で countdown
-//                               + 自動 retry callback
-//   - kind: 'unsupported-mode'  p5js 以外 (processing / shader 等)。OP の作品ページへの
-//                               リンクを案内
+//   - kind: 'rate-limit'        取り込み元の per-IP 制限 (OP / GitHub API)。待機時間を
+//                               秒で countdown + 自動 retry callback
+//   - kind: 'unsupported-mode'  OP で p5js / html 以外 (processing / shader 等)。
+//                               作品ページへのリンクを案内
+//   - kind: 'invalid-format'    取得はできたがスケッチとして実行できない (Gist に
+//                               index.html が無い等)。元ページへのリンクを案内
 //   - kind: 'not-found'         404 / API エラー。ホームに戻る案内
 //
 // 視覚スタイルは既存 .container 系を流用しつつ、専用クラスは少しだけ追加。
@@ -13,7 +15,7 @@ import { routeHref } from '../utils/paths.js';
 import { t, onLangChange } from '../i18n/index.js';
 import { langSwitcherHtml, wireLangSwitcher } from '../i18n/LanguageSwitcher.js';
 
-export type SketchErrorKind = 'rate-limit' | 'unsupported-mode' | 'not-found';
+export type SketchErrorKind = 'rate-limit' | 'unsupported-mode' | 'invalid-format' | 'not-found';
 
 export interface SketchErrorOptions {
   /** rate-limit のとき: Retry-After ヘッダから抽出した待機時間 (ms) */
@@ -22,8 +24,10 @@ export interface SketchErrorOptions {
   onRetry?: () => void;
   /** unsupported-mode のとき: 検出された mode (例: 'processing') */
   mode?: string;
-  /** unsupported-mode / not-found のとき: 元の OP 作品 URL */
+  /** unsupported-mode / invalid-format / not-found のとき: 元の作品ページ URL */
   sketchUrl?: string;
+  /** 取り込み元。sketchUrl のリンク文言を出し分ける。既定は 'op' */
+  source?: 'op' | 'gist';
   /** 任意追加メッセージ (generic な技術詳細) */
   detail?: string;
 }
@@ -45,6 +49,9 @@ export class SketchErrorView {
           break;
         case 'unsupported-mode':
           SketchErrorView.renderUnsupported(app, options);
+          break;
+        case 'invalid-format':
+          SketchErrorView.renderInvalidFormat(app, options);
           break;
         default:
           SketchErrorView.renderNotFound(app, options);
@@ -81,7 +88,7 @@ export class SketchErrorView {
         <div class="sketch-error-icon">⏳</div>
         <h1 class="sketch-error-title">${t('sketchError.rateLimit.title')}</h1>
         <p class="sketch-error-message">
-          ${t('sketchError.rateLimit.message')}
+          ${opts.source === 'gist' ? t('sketchError.rateLimit.message.gist') : t('sketchError.rateLimit.message')}
         </p>
         <p class="sketch-error-countdown">
           ${t('sketchError.rateLimit.countdown', {
@@ -133,6 +140,24 @@ export class SketchErrorView {
     `;
   }
 
+  private static renderInvalidFormat(app: HTMLElement, opts: SketchErrorOptions): void {
+    app.innerHTML = `
+      <div class="container sketch-error">
+        <div class="dc-lang-corner">${langSwitcherHtml()}</div>
+        <div class="sketch-error-icon">📄</div>
+        <h1 class="sketch-error-title">${t('sketchError.invalidFormat.title')}</h1>
+        <p class="sketch-error-message">
+          ${t('sketchError.invalidFormat.message')}
+        </p>
+        ${opts.detail ? `<p class="sketch-error-detail"><code>${escapeHtml(opts.detail)}</code></p>` : ''}
+        <div class="sketch-error-actions">
+          ${SketchErrorView.sourceLinkHtml(opts)}
+          <a href="${routeHref('/')}" class="sketch-error-link">${t('sketchError.home')}</a>
+        </div>
+      </div>
+    `;
+  }
+
   private static renderNotFound(app: HTMLElement, opts: SketchErrorOptions): void {
     app.innerHTML = `
       <div class="container sketch-error">
@@ -140,15 +165,24 @@ export class SketchErrorView {
         <div class="sketch-error-icon">😵</div>
         <h1 class="sketch-error-title">${t('sketchError.notFound.title')}</h1>
         <p class="sketch-error-message">
-          ${t('sketchError.notFound.message')}
+          ${opts.source === 'gist' ? t('sketchError.notFound.message.gist') : t('sketchError.notFound.message')}
         </p>
         ${opts.detail ? `<p class="sketch-error-detail"><code>${escapeHtml(opts.detail)}</code></p>` : ''}
         <div class="sketch-error-actions">
-          ${opts.sketchUrl ? `<a href="${opts.sketchUrl}" target="_blank" rel="noopener" class="sketch-error-button">${t('sketchError.notFound.tryOnOp')}</a>` : ''}
+          ${SketchErrorView.sourceLinkHtml(opts)}
           <a href="${routeHref('/')}" class="sketch-error-link">${t('sketchError.home')}</a>
         </div>
       </div>
     `;
+  }
+
+  /** 元ページへのリンク。文言は取り込み元 (OP / Gist) で出し分ける。 */
+  private static sourceLinkHtml(opts: SketchErrorOptions): string {
+    if (!opts.sketchUrl) return '';
+    const label = opts.source === 'gist'
+      ? t('sketchError.openGist')
+      : t('sketchError.notFound.tryOnOp');
+    return `<a href="${opts.sketchUrl}" target="_blank" rel="noopener" class="sketch-error-button">${label}</a>`;
   }
 }
 
