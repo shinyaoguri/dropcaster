@@ -2,17 +2,17 @@
 
 > ⚠️ **Alpha Version**: This project is under active development. APIs may change.
 
-OpenProcessing の作品をブラウザベースの投影マッピング用ビューアとして使うためのツール。**ホスト版 ([dropcaster.soui.dev](https://dropcaster.soui.dev)) で作品 ID を入れればすぐ動かせる**ほか、**ローカル CLI で自分専用のキュレーションギャラリーを作って公開する**こともできる。
+OpenProcessing の作品や公開 Gist のスケッチを、ブラウザベースの投影マッピング用ビューアとして使うためのツール。**ホスト版 ([dropcaster.soui.dev](https://dropcaster.soui.dev)) で作品 ID や Gist の URL を入れればすぐ動かせる**ほか、**ローカル CLI で自分専用のキュレーションギャラリーを作って公開する**こともできる。
 
 > 🔒 **信頼モデル（重要）**
 >
 > dropcaster は **自分で内容を確認したスケッチを置いて使うツール** です。スケッチは `<iframe>` で読み込まれますが、`sandbox` 属性を付けず親と同じオリジンから配信されるため、スケッチの JS は親ページ（ギャラリー本体）の DOM・`localStorage`・`window.opener`／出力ウィンドウ・他スケッチのキャプチャストリームに**自由にアクセスできます**。
 >
-> したがって、第三者の OpenProcessing 作品などを**無検証のまま大量に投入する用途は想定していません**。任意のスケッチを安全に展示したい場合は、別オリジン配信＋`sandbox` 属性＋協調的な `postMessage` / `captureStream` 受け渡し、といった構成が必要になります（dropcaster 本体には現状その機能はありません）。展示で使うときは取り込んだ `mySketch.js` / `index.html` に目を通すか、信頼できる作者の作品に限定してください。
+> したがって、第三者の OpenProcessing 作品や Gist などを**無検証のまま大量に投入する用途は想定していません**。任意のスケッチを安全に展示したい場合は、別オリジン配信＋`sandbox` 属性＋協調的な `postMessage` / `captureStream` 受け渡し、といった構成が必要になります（dropcaster 本体には現状その機能はありません）。展示で使うときは取り込んだ `mySketch.js` / `index.html` に目を通すか、信頼できる作者の作品に限定してください。
 
 ## 特徴
 
-- 🌐 ホスト版 ([dropcaster.soui.dev](https://dropcaster.soui.dev)) で OpenProcessing 作品 ID を入れて即起動
+- 🌐 ホスト版 ([dropcaster.soui.dev](https://dropcaster.soui.dev)) で OpenProcessing 作品 ID / 公開 Gist の URL を入れて即起動
 - 🎭 ブラウザベースのプロジェクションマッピング（出力ウィンドウ + `matrix3d` ワープ）
 - 📥 `dropcaster fetch <id>` で OP 作品をローカルに取り込み（アセット同梱）
 - 🎨 ローカル CLI でキュレーションギャラリーを生成
@@ -24,17 +24,28 @@ OpenProcessing の作品をブラウザベースの投影マッピング用ビ�
 
 ### A. ホスト版を使う（インストール不要）
 
-[**https://dropcaster.soui.dev**](https://dropcaster.soui.dev) を開いて、OpenProcessing の作品 ID（または URL）を入れるだけ。投影マッピング機能まで全部使える。
+[**https://dropcaster.soui.dev**](https://dropcaster.soui.dev) を開いて、OpenProcessing の作品 ID（または URL）か、公開 Gist の URL を入れるだけ。投影マッピング機能まで全部使える。入力欄はどちらの形式も受け付ける（ID 空間が重ならないので自動で判別する）。
 
 ```
-https://dropcaster.soui.dev/                   ← ID 入力 UI
+https://dropcaster.soui.dev/                   ← 入力 UI
 https://dropcaster.soui.dev/?op=2257553        ← クエリで直接指定（ブックマーク用）
 https://dropcaster.soui.dev/op/2257553         ← パスでも可
+https://dropcaster.soui.dev/gist/<gist id>     ← 公開 Gist（?gist=<gist id> でも可）
 ```
+
+**OpenProcessing の作品**
 
 - 対応エンジン: **p5js / html mode**（pjs / applet — 古い Processing (Java) スケッチ — は非対応）
 - 外部アセット付き作品（`loadImage` 等）は同レポジトリの Cloudflare Worker が `/op-cdn/*` で CORS proxy するので、tainted せず `captureStream` でき投影マッピングが成立
 - 公開作品のみ（OP の `isPrivate: 0`）
+
+**公開 Gist のスケッチ**
+
+- [canvastage](https://github.com/shinyaoguri/canvastage) の「Share to GitHub Gist」で書き出した Gist をそのまま読み込める
+- canvastage 専用ではなく、**`index.html` を含む公開 Gist**なら読み込む。`index.html` から相対参照された Gist 内のファイル（`style.css` / `sketch.js` など）は組み立て時にインライン展開され、CDN の `<script src>` はそのまま残る
+- ライブラリやアセットは作者が書いた絶対 URL（CDN）で読まれる。OP のような proxy は経由しない
+- Secret Gist / 削除済み Gist、`index.html` を含まない Gist は読み込めない
+- 未認証の GitHub API を使うため 60 リクエスト/時（IP 単位）の上限がある。当たった場合は待ち時間つきのエラー画面が出る
 
 ### B. ローカル CLI で自分のギャラリーを作る
 
@@ -223,7 +234,7 @@ OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（�
 ## 設定
 
 `dropcaster.config.js`（`dropcaster init` が生成）でギャラリーをカスタマイズ。
-主に PWA manifest と `<head>` のメタ情報です。Service Worker はアプリシェル / ローカル sketch / OP API メタ / 外部 CDN / runtime の 5 バケットで自動的にキャッシュします。フルな例は [dropcaster.config.example.js](dropcaster.config.example.js) を参照。
+主に PWA manifest と `<head>` のメタ情報です。Service Worker はアプリシェル / ローカル sketch / OP API メタ / Gist API / 外部 CDN / runtime の 6 バケットで自動的にキャッシュします。フルな例は [dropcaster.config.example.js](dropcaster.config.example.js) を参照。
 
 ```javascript
 export default {
@@ -266,13 +277,13 @@ dropcaster/
 ├── src/
 │   ├── viewer/        # viewer 本体 (TS)。user gallery / ホスト版で共有
 │   │   ├── runtime/   # SketchFrame, SketchPool（iframe 管理）
-│   │   ├── services/  # OpenProcessingSource, sketchService
-│   │   ├── components/# UI: ギャラリー, ID 入力, エラー画面
+│   │   ├── services/  # OpenProcessingSource, GistSource, sketchService
+│   │   ├── components/# UI: ギャラリー, 作品参照の入力, エラー画面
 │   │   ├── managers/  # FullscreenManager, CursorManager 等
 │   │   ├── windows/   # 出力ウィンドウ・コントロール
 │   │   └── pwa/       # Service Worker 登録
 │   ├── core/
-│   │   └── modules/   # op-api-client, op-sketch-builder, asset-downloader 等（Node/Browser 共用）
+│   │   └── modules/   # op-api-client, gist-api-client, html-doc-builder, asset-downloader 等（Node/Browser 共用）
 │   └── cli/           # CLI (init / dev / build / scan / fetch / doctor)
 ├── apps/
 │   └── web/           # ホスト版 (dropcaster.soui.dev)
@@ -291,13 +302,13 @@ dropcaster/
 ## アーキテクチャ
 
 ### Web技術完結型のエコシステム統合
-- OpenProcessing等の既存クリエイティブコーディングコミュニティとの連携
+- OpenProcessing 等の既存クリエイティブコーディングコミュニティとの連携（公開 Gist 経由で canvastage とも連携）
 - p5.js/WebGL/WebGPU コンテンツを `<iframe>` でホストし、CSS の `matrix3d` で投影マッピング
   （同一オリジンかつ `sandbox` なしの iframe なので**セキュリティ境界ではない**点に注意 — 冒頭の「信頼モデル」を参照）
 - コンテンツ作者のコードを改変せずにそのまま利用可能
 
 ### ブラウザネイティブなアーキテクチャ
-- PWA として配布できる。Service Worker は 5 つのキャッシュバケット (app shell / local sketches / OP API meta / 外部 CDN / runtime) に振り分けて、一度開いた作品はオフラインでも再生可能
+- PWA として配布できる。Service Worker は 6 つのキャッシュバケット (app shell / local sketches / OP API meta / Gist API / 外部 CDN / runtime) に振り分けて、一度開いた作品はオフラインでも再生可能。Gist だけは同じ ID のまま更新されるので NetworkFirst（キャッシュはオフライン時の保険）
 - プロジェクションマッピングは `window.open()` + Window Management API でプロジェクタ画面にポップアウト、
   同一オリジンの `window.opener` 参照経由で窓間連携
 - `canvas.captureStream()` を共有 `<video>` 群へ bind し、CSS `matrix3d` でワープ（クローンなし）
@@ -306,7 +317,8 @@ dropcaster/
 - Cloudflare Workers (Static Assets) **1 つ**でアプリ本体 (`apps/web/dist/`) と `/op-cdn/*` proxy を兼任
 - `/op-cdn/*` は OpenProcessing CDN (`deckard.openprocessing.org`) への中継。CORS ヘッダを後付けして同一オリジン化することで、`captureStream` が tainted にならないようにしている
 - OpenProcessing API (`/api/sketch/*`) は viewer から直接叩く構造。per-IP 40 req/min の制限はユーザ単位なので、利用者が増えても全体で枯れない
-- レート制限 (HTTP 429) に当たった場合は countdown UI で自動再試行
+- Gist は GitHub API (`api.github.com/gists/*`) を viewer から直接叩く。こちらも proxy 不要（ACAO が `*`）
+- レート制限 (OP は HTTP 429、GitHub は 60 req/時) に当たった場合は countdown UI で自動再試行
 
 ## 長時間運用のコツ
 

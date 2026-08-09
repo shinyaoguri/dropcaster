@@ -15,12 +15,16 @@ test('generateServiceWorker emits a multi-bucket SW with all expected cache buck
   await withTempDir(async (dir) => {
     await generateServiceWorker(dir);
     const sw = await readFile(join(dir, 'sw.js'), 'utf-8');
-    for (const name of ['SHELL_CACHE', 'LOCAL_CACHE', 'OP_META_CACHE', 'OP_CDN_CACHE', 'RUNTIME_CACHE']) {
+    for (const name of ['SHELL_CACHE', 'LOCAL_CACHE', 'OP_META_CACHE', 'GIST_CACHE', 'OP_CDN_CACHE', 'RUNTIME_CACHE']) {
       assert.match(sw, new RegExp(`const ${name}\\s*=`), `missing bucket: ${name}`);
     }
     // /op-cdn/ proxy 分岐とナビゲーション fallback は SW の挙動の要なので回帰させない
     assert.match(sw, /\/op-cdn\//);
     assert.match(sw, /OFFLINE_NAVIGATION_FALLBACK/);
+    // Gist は同じ ID のまま更新されるので NetworkFirst で拾う (CacheFirst に倒すと
+    // 作者が直しても古い srcdoc が出続ける)
+    assert.match(sw, /api\.github\.com/);
+    assert.match(sw, /networkFirst\(req, GIST_CACHE\)/);
   });
 });
 
