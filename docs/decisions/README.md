@@ -15,3 +15,4 @@
 | [0002](0002-canvas-backing-store-decides-quality.md) | 投影出力の画質は canvas バッキングストア解像度だけで決める | 採用 |
 | [0003](0003-manual-corner-pin-over-camera-calibration.md) | 投影面の対応付けは手動コーナーピンを維持し、カメラ校正は採らない | 却下 |
 | [0004](0004-wrangler-as-pinned-devdependency.md) | wrangler は devDependency に固定し、action を挟まず直接呼ぶ | 採用 |
+| [0005](0005-jsdoc-checkjs-over-typescript.md) | Node 側は plain JS + JSDoc + checkJs で型を担保し、TypeScript には移行しない | 採用 |

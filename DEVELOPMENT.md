@@ -95,7 +95,9 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 ## 注意点 / 既知の TODO
 
 - `src/cli/` と `src/core/` は plain JS だが、`npm run check`（`tsc -p tsconfig.node.json`、
-  JSDoc + checkJs 方式）で型チェックされる（CI でも実行）。`src/core/modules/` の手書き
+  JSDoc + checkJs 方式）で型チェックされる（CI でも実行）。この方式を選んだ理由と TypeScript
+  化しない判断は [ADR 0005](docs/decisions/0005-jsdoc-checkjs-over-typescript.md) を参照。
+  `src/core/modules/` の手書き
   `.d.ts` がそのまま型情報になるので、モジュールの公開面を変えたら `.d.ts` も更新すること。
   `sw-template.js` は SW コンテキストのコードなので検査対象外（tsconfig.node.json の exclude 参照）。
 - 自動テスト: `npm test` で `node --test` ベースの最小回帰テストが走る（`tests/`）。現状カバーしているのは Service Worker 生成（`generateServiceWorker`）と scan の description 保持。新機能を入れたら、回帰しやすい純粋関数・生成物は同様に追加してほしい。
