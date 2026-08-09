@@ -1,9 +1,10 @@
 // dropcaster Service Worker
 //
-// 5 つのキャッシュバケットに振り分ける:
+// 6 つのキャッシュバケットに振り分ける:
 //   shell    アプリ本体の HTML / JS / CSS / 画像 (same-origin の navigate + assets)
 //   local    ローカル sketch (/sketches/*, /sketches.json)
 //   op-meta  OpenProcessing API (/api/sketch/* / /code)
+//   gist     GitHub Gist API (api.github.com/gists/*)
 //   op-cdn   外部 CDN (cdn.jsdelivr.net 等) と asset proxy のレスポンス
 //   runtime  上記いずれにも該当しない GET (大網)
 //
@@ -12,8 +13,14 @@
 //   shell (assets)    CacheFirst (URL に hash が乗っているので immutable 扱い)
 //   local catalog     StaleWhileRevalidate
 //   op-meta           CacheFirst (24h 後にネット往復、それまでは即返し)
+//   gist              NetworkFirst → 失敗時 cached (下記の理由で鮮度優先)
 //   op-cdn            CacheFirst (URL に content hash が乗るので immutable)
 //   runtime           StaleWhileRevalidate (ベストエフォート)
+//
+// gist だけ NetworkFirst なのは、OP の作品が実質固定なのに対し Gist は同じ ID の
+// まま更新されるため (canvastage の「Share to Gist」は同じ Gist を PATCH で
+// 上書きする)。作者が直して投影し直す動線を壊さないよう鮮度を優先し、
+// キャッシュはオフライン時の保険として持つ。
 //
 // キャッシュ世代管理: CACHE_VERSION を変えれば古い bucket を activate 時に一掃。
 // クォータ管理は browser に委ねる (HTTP cache のように LRU evict される)。
@@ -28,10 +35,11 @@ const CACHE_VERSION = 'v1';
 const SHELL_CACHE   = `dropcaster-shell-${CACHE_VERSION}`;
 const LOCAL_CACHE   = `dropcaster-local-${CACHE_VERSION}`;
 const OP_META_CACHE = `dropcaster-op-meta-${CACHE_VERSION}`;
+const GIST_CACHE    = `dropcaster-gist-${CACHE_VERSION}`;
 const OP_CDN_CACHE  = `dropcaster-op-cdn-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `dropcaster-runtime-${CACHE_VERSION}`;
 
-const ALL_CACHES = [SHELL_CACHE, LOCAL_CACHE, OP_META_CACHE, OP_CDN_CACHE, RUNTIME_CACHE];
+const ALL_CACHES = [SHELL_CACHE, LOCAL_CACHE, OP_META_CACHE, GIST_CACHE, OP_CDN_CACHE, RUNTIME_CACHE];
 
 // install 時に最低限のシェル (ルート HTML) を取りにいく。/assets/* はハッシュ付きなので
 // 実際のリクエストが来てから cache-first で取り込む。
@@ -124,6 +132,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Gist API: api.github.com/gists/...
+  if (url.host === 'api.github.com' && url.pathname.startsWith('/gists/')) {
+    event.respondWith(networkFirst(req, GIST_CACHE));
+    return;
+  }
+
   // 外部 CDN (jsdelivr, fonts, deckard など) は CacheFirst。
   // URL に content hash が乗っている前提で immutable 扱い。
   if (isExternalImmutableCdn(url)) {
@@ -164,6 +178,24 @@ async function cacheFirst(req, cacheName) {
     cache.put(req, res.clone()).catch(() => {});
   }
   return res;
+}
+
+// 更新されうるリソース向け。ネットを先に試し、失敗 (オフライン / DNS) のときだけ
+// キャッシュへ落とす。レート制限の 403 のようなエラー応答は isCacheable が弾くので、
+// 制限に当たっても直前の成功レスポンスが残り続ける。
+async function networkFirst(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  try {
+    const res = await fetch(req);
+    if (isCacheable(res)) {
+      cache.put(req, res.clone()).catch(() => {});
+    }
+    return res;
+  } catch (err) {
+    const cached = await cache.match(req);
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 async function staleWhileRevalidate(req, cacheName) {

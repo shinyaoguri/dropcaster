@@ -1,4 +1,4 @@
-// OpenProcessing 作品 ID を入力して読み込ませる UI。
+// 外部ソースの作品参照 (OpenProcessing 作品 ID / 公開 Gist) を入力して読み込ませる UI。
 //
 // 2 つのレンダリングモードを持つ:
 //   renderHero(onSubmit)   ローカル catalog が空 (ホスト版) のときのメイン画面。
@@ -6,12 +6,17 @@
 //   renderInline(container, onSubmit)
 //                          ギャラリーの上に出す小さな入力バー。
 //
-// どちらも submit 時に parseOpId() で ID を抽出し、onSubmit(id) を呼ぶ。
-// 入力は数値だけでなく "sketch<id>" や OP の URL もそのまま受ける。
+// どちらも submit 時に parseSketchRef() で参照を解決し、onSubmit(ref) を呼ぶ。
+// OP は数値 ID / "sketch<id>" / 作品 URL、Gist は 32 桁 hex の ID / Gist URL を
+// 受ける。ID 空間が重ならない (数字 vs 20 桁以上 hex) ので入力欄は 1 つで足りる。
 
 import { t, onLangChange } from '../i18n/index.js';
 import { langSwitcherHtml, wireLangSwitcher } from '../i18n/LanguageSwitcher.js';
 import { getConfig } from '../config.js';
+import { parseSketchRef } from '../../core/modules/sketch-ref.js';
+import type { SketchRef } from '../../core/modules/sketch-ref.js';
+
+export type { SketchRef } from '../../core/modules/sketch-ref.js';
 
 function heroHtml(): string {
   return `
@@ -78,7 +83,7 @@ export class OpIdEntryView {
   private static heroLangUnsub: (() => void) | null = null;
 
   /** catalog が空のときのメイン画面として #app 全体を埋める。 */
-  static renderHero(onSubmit: (id: string) => void): void {
+  static renderHero(onSubmit: (ref: SketchRef) => void): void {
     const app = document.querySelector<HTMLDivElement>('#app');
     if (!app) return;
     OpIdEntryView.heroLangUnsub?.();
@@ -98,7 +103,7 @@ export class OpIdEntryView {
   }
 
   /** ギャラリー UI 内などに小さな入力バーを差し込む。 */
-  static renderInline(container: HTMLElement, onSubmit: (id: string) => void): void {
+  static renderInline(container: HTMLElement, onSubmit: (ref: SketchRef) => void): void {
     container.insertAdjacentHTML('beforeend', inlineHtml());
     OpIdEntryView.wireForm(container, onSubmit);
   }
@@ -109,7 +114,7 @@ export class OpIdEntryView {
   }
 
   /** scope 内の最後の .op-id-form を 1 つだけ wire する。重複バインドはしない。 */
-  static wireForm(scope: HTMLElement, onSubmit: (id: string) => void): void {
+  static wireForm(scope: HTMLElement, onSubmit: (ref: SketchRef) => void): void {
     const form = scope.querySelector<HTMLFormElement>('.op-id-form:not([data-wired])');
     if (!form) return;
     form.setAttribute('data-wired', 'true');
@@ -119,11 +124,11 @@ export class OpIdEntryView {
 
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-      const id = parseOpId(input.value);
-      if (id) {
+      const ref = parseSketchRef(input.value);
+      if (ref) {
         error?.setAttribute('hidden', '');
         input.classList.remove('op-id-input--invalid');
-        onSubmit(id);
+        onSubmit(ref);
       } else {
         error?.removeAttribute('hidden');
         input.classList.add('op-id-input--invalid');
@@ -136,25 +141,4 @@ export class OpIdEntryView {
       error?.setAttribute('hidden', '');
     });
   }
-}
-
-/**
- * 入力文字列から OpenProcessing の作品 ID (数値) を抽出する。
- * 数値そのもの、"sketch<id>"、OP の作品 URL を受け付ける。
- * URL は旧形式 (https://openprocessing.org/sketch/<id>) と
- * 新形式 (https://openprocessing.org/@<username>/<id>) の両方に対応。
- * 抽出不能なら null。
- */
-export function parseOpId(raw: string): string | null {
-  const t = String(raw ?? '').trim();
-  if (!t) return null;
-  // OP の URL から抽出: /sketch/<digits> または /@<username>/<digits>
-  const urlMatch = t.match(/openprocessing\.org\/(?:sketch\/|@[^/]+\/)(\d+)/i);
-  if (urlMatch) return urlMatch[1];
-  // "sketch<id>" 形式
-  const prefixMatch = t.match(/^sketch(\d+)$/i);
-  if (prefixMatch) return prefixMatch[1];
-  // 純粋な数値
-  if (/^\d+$/.test(t)) return t;
-  return null;
 }

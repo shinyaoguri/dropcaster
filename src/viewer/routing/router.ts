@@ -30,13 +30,20 @@ export class Router {
 
     const path = stripBasePath(window.location.pathname);
 
-    // OpenProcessing 経路を最優先で拾う:
-    //   /op/<id>           パスベース
-    //   /?op=<id>          クエリベース (任意のパスで効くが、典型はホーム)
+    // 外部ソース経路を最優先で拾う:
+    //   /op/<id>   /?op=<id>     OpenProcessing (id は数字)
+    //   /gist/<id> /?gist=<id>   公開 Gist (id は 20 桁以上の hex)
+    // クエリベースは任意のパスで効くが、典型はホーム。
     const opId = pickOpId(path, window.location.search);
     if (opId) {
       const handler = this.routes.get('/op/:id');
       if (handler) { handler(opId); return; }
+    }
+
+    const gistId = pickGistId(path, window.location.search);
+    if (gistId) {
+      const handler = this.routes.get('/gist/:id');
+      if (handler) { handler(gistId); return; }
     }
 
     // 完全一致のルートをまずチェック
@@ -95,6 +102,21 @@ function pickOpId(path: string, search: string): string | null {
       const id = raw.replace(/^sketch/i, '');
       if (/^\d+$/.test(id)) return id;
     }
+  } catch { /* ignore */ }
+  return null;
+}
+
+/** path と search から Gist の id を拾う。なければ null。 */
+function pickGistId(path: string, search: string): string | null {
+  // path: /gist/<id> 形式 (id は 20 桁以上の hex。OP の数値 id とは空間が重ならない)
+  const pathMatch = path.match(/^\/gist\/([0-9a-f]{20,})\/?$/i);
+  if (pathMatch) return pathMatch[1].toLowerCase();
+
+  // ?gist=<id>
+  try {
+    const params = new URLSearchParams(search);
+    const raw = (params.get('gist') ?? '').trim();
+    if (/^[0-9a-f]{20,}$/i.test(raw)) return raw.toLowerCase();
   } catch { /* ignore */ }
   return null;
 }

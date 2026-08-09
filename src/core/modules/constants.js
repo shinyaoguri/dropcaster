@@ -27,6 +27,14 @@ export const API_CONFIG = {
   apiRequestIntervalMs: 1500, // レート制限対策：API リクエスト間隔の下限（ms）
 };
 
+// GitHub Gist クライアントの設定（canvastage が書き出した公開 Gist を読む）
+export const GIST_CONFIG = {
+  baseUrl: 'https://gist.github.com',
+  apiBaseUrl: 'https://api.github.com',
+  apiVersion: '2022-11-28',
+  apiRequestTimeout: 30000,
+};
+
 // デフォルト値
 export const DEFAULTS = {
   unknownUser: 'Unknown User',

@@ -23,6 +23,13 @@ export const API_CONFIG: {
   apiRequestIntervalMs: number;
 };
 
+export const GIST_CONFIG: {
+  baseUrl: string;
+  apiBaseUrl: string;
+  apiVersion: string;
+  apiRequestTimeout: number;
+};
+
 export const DEFAULTS: {
   unknownUser: string;
   unknownTitle: string;
