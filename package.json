@@ -57,7 +57,7 @@
     "@types/node": "^26.2.0",
     "nodemon": "^3.0.2",
     "typescript": "^7.0.2",
-    "wrangler": "^4.123.0"
+    "wrangler": "^4.131.0"
   },
   "dependencies": {
     "chalk": "^6.0.0",
