@@ -53,11 +53,11 @@
     "test": "node --test \"tests/**/*.test.js\""
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260921.1",
-    "@types/node": "^26.4.0",
+    "@cloudflare/workers-types": "^5.20260928.1",
+    "@types/node": "^26.6.3",
     "nodemon": "^3.0.2",
     "typescript": "^7.0.2",
-    "wrangler": "^4.136.1"
+    "wrangler": "^4.142.0"
   },
   "dependencies": {
     "chalk": "^6.0.0",
