@@ -18,8 +18,15 @@ export class SketchCard {
     }
 
     // 安全なプロパティアクセス
-    const previewGif = publicAssetPath(sketch.previewGif || 'vite.svg');
     const title = escapeHtml(sketch.title);
+    // プレビュー未生成のスケッチは画像を出さず、.sketch-preview の背景色をプレースホルダにする
+    const previewImageHTML = sketch.previewGif
+      ? `<img
+            src="${escapeHtml(publicAssetPath(sketch.previewGif))}"
+            alt="${title}"
+            loading="lazy"
+          />`
+      : '';
     const userName = escapeHtml(sketch.userData?.userName || t('gallery.card.unknownUser'));
     const sketchUrl = safeUrl(sketch.sketchUrl);
     const userUrl = safeUrl(sketch.userData?.userUrl);
@@ -28,11 +35,7 @@ export class SketchCard {
     return `
       <div class="sketch-card">
         <div class="sketch-preview">
-          <img
-            src="${escapeHtml(previewGif)}"
-            alt="${title}"
-            loading="lazy"
-          />
+          ${previewImageHTML}
           <div class="sketch-overlay">
             <div class="sketch-bottom-left">
               <div class="sketch-info">

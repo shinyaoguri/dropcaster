@@ -42,4 +42,5 @@ sketches/*
 public/*
 !public/manifest.json
 !public/sw.js
+!public/icon.svg
 !public/.gitkeep
