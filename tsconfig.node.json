@@ -9,6 +9,9 @@
     "allowJs": true,
     "checkJs": true,
     "noEmit": true,
+    // tests/ から viewer の純関数 (.ts) を拡張子付きで直接 import する (Node 24 の型除去で実行)。
+    // import 先の .ts もこの設定で検査されるので、import してよいのは他を import しない純関数だけ
+    "allowImportingTsExtensions": true,
     "strict": false,
     "skipLibCheck": true,
     "types": ["node"]

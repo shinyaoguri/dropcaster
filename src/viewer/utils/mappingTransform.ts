@@ -717,9 +717,136 @@ export function rotateQuadAround(quad: Quad, center: Point, angleRad: number): Q
   };
 }
 
+/** a×b（2D 外積の z 成分）。画面座標（y 下向き）では正 = 見た目で時計回りに曲がる。 */
+function cross(ax: number, ay: number, bx: number, by: number): number {
+  return ax * by - ay * bx;
+}
+
+/** quad の 4 隅を CORNER_KEYS 順（TL→TR→BR→BL）の配列で返す。 */
+function quadVertices(quad: Quad): Point[] {
+  return CORNER_KEYS.map(k => quad[k]);
+}
+
+/** 各頂点での曲がり（前の辺 × 次の辺）。CORNER_KEYS 順。 */
+function quadTurns(quad: Quad): number[] {
+  const v = quadVertices(quad);
+  return v.map((p, i) => {
+    const prev = v[(i + 3) % 4];
+    const next = v[(i + 1) % 4];
+    return cross(p.x - prev.x, p.y - prev.y, next.x - p.x, next.y - p.y);
+  });
+}
+
+/**
+ * quad が（退化していない）凸四角形か。
+ *
+ * 矩形 → quad のホモグラフィー（射影変換）は凸な矩形を必ず凸四角形へ写すので、凹んだ quad・
+ * 自己交差した quad には正しい写像が存在しない。それでも係数は解けてしまい、同次座標の分母が
+ * 映像の内部で符号を変えて、映像が quad の外側へ反転して描かれる（#95）。
+ *
+ * 4 頂点の曲がりがすべて同符号なら凸（4 頂点では同符号のまま 2 周はできない）。向きは
+ * 時計回り・反時計回りのどちらも合法（左右・上下に反転させた quad も正しく写像できる）。
+ * 自己交差（蝶ネクタイ形）は符号が混ざるので弾かれる。
+ */
+export function isConvexQuad(quad: Quad): boolean {
+  const turns = quadTurns(quad);
+  const eps = 1e-9;
+  return turns.every(t => t > eps) || turns.every(t => t < -eps);
+}
+
+/**
+ * 隅を動かすとき、凸を保つ境界からこの距離（仮想キャンバス px）だけ内側に留める。
+ * 境界ちょうどだと 3 点が一直線に並んで退化し、ホモグラフィーが発散する。
+ */
+const CONVEX_MARGIN_PX = 1;
+
+/** n·p >= c の半平面（n は単位法線）。 */
+interface HalfPlane { nx: number; ny: number; c: number }
+
+/**
+ * 有向直線 a→b に対して `sign` 側（cross(b-a, p-a) の符号が sign）にあり、かつ直線から
+ * margin 以上離れている、という半平面。a と b が重なっていれば null。
+ */
+function sideHalfPlane(a: Point, b: Point, sign: number, margin: number): HalfPlane | null {
+  const ux = b.x - a.x;
+  const uy = b.y - a.y;
+  const len = Math.hypot(ux, uy);
+  if (len < 1e-9) return null;
+  // cross(u, p-a) = (-uy, ux)·(p-a)
+  const nx = (sign * -uy) / len;
+  const ny = (sign * ux) / len;
+  return { nx, ny, c: nx * a.x + ny * a.y + margin };
+}
+
+/**
+ * quad の隅 `corner` を `target` へ動かしたいときの、実際の移動先を返す。
+ *
+ * - 動かしても quad が（余白込みで）凸のままなら `target` をそのまま返す
+ * - 元の quad がそもそも凸でない（凹んだ quad を保存した古い設定など）なら制限しない。
+ *   ここで止めると隅を動かして直すこともできなくなるため
+ * - それ以外は「quad が凸のまま保てる領域」のうち `target` にいちばん近い点を返す。
+ *   限界を越えて引っぱると隅は境界に沿って滑る（その場で引っかかって止まらない）
+ *
+ * 動かす隅 P が関わる曲がりは「前の隅」「P」「次の隅」の 3 つで、どれも P について線形
+ * なので、凸を保つ領域は 3 本の半平面の共通部分（凸領域）になり、最近点は一意に決まる。
+ */
+export function constrainQuadCorner(quad: Quad, corner: CornerKey, target: Point): Point {
+  if (!isConvexQuad(quad)) return { x: target.x, y: target.y };
+
+  const i = CORNER_KEYS.indexOf(corner);
+  const v = quadVertices(quad);
+  const prev2 = v[(i + 2) % 4];
+  const prev = v[(i + 3) % 4];
+  const next = v[(i + 1) % 4];
+  const next2 = v[(i + 2) % 4];
+  const s = Math.sign(quadTurns(quad)[0]);
+
+  // 曲がり（前の隅）: cross(prev-prev2, P-prev) が s と同符号 → 直線 prev2→prev の s 側
+  // 曲がり（P）     : cross(P-prev, next-P) = cross(P-prev, next-prev) → 直線 prev→next の -s 側
+  // 曲がり（次の隅）: cross(next-P, next2-next) = cross(next2-next, P-next) → 直線 next→next2 の s 側
+  const planes = [
+    sideHalfPlane(prev2, prev, s, CONVEX_MARGIN_PX),
+    sideHalfPlane(prev, next, -s, CONVEX_MARGIN_PX),
+    sideHalfPlane(next, next2, s, CONVEX_MARGIN_PX),
+  ].filter((h): h is HalfPlane => h !== null);
+
+  const tol = 1e-7;
+  const inside = (p: Point) => planes.every(h => h.nx * p.x + h.ny * p.y >= h.c - tol);
+  if (inside(target)) return { x: target.x, y: target.y };
+
+  // 最近点の候補: 各境界線への垂線の足と、境界線どうしの交点（凸領域の頂点）
+  const candidates: Point[] = [];
+  for (const h of planes) {
+    const d = h.c - (h.nx * target.x + h.ny * target.y);
+    candidates.push({ x: target.x + d * h.nx, y: target.y + d * h.ny });
+  }
+  for (let a = 0; a < planes.length; a++) {
+    for (let b = a + 1; b < planes.length; b++) {
+      const h1 = planes[a], h2 = planes[b];
+      const det = cross(h1.nx, h1.ny, h2.nx, h2.ny);
+      if (Math.abs(det) < 1e-12) continue;
+      candidates.push({
+        x: (h1.c * h2.ny - h2.c * h1.ny) / det,
+        y: (h1.nx * h2.c - h2.nx * h1.c) / det,
+      });
+    }
+  }
+
+  let best: Point | null = null;
+  let bestDist = Infinity;
+  for (const p of candidates) {
+    if (!inside(p)) continue;
+    const dist = Math.hypot(p.x - target.x, p.y - target.y);
+    if (dist < bestDist) { best = p; bestDist = dist; }
+  }
+  // 余白込みの領域が空（元の quad がほぼ退化している）なら動かさない
+  return best ?? { x: quad[corner].x, y: quad[corner].y };
+}
+
 /**
  * 単位矩形 (0,0)-(width,height) を quad（pixel 座標、transform-origin: top left 基準）
- * に写像する CSS matrix3d 文字列を返す。退化（共線・面積0）なら 'none'。
+ * に写像する CSS matrix3d 文字列を返す。退化（共線・面積0）や凸でない quad なら 'none'
+ * （凹んだ quad には正しい写像が無く、そのまま描くと映像が反転する。isConvexQuad 参照）。
  *
  * 単位矩形 → 任意四角形 への 2D ホモグラフィー（perspective 込み）を直接構築:
  *   x' = (a*u + b*v + c) / (g*u + h*v + 1)
@@ -728,6 +855,7 @@ export function rotateQuadAround(quad: Quad, center: Point, angleRad: number): Q
  */
 function homographyMatrix3d(quad: Quad, width: number, height: number): string {
   if (width <= 0 || height <= 0) return 'none';
+  if (!isConvexQuad(quad)) return 'none';
 
   const { topLeft: p0, topRight: p1, bottomRight: p2, bottomLeft: p3 } = quad;
 
@@ -779,9 +907,10 @@ export function applyQuadCanvas(
   if (canvasWidth <= 0 || canvasHeight <= 0) return;
   const transform = homographyMatrix3d(quad, canvasWidth, canvasHeight);
   if (transform === 'none') {
-    // 退化 quad（共線・面積0）。transform: none をそのまま適用すると
-    // 未変形のフルキャンバス寸法の映像が出力に表示されてしまうので、
-    // 「面積 0 → 何も見えない」に合わせて非表示にする。
+    // 退化 quad（共線・面積0）または凸でない quad。transform: none をそのまま適用すると
+    // 未変形のフルキャンバス寸法の映像が出力に表示されてしまうので非表示にする。
+    // 凸でない quad は正しく写像できず、描くと映像が quad の外側へ反転する（#95）。
+    // 編集操作では constrainQuadCorner が凸を保つので、ここに来るのは古い設定ファイル由来だけ。
     container.style.visibility = 'hidden';
     return;
   }

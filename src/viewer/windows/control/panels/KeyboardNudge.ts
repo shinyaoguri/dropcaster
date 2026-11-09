@@ -5,7 +5,7 @@
  * mousedown 時に setSelection() / clearSelection() を呼んで状態を更新する（クロス panel API）。
  */
 
-import type { CornerKey } from '../../../utils/mappingTransform';
+import { constrainQuadCorner, type CornerKey } from '../../../utils/mappingTransform';
 import type { MappingsController } from '../MappingsController';
 
 export type NudgeSelection =
@@ -104,12 +104,14 @@ export class KeyboardNudge {
       const q = ctrl.getActiveQuad();
       const p = q[corner];
       // 1 screen-px = step.x canvas-px。pixels（1 or 10）ぶん × step が仮想キャンバス px ステップ。
+      // quad が凹む位置へは動かさない（凹んだ quad は映像が反転する。#95）
+      const target = {
+        x: p.x + dirX * pixels * step.x,
+        y: p.y + dirY * pixels * step.y,
+      };
       ctrl.setActiveQuad({
         ...q,
-        [corner]: {
-          x: p.x + dirX * pixels * step.x,
-          y: p.y + dirY * pixels * step.y,
-        },
+        [corner]: constrainQuadCorner(q, corner, target),
       });
       opts.onAfterMutate('quad');
       ctrl.commit();

@@ -100,7 +100,7 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
   `src/core/modules/` の手書き
   `.d.ts` がそのまま型情報になるので、モジュールの公開面を変えたら `.d.ts` も更新すること。
   `sw-template.js` は SW コンテキストのコードなので検査対象外（tsconfig.node.json の exclude 参照）。
-- 自動テスト: `npm test` で `node --test` ベースの最小回帰テストが走る（`tests/`）。現状カバーしているのは Service Worker 生成（`generateServiceWorker`）、scan の description 保持、srcdoc の組み立て（OP の p5js / html モードと Gist）、作品参照のパーサ。新機能を入れたら、回帰しやすい純粋関数・生成物は同様に追加してほしい。
+- 自動テスト: `npm test` で `node --test` ベースの最小回帰テストが走る（`tests/`）。現状カバーしているのは Service Worker 生成（`generateServiceWorker`）、scan の description 保持、srcdoc の組み立て（OP の p5js / html モードと Gist）、作品参照のパーサ、マッピング quad の凸判定と隅の移動制限（`src/viewer/utils/mappingTransform.ts`）。viewer の純関数は、他を import しない `.ts` なら `tests/` から拡張子付きで直接 import してテストできる（Node 24 の型除去で動く）。新機能を入れたら、回帰しやすい純粋関数・生成物は同様に追加してほしい。
 - 取り込み元（OpenProcessing / 公開 Gist）を増やすときは、srcdoc の組み立てを
   `src/core/modules/html-doc-builder.js` に載せ、参照の判定を `sketch-ref.js` に足す。
   判断の背景は [ADR 0006](docs/decisions/0006-gist-as-second-sketch-source.md) を参照。

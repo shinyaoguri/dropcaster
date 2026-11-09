@@ -22,6 +22,7 @@ import {
   applyQuadCanvas,
   applyVideoCrop,
   cloneQuad,
+  constrainQuadCorner,
   defaultQuad,
   isMaskEntry,
   mappingColor,
@@ -356,9 +357,12 @@ export class MappingAreaPanel {
           const dx = ((e.clientX - snap.startX) / parentRect.width) * snap.canvasW;
           const dy = ((e.clientY - snap.startY) / parentRect.height) * snap.canvasH;
           const q = ctrl.getActiveQuad();
+          // quad が凹む位置へは動かさない（凹んだ quad は映像が反転する。#95）。
+          // 直前の（凸な）quad を基準に、凸を保てる範囲のいちばん近い点へ寄せる
+          const target = { x: snap.initialPoint.x + dx, y: snap.initialPoint.y + dy };
           ctrl.setActiveQuad({
             ...q,
-            [corner]: { x: snap.initialPoint.x + dx, y: snap.initialPoint.y + dy },
+            [corner]: constrainQuadCorner(q, corner, target),
           });
           this.refreshTransform();
           ctrl.commit();
