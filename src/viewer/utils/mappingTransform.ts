@@ -755,62 +755,72 @@ export function isConvexQuad(quad: Quad): boolean {
 }
 
 /**
- * 隅を動かすとき、凸を保つ境界からこの距離（仮想キャンバス px）だけ内側に留める。
- * 境界ちょうどだと 3 点が一直線に並んで退化し、ホモグラフィーが発散する。
+ * 隅を動かすときに許す「遠近の強さ」の上限。
+ *
+ * 遠近の強さ = ホモグラフィーの同次座標の分母 w = g·u + h·v + 1 の、4 隅での最大 / 最小。
+ * w が小さい隅ほど映像が大きく引き伸ばされる。凸でさえあればよいとして凸の境界すれすれ
+ * まで隅を寄せると、この比が数百倍になってホモグラフィーがほぼ特異になり、枠線が quad の
+ * 広い範囲を塗り、隅のわずかな動きで映像が大きく揺れる（#97）。#97 の配置で測ると、
+ * 20 倍なら隅が 1px 動いたときの映像の動きが 1px 未満に収まる（測定値は ADR 0007）。
+ * 台形でいえば平行な 2 辺の長さが 20:1。
+ *
+ * w の 4 隅での値は、反対側の隅の「角の三角形」（その隅と両隣の 3 点）の面積に比例するので、
+ * 遠近の強さ = 4 つの曲がり（quadTurns）の絶対値の最大 / 最小、として求まる。
  */
-const CONVEX_MARGIN_PX = 1;
+const MAX_PERSPECTIVE_RATIO = 20;
 
 /** n·p >= c の半平面（n は単位法線）。 */
 interface HalfPlane { nx: number; ny: number; c: number }
 
 /**
- * 有向直線 a→b に対して `sign` 側（cross(b-a, p-a) の符号が sign）にあり、かつ直線から
- * margin 以上離れている、という半平面。a と b が重なっていれば null。
- */
-function sideHalfPlane(a: Point, b: Point, sign: number, margin: number): HalfPlane | null {
-  const ux = b.x - a.x;
-  const uy = b.y - a.y;
-  const len = Math.hypot(ux, uy);
-  if (len < 1e-9) return null;
-  // cross(u, p-a) = (-uy, ux)·(p-a)
-  const nx = (sign * -uy) / len;
-  const ny = (sign * ux) / len;
-  return { nx, ny, c: nx * a.x + ny * a.y + margin };
-}
-
-/**
  * quad の隅 `corner` を `target` へ動かしたいときの、実際の移動先を返す。
  *
- * - 動かしても quad が（余白込みで）凸のままなら `target` をそのまま返す
+ * - 動かしても quad が凸で、遠近の強さが上限（MAX_PERSPECTIVE_RATIO）以下なら `target` を
+ *   そのまま返す
  * - 元の quad がそもそも凸でない（凹んだ quad を保存した古い設定など）なら制限しない。
  *   ここで止めると隅を動かして直すこともできなくなるため
- * - それ以外は「quad が凸のまま保てる領域」のうち `target` にいちばん近い点を返す。
- *   限界を越えて引っぱると隅は境界に沿って滑る（その場で引っかかって止まらない）
+ * - それ以外は、条件を満たす領域のうち `target` にいちばん近い点を返す。限界を越えて
+ *   引っぱると隅は境界に沿って滑る（その場で引っかかって止まらない）
+ * - 元の quad の遠近の強さがすでに上限を超えているなら、上限の代わりに「いまより強く
+ *   しない」を条件にする。いまの位置が必ず条件を満たすので、触った隅が飛ばない
  *
- * 動かす隅 P が関わる曲がりは「前の隅」「P」「次の隅」の 3 つで、どれも P について線形
- * なので、凸を保つ領域は 3 本の半平面の共通部分（凸領域）になり、最近点は一意に決まる。
+ * 4 つの曲がりは動かす隅 P について 1 次式（反対側の隅の曲がりは定数）なので、
+ * 「曲がり j >= 曲がり k / 上限」はどの組も P の半平面になる。条件を満たす領域はその
+ * 共通部分（凸多角形）で、最近点は一意に決まる。曲がりがすべて同符号 = 凸であることも
+ * この条件に含まれる。
  */
 export function constrainQuadCorner(quad: Quad, corner: CornerKey, target: Point): Point {
   if (!isConvexQuad(quad)) return { x: target.x, y: target.y };
 
-  const i = CORNER_KEYS.indexOf(corner);
-  const v = quadVertices(quad);
-  const prev2 = v[(i + 2) % 4];
-  const prev = v[(i + 3) % 4];
-  const next = v[(i + 1) % 4];
-  const next2 = v[(i + 2) % 4];
+  const origin = quad[corner];
   const s = Math.sign(quadTurns(quad)[0]);
+  // 向きを掛けた曲がり（凸なら 4 つとも正）を、P = origin + (dx, dy) の 1 次式
+  // t_j = base[j] + gx[j]·dx + gy[j]·dy として求める
+  const turnsAt = (dx: number, dy: number) =>
+    quadTurns({ ...quad, [corner]: { x: origin.x + dx, y: origin.y + dy } }).map(t => s * t);
+  const base = turnsAt(0, 0);
+  const gx = turnsAt(1, 0).map((t, j) => t - base[j]);
+  const gy = turnsAt(0, 1).map((t, j) => t - base[j]);
 
-  // 曲がり（前の隅）: cross(prev-prev2, P-prev) が s と同符号 → 直線 prev2→prev の s 側
-  // 曲がり（P）     : cross(P-prev, next-P) = cross(P-prev, next-prev) → 直線 prev→next の -s 側
-  // 曲がり（次の隅）: cross(next-P, next2-next) = cross(next2-next, P-next) → 直線 next→next2 の s 側
-  const planes = [
-    sideHalfPlane(prev2, prev, s, CONVEX_MARGIN_PX),
-    sideHalfPlane(prev, next, -s, CONVEX_MARGIN_PX),
-    sideHalfPlane(next, next2, s, CONVEX_MARGIN_PX),
-  ].filter((h): h is HalfPlane => h !== null);
+  const rho = Math.min(1 / MAX_PERSPECTIVE_RATIO, Math.min(...base) / Math.max(...base));
 
-  const tol = 1e-7;
+  // t_j - rho·t_k >= 0 を、すべての組 (j, k) について半平面にする
+  const planes: HalfPlane[] = [];
+  for (let j = 0; j < 4; j++) {
+    for (let k = 0; k < 4; k++) {
+      if (j === k) continue;
+      const ax = gx[j] - rho * gx[k];
+      const ay = gy[j] - rho * gy[k];
+      const len = Math.hypot(ax, ay);
+      if (len < 1e-12) continue;
+      const nx = ax / len;
+      const ny = ay / len;
+      const atOrigin = (base[j] - rho * base[k]) / len;
+      planes.push({ nx, ny, c: nx * origin.x + ny * origin.y - atOrigin });
+    }
+  }
+
+  const tol = 1e-6;
   const inside = (p: Point) => planes.every(h => h.nx * p.x + h.ny * p.y >= h.c - tol);
   if (inside(target)) return { x: target.x, y: target.y };
 
@@ -839,8 +849,8 @@ export function constrainQuadCorner(quad: Quad, corner: CornerKey, target: Point
     const dist = Math.hypot(p.x - target.x, p.y - target.y);
     if (dist < bestDist) { best = p; bestDist = dist; }
   }
-  // 余白込みの領域が空（元の quad がほぼ退化している）なら動かさない
-  return best ?? { x: quad[corner].x, y: quad[corner].y };
+  // 候補が数値誤差ですべて弾かれたら動かさない（いまの位置は必ず条件を満たす）
+  return best ?? { x: origin.x, y: origin.y };
 }
 
 /**
