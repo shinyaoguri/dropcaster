@@ -135,13 +135,15 @@ sketches/
 >
 > ```js
 > function setup() {
->   pixelDensity(1);            // Retina 環境で意図せず 2倍解像度になるのを防ぐ
 >   createCanvas(3840, 2160);   // プロジェクタ以上の固定解像度。キーストン補正で四隅を
 >                               // 伸ばす分の余裕を見て少し大きめにしてもよい
+>   pixelDensity(1);            // Retina 環境で意図せず 2倍解像度になるのを防ぐ（createCanvas の後に呼ぶ）
 >   // ※ windowWidth / windowHeight 任せにすると、出力解像度がメインウィンドウのサイズに
 >   //   引っ張られてしまう（FHD のウィンドウ → 低解像度のまま 4K に拡大されてボケる）
 > }
 > ```
+>
+> `pixelDensity(1)` は **`createCanvas` の後**に呼んでください。p5.js 2.x（OpenProcessing の p5js モードが読み込む版）では `createCanvas` が密度を画面のピクセル比に合わせ直すため、前に呼ぶだけでは効かず、Retina 環境ではバッキングストアが縦横 2 倍（画素数 4 倍）になります。後に呼ぶ書き方なら 1.x / 2.x のどちらでも密度 1 になります。
 >
 > 解像度を上げるほど毎フレームの GPU 負荷（fill rate / VRAM）も増えるので、ライブなマッピングを複数重ねる場合は用途に合わせて解像度を決めてください。
 
