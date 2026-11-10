@@ -18,3 +18,4 @@
 | [0005](0005-jsdoc-checkjs-over-typescript.md) | Node 側は plain JS + JSDoc + checkJs で型を担保し、TypeScript には移行しない | 採用 |
 | [0006](0006-gist-as-second-sketch-source.md) | 公開 Gist を 2 つ目のスケッチソースとして扱う | 採用 |
 | [0007](0007-mapping-quad-stays-convex.md) | マッピングの quad は凸四角形に限り、隅の移動を凸の範囲へ制限する | 採用 |
+| [0008](0008-output-removal-collapses-canvas.md) | 出力の削除は追加の逆操作として仮想キャンバスを詰め直し、取り残しを残った出力へ寄せる | 採用 |

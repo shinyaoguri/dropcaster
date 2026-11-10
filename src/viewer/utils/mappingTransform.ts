@@ -102,8 +102,10 @@ export interface OutputDef {
  * マッピング機能全体の正規状態。
  *
  *  - version: 現在のスキーマバージョン（2）。v1 から非互換。
- *  - canvas: 仮想キャンバスのサイズ（px）。全 output と全 quad を包含する座標空間。
- *    outputs を追加・移動するたびに recomputeCanvasBounds で再計算される。
+ *  - canvas: 仮想キャンバスのサイズ（px）。原点 (0,0) から全 output を包含する座標空間
+ *    （quad は含めない — はみ出した quad はどの出力にも映らないだけ）。
+ *    outputs を追加・移動・削除するたびに recomputeCanvasBounds で再計算される。
+ *    削除時は withRemovedOutput が削除した出力の帯を詰めてから再計算する。
  *  - outputs は1件以上。複数の出力ウィンドウを同時に扱う場合は最大4件まで（UI 制約）。
  *  - 各 mapping の quad は仮想キャンバス px。output との関係は quad と output bounds の
  *    交差判定で自動的に決まる（mapping は output に所属しない）。
@@ -399,21 +401,143 @@ export function withAddedOutput(state: MappingsState): MappingsState {
 }
 
 /**
- * 出力を 1 件削除。最後の 1 件なら no-op。
- * mapping は output と独立した存在なので、出力を消しても mapping は仮想キャンバス上に
- * そのまま残る（quad の位置によっては他の出力に映る、またはどこにも映らない状態になる）。
+ * 出力を 1 件削除する。withAddedOutput（右端に 1 台ぶん広げる）の逆操作として、
+ * 仮想キャンバスを詰め直す（#99、ADR 0008）。最後の 1 件・該当なしなら no-op。
+ *
+ *  1. 削除した出力の上にあり、残りのどの出力にも乗らなくなる mapping / mask（取り残し）を、
+ *     削除した出力の中での相対位置を保ったまま残りの先頭の出力へ移す。
+ *  2. 削除した出力が占めていた x / y の帯のうち、残りの出力に覆われていない部分を潰す。
+ *     帯の外にある既存の隙間は触らない。
+ *  3. 出力と item を一緒に平行移動する。item はいちばん大きく重なる出力（アンカー）と
+ *     同じだけ動くので、各出力から見た item の位置は変わらない＝投影結果は変わらない。
+ *
  * activeOutputId がその出力を指していたら undefined に戻す。
  */
 export function withRemovedOutput(state: MappingsState, outputId: string): MappingsState {
   if (state.outputs.length <= 1) return state;
+  const removed = state.outputs.find(o => o.id === outputId);
+  if (!removed) return state; // 該当なし
   const remaining = state.outputs.filter(o => o.id !== outputId);
-  if (remaining.length === state.outputs.length) return state; // 該当なし
+  const removedRect = outputRect(removed);
+  const target = remaining[0];
+
+  const gapsX = uncoveredParts(
+    removed.position.x, removed.position.x + removed.size.width,
+    remaining.map(o => [o.position.x, o.position.x + o.size.width]),
+  );
+  const gapsY = uncoveredParts(
+    removed.position.y, removed.position.y + removed.size.height,
+    remaining.map(o => [o.position.y, o.position.y + o.size.height]),
+  );
+  const shiftAt = (p: Point): Point => ({
+    x: collapseShift(p.x, gapsX),
+    y: collapseShift(p.y, gapsY),
+  });
+
+  const mappings = state.mappings.map(item => {
+    const bounds = itemBounds(item);
+    if (!bounds) return item;
+    let anchor: OutputDef | undefined;
+    let bestArea = 0;
+    for (const o of remaining) {
+      const area = overlapArea(bounds, outputRect(o));
+      if (area > bestArea) {
+        bestArea = area;
+        anchor = o;
+      }
+    }
+    let moved = item;
+    if (!anchor && overlapArea(bounds, removedRect) > 0) {
+      moved = translateItem(
+        item,
+        target.position.x - removed.position.x,
+        target.position.y - removed.position.y,
+      );
+      anchor = target;
+    }
+    // どの出力にも乗らない item は自分の左上の位置で潰した分だけ動かす
+    const shift = shiftAt(anchor ? anchor.position : { x: bounds.x, y: bounds.y });
+    return translateItem(moved, shift.x, shift.y);
+  });
+
+  const outputs = remaining.map(o => {
+    const shift = shiftAt(o.position);
+    if (shift.x === 0 && shift.y === 0) return o;
+    return { ...o, position: { x: o.position.x + shift.x, y: o.position.y + shift.y } };
+  });
+
   return {
     ...state,
-    outputs: remaining,
-    canvas: recomputeCanvasBounds(remaining),
+    outputs,
+    mappings,
+    canvas: recomputeCanvasBounds(outputs),
     activeOutputId: state.activeOutputId === outputId ? undefined : state.activeOutputId,
   };
+}
+
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function outputRect(o: OutputDef): Rect {
+  return { x: o.position.x, y: o.position.y, width: o.size.width, height: o.size.height };
+}
+
+/** mapping の quad / mask の頂点の axis-aligned bounding box。頂点が無ければ null。 */
+function itemBounds(item: MappingItem): Rect | null {
+  const pts = isMaskEntry(item) ? item.points : quadVertices(item.quad);
+  if (pts.length === 0) return null;
+  let minX = pts[0].x, maxX = pts[0].x, minY = pts[0].y, maxY = pts[0].y;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/** 2 矩形の重なり面積。辺が接しているだけなら 0。 */
+function overlapArea(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+function translateItem(item: MappingItem, dx: number, dy: number): MappingItem {
+  if (dx === 0 && dy === 0) return item;
+  if (isMaskEntry(item)) {
+    return { ...item, points: item.points.map(p => ({ x: p.x + dx, y: p.y + dy })) };
+  }
+  return { ...item, quad: translateQuad(item.quad, dx, dy) };
+}
+
+/** 半開区間 [start, end) のうち、covers のどれにも覆われない部分区間を昇順で返す。 */
+function uncoveredParts(start: number, end: number, covers: Array<[number, number]>): Array<[number, number]> {
+  const parts: Array<[number, number]> = [];
+  let cursor = start;
+  for (const [a, b] of [...covers].sort((p, q) => p[0] - q[0])) {
+    if (cursor >= end) break;
+    if (b <= cursor) continue;
+    if (a >= end) break;
+    if (a > cursor) parts.push([cursor, a]);
+    cursor = Math.max(cursor, b);
+  }
+  if (cursor < end) parts.push([cursor, end]);
+  return parts;
+}
+
+/** gaps を潰したとき座標 v が動く量（0 以下）。gap の内側の点は gap の始点へ寄る。 */
+function collapseShift(v: number, gaps: Array<[number, number]>): number {
+  let shift = 0;
+  for (const [a, b] of gaps) {
+    if (v >= b) shift -= b - a;
+    else if (v > a) shift -= v - a;
+  }
+  return shift;
 }
 
 /**
