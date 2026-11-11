@@ -41,6 +41,22 @@ jobs:
       - name: Build hosted web app
         run: npm run build:web
 
+      - name: Build isolated 3D projection PoC
+        run: npm run build:poc
+
+      - name: Select Chromium for projection checks
+        timeout-minutes: 5
+        run: |
+          if projection_chromium_path="$(command -v google-chrome || command -v chromium)"; then
+            printf 'CHROMIUM_PATH=%s\n' "$projection_chromium_path" >> "$GITHUB_ENV"
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: Verify CSS/GPU projection and preview lifecycle
+        timeout-minutes: 5
+        run: npm run test:poc
+
       # デプロイ経路の破損を PR 時点で検出する (#44 は CI が緑のまま deploy.yml だけが
       # 1.5 ヶ月落ち続けていた)。--dry-run は API トークン不要でバンドルまで実行する。
       - name: Dry-run deploy (Cloudflare Workers)
