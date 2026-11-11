@@ -11,6 +11,7 @@ import { t, onLangChange } from '../i18n/index.js';
 
 export class SketchPageView {
   private openWindowsToggleCallback: (() => void) | null = null;
+  private practiceToggleCallback: (() => void) | null = null;
   private uiController: UIElementController;
   // 投影中、各マッピングのソース切り抜き範囲を示すワイヤーフレーム枠（.dc-source-crop-box）はここに生成される
   private projectionStage: HTMLDivElement | null = null;
@@ -86,6 +87,7 @@ export class SketchPageView {
         </button>
 
         <!-- 投影中のソース可視化レイヤ（前面化して、各マッピングのソース矩形を枠で描く。子は動的生成） -->
+        <button id="practice-btn" class="practice-start-button ui-element" data-i18n="practice.start">${t('practice.start')}</button>
         <div id="iframe-content-overlay" class="iframe-content-overlay"></div>
 
         <!-- inline マウントされた ControlPanel のシェル。投影モードでだけ表示される -->
@@ -142,6 +144,7 @@ export class SketchPageView {
     openWindowsBtn.addEventListener('click', () => {
       this.openWindowsToggleCallback?.();
     });
+    document.getElementById('practice-btn')?.addEventListener('click', () => this.practiceToggleCallback?.());
   }
 
   private updateFullscreenUI(isFullscreen: boolean): void {
@@ -318,6 +321,8 @@ export class SketchPageView {
     this.openWindowsToggleCallback = callback;
   }
 
+  onPracticeToggle(callback: () => void): void { this.practiceToggleCallback = callback; }
+
   destroy(): void {
     if (this.cropRefreshInterval !== null) {
       clearInterval(this.cropRefreshInterval);
@@ -329,5 +334,6 @@ export class SketchPageView {
     this.langUnsub?.();
     this.langUnsub = null;
     this.openWindowsToggleCallback = null;
+    this.practiceToggleCallback = null;
   }
 }

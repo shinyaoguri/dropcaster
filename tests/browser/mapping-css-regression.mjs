@@ -16,6 +16,18 @@ const browser = await chromium.launch({
   headless: true,
 });
 let comparisons = 0;
+// Decoding a frame does not mean Chrome's compositor has finished rasterizing
+// the new CSS transform. Require stable painted pixels on both sides of the comparison.
+async function paintedScreenshot(page) {
+  let previous;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const next = await page.screenshot({ animations: 'disabled' });
+    if (previous?.equals(next)) return next;
+    previous = next;
+  }
+  throw new Error('Output pixels did not stabilize');
+}
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
     const hosted = config.startsWith('apps/');
@@ -110,7 +122,7 @@ try {
             }));
           }, { fixture, side, mode, base: fixtures[0] });
 
-          const current = await popup.screenshot({ animations: 'disabled' });
+          const current = await paintedScreenshot(popup);
           // Only transform/crop styles are replaced; masks, stream, DOM ordering,
           // clipping and output layout remain the real OutputWindow implementation.
           await page.evaluate(({ fixture, base, mode }) => {
@@ -122,7 +134,7 @@ try {
               Object.assign(child.el.querySelector('video').style, f.videoStyle);
             }
           }, { fixture, base: fixtures[0], mode });
-          const baseline = await popup.screenshot({ animations: 'disabled' });
+          const baseline = await paintedScreenshot(popup);
           if (artifactDir && (!current.equals(baseline) || fixture.name === 'perspective')) {
             await writeFile(resolve(artifactDir, `${comparisonName}-current.png`), current);
             await writeFile(resolve(artifactDir, `${comparisonName}-baseline.png`), baseline);

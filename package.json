@@ -54,14 +54,14 @@
     "dev:poc": "vite --config poc/projection-3d/vite.config.ts",
     "build:poc": "tsc -p poc/projection-3d/tsconfig.json && vite build --config poc/projection-3d/vite.config.ts",
     "test:poc": "node tests/browser/projection-poc.mjs",
-    "test:projection-runtime": "node tests/browser/projection-runtime.mjs"
+    "test:projection-runtime": "node tests/browser/projection-runtime.mjs",
+    "test:practice": "node tests/browser/practice-mode.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261102.1",
     "@types/node": "^26.6.6",
     "@types/three": "0.187.0",
     "nodemon": "^3.0.2",
-    "three": "0.187.0",
     "typescript": "^7.0.2",
     "wrangler": "^4.156.1"
   },
@@ -72,7 +72,8 @@
     "playwright": "^1.64.1",
     "prompts": "^2.4.2",
     "terser": "^5.51.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "three": "0.187.0"
   },
   "overrides": {
     "undici": "^7.29.0"

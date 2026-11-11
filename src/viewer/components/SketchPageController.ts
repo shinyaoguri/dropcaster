@@ -7,6 +7,8 @@ import { WindowController } from './WindowController';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import { InlineControlHost } from '../windows/control/InlineControlHost';
 import { publicAssetPath } from '../utils/paths.js';
+import { PracticeController } from '../practice/PracticeController';
+import type { Project } from '../practice/project';
 
 export class SketchPageController {
   private fullscreenManager: FullscreenManager;
@@ -18,6 +20,8 @@ export class SketchPageController {
   private isDestroyed = false;
   /** projection 中だけ #dc-inline-editor 内にマウントする ControlWindow（inline 経路）。 */
   private inlinePanel: ControlWindow | null = null;
+  private practice: PracticeController;
+  private sketch: Sketch | null = null;
   /** unsubscribe: projection-mode-change のリスナを destroy で外すため。 */
   private boundProjectionChange = (e: Event) => this.handleProjectionChange(e);
 
@@ -26,13 +30,18 @@ export class SketchPageController {
     this.cursorManager = new CursorManager();
     this.view = new SketchPageView();
     this.windowController = new WindowController();
+    this.practice = new PracticeController({ wc: this.windowController, getFrame: () => this.sketchFrame,
+      mountEditor: () => this.mountInlineEditor(), getContext: () => ({ sketches: this.sketch ? [this.sketch] : [], currentIndex: 0, intervalSeconds: 30 }) });
   }
 
   async renderSketch(sketch: Sketch): Promise<void> {
     this.isDestroyed = false;
+    this.sketch = sketch;
 
     // ビューのレンダリング（#sketch-stage を含む空のステージを描画）
     this.view.render(sketch);
+    this.setupEventListeners();
+    window.addEventListener('projection-mode-change', this.boundProjectionChange);
 
     // スケッチ iframe を SketchFrame で差し込む
     const stage = document.getElementById('sketch-stage');
@@ -51,18 +60,17 @@ export class SketchPageController {
     }
 
     // 各マネージャーの初期化
+    if (this.isDestroyed) return;
     this.fullscreenManager.initialize();
     this.cursorManager.initialize();
 
     // ページ離脱時の警告を設定
     this.setupBeforeUnloadWarning();
 
-    // イベントリスナーの設定
-    this.setupEventListeners();
-
-    // 投影モードの開始／終了で inline ペインを mount／teardown
-    window.addEventListener('projection-mode-change', this.boundProjectionChange);
   }
+
+  async openProject(project: Project): Promise<void> { await this.practice.openProject(project); }
+  async startPractice(): Promise<void> { if (!this.isDestroyed) await this.practice.start(); }
 
   private handleProjectionChange(event: Event): void {
     const active = !!(event as CustomEvent).detail?.active;
@@ -75,10 +83,10 @@ export class SketchPageController {
    * canonical state は WindowController が保持し、ペインはその mirror をレンダリングする
    * （WindowController.events 経由）。
    */
-  private mountInlineEditor(): void {
-    if (this.inlinePanel) return; // 既に mount 済み
+  private mountInlineEditor(): ControlWindow | null {
+    if (this.inlinePanel) return this.inlinePanel;
     const aside = document.getElementById('dc-inline-editor');
-    if (!aside) return;
+    if (!aside) return null;
     aside.removeAttribute('hidden');
     this.inlinePanel = new ControlWindow();
     this.inlinePanel.mountInline(aside, (shell) =>
@@ -86,6 +94,7 @@ export class SketchPageController {
     );
     // 既にストリームが流れていれば bind し直す（mount が broadcastStream より後に来た場合の保険）
     this.windowController.rebindStreamToInlinePanel();
+    return this.inlinePanel;
   }
 
   private unmountInlineEditor(): void {
@@ -108,6 +117,7 @@ export class SketchPageController {
 
     // ウィンドウ開くボタンのイベント
     this.view.onOpenWindowsToggle(() => this.openWindows());
+    this.view.onPracticeToggle(() => this.practice.toggle());
   }
 
   private openWindows(): void {
@@ -186,6 +196,7 @@ export class SketchPageController {
       this.openWindowsTimeout = null;
     }
 
+    this.practice.dispose();
     this.unmountInlineEditor();
     this.fullscreenManager.destroy();
     this.sketchFrame?.dispose();

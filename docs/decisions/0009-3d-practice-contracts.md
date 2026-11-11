@@ -3,7 +3,7 @@
 ## 状態
 
 採用（2026-11-11）: 座標規約、描画の分離、状態と stream の所有権、段階的な導入方針。
-Project の JSON 形状は **#117 と共用する最小案**。永続化の実装・形式確定は後続変更で行う。
+Project の JSON 形状は当初の **#117 と共用する最小案**。実装時の形式確定は [0010](0010-portable-project-and-practice-ui.md) を参照。
 この ADR の追加で [#124](https://github.com/shinyaoguri/dropcaster/issues/124) の段階 0〜4 が完了するわけではない。
 
 ## 文脈

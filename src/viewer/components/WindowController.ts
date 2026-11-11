@@ -49,6 +49,7 @@ export class WindowController {
   /** 出力 id → 担当 OutputWindow。openOutputWindowFor で生やし、close で消す。 */
   private outputWindows = new Map<string, OutputWindow>();
   private activeStreams: MediaStream[] = [];
+  private streamConsumers = new Set<symbol>();
   private windowMonitoringInterval: number | null = null;
   private saveTimer: number | null = null;
   /** 直近に通知した出力寸法群（JSON）。同じなら再 emit しない。 */
@@ -82,6 +83,8 @@ export class WindowController {
    * 値は常に最新を保持し、`events.X.get()` で snapshot として取れる。
    */
   readonly events = {
+    stream: new Emitter<MediaStream | null>(null),
+    streaming: new Emitter<boolean>(false),
     state: new Emitter<MappingsState>(defaultMappingsState()),
     testPattern: new Emitter<TestPatternKindOrOff>('off'),
     outputBounds: new Emitter<OutputBoundsMap>({}),
@@ -499,6 +502,13 @@ export class WindowController {
   }
 
   async startCanvasStreaming(iframeElement: HTMLIFrameElement): Promise<void> {
+    // Opening a real output alongside practice must retain the current source/test stream.
+    if (this.currentSourceIframe) {
+      this.setSource(iframeElement);
+      this.startWindowMonitoring();
+      this.setProjectionMode(true);
+      return;
+    }
     this.testPattern?.stop();
     this.testPatternKind = 'off';
     this.broadcastTestPatternState();
@@ -642,6 +652,7 @@ export class WindowController {
    *   - 出力ウィンドウの warp 用 <video> 群にも同 stream を bind
    */
   private broadcastStream(stream: MediaStream): void {
+    this.events.stream.set(stream);
     // inline panel（main の DOM 上）の video 群（clone せず共有 bind）
     this.bindStreamToInlinePanel(stream);
     // 出力ウィンドウの video 群にも同じ stream
@@ -752,6 +763,7 @@ export class WindowController {
   }
 
   private setProjectionMode(active: boolean): void {
+    this.events.streaming.setIfChanged(active, (a, b) => a === b);
     window.dispatchEvent(new CustomEvent('projection-mode-change', {
       detail: { active }
     }));
@@ -891,7 +903,7 @@ export class WindowController {
     }
 
     this.windowMonitoringInterval = window.setInterval(() => {
-      if (!this.hasActiveWindows()) {
+      if (!this.hasStreamConsumers()) {
         this.stopCanvasStreaming();
         return;
       }
@@ -909,6 +921,24 @@ export class WindowController {
     return false;
   }
 
+  /** Borrow the controller-owned stream. Releasing a consumer never stops another consumer's tracks. */
+  acquireStreamConsumer(): () => void {
+    const token = Symbol('projection consumer');
+    this.streamConsumers.add(token);
+    return () => {
+      if (!this.streamConsumers.delete(token)) return;
+      if (!this.hasStreamConsumers()) this.stopCanvasStreaming();
+    };
+  }
+
+  hasStreamConsumers(): boolean { return this.streamConsumers.size > 0 || this.hasActiveWindows(); }
+
+  /** Close real outputs while an independent practice consumer may remain. */
+  closeOutputWindows(): void {
+    for (const id of [...this.outputWindows.keys()]) this.closeOutputWindowFor(id);
+    if (!this.hasStreamConsumers()) this.stopCanvasStreaming();
+  }
+
   /** canvas からのキャプチャだけを止める（observer 切断 ＋ tracks 停止）。ウィンドウ・監視はそのまま。 */
   private stopCanvasCapture(): void {
     // 予約済み callback は、同じ iframe を再利用した場合も旧世代として無効にする。
@@ -923,6 +953,7 @@ export class WindowController {
 
   /** source の load/document 監視は残し、現在の capture とその監視だけを解放する。 */
   private releaseCapturedStream(): void {
+    this.events.stream.setIfChanged(null, (a, b) => a === b);
     this.detachRecoveryVideo?.();
     this.detachRecoveryVideo = null;
     this.capturedCanvas = null;
@@ -951,6 +982,7 @@ export class WindowController {
 
   // Canvas配信を停止（ウィンドウ監視・プロジェクションモードも解除）
   stopCanvasStreaming(): void {
+    this.streamConsumers.clear();
     this.stopCanvasCapture();
     this.currentSourceIframe = null;
 

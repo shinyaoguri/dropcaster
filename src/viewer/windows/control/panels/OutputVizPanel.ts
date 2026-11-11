@@ -76,6 +76,7 @@ export class OutputVizPanel {
   private canvasMappings: HTMLElement | null = null;
   /** quad ハンドルを置くレイヤ（mappings の上、frame の上）。 */
   private canvasHandles: HTMLElement | null = null;
+  private practiceBackground: { outputId: string; image: HTMLImageElement } | null = null;
   /**
    * stage 自身のサイズ変化（カラムリサイザでマッピングカラムの幅を変えた、ウィンドウリサイズで
    * 親フレックスが再分配された、等）に追従するための observer。LayoutPanel と同じ理由で
@@ -174,6 +175,19 @@ export class OutputVizPanel {
     return this.canvasHandles;
   }
 
+  /** Editor-only projector view. It is never sent to OutputWindow or the stream. */
+  setPracticeBackground(outputId: string, url: string | null, opacity = 0.65): void {
+    if (this.canvasMappings) this.canvasMappings.style.opacity = url ? String(opacity) : '';
+    if (url && this.practiceBackground?.outputId === outputId && this.practiceBackground.image.src === url) return;
+    this.practiceBackground?.image.remove(); this.practiceBackground = null;
+    if (!url || !this.canvasHost) return;
+    const image = this.canvasHost.ownerDocument.createElement('img');
+    image.className = 'dc-practice-background'; image.alt = ''; image.draggable = false;
+    image.style.cssText = 'position:absolute;pointer-events:none;z-index:0'; image.src = url;
+    this.canvasHost.prepend(image); this.practiceBackground = { outputId, image };
+    this.renderAll();
+  }
+
   destroy(): void {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
@@ -183,6 +197,7 @@ export class OutputVizPanel {
     this.canvasHost = null;
     this.canvasMappings = null;
     this.canvasHandles = null;
+    this.practiceBackground = null;
     this.frames.clear();
     this.scope = null;
     this.stageEl = null;
@@ -401,6 +416,11 @@ export class OutputVizPanel {
       entry.root.style.top = `${out.position.y}px`;
       entry.root.style.width = `${out.size.width}px`;
       entry.root.style.height = `${out.size.height}px`;
+      if (this.practiceBackground?.outputId === out.id) {
+        const image = this.practiceBackground.image;
+        image.style.left = `${out.position.x}px`; image.style.top = `${out.position.y}px`;
+        image.style.width = `${out.size.width}px`; image.style.height = `${out.size.height}px`;
+      }
 
       // active 強調
       entry.root.classList.toggle('is-active', out.id === activeOutput);

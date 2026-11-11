@@ -1,0 +1,137 @@
+{
+  "format": "dropcaster-project",
+  "schemaVersion": 1,
+  "id": "sample-textured-wall",
+  "name": "Textured wall · 6 m × 4 m",
+  "createdAt": "2026-11-11T00:00:00.000Z",
+  "updatedAt": "2026-11-11T00:00:00.000Z",
+  "venue": {
+    "id": "sample-wall",
+    "revision": 1,
+    "layout": {
+      "version": 2,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "outputs": [
+        {
+          "id": "output-1",
+          "name": "Output 1",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "size": {
+            "width": 1920,
+            "height": 1080
+          }
+        }
+      ],
+      "mappings": [
+        {
+          "id": "mapping-1",
+          "name": "Mapping 1",
+          "source": {
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "height": 100
+          },
+          "quad": {
+            "topLeft": {
+              "x": 480,
+              "y": 270
+            },
+            "topRight": {
+              "x": 1440,
+              "y": 270
+            },
+            "bottomRight": {
+              "x": 1440,
+              "y": 810
+            },
+            "bottomLeft": {
+              "x": 480,
+              "y": 810
+            }
+          }
+        }
+      ],
+      "activeId": "mapping-1",
+      "activeOutputId": "output-1"
+    },
+    "scene": {
+      "kind": "glb",
+      "metersPerUnit": 1,
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "quaternion": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "color": "#ffffff",
+      "assetId": "wall"
+    },
+    "projectors": [
+      {
+        "id": "projector-1",
+        "outputId": "output-1",
+        "position": [
+          0,
+          2.5,
+          4.5
+        ],
+        "quaternion": [
+          -0.07274986500432551,
+          0,
+          0,
+          0.997350217898333
+        ],
+        "verticalFovDegrees": 43,
+        "aspect": 1.7777777777777777,
+        "lensShift": [
+          0,
+          0
+        ],
+        "near": 0.1,
+        "far": 30
+      }
+    ]
+  },
+  "content": [
+    {
+      "id": "builtin-checkerboard",
+      "kind": "builtin",
+      "ref": "checkerboard",
+      "title": "Built-in calibration sample",
+      "revision": "1",
+      "revisionPinned": false
+    }
+  ],
+  "show": {
+    "contentIds": [
+      "builtin-checkerboard"
+    ],
+    "intervalSeconds": 30,
+    "currentIndex": 0
+  },
+  "assets": [
+    {
+      "id": "wall",
+      "name": "textured-wall.glb",
+      "mimeType": "model/gltf-binary",
+      "data": "Z2xURgIAAACoBAAAsAMAAEpTT057ImFzc2V0Ijp7InZlcnNpb24iOiIyLjAifSwic2NlbmUiOjAsInNjZW5lcyI6W3sibm9kZXMiOlswXX1dLCJub2RlcyI6W3sibWVzaCI6MH1dLCJtZXNoZXMiOlt7InByaW1pdGl2ZXMiOlt7ImF0dHJpYnV0ZXMiOnsiUE9TSVRJT04iOjAsIk5PUk1BTCI6MSwiVEVYQ09PUkRfMCI6Mn0sImluZGljZXMiOjMsIm1hdGVyaWFsIjowfV19XSwibWF0ZXJpYWxzIjpbeyJwYnJNZXRhbGxpY1JvdWdobmVzcyI6eyJiYXNlQ29sb3JGYWN0b3IiOlswLjcsMC44LDAuOSwxXSwiYmFzZUNvbG9yVGV4dHVyZSI6eyJpbmRleCI6MH19fV0sInRleHR1cmVzIjpbeyJzb3VyY2UiOjB9XSwiaW1hZ2VzIjpbeyJidWZmZXJWaWV3Ijo0LCJtaW1lVHlwZSI6ImltYWdlL3BuZyJ9XSwiYnVmZmVycyI6W3siYnl0ZUxlbmd0aCI6MjE5fV0sImJ1ZmZlclZpZXdzIjpbeyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjAsImJ5dGVMZW5ndGgiOjQ4fSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6NDgsImJ5dGVMZW5ndGgiOjQ4fSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6OTYsImJ5dGVMZW5ndGgiOjMyfSx7ImJ1ZmZlciI6MCwiYnl0ZU9mZnNldCI6MTI4LCJieXRlTGVuZ3RoIjoxMn0seyJidWZmZXIiOjAsImJ5dGVPZmZzZXQiOjE0MCwiYnl0ZUxlbmd0aCI6Nzl9XSwiYWNjZXNzb3JzIjpbeyJidWZmZXJWaWV3IjowLCJjb21wb25lbnRUeXBlIjo1MTI2LCJjb3VudCI6NCwidHlwZSI6IlZFQzMiLCJtaW4iOlstMywwLC0zXSwibWF4IjpbMyw0LC0zXX0seyJidWZmZXJWaWV3IjoxLCJjb21wb25lbnRUeXBlIjo1MTI2LCJjb3VudCI6NCwidHlwZSI6IlZFQzMifSx7ImJ1ZmZlclZpZXciOjIsImNvbXBvbmVudFR5cGUiOjUxMjYsImNvdW50Ijo0LCJ0eXBlIjoiVkVDMiJ9LHsiYnVmZmVyVmlldyI6MywiY29tcG9uZW50VHlwZSI6NTEyMywiY291bnQiOjYsInR5cGUiOiJTQ0FMQVIifV19INwAAABCSU4AAABAwAAAAAAAAEDAAABAQAAAAAAAAEDAAABAQAAAgEAAAEDAAABAwAAAgEAAAEDAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AAAAAAAAgD8AAAEAAgAAAAIAAwCJUE5HDQoaCgAAAA1JSERSAAAAAgAAAAIIAgAAAP3UmnMAAAAWSURBVHicY/gfICe35T+D3Jb//wPkAC1yBn2TqpJEAAAAAElFTkSuQmCCAA=="
+    }
+  ]
+}

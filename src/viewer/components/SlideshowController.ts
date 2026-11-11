@@ -2,6 +2,7 @@ import type { Sketch } from '../types/sketch.js';
 import { SlideshowView } from './SlideshowView';
 import { routeHref } from '../utils/paths.js';
 import { t } from '../i18n/index.js';
+import type { Project } from '../practice/project';
 
 export class SlideshowController {
   private view: SlideshowView;
@@ -13,12 +14,12 @@ export class SlideshowController {
   /**
    * スライドショーを開始
    */
-  public start(sketches: Sketch[]): void {
+  public start(sketches: Sketch[], show?: { currentIndex: number; intervalSeconds: number }): void {
     if (sketches.length === 0) {
       this.showEmptyState();
       return;
     }
-    this.view.render(sketches.map(s => s.id), sketches);
+    this.view.render(sketches.map(s => s.id), sketches, show);
   }
 
   /**
@@ -59,4 +60,5 @@ export class SlideshowController {
   public destroy(): void {
     this.view.destroy();
   }
+  public async openProject(project: Project): Promise<void> { await this.view.openProject(project); }
 }

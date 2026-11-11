@@ -797,6 +797,10 @@ body {
 
 .op-hero-footer p { margin: 0; }
 
+.op-hero-practice { text-align: center; margin: 0; font-size: 0.9rem; }
+.op-hero-practice a { color: #475569; text-underline-offset: 3px; }
+.op-hero-practice a:hover { color: #1e293b; }
+
 .op-hero-credit a {
   color: #64748b;
   text-decoration: none;

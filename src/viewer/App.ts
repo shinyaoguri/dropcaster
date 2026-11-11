@@ -11,6 +11,10 @@ import { SlideshowController } from './components/SlideshowController.js';
 import { Error404View } from './components/Error404View.js';
 import { SketchErrorView } from './components/SketchErrorView.js';
 import { API_CONFIG, GIST_CONFIG } from '../core/modules/constants.js';
+import { readProject } from './practice/projectStore';
+import { parseProject } from './practice/project';
+import { t } from './i18n';
+import { sampleSketch } from './practice/sampleSketch';
 
 export class App {
   private sketchService: SketchServiceImpl;
@@ -19,6 +23,7 @@ export class App {
   private router: Router;
   private sketchPageController: SketchPageController | null = null;
   private slideshowController: SlideshowController | null = null;
+  private routeGeneration = 0;
 
   constructor() {
     this.sketchService = new SketchServiceImpl();
@@ -40,6 +45,7 @@ export class App {
    * MediaStream が前のページから残留する。
    */
   private teardownCurrent(): void {
+    this.routeGeneration++;
     if (this.sketchPageController) {
       this.sketchPageController.destroy();
       this.sketchPageController = null;
@@ -84,12 +90,15 @@ export class App {
     // OpenProcessing 経路: /op/<id> または /?op=<id>
     this.router.registerRoute('/op/:id', async (opId: string) => {
       this.teardownCurrent();
+      const generation = this.routeGeneration;
 
       try {
         const sketch = await this.opSource.resolve(opId);
+        if (generation !== this.routeGeneration) return;
         this.sketchPageController = new SketchPageController();
         await this.sketchPageController.renderSketch(sketch);
       } catch (err) {
+        if (generation !== this.routeGeneration) return;
         const sketchUrl = `${API_CONFIG.baseUrl}/sketch/${opId}`;
         if (err instanceof OpenProcessingRateLimitError) {
           console.warn(err.message);
@@ -113,13 +122,16 @@ export class App {
     // Gist 経路: /gist/<id> または /?gist=<id>
     this.router.registerRoute('/gist/:id', async (gistId: string) => {
       this.teardownCurrent();
+      const generation = this.routeGeneration;
 
       const gistUrl = `${GIST_CONFIG.baseUrl}/${gistId}`;
       try {
         const sketch = await this.gistSource.resolve(gistId);
+        if (generation !== this.routeGeneration) return;
         this.sketchPageController = new SketchPageController();
         await this.sketchPageController.renderSketch(sketch);
       } catch (err) {
+        if (generation !== this.routeGeneration) return;
         if (err instanceof GistRateLimitError) {
           console.warn(err.message);
           SketchErrorView.render('rate-limit', {
@@ -144,6 +156,50 @@ export class App {
           });
         }
       }
+    });
+
+    // Resolve every saved reference before replacing the current working view.
+    this.router.registerRoute('/project', async () => {
+      const generation = ++this.routeGeneration;
+      const status = document.getElementById('dc-practice-status');
+      if (status) status.textContent = t('practice.loading');
+      try {
+        const project = parseProject(await readProject());
+        const sketches = await Promise.all(project.show.contentIds.map(async id => {
+          const ref = project.content.find(c => c.id === id)!;
+          if (ref.kind === 'op') return this.opSource.resolve(ref.ref);
+          if (ref.kind === 'gist') return this.gistSource.resolve(ref.ref);
+          if (ref.kind === 'builtin') return sampleSketch();
+          const local = this.sketchService.getSketchById(ref.ref);
+          if (!local) throw new Error('Missing local sketch');
+          return local;
+        }));
+        if (generation !== this.routeGeneration) return;
+        if (!sketches.length) throw new Error('No saved sketches');
+        this.teardownCurrent();
+        if (sketches.length === 1) {
+          const controller = new SketchPageController();
+          this.sketchPageController = controller;
+          await controller.renderSketch(sketches[0]);
+          if (this.sketchPageController === controller) await controller.openProject(project);
+        } else {
+          this.slideshowController = new SlideshowController();
+          this.slideshowController.start(sketches, project.show);
+          await this.slideshowController.openProject(project);
+        }
+      } catch {
+        if (generation !== this.routeGeneration) return;
+        if (status?.isConnected) { status.textContent = t('practice.contentMissing'); status.classList.add('is-error'); }
+        else SketchErrorView.render('not-found', { detail: t('practice.contentMissing') });
+      }
+    });
+
+    this.router.registerRoute('/practice', async () => {
+      this.teardownCurrent();
+      const controller = new SketchPageController();
+      this.sketchPageController = controller;
+      await controller.renderSketch(sampleSketch());
+      if (this.sketchPageController === controller) await controller.startPractice();
     });
 
     // スライドショーページ
