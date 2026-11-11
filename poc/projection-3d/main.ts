@@ -170,6 +170,7 @@ function stopPreview(): void {
   snapshotFrame = null;
   resizeObserver?.disconnect(); resizeObserver = null;
   preview?.dispose(); preview = null;
+  video.pause(); video.srcObject = null;
   startButton.disabled = false; stopButton.disabled = true; message('stopped');
 }
 
@@ -179,6 +180,8 @@ async function startPreview(): Promise<void> {
   try {
     // Three.js is not requested until the experiment is explicitly started.
     const { ProjectionPreview } = await import('./ProjectionPreview');
+    if (current !== generation) return;
+    video.srcObject = stream;
     await video.play();
     if (current !== generation) return;
     preview = new ProjectionPreview(venueCanvas, video);

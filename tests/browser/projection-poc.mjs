@@ -157,12 +157,21 @@ try {
   for (let n=0;n<3;n++) {
     const stopped = await page.evaluate(() => {
       const p=window.projectionPoc.preview; window.projectionPoc.stop();
-      return { ...p.diagnostics(), track: window.projectionPoc.stream.getVideoTracks()[0].readyState };
+      return { ...p.diagnostics(), track: window.projectionPoc.stream.getVideoTracks()[0].readyState,
+        paused: window.projectionPoc.video.paused, attached: window.projectionPoc.video.srcObject !== null };
     });
     assert.equal(stopped.disposed,true); assert.equal(stopped.memory.textures,0); assert.equal(stopped.memory.geometries,0);
     assert.equal(stopped.track,'live','preview cannot stop borrowed tracks');
+    assert.equal(stopped.paused,true); assert.equal(stopped.attached,false);
     await page.click('#start'); await page.waitForFunction(() => window.projectionPoc.preview?.depthRenders>0);
   }
+
+  const cancelled = await page.evaluate(async () => {
+    const api=window.projectionPoc; api.stop(); const pending=api.start(); api.stop(); await pending;
+    return { active:!!api.preview, attached:api.video.srcObject !== null, track:api.stream.getVideoTracks()[0].readyState };
+  });
+  assert.deepEqual(cancelled,{active:false,attached:false,track:'live'},'cancelled initialization cannot reattach video or GPU');
+  await page.click('#start'); await page.waitForFunction(() => window.projectionPoc.preview?.depthRenders>0);
 
   await page.evaluate(() => {
     const ext=window.projectionPoc.preview.renderer.getContext().getExtension('WEBGL_lose_context');

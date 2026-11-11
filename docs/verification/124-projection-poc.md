@@ -57,6 +57,7 @@ CSS と同じ pixel 出力を必要とする用途には、この基準を流用
 - 観察カメラのドラッグ / zoom / viewport resize 後も projector matrix と depth render 回数が不変。
 - 四隅の実ドラッグで state が変わる。凹への移動制約は既存の関数を共用する。
 - 3 回の停止再開で GPU の texture / geometry 数が停止後 0、借用 track は live のまま。
+- 停止時はプレビュー video を pause / detach し、開始中のキャンセル後も再接続しない。
 - context lost で 3D を停止し、復帰後に再開始できる。WebGL 無効でも CSS と四隅の編集を継続。
 - 初回開始時にデコード済み映像から GPU snapshot が生成されることを検証。
 
