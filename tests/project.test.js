@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createProject, parseProject, portableProject, reconcileProjectLayout, encodeAsset, decodeAsset, validateGlb } from '../src/viewer/practice/project.ts';
+import { createProject, parseProject, portableProject, portableVenue, importVenue, reconcileProjectLayout, encodeAsset, decodeAsset, validateGlb } from '../src/viewer/practice/project.ts';
+import { roomScene } from '../src/viewer/practice/venueObjects.ts';
 import { withAddedOutput, withRemovedOutput } from '../src/viewer/utils/mappingTransform.ts';
 import { venueFixture } from './fixtures/venue-glb.mjs';
 
@@ -55,4 +56,56 @@ test('large embedded assets decode without regexp stack overflow; invalid paddin
   const bytes = new Uint8Array(8 * 1024 * 1024).fill(123);
   assert.deepEqual(decodeAsset(encodeAsset(bytes)), bytes);
   for (const bad of ['a', 'AAAA===A', 'AA=A', '====', 'AA$=']) assert.throws(() => decodeAsset(bad));
+});
+
+test('v1 projects migrate without changing calibrated geometry or embedded assets', () => {
+  const p = createProject();
+  p.assets = [{ id:'wall', name:'wall.glb', mimeType:'model/gltf-binary', data:encodeAsset(venueFixture()) }];
+  p.venue.scene.kind = 'glb'; p.venue.scene.assetId = 'wall';
+  p.venue.projectors[0].position = [3, 2, 1];
+  const restored = parseProject({ ...p, schemaVersion: 1 });
+  assert.equal(restored.schemaVersion, 2);
+  assert.deepEqual(restored.venue.projectors, p.venue.projectors);
+  assert.deepEqual(restored.venue.layout, parseProject(p).venue.layout);
+  assert.deepEqual(restored.assets, p.assets);
+});
+
+test('measured rooms use clear inner dimensions and preserve object edits on roundtrip', () => {
+  const p = createProject(); p.venue.scene = roomScene(8, 3, 6, ['Floor', 'Back', 'Left', 'Right']);
+  const objects = p.venue.scene.objects; assert.ok(objects);
+  const [floor, back, left, right] = objects;
+  assert.equal(floor.position[1] + floor.size[1] / 2, 0);
+  assert.equal(back.position[2] + back.size[2] / 2, -3);
+  assert.equal(right.position[0] - right.size[0] / 2 - (left.position[0] + left.size[0] / 2), 8);
+  back.position[0] = 1.5; back.color = '#804020'; back.quaternion = [0, Math.sin(Math.PI / 4), 0, Math.cos(Math.PI / 4)];
+  assert.deepEqual(parseProject(JSON.parse(JSON.stringify(p))).venue.scene.objects, objects);
+  for (const mutate of [
+    p => { p.venue.scene.objects[0].size[1] = 0; },
+    p => { p.venue.scene.objects[0].position[0] = Infinity; },
+    p => { p.venue.scene.objects[0].color = 'not a colour'; },
+    p => { p.venue.scene.objects[0].quaternion = [0, 0, 0, 0]; },
+    p => { p.venue.scene.objects.push(p.venue.scene.objects[0]); },
+    p => { p.venue.scene.objects = []; },
+    p => { p.venue.scene.scale = [2, 2, 2]; },
+    p => { p.venue.scene.objects = Array.from({length:129}, (_,i) => ({ ...objects[0], id: String(i) })); },
+  ]) { const bad = structuredClone(p); mutate(bad); assert.throws(() => parseProject(bad)); }
+  assert.throws(() => parseProject({ ...p, schemaVersion: 1 }), 'old readers must not silently lose editable geometry');
+});
+
+test('venue sharing strips screen and source details while retaining the receiving project and show', () => {
+  const author = createProject(); author.name = 'Hall'; author.venue.scene = roomScene(8, 3, 6, ['F', 'B', 'L', 'R']);
+  author.content = [{ id: 'local-secret', kind:'local', ref:'local-secret', title:'Private rehearsal', revision:null, revisionPinned:false }];
+  author.show.contentIds = ['local-secret'];
+  author.venue.layout.outputs[0].screen = { left:1920, top:0, width:1920, height:1080 };
+  const shared = portableVenue(author);
+  assert.equal(JSON.stringify(shared).includes('local-secret'), false); assert.equal('show' in shared, false);
+  assert.equal(shared.venue.layout.outputs[0].screen, undefined);
+  const recipient = createProject(); recipient.name = 'My show'; recipient.show.intervalSeconds = 45;
+  const imported = importVenue(shared, recipient);
+  assert.equal(imported.name, recipient.name); assert.equal(imported.id, recipient.id);
+  assert.deepEqual(imported.show, recipient.show); assert.deepEqual(imported.content, recipient.content);
+  assert.deepEqual(imported.venue.scene.objects, author.venue.scene.objects);
+  assert.throws(() => importVenue({ ...shared, schemaVersion:99 }, recipient));
+  assert.throws(() => importVenue({ ...shared, venue: { ...shared.venue, projectors:[] } }, recipient));
+  assert.equal(recipient.venue.scene.kind, 'sample');
 });

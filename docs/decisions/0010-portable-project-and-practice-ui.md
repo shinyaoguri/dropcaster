@@ -1,5 +1,7 @@
 # 0010: Project v1 を共通保存形式にし、既存編集画面で 3D 練習を提供する
 
+編集可能な実寸部材、Project v2、会場のみの配布は[ADR 0011](0011-measured-venue-authoring.md)で拡張する。
+
 ## 状態
 
 採用（2026-11-11）。[0009](0009-3d-practice-contracts.md) の保存最小案を具体化する。

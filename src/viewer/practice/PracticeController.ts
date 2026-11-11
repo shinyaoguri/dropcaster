@@ -61,12 +61,12 @@ export class PracticeController {
     this.editor = editor; editor.setPracticeMode(true);
     this.scope.classList.add('dc-practice-mode');
     this.toolbar = document.createElement('header'); this.toolbar.className = 'dc-practice-toolbar';
-    this.toolbar.innerHTML = '<strong data-i18n="practice.title"></strong><span id="dc-practice-status" role="status" aria-live="polite"></span><button type="button" id="practice-retry" data-i18n="practice.retry" hidden></button><button type="button" id="practice-settings" data-i18n="practice.settings"></button><button type="button" id="practice-project" data-i18n="practice.project"></button><button type="button" id="practice-open-output" data-i18n="practice.openOutput"></button><button type="button" id="practice-stop" data-i18n="practice.stop"></button>';
+    this.toolbar.innerHTML = '<strong data-i18n="practice.title"></strong><span id="dc-practice-status" role="status" aria-live="polite"></span><button type="button" id="practice-retry" data-i18n="practice.retry" hidden></button><button type="button" id="practice-settings" data-i18n="practice.settings"></button><button type="button" id="practice-venue" data-i18n="practice.buildVenue"></button><button type="button" id="practice-project" data-i18n="practice.project"></button><button type="button" id="practice-open-output" data-i18n="practice.openOutput"></button><button type="button" id="practice-stop" data-i18n="practice.stop"></button>';
     this.scope.prepend(this.toolbar);
     this.toolbar.querySelector('#practice-stop')!.addEventListener('click', () => this.stop());
     this.toolbar.querySelector('#practice-open-output')!.addEventListener('click', () => this.options.wc.openOutputWindow());
     this.toolbar.querySelector('#practice-retry')!.addEventListener('click', () => void this.startPanel(editor, ++this.generation));
-    for (const [button, id] of [['practice-settings', 'dc-practice-settings'], ['practice-project', 'dc-practice-project']]) {
+    for (const [button, id] of [['practice-settings', 'dc-practice-settings'], ['practice-venue', 'dc-practice-venue'], ['practice-project', 'dc-practice-project']]) {
       this.toolbar.querySelector(`#${button}`)!.addEventListener('click', () => {
         const element = this.scope?.querySelector<HTMLElement>(`#${id}`);
         if (element instanceof HTMLDetailsElement) element.open = true;

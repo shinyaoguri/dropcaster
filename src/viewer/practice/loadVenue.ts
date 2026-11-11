@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { decodeAsset, validateGlb, ProjectFormatError, type Project } from './project';
+import { decodeAsset, validateGlb, ProjectFormatError, type Project, type VenueObject } from './project';
 
 export interface PreparedVenue { group: THREE.Group | null; dispose: () => void }
 export async function prepareVenue(project: Project): Promise<PreparedVenue> {
   if (project.venue.scene.kind === 'sample') return { group: null, dispose() {} };
+  if (project.venue.scene.kind === 'objects') return prepareObjects(project.venue.scene.objects!);
   const asset = project.assets.find(a => a.id === project.venue.scene.assetId);
   if (!asset) throw new ProjectFormatError('asset');
   const bytes = decodeAsset(asset.data); validateGlb(bytes);
@@ -36,4 +37,19 @@ export async function prepareVenue(project: Project): Promise<PreparedVenue> {
     dispose(); throw new ProjectFormatError('size');
   }
   return { group: gltf.scene, dispose };
+}
+
+export function prepareObjects(objects: VenueObject[]): PreparedVenue {
+  const group = new THREE.Group();
+  const geometries: THREE.BufferGeometry[] = [], materials: THREE.Material[] = [];
+  for (const object of objects) {
+    const geometry = new THREE.BoxGeometry(...object.size);
+    const material = new THREE.MeshStandardMaterial({ color: object.color });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = object.name; mesh.position.fromArray(object.position); mesh.quaternion.fromArray(object.quaternion);
+    mesh.userData.venueObjectId = object.id;
+    geometries.push(geometry); materials.push(material); group.add(mesh);
+  }
+  let disposed = false;
+  return { group, dispose() { if (disposed) return; disposed = true; geometries.forEach(g => g.dispose()); materials.forEach(m => m.dispose()); } };
 }

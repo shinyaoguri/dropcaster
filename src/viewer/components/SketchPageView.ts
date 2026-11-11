@@ -87,7 +87,13 @@ export class SketchPageView {
         </button>
 
         <!-- 投影中のソース可視化レイヤ（前面化して、各マッピングのソース矩形を枠で描く。子は動的生成） -->
-        <button id="practice-btn" class="practice-start-button ui-element" data-i18n="practice.start">${t('practice.start')}</button>
+        <button id="practice-btn" class="practice-start-button top-right-button ui-element"
+          data-i18n-title="practice.start" data-i18n-aria-label="practice.start"
+          title="${t('practice.start')}" aria-label="${t('practice.start')}">
+          <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="m12 2 9 5v10l-9 5-9-5V7Zm0 10 9-5M12 12 3 7m9 5v10"/>
+          </svg>
+        </button>
         <div id="iframe-content-overlay" class="iframe-content-overlay"></div>
 
         <!-- inline マウントされた ControlPanel のシェル。投影モードでだけ表示される -->

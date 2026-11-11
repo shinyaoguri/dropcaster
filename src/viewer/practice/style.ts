@@ -34,9 +34,10 @@ export function installPracticeStyles(): void {
     .dc-practice-check { display:flex; align-items:center; gap:6px; font-size:12px; color:#ccc; line-height:1.4; margin:10px 0; }
     .dc-practice-settings ul { padding-left:18px; font-size:12px; color:#ccc; overflow-wrap:anywhere; }
     .dc-practice-settings .tool-button { margin:4px 0; }
-    .practice-start-button { position:fixed; top:9rem; right:1rem; z-index:1002; border:1px solid #555; border-radius:6px; background:rgba(32,32,32,.9); color:#fff; padding:10px 13px; font:13px system-ui; cursor:pointer; }
-    .practice-start-button:hover { background:#444; }
-    .slideshow-controls .practice-start-button { position:static; }
+    .dc-practice-object-actions { display:flex; gap:5px; flex-wrap:wrap; }
+    .dc-practice-object-actions .tool-button { width:auto; flex:1; min-width:65px; }
+    .dc-practice-settings button:disabled { opacity:.45; cursor:not-allowed; }
+    .dc-practice-help { display:block; color:#93c5fd; font-size:12px; margin:8px 0; }
     @media(max-width:1000px) {
       .dc-practice-mode .control-container { display:grid; grid-template-columns:230px minmax(0,1fr); grid-template-rows:minmax(260px,1fr) minmax(280px,1fr); overflow:auto; }
       .dc-practice-mode .tool-column { grid-row:1/3; width:auto; min-width:0; max-width:none; }

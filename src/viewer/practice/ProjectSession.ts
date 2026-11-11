@@ -55,9 +55,9 @@ export class ProjectSession {
       currentIndex: context.currentIndex, intervalSeconds: context.intervalSeconds } });
     if (this.initialized) this.scheduleSave();
   }
-  update(next: Project, layout = false): void {
+  update(next: Project, layout = false, replaceContent = true): void {
     if (this.disposed) return;
-    if (layout) this.followContext = false; // Keep imported references until the user opens them.
+    if (layout && replaceContent) this.followContext = false; // Keep imported references until the user opens them.
     const project = { ...next, updatedAt: new Date().toISOString() };
     this.changes.set(project);
     if (layout) this.wc.applyStateFromInline(project.venue.layout);
