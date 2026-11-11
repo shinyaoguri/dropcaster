@@ -78,7 +78,12 @@ export class SlideshowView {
                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
               </svg>
             </button>
-            <button id="practice-btn" class="practice-start-button" data-i18n="practice.start">${t('practice.start')}</button>
+            <button id="practice-btn" class="control-btn" data-i18n-title="practice.start" data-i18n-aria-label="practice.start"
+              title="${t('practice.start')}" aria-label="${t('practice.start')}">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="m12 2 9 5v10l-9 5-9-5V7Zm0 10 9-5M12 12 3 7m9 5v10"/>
+              </svg>
+            </button>
             <button id="mapping-btn" class="control-btn" data-i18n-title="slideshow.mapping" title="${t('slideshow.mapping')}">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2"/>
@@ -596,6 +601,10 @@ export class SlideshowView {
     scope.querySelectorAll<HTMLElement>('[data-i18n-title]').forEach((el) => {
       const key = el.getAttribute('data-i18n-title');
       if (key) el.title = t(key as Parameters<typeof t>[0]);
+    });
+    scope.querySelectorAll<HTMLElement>('[data-i18n-aria-label]').forEach((el) => {
+      const key = el.getAttribute('data-i18n-aria-label');
+      if (key) el.setAttribute('aria-label', t(key as Parameters<typeof t>[0]));
     });
   }
 
