@@ -102,7 +102,8 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 対象・制約は [#124 の検証記録](docs/verification/124-projection-foundation.md) を参照。
 
 3D 描画実験は `npm run dev:poc`、型検査とビルドは `npm run build:poc`、CSS/GPU・遮蔽・
-寿命のブラウザ確認は `npm run test:poc`。CI でも Chromium を入れて実行する。
+寿命のブラウザ確認は `npm run test:poc`。CI は runner の Chrome / Chromium を優先し、
+なければ Playwright の Chromium を入れて実行する。
 操作と測定方法は [PoC README](poc/projection-3d/README.md) を参照。
 
 ## 注意点 / 既知の TODO
