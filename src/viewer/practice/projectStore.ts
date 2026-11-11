@@ -5,14 +5,16 @@ import type { Project } from './project';
 let database: Promise<IDBDatabase> | undefined;
 function open(): Promise<IDBDatabase> {
   return database ??= new Promise((resolve, reject) => {
+    let blocked = false;
     const request = indexedDB.open('dropcaster.projects', 1);
     request.onupgradeneeded = () => request.result.createObjectStore('projects');
     request.onsuccess = () => {
+      if (blocked) { request.result.close(); return; }
       request.result.onversionchange = () => { request.result.close(); database = undefined; };
       resolve(request.result);
     };
     request.onerror = () => { database = undefined; reject(request.error); };
-    request.onblocked = () => { database = undefined; reject(new Error('Project database blocked')); };
+    request.onblocked = () => { blocked = true; database = undefined; reject(new Error('Project database blocked')); };
   });
 }
 export async function readProject(key = 'draft'): Promise<Project | undefined> {

@@ -46,6 +46,7 @@ export interface MappingsListPanelAttachOptions {
   getHostWin: () => Window | null;
   /** 出力ウィンドウを開く／閉じる（ControlHost 経由）。 */
   openOutputWindow: (outputId: string) => void;
+  autoOpenAddedOutput?: () => boolean;
   closeOutputWindow: (outputId: string) => void;
   /** 出力ウィンドウが開いているかの問い合わせ（ヘッダの「開く／閉じる」表示用）。 */
   isOutputWindowOpen: (outputId: string) => boolean;
@@ -395,7 +396,7 @@ export class MappingsListPanel {
         ctrl.replaceState(next);
         // 直後に同じ user gesture でポップアウトを開く（ユーザの「増やすと出る」期待に合わせる）。
         const newId = next.activeOutputId;
-        if (newId) this.opts?.openOutputWindow(newId);
+        if (newId && this.opts?.autoOpenAddedOutput?.() !== false) this.opts?.openOutputWindow(newId);
       });
     }
 

@@ -40,6 +40,8 @@ export class SketchPageController {
 
     // ビューのレンダリング（#sketch-stage を含む空のステージを描画）
     this.view.render(sketch);
+    this.setupEventListeners();
+    window.addEventListener('projection-mode-change', this.boundProjectionChange);
 
     // スケッチ iframe を SketchFrame で差し込む
     const stage = document.getElementById('sketch-stage');
@@ -65,14 +67,10 @@ export class SketchPageController {
     // ページ離脱時の警告を設定
     this.setupBeforeUnloadWarning();
 
-    // イベントリスナーの設定
-    this.setupEventListeners();
-
-    // 投影モードの開始／終了で inline ペインを mount／teardown
-    window.addEventListener('projection-mode-change', this.boundProjectionChange);
   }
 
   async openProject(project: Project): Promise<void> { await this.practice.openProject(project); }
+  async startPractice(): Promise<void> { if (!this.isDestroyed) await this.practice.start(); }
 
   private handleProjectionChange(event: Event): void {
     const active = !!(event as CustomEvent).detail?.active;

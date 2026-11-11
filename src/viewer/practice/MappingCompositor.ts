@@ -38,6 +38,7 @@ export class MappingCompositor {
   private readonly camera = new THREE.Camera();
   private readonly geometry = new THREE.PlaneGeometry(2, 2);
   private readonly renderer: THREE.WebGLRenderer;
+  private items = new Map<string, THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>();
   private disposed = false;
 
   constructor(renderer: THREE.WebGLRenderer, video: HTMLVideoElement, width: number, height: number) {
@@ -73,20 +74,33 @@ export class MappingCompositor {
   setSize(width: number, height: number): void { this.target.setSize(width, height); }
 
   setState(state: MappingsState, outputId: string): void {
-    this.clearItems();
     const output = state.outputs.find(o => o.id === outputId);
-    if (!output || output.size.width <= 0 || output.size.height <= 0) return;
+    if (!output || output.size.width <= 0 || output.size.height <= 0) { this.clearItems(); return; }
+    const next = new Map<string, THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>();
+    this.scene.clear();
     // All items use the transparent render list, including opaque black masks.
     // Otherwise Three groups opaque masks before transparent mapping videos.
     for (const item of [...state.mappings].reverse()) {
       if (!isMappingEnabled(item)) continue;
-      const material = this.materialFor(item, output);
-      if (!material) continue;
-      const mesh = new THREE.Mesh(this.geometry, material);
+      const candidate = this.materialFor(item, output);
+      if (!candidate) continue;
+      let mesh = this.items.get(item.id);
+      if (mesh && mesh.material.fragmentShader === candidate.fragmentShader) {
+        // A drag changes uniforms, not shader code. Retain the compiled program
+        // instead of disposing/recompiling the last material on every pointer move.
+        Object.assign(mesh.material.uniforms, candidate.uniforms);
+        candidate.dispose();
+      } else {
+        mesh?.material.dispose();
+        mesh = new THREE.Mesh(this.geometry, candidate);
+      }
+      next.set(item.id, mesh);
       mesh.frustumCulled = false;
       mesh.renderOrder = this.scene.children.length;
       this.scene.add(mesh);
     }
+    for (const [id, mesh] of this.items) if (!next.has(id)) mesh.material.dispose();
+    this.items = next;
   }
 
   private materialFor(item: MappingItem, output: OutputDef): THREE.ShaderMaterial | null {
@@ -159,7 +173,8 @@ export class MappingCompositor {
   }
 
   private clearItems(): void {
-    for (const child of this.scene.children) (child as THREE.Mesh<THREE.BufferGeometry, THREE.Material>).material.dispose();
+    for (const mesh of this.items.values()) mesh.material.dispose();
+    this.items.clear();
     this.scene.clear();
   }
 

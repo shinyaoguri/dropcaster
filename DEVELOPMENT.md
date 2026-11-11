@@ -111,6 +111,12 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 決定的な作品 fixture を使い、CI でも実行する。既存 Chromium は同じく `CHROMIUM_PATH` で指定する。
 対象と検出確認は [状態・復旧の検証記録](docs/verification/124-runtime-recovery.md) を参照。
 
+`npm run test:practice` は製品の個別作品／スライドショー UI から練習を起動し、実出力との併用、
+既存編集、GLB／パッケージ保存、異常 import、容量不足、描画復旧・終了を両エントリで検証する。
+`PRACTICE_ARTIFACT_DIR=/tmp/practice-images` でスクリーンショットを保存できる。
+`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample`
+で失敗箇所だけを再実行できる。内蔵サンプルの実 UI は `/practice`。GLB サンプルは `docs/samples/`。
+
 ## 注意点 / 既知の TODO
 
 - `src/cli/` と `src/core/` は plain JS だが、`npm run check`（`tsc -p tsconfig.node.json`、

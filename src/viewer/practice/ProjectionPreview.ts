@@ -172,6 +172,7 @@ export class ProjectionPreview {
           const material = this.materials[0].clone();
           Object.assign(material.uniforms, this.uniforms());
           material.uniforms.baseColor.value = original.color?.clone() ?? new THREE.Color(0xb5bac7);
+          material.userData.originalColor = material.uniforms.baseColor.value.clone();
           if (original.map && object.geometry.hasAttribute('uv')) {
             original.map.updateMatrix();
             material.uniforms.baseMap = { value: original.map };
@@ -294,7 +295,13 @@ export class ProjectionPreview {
       preview: [this.compositor.target.width, this.compositor.target.height],
       viewport: [this.renderer.domElement.width, this.renderer.domElement.height],
       projectorMatrix: this.projectionMatrix.toArray(), depthRenders: this.depthRenders,
-      venueTriangles: this.geometries.reduce((n, g) => n + (g.index?.count ?? 0)/3, 0),
+      venueTriangles: (() => {
+        let count = 0;
+        (this.venue ?? this.sample).traverse(object => {
+          if (object instanceof THREE.Mesh) count += (object.geometry.index?.count ?? object.geometry.getAttribute('position')?.count ?? 0) / 3;
+        });
+        return count;
+      })(),
       memory: { ...this.renderer.info.memory }, disposed: this.disposed,
     };
   }

@@ -6,7 +6,7 @@ import { readProject, writeProject } from './projectStore';
 
 export interface ShowContext { sketches: Sketch[]; currentIndex: number; intervalSeconds: number }
 export function contentReference(sketch: Sketch): ContentReference {
-  const kind = sketch.id.startsWith('op-') ? 'op' : sketch.id.startsWith('gist-') ? 'gist' : 'local';
+  const kind = sketch.id === 'builtin-checkerboard' ? 'builtin' : sketch.id.startsWith('op-') ? 'op' : sketch.id.startsWith('gist-') ? 'gist' : 'local';
   return { id: sketch.id, kind, ref: kind === 'local' ? sketch.id : sketch.id.slice(kind.length + 1), title: sketch.title,
     path: kind === 'local' ? sketch.path.replace(/^(\.\.\/|\.\/|\/)+/, '') : undefined,
     revision: sketch.lastModified || null, revisionPinned: false };
@@ -23,6 +23,7 @@ export class ProjectSession {
   private disposed = false;
   private initialized = false;
   private saveVersion = 0;
+  private followContext = true;
   private getContext: () => ShowContext;
 
   constructor(wc: WindowController, getContext: () => ShowContext) {
@@ -46,6 +47,7 @@ export class ProjectSession {
     this.updateContent();
   }
   updateContent(): void {
+    if (!this.followContext) return;
     const context = this.getContext();
     if (!context.sketches.length) return;
     const content = context.sketches.map(contentReference);
@@ -55,11 +57,13 @@ export class ProjectSession {
   }
   update(next: Project, layout = false): void {
     if (this.disposed) return;
+    if (layout) this.followContext = false; // Keep imported references until the user opens them.
     const project = { ...next, updatedAt: new Date().toISOString() };
     this.changes.set(project);
     if (layout) this.wc.applyStateFromInline(project.venue.layout);
     this.scheduleSave();
   }
+  followCurrentContent(): void { this.followContext = true; this.updateContent(); }
   private scheduleSave(): void {
     clearTimeout(this.timer);
     this.saveVersion++;

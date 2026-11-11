@@ -14,6 +14,7 @@ import { API_CONFIG, GIST_CONFIG } from '../core/modules/constants.js';
 import { readProject } from './practice/projectStore';
 import { parseProject } from './practice/project';
 import { t } from './i18n';
+import { sampleSketch } from './practice/sampleSketch';
 
 export class App {
   private sketchService: SketchServiceImpl;
@@ -168,6 +169,7 @@ export class App {
           const ref = project.content.find(c => c.id === id)!;
           if (ref.kind === 'op') return this.opSource.resolve(ref.ref);
           if (ref.kind === 'gist') return this.gistSource.resolve(ref.ref);
+          if (ref.kind === 'builtin') return sampleSketch();
           const local = this.sketchService.getSketchById(ref.ref);
           if (!local) throw new Error('Missing local sketch');
           return local;
@@ -190,6 +192,14 @@ export class App {
         if (status?.isConnected) { status.textContent = t('practice.contentMissing'); status.classList.add('is-error'); }
         else SketchErrorView.render('not-found', { detail: t('practice.contentMissing') });
       }
+    });
+
+    this.router.registerRoute('/practice', async () => {
+      this.teardownCurrent();
+      const controller = new SketchPageController();
+      this.sketchPageController = controller;
+      await controller.renderSketch(sampleSketch());
+      if (this.sketchPageController === controller) await controller.startPractice();
     });
 
     // スライドショーページ

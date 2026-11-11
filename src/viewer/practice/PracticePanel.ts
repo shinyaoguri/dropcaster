@@ -30,6 +30,7 @@ export class PracticePanel {
   private video = document.createElement('video');
   private frame = 0;
   private observer: ResizeObserver;
+  private resizePending = true;
   private off: (() => void)[] = [];
   private disposed = false;
   private action = 0;
@@ -59,6 +60,7 @@ export class PracticePanel {
       <p class="dc-practice-hint">${label('practice.viewHint')}</p><div class="dc-practice-viewport"></div>`;
     this.root.querySelector('.dc-practice-viewport')!.append(this.canvas);
     this.settings.className = 'dc-practice-settings';
+    this.settings.id = 'dc-practice-settings';
     this.settings.innerHTML = `<div class="tool-section">
       <label class="dc-practice-field">${label('practice.output')}<select id="practice-output"></select></label>
       <label class="dc-practice-field">${label('practice.quality')}<select id="practice-quality"><option>320</option><option selected>640</option><option>960</option></select></label>
@@ -79,7 +81,7 @@ export class PracticePanel {
       ${vectorFields('practice-v-position', 'practice.position')}${vectorFields('practice-v-rotation', 'practice.rotation', -360, 360, 0.1)}
       ${vectorFields('practice-v-scale', 'practice.scale', 0.0001, 1000, 0.0001)}
       <label class="dc-practice-field">${label('practice.color')}<input id="practice-color" type="color"></label></form></details>
-      <details class="tool-section"><summary>${label('practice.project')}</summary>
+      <details id="dc-practice-project" class="tool-section"><summary>${label('practice.project')}</summary>
       <label class="dc-practice-field">${label('practice.projectName')}<input id="practice-project-name" maxlength="200" required></label>
       ${button('practice-save', 'practice.save')}${button('practice-duplicate', 'practice.duplicate')}
       <p id="practice-storage" class="dc-practice-hint" role="status"></p>
@@ -91,7 +93,7 @@ export class PracticePanel {
       <p class="dc-practice-hint">${label('practice.referencesOnly')}</p>${button('practice-open-content', 'practice.openContent')}</details>`;
     scope.querySelector('.source-column')!.append(this.root);
     scope.querySelector('.tool-content')!.append(this.settings);
-    this.observer = new ResizeObserver(() => this.resize()); this.observer.observe(this.canvas.parentElement!);
+    this.observer = new ResizeObserver(() => { this.resizePending = true; }); this.observer.observe(this.canvas.parentElement!);
     this.canvas.addEventListener('webglcontextlost', this.contextLost);
     this.wireControls();
     this.off.push(wc.events.stream.subscribe(stream => this.bindStream(stream)), session.changes.subscribe(project => this.update(project)),
@@ -100,6 +102,7 @@ export class PracticePanel {
     void this.refreshSaved();
     const render = () => {
       if (this.disposed) return;
+      if (this.resizePending) { this.resizePending = false; this.resize(); }
       this.preview.setProjectionEnabled(this.video.readyState >= 2 && !!this.video.srcObject);
       this.preview.render(); this.frame = requestAnimationFrame(render);
     };
@@ -107,8 +110,9 @@ export class PracticePanel {
   }
 
   async initialize(): Promise<void> {
+    const action = ++this.action;
     const prepared = await prepareVenue(this.session.changes.get());
-    if (this.disposed) { prepared.dispose(); return; }
+    if (this.disposed || action !== this.action) { prepared.dispose(); return; }
     this.preview.setVenue(prepared.group, prepared.dispose); this.venueKey = '';
     this.update(this.session.changes.get());
   }
@@ -124,6 +128,10 @@ export class PracticePanel {
     applyControlTranslations(this.root); applyControlTranslations(this.settings);
     this.update(this.session.changes.get()); this.storageStatus();
     this.canvas.setAttribute('aria-label', t('practice.viewHint'));
+    this.settings.querySelectorAll('fieldset').forEach(group => {
+      const text = group.querySelector('legend')?.textContent;
+      group.querySelectorAll('input').forEach(input => input.setAttribute('aria-label', `${text} ${input.parentElement?.firstChild?.textContent}`));
+    });
   }
   private storageStatus(): void {
     const state = this.session.storage.get();
@@ -253,6 +261,8 @@ export class PracticePanel {
       const prepared = await prepareVenue(project);
       if (this.disposed || action !== this.action) { prepared.dispose(); return; }
       this.previous = this.session.changes.get();
+      if (!layout) project = { ...this.previous, assets: project.assets, venue: { ...this.previous.venue,
+        revision: this.previous.venue.revision + 1, scene: project.venue.scene } };
       this.preview.setVenue(prepared.group, prepared.dispose); this.venueKey = ''; this.opticsKey = '';
       this.session.update(project, layout); this.preview.overview(); this.status(layout ? 'practice.imported' : 'practice.modelLoaded');
     } catch (error) { if (!this.disposed && action === this.action) this.error(error); }

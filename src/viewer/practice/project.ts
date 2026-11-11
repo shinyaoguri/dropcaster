@@ -11,7 +11,7 @@ export interface VenueScene {
   position: Vec3; quaternion: Quaternion; scale: Vec3; color: string;
 }
 export interface ContentReference {
-  id: string; kind: 'local' | 'op' | 'gist'; ref: string; title: string;
+  id: string; kind: 'local' | 'op' | 'gist' | 'builtin'; ref: string; title: string;
   path?: string; revision: string | null; revisionPinned: false;
 }
 export interface Project {
@@ -63,7 +63,9 @@ function parseLayout(value: unknown): MappingsState {
       if (item.points.length > 4096) fail('size');
       item.points.forEach(point);
     } else {
-      point(item.source); size(item.source);
+      point(item.source);
+      // v2 intentionally clamps zero/negative crop sizes at draw time, in both CSS and GPU.
+      num(item.source.width, -1_000_000, 1_000_000); num(item.source.height, -1_000_000, 1_000_000);
       CORNER_KEYS.forEach(key => point(item.quad[key]));
     }
   }
@@ -89,6 +91,7 @@ export function createProject(layout = defaultMappingsState()): Project {
 /** 2D output compaction must never move the physical projector. */
 export function reconcileProjectLayout(project: Project, layout: MappingsState): Project {
   return { ...project, updatedAt: new Date().toISOString(), venue: { ...project.venue, layout,
+    revision: project.venue.revision + (project.venue.layout === layout ? 0 : 1),
     projectors: layout.outputs.map(output => project.venue.projectors.find(p => p.outputId === output.id) ?? defaultProjector(output.id)) } };
 }
 
@@ -195,8 +198,9 @@ export function parseProject(value: unknown): Project {
   if (!/^#[0-9a-f]{6}$/i.test(color)) fail();
   const content = list(root.content, 100).map(value => {
     const c = record(value), kind = c.kind;
-    if (kind !== 'local' && kind !== 'op' && kind !== 'gist') fail();
+    if (kind !== 'local' && kind !== 'op' && kind !== 'gist' && kind !== 'builtin') fail();
     const ref = str(c.ref);
+    if (kind === 'builtin' && ref !== 'checkerboard') fail('reference');
     if ((kind === 'op' && !/^\d+$/.test(ref)) || (kind === 'gist' && !/^[a-f0-9]{20,64}$/i.test(ref))) fail('reference');
     const path = c.path === undefined ? undefined : str(c.path, 2000);
     if (path && (/^[a-z]+:/i.test(path) || path.startsWith('//') || path.includes('..'))) fail('reference');
@@ -211,8 +215,10 @@ export function parseProject(value: unknown): Project {
   if (!Number.isInteger(currentIndex)) fail();
   const createdAt = str(root.createdAt), updatedAt = str(root.updatedAt);
   if (!Number.isFinite(Date.parse(createdAt)) || !Number.isFinite(Date.parse(updatedAt))) fail();
+  const revision = num(venue.revision, 1, Number.MAX_SAFE_INTEGER);
+  if (!Number.isInteger(revision)) fail();
   return { format: 'dropcaster-project', schemaVersion: 1, id: str(root.id), name: str(root.name), createdAt, updatedAt,
-    venue: { id: str(venue.id), revision: num(venue.revision, 1, Number.MAX_SAFE_INTEGER), layout,
+    venue: { id: str(venue.id), revision, layout,
       scene: { kind: scene.kind as VenueScene['kind'], assetId, metersPerUnit: num(scene.metersPerUnit, 0.00001, 10000),
         position: vector(scene.position, 3) as Vec3, quaternion: quat(scene.quaternion), scale: vector(scene.scale, 3, 0.0001, 1000) as Vec3, color }, projectors },
     content, show: { contentIds, intervalSeconds: num(show.intervalSeconds, 5, 300), currentIndex }, assets };

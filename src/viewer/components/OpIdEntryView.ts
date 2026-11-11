@@ -15,6 +15,7 @@ import { langSwitcherHtml, wireLangSwitcher } from '../i18n/LanguageSwitcher.js'
 import { getConfig } from '../config.js';
 import { parseSketchRef } from '../../core/modules/sketch-ref.js';
 import type { SketchRef } from '../../core/modules/sketch-ref.js';
+import { routeHref } from '../utils/paths.js';
 
 export type { SketchRef } from '../../core/modules/sketch-ref.js';
 
@@ -45,6 +46,7 @@ function heroHtml(): string {
       </div>
       <p class="op-id-error" hidden>${t('op.error.invalid')}</p>
     </form>
+    <p class="op-hero-practice"><a href="${routeHref('/practice')}">${t('practice.trySample')}</a></p>
     <footer class="op-hero-footer">
       <p>${t(getConfig().assetProxyBaseUrl ? 'op.hero.footer' : 'op.hero.footer.noProxy')}
         <span class="op-hero-help" tabindex="0" aria-label="${t('op.hero.help.label')}">?<span

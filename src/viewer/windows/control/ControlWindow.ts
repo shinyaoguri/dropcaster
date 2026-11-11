@@ -31,6 +31,8 @@ import type {
 } from './ControlHost';
 
 export class ControlWindow extends BaseWindow {
+  private practiceMode = false;
+  setPracticeMode(active: boolean): void { this.practiceMode = active; }
   private sourceVideo: HTMLVideoElement | null = null;
   private inactivePreviews = new InactivePreviewPool();
   private videoActualDimensions = {
@@ -407,6 +409,7 @@ ${CONTROL_PANEL_CSS}
       this.mappingsList.attach(scope, this.hostDoc, this.ctrl, {
         getHostWin: () => this.hostWin,
         openOutputWindow: (outputId) => host.openOutputWindow(outputId),
+        autoOpenAddedOutput: () => !this.practiceMode,
         closeOutputWindow: (outputId) => host.closeOutputWindow(outputId),
         isOutputWindowOpen: (outputId) => this.outputBounds[outputId] !== undefined,
       });

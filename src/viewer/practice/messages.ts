@@ -1,6 +1,8 @@
 const labels = {
   start: ['3D practice', '3D練習'], stop: ['End practice', '練習を終了'], loading: ['Preparing 3D…', '3Dを準備中…'],
   title: ['3D practice · one projector', '3D練習・1プロジェクタ'], openOutput: ['Open real output', '実出力を開く'],
+  settings: ['3D settings', '3D設定'],
+  trySample: ['Try 3D practice with a sample', 'サンプル映像で3D練習を試す'], sampleSource: ['Built-in calibration sample', '内蔵の調整用サンプル'],
   retry: ['Retry 3D', '3Dを再試行'], error: ['3D is unavailable. You can continue editing in 2D.', '3Dを表示できません。2D編集はそのまま続けられます。'],
   contextLost: ['3D graphics stopped. Retry to restore the preview.', '3D描画が停止しました。再試行でプレビューを復旧できます。'],
   waiting: ['Waiting for the sketch canvas…', '作品のcanvasを待っています…'],

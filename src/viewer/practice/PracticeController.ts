@@ -16,6 +16,7 @@ export class PracticeController {
   private options: PracticeOptions;
   private session: ProjectSession | null = null;
   private panel: PracticePanel | null = null;
+  private editor: ControlWindow | null = null;
   private toolbar: HTMLElement | null = null;
   private scope: HTMLElement | null = null;
   private release: (() => void) | null = null;
@@ -30,6 +31,10 @@ export class PracticeController {
     this.options = options; installPracticeStyles();
     this.off.push(onLangChange(() => this.translate()), options.wc.events.streaming.subscribe(active => {
       if (!active && this.active) this.stop();
+    }), options.wc.events.stream.subscribe(stream => {
+      if (!this.active) return;
+      if (stream && this.statusKey === 'practice.waiting') this.status('practice.ready');
+      else if (!stream && this.statusKey === 'practice.ready') this.status('practice.waiting');
     }));
   }
   get isActive(): boolean { return this.active; }
@@ -41,6 +46,7 @@ export class PracticeController {
     await this.session.ready;
     if (this.disposed) return;
     this.session.update(project, true);
+    this.session.followCurrentContent();
     await this.start();
   }
 
@@ -52,13 +58,21 @@ export class PracticeController {
     const editor = this.options.mountEditor();
     this.scope = document.querySelector('#dc-inline-editor .dc-control-shell');
     if (!editor || !this.scope) { this.stop(); return; }
+    this.editor = editor; editor.setPracticeMode(true);
     this.scope.classList.add('dc-practice-mode');
     this.toolbar = document.createElement('header'); this.toolbar.className = 'dc-practice-toolbar';
-    this.toolbar.innerHTML = '<strong data-i18n="practice.title"></strong><span id="dc-practice-status" role="status" aria-live="polite"></span><button type="button" id="practice-retry" data-i18n="practice.retry" hidden></button><button type="button" id="practice-open-output" data-i18n="practice.openOutput"></button><button type="button" id="practice-stop" data-i18n="practice.stop"></button>';
+    this.toolbar.innerHTML = '<strong data-i18n="practice.title"></strong><span id="dc-practice-status" role="status" aria-live="polite"></span><button type="button" id="practice-retry" data-i18n="practice.retry" hidden></button><button type="button" id="practice-settings" data-i18n="practice.settings"></button><button type="button" id="practice-project" data-i18n="practice.project"></button><button type="button" id="practice-open-output" data-i18n="practice.openOutput"></button><button type="button" id="practice-stop" data-i18n="practice.stop"></button>';
     this.scope.prepend(this.toolbar);
     this.toolbar.querySelector('#practice-stop')!.addEventListener('click', () => this.stop());
     this.toolbar.querySelector('#practice-open-output')!.addEventListener('click', () => this.options.wc.openOutputWindow());
     this.toolbar.querySelector('#practice-retry')!.addEventListener('click', () => void this.startPanel(editor, ++this.generation));
+    for (const [button, id] of [['practice-settings', 'dc-practice-settings'], ['practice-project', 'dc-practice-project']]) {
+      this.toolbar.querySelector(`#${button}`)!.addEventListener('click', () => {
+        const element = this.scope?.querySelector<HTMLElement>(`#${id}`);
+        if (element instanceof HTMLDetailsElement) element.open = true;
+        element?.scrollIntoView({ block: 'start' });
+      });
+    }
     this.status('practice.loading'); this.translate();
     this.session ??= new ProjectSession(this.options.wc, this.options.getContext);
     void this.connectSource();
@@ -92,7 +106,7 @@ export class PracticeController {
       this.panel = panel;
       await panel.initialize();
       if (!this.active || generation !== this.generation) { panel.dispose(); return; }
-      this.status('practice.ready');
+      this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting');
       // Retry may have invalidated a pending source wait.
       if (!this.options.wc.events.stream.get()) void this.connectSource();
     } catch {
@@ -113,6 +127,7 @@ export class PracticeController {
   stop(): void {
     if (!this.active) return;
     this.active = false; this.generation++;
+    this.editor?.setPracticeMode(false); this.editor = null;
     this.panel?.dispose(); this.panel = null;
     this.toolbar?.remove(); this.toolbar = null;
     this.scope?.classList.remove('dc-practice-mode'); this.scope = null;
