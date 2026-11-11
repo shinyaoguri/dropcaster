@@ -53,7 +53,8 @@
     "test": "node --test \"tests/**/*.test.js\"",
     "dev:poc": "vite --config poc/projection-3d/vite.config.ts",
     "build:poc": "tsc -p poc/projection-3d/tsconfig.json && vite build --config poc/projection-3d/vite.config.ts",
-    "test:poc": "node tests/browser/projection-poc.mjs"
+    "test:poc": "node tests/browser/projection-poc.mjs",
+    "test:projection-runtime": "node tests/browser/projection-runtime.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261102.1",

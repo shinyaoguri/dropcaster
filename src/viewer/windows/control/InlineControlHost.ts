@@ -25,6 +25,7 @@ export class InlineControlHost implements ControlHost {
   readonly host: HTMLElement;
   readonly window: Window;
   private wc: WindowController;
+  private publishingState = false;
 
   constructor(win: Window, host: HTMLElement, wc: WindowController) {
     this.window = win;
@@ -36,12 +37,16 @@ export class InlineControlHost implements ControlHost {
 
   getState(): MappingsState { return this.wc.events.state.get(); }
   onStateChange(handler: Listener<MappingsState>): Unsubscribe {
-    return this.wc.events.state.subscribe(handler);
+    return this.wc.events.state.subscribe(state => {
+      if (!this.publishingState) handler(state);
+    });
   }
   emitStateMutation(state: MappingsState): void {
     // 親（state の真のオーナー）へ「ローカル変更があった」と伝える。
-    // applyStateFromInline は inline 自身に echo back せず、出力ウィンドウにのみ反映する。
-    this.wc.applyStateFromInline(state);
+    // echo は起点の host だけで抑止する。snapshot と他の購読者は必ず更新する。
+    this.publishingState = true;
+    try { this.wc.applyStateFromInline(state); }
+    finally { this.publishingState = false; }
   }
 
   // --- test pattern ---
