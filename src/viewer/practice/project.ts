@@ -205,7 +205,7 @@ export function parseProject(value: unknown): Project {
     const path = c.path === undefined ? undefined : str(c.path, 2000);
     if (path && (/^[a-z]+:/i.test(path) || path.startsWith('//') || path.includes('..'))) fail('reference');
     if (c.revisionPinned !== false) fail('version');
-    return { id: str(c.id), kind: kind as ContentReference['kind'], ref, title: str(c.title), path,
+    return { id: str(c.id), kind: kind as ContentReference['kind'], ref, title: str(c.title, 10000), path,
       revision: c.revision === null ? null : str(c.revision), revisionPinned: false as const };
   });
   unique(content.map(c => c.id));

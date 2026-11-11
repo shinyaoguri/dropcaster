@@ -7,8 +7,8 @@ import { readProject, writeProject } from './projectStore';
 export interface ShowContext { sketches: Sketch[]; currentIndex: number; intervalSeconds: number }
 export function contentReference(sketch: Sketch): ContentReference {
   const kind = sketch.id === 'builtin-checkerboard' ? 'builtin' : sketch.id.startsWith('op-') ? 'op' : sketch.id.startsWith('gist-') ? 'gist' : 'local';
-  return { id: sketch.id, kind, ref: kind === 'local' ? sketch.id : sketch.id.slice(kind.length + 1), title: sketch.title,
-    path: kind === 'local' ? sketch.path.replace(/^(\.\.\/|\.\/|\/)+/, '') : undefined,
+  return { id: sketch.id, kind, ref: kind === 'local' ? sketch.id : sketch.id.slice(kind.length + 1), title: sketch.title || sketch.id,
+    path: kind === 'local' && sketch.path ? sketch.path.replace(/^(\.\.\/|\.\/|\/)+/, '') : undefined,
     revision: sketch.lastModified || null, revisionPinned: false };
 }
 

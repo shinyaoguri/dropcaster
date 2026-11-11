@@ -164,12 +164,22 @@ async function projects(page, base) {
   await importProject(page, legacy); assert.equal((await state(page)).mappings[0].name, 'Legacy loaded');
   await page.locator('#practice-undo-import').click(); await page.waitForFunction(() => document.querySelector('#practice-project-name').value === 'Tour wall');
   assert.equal((await exportProject(page)).assets[0].data, saved.assets[0].data);
-  await importProject(page, saved); await page.locator('#practice-open-content').click();
+  await importProject(page, saved);
+  await page.evaluate(() => { window.previousWC = window.practiceWC; });
+  await page.locator('#practice-open-content').click();
   await page.waitForURL('**/project'); await page.waitForSelector('#dc-practice-canvas');
   await page.waitForFunction(() => document.querySelector('#practice-fov')?.value === '50');
+  await page.waitForFunction(() => window.practiceWC !== window.previousWC);
   assert.equal(page.context().pages().length, 1, 'opening project does not open outputs');
   assert.equal((await exportProject(page)).assets[0].data, saved.assets[0].data);
   await snapshot(page, base.name + '-glb');
+  const missing = structuredClone(saved); missing.content[0].ref = 'missing-local-sketch';
+  await importProject(page, missing);
+  await page.evaluate(() => { window.previousWC = window.practiceWC; });
+  await page.locator('#practice-open-content').click();
+  await page.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.includes('unavailable here'));
+  assert.equal(await page.evaluate(() => window.practiceWC === window.previousWC), true, 'unavailable content keeps the working view');
+  await importProject(page, saved);
   // Browser-storage failure keeps edits/export available and reports the failure.
   await page.evaluate(() => { window.realTransaction = IDBDatabase.prototype.transaction; IDBDatabase.prototype.transaction = function (...args) { if (args[1] === 'readwrite') throw new DOMException('test quota', 'QuotaExceededError'); return window.realTransaction.apply(this, args); }; });
   await change(page, '#practice-project-name', 'Unsaved but exportable');
@@ -195,8 +205,10 @@ async function slideshow(page, base) {
   await change(page, '#interval-input', 45);
   const p = await exportProject(page); assert.equal(p.show.intervalSeconds, 45); assert.equal(p.content.length, 3);
   await page.locator('#next-btn').click(); await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 1280);
+  await page.evaluate(() => { window.previousWC = window.practiceWC; });
   await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 1280);
+  await page.waitForFunction(() => window.practiceWC !== window.previousWC);
   assert.equal(await page.locator('#interval-input').inputValue(), '45');
   assert.equal(await page.locator('#current-sketch-number').innerText(), '2');
   assert.equal(page.context().pages().length, 1);
