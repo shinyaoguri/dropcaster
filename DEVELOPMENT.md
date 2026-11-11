@@ -92,6 +92,15 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 確定した設計判断・検討して断念した方向は [docs/decisions/](docs/decisions/) に
 1 判断 1 ファイルで置く。再挑戦・方針変更のときはまずここを読む。
 
+### マッピング描画のブラウザ回帰確認
+
+`node tests/browser/mapping-css-regression.mjs` は両 Vite エントリを起動し、実際の出力
+ウィンドウの描画を変更前の固定 CSS と比較する。Playwright の Chromium が必要。
+既存ブラウザを使う場合は `CHROMIUM_PATH=/path/to/chromium` を指定する。
+`MAPPING_ARTIFACT_DIR=/tmp/mapping-images` で代表画像と失敗画像を保存できる。
+`npm test` には含めず、通常の純粋関数テストはブラウザのインストールなしで実行できる。
+対象・制約は [#124 の検証記録](docs/verification/124-projection-foundation.md) を参照。
+
 ## 注意点 / 既知の TODO
 
 - `src/cli/` と `src/core/` は plain JS だが、`npm run check`（`tsc -p tsconfig.node.json`、
