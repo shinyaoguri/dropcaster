@@ -63,6 +63,12 @@ export class WindowController {
   private canvasMutationObserver: MutationObserver | null = null;
   /** いまマッピングのソースにしているスケッチ iframe（差し替え可能）。 */
   private currentSourceIframe: HTMLIFrameElement | null = null;
+  private capturedCanvas: HTMLCanvasElement | null = null;
+  private sourceGeneration = 0;
+  private detachSourceMonitor: (() => void) | null = null;
+  private sourceDocumentObserver: MutationObserver | null = null;
+  private waitingForSourceLoad = false;
+  private detachRecoveryVideo: (() => void) | null = null;
   /** テストパターン用のソース。校正中だけ生成し、'off' に戻すと破棄せず stop する（再利用）。 */
   private testPattern: TestPatternSource | null = null;
   private testPatternKind: TestPatternKind | 'off' = 'off';
@@ -384,23 +390,18 @@ export class WindowController {
    * 正規 state の唯一の更新ポイント。state を差し替えてから:
    *  - SketchPageView へ overlay 更新イベントを発火
    *  - 出力ウィンドウへは常に broadcast
-   *  - inline 版 control へは `broadcastToControl: false` でなければ events.state を fire
+   *  - snapshot を更新し、購読者へ通知
    *
-   * inline 自身が変更の起点なら echo back しない（自己ループ防止）。
+   * 起点への echo 抑止は InlineControlHost が行う。snapshot 更新は抑止しない。
    */
-  private applyState(
-    next: MappingsState,
-    options: { broadcastToControl?: boolean } = {}
-  ): void {
+  private applyState(next: MappingsState): void {
     this.state = next;
+    this.events.state.set(next);
     this.scheduleSave();
     this.dispatchOverlayUpdate();
     // 出力が削除されていたら対応するポップアウトを閉じる（残り続けると孤立ウィンドウになる）
     this.closeOrphanedOutputWindows();
     this.broadcastStateToOutput();
-    if (options.broadcastToControl !== false) {
-      this.events.state.set(next);
-    }
   }
 
   /** state.outputs に存在しなくなった outputId の出力ウィンドウを閉じる。 */
@@ -413,7 +414,7 @@ export class WindowController {
 
   /** inline ペインの ControlPanel から「UI で state を変えた」と通知される入口。 */
   applyStateFromInline(next: MappingsState): void {
-    this.applyState(next, { broadcastToControl: false });
+    this.applyState(next);
   }
 
   private broadcastStateToOutput(): void {
@@ -496,9 +497,11 @@ export class WindowController {
   }
 
   async startCanvasStreaming(iframeElement: HTMLIFrameElement): Promise<void> {
+    this.testPattern?.stop();
+    this.testPatternKind = 'off';
+    this.broadcastTestPatternState();
     this.currentSourceIframe = iframeElement;
-    this.stopCanvasCapture(); // 既存のキャプチャがあれば一旦止める（ウィンドウは閉じない）
-    if (!this.captureFromSource()) return;
+    this.startSourceCapture();
     this.startWindowMonitoring();
     // プロジェクション中はメインウィンドウ側のディスプレイをスリープさせない。
     // 出力ウィンドウ側は OutputWindow が自分で wake lock を取る。
@@ -512,9 +515,44 @@ export class WindowController {
    * captureStream し直し、各所（in-page オーバーレイ・コントロール・ポップアウト）へ再 broadcast する。
    */
   setSource(iframeElement: HTMLIFrameElement): void {
-    if (iframeElement === this.currentSourceIframe && this.activeStreams.length > 0) return;
+    const sameSource = iframeElement === this.currentSourceIframe;
     this.currentSourceIframe = iframeElement;
+    // 校正中も「off で戻る先」は更新するが、配信中のテスト stream は維持する。
+    if (this.testPatternKind !== 'off') return;
+    if (sameSource && (this.waitingForSourceLoad || this.contextLostReloadTimer !== null)) return;
+    if (sameSource && this.getCanvasFromIframe(iframeElement) === this.capturedCanvas
+      && this.activeStreams[0]?.getVideoTracks().some(track => track.readyState === 'live')) return;
+    this.startSourceCapture();
+  }
+
+  /** load 後の遅延 canvas 生成・同一 document 内の canvas 置換も監視する。 */
+  private startSourceCapture(): void {
     this.stopCanvasCapture();
+    const iframe = this.currentSourceIframe;
+    if (!iframe) return;
+    const generation = this.sourceGeneration;
+    const isCurrent = () => generation === this.sourceGeneration
+      && this.currentSourceIframe === iframe && this.testPatternKind === 'off';
+    const observeDocument = () => {
+      this.sourceDocumentObserver?.disconnect();
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+      this.sourceDocumentObserver = new MutationObserver(() => {
+        if (!isCurrent() || this.waitingForSourceLoad) return;
+        if (this.getCanvasFromIframe(iframe) !== this.capturedCanvas) this.scheduleRecapture();
+      });
+      this.sourceDocumentObserver.observe(doc, { childList: true, subtree: true });
+    };
+    const onLoad = () => {
+      if (!isCurrent()) return;
+      this.waitingForSourceLoad = false;
+      this.releaseCapturedStream();
+      observeDocument();
+      this.captureFromSource();
+    };
+    iframe.addEventListener('load', onLoad);
+    this.detachSourceMonitor = () => iframe.removeEventListener('load', onLoad);
+    observeDocument();
     this.captureFromSource();
   }
 
@@ -522,7 +560,8 @@ export class WindowController {
   private captureFromSource(): boolean {
     const iframe = this.currentSourceIframe;
     if (!iframe) return false;
-    const canvas = this.getCanvasFromIframe(iframe); // resize 監視の (再)アタッチも兼ねる
+    if (this.waitingForSourceLoad || this.testPatternKind !== 'off') return false;
+    const canvas = this.getCanvasFromIframe(iframe);
     if (!canvas) return false;
 
     try {
@@ -533,6 +572,9 @@ export class WindowController {
         return false;
       }
       this.trackStream(stream);
+      this.capturedCanvas = canvas;
+      this.monitorCanvasResize(canvas);
+      this.monitorCanvasContext(canvas, iframe);
       this.attachTrackSurvivalMonitor(stream);
 
       this.videoActualDimensions = {
@@ -541,6 +583,7 @@ export class WindowController {
       };
       this.notifyVideoDimensions();
       this.broadcastStream(stream);
+      this.clearWebglWarningWhenReady(stream);
       return true;
     } catch (error) {
       console.error('WindowController: Canvas streaming開始エラー:', error);
@@ -562,6 +605,8 @@ export class WindowController {
       // テストパターン表示中はテスト側がトラックを管理しているので関与しない
       if (this.testPatternKind !== 'off') return;
       if (!this.currentSourceIframe) return;
+      // context lost 中の mute で reload 予約を取り消さない。
+      if (this.contextLostReloadTimer !== null || this.waitingForSourceLoad) return;
       console.warn('WindowController: ソースキャプチャの track が終了 — 自動再キャプチャ');
       this.scheduleRecapture();
     };
@@ -577,10 +622,12 @@ export class WindowController {
   /** track ended の通知が同時に複数飛んでくることがあるので、まとめて 1 回だけ再キャプチャする。 */
   private scheduleRecapture(): void {
     if (this.recaptureTimer !== null) return;
+    const generation = this.sourceGeneration;
     this.recaptureTimer = window.setTimeout(() => {
       this.recaptureTimer = null;
-      if (!this.currentSourceIframe || this.testPatternKind !== 'off') return;
-      this.stopCanvasCapture();
+      if (generation !== this.sourceGeneration || !this.currentSourceIframe
+        || this.testPatternKind !== 'off' || this.waitingForSourceLoad) return;
+      this.releaseCapturedStream();
       this.captureFromSource();
     }, 100);
   }
@@ -670,37 +717,34 @@ export class WindowController {
    */
   setTestPattern(kind: TestPatternKind | 'off'): void {
     if (this.testPatternKind === kind) return;
-    const prev = this.testPatternKind;
-    this.testPatternKind = kind;
-    this.events.testPattern.set(kind);
-
     if (kind === 'off') {
-      // テスト → 通常ソース。テスト stream を止めて、source iframe から再キャプチャする
+      this.testPatternKind = kind;
       this.testPattern?.stop();
-      this.stopCanvasCapture();
-      if (this.currentSourceIframe) this.captureFromSource();
-    } else if (prev === 'off') {
-      // 通常 → テスト。source の tracks は止めるが iframe 参照は残しておく（'off' で復帰するため）
-      this.stopCanvasCapture();
+      this.startSourceCapture();
+    } else {
+      // 生成に失敗した場合は現在の stream と選択状態をそのまま維持する。
       if (!this.testPattern) this.testPattern = new TestPatternSource();
       const stream = this.testPattern.start(kind);
       if (!stream) {
         console.error('WindowController: テストパターン stream の生成に失敗');
-        this.testPatternKind = prev;
         return;
       }
-      this.trackStream(stream);
-      this.broadcastStream(stream);
-    } else {
-      // テスト → 別のテスト。canvas を描き直すだけで stream オブジェクトは同じ
-      this.testPattern?.start(kind);
+      this.testPatternKind = kind;
+      if (stream !== this.activeStreams[0]) {
+        this.stopCanvasCapture();
+        this.trackStream(stream);
+        this.videoActualDimensions = this.testPattern.getDimensions();
+        this.notifyVideoDimensions();
+        this.broadcastStream(stream);
+        this.clearWebglWarningWhenReady(stream);
+      }
     }
 
     this.broadcastTestPatternState();
   }
 
   private broadcastTestPatternState(): void {
-    this.events.testPattern.set(this.testPatternKind);
+    this.events.testPattern.setIfChanged(this.testPatternKind, (a, b) => a === b);
   }
 
   private setProjectionMode(active: boolean): void {
@@ -728,24 +772,8 @@ export class WindowController {
   }
 
   private getCanvasFromIframe(iframeElement: HTMLIFrameElement): HTMLCanvasElement | null {
-    const iframeDoc = iframeElement.contentDocument || iframeElement.contentWindow?.document;
-    if (!iframeDoc) {
-      console.error('WindowController: iframeドキュメントにアクセスできません');
-      return null;
-    }
-
-    const canvas = iframeDoc.querySelector('canvas') as HTMLCanvasElement;
-    if (!canvas) {
-      console.error('WindowController: Canvas要素が見つかりません');
-      return null;
-    }
-
-    // Canvasのサイズ変更を監視
-    this.monitorCanvasResize(canvas);
-    // GPU プロセスクラッシュ等で WebGL コンテキストが失われたら検知（2D canvas では発火しない）
-    this.monitorCanvasContext(canvas, iframeElement);
-
-    return canvas;
+    // load 後に p5 の setup() 等で生成される場合は source document の監視で再試行する。
+    return iframeElement.contentDocument?.querySelector('canvas') ?? null;
   }
 
   /** 直近 monitorCanvasContext で wire した解除関数（重複登録防止＋意図的停止時の cleanup）。 */
@@ -760,6 +788,7 @@ export class WindowController {
    */
   private monitorCanvasContext(canvas: HTMLCanvasElement, iframe: HTMLIFrameElement): void {
     this.detachCanvasContextMonitor?.();
+    const generation = this.sourceGeneration;
 
     const onLost = (e: Event) => {
       e.preventDefault(); // これで初めて webglcontextrestored の発火が許可される
@@ -769,8 +798,13 @@ export class WindowController {
       this.contextLostReloadTimer = window.setTimeout(() => {
         this.contextLostReloadTimer = null;
         // 復帰してなければ強制リロード（state は失われるが、フリーズしっぱなしよりまし）
-        if (this.currentSourceIframe === iframe) {
+        if (generation === this.sourceGeneration && this.currentSourceIframe === iframe
+          && this.testPatternKind === 'off' && this.capturedCanvas === canvas) {
           console.warn('WindowController: WebGL context が復帰しないため iframe をリロード');
+          // 旧 document の終了通知を切り離し、load → canvas 生成 → 再 bind まで待つ。
+          this.waitingForSourceLoad = true;
+          this.sourceDocumentObserver?.disconnect();
+          this.releaseCapturedStream();
           // srcdoc 属性がある場合（OP 経路）は src の再代入ではナビゲーションが
           // 起きないので、srcdoc 自体を再代入してリロードを起こす。
           try {
@@ -789,7 +823,8 @@ export class WindowController {
         clearTimeout(this.contextLostReloadTimer);
         this.contextLostReloadTimer = null;
       }
-      this.broadcastWebglContextStatus('ok');
+      // 元 track が終了している場合も含めて再接続し、デコードできてから警告を消す。
+      this.scheduleRecapture();
     };
     canvas.addEventListener('webglcontextlost', onLost as EventListener);
     canvas.addEventListener('webglcontextrestored', onRestored);
@@ -805,7 +840,31 @@ export class WindowController {
   }
 
   private broadcastWebglContextStatus(status: 'lost' | 'ok'): void {
-    this.events.webglContext.set(status);
+    this.events.webglContext.setIfChanged(status, (a, b) => a === b);
+  }
+
+  /** 復旧成功は live track の存在だけでなく、最初の映像データで確認する。 */
+  private clearWebglWarningWhenReady(stream: MediaStream): void {
+    if (this.events.webglContext.get() !== 'lost') return;
+    this.detachRecoveryVideo?.();
+    const generation = this.sourceGeneration;
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    const onReady = () => {
+      if (generation !== this.sourceGeneration || !this.activeStreams.includes(stream)) return;
+      this.broadcastWebglContextStatus('ok');
+      this.detachRecoveryVideo?.();
+      this.detachRecoveryVideo = null;
+    };
+    video.addEventListener('loadeddata', onReady);
+    this.detachRecoveryVideo = () => {
+      video.removeEventListener('loadeddata', onReady);
+      video.pause();
+      video.srcObject = null;
+    };
+    video.srcObject = stream;
+    void video.play().catch(() => { /* 復旧待ちの警告は維持する */ });
   }
 
   private startWindowMonitoring(): void {
@@ -834,6 +893,21 @@ export class WindowController {
 
   /** canvas からのキャプチャだけを止める（observer 切断 ＋ tracks 停止）。ウィンドウ・監視はそのまま。 */
   private stopCanvasCapture(): void {
+    // 予約済み callback は、同じ iframe を再利用した場合も旧世代として無効にする。
+    this.sourceGeneration++;
+    this.detachSourceMonitor?.();
+    this.detachSourceMonitor = null;
+    this.sourceDocumentObserver?.disconnect();
+    this.sourceDocumentObserver = null;
+    this.waitingForSourceLoad = false;
+    this.releaseCapturedStream();
+  }
+
+  /** source の load/document 監視は残し、現在の capture とその監視だけを解放する。 */
+  private releaseCapturedStream(): void {
+    this.detachRecoveryVideo?.();
+    this.detachRecoveryVideo = null;
+    this.capturedCanvas = null;
     this.canvasResizeObserver?.disconnect();
     this.canvasResizeObserver = null;
     this.canvasMutationObserver?.disconnect();
@@ -848,8 +922,7 @@ export class WindowController {
 
     this.activeStreams.forEach(stream => {
       stream.getTracks().forEach(track => {
-        // track.stop() は ended を発火する。survival monitor をループさせないために
-        // 先にハンドラを潰してから停止する。
+        // 意図した停止後に古い通知を処理しないよう、先にハンドラを外す。
         track.onended = null;
         track.onmute = null;
         track.stop();
@@ -866,6 +939,8 @@ export class WindowController {
     // テストパターンも止めて 'off' に戻す（次回 start 時のクリーンな状態のため）
     this.testPattern?.stop();
     this.testPatternKind = 'off';
+    this.broadcastTestPatternState();
+    this.broadcastWebglContextStatus('ok');
 
     // ウィンドウ監視を停止
     if (this.windowMonitoringInterval !== null) {

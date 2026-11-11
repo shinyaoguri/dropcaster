@@ -57,6 +57,10 @@ export class TestPatternSource {
     this.stream = null;
   }
 
+  getDimensions(): { width: number; height: number } {
+    return { width: this.canvas.width, height: this.canvas.height };
+  }
+
   /** 完全に破棄（canvas を DOM から外す）。 */
   dispose(): void {
     this.stop();
