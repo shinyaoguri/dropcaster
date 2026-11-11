@@ -978,23 +978,33 @@ export function constrainQuadCorner(quad: Quad, corner: CornerKey, target: Point
 }
 
 /**
- * 単位矩形 (0,0)-(width,height) を quad（pixel 座標、transform-origin: top left 基準）
- * に写像する CSS matrix3d 文字列を返す。退化（共線・面積0）や凸でない quad なら 'none'
- * （凹んだ quad には正しい写像が無く、そのまま描くと映像が反転する。isConvexQuad 参照）。
+ * 行優先の 3×3 射影行列。CSS / WebGL の column-major への変換は利用側で行う。
+ * 最後の係数も保持する（逆行列では 0 になり得るため、1 に固定しない）。
+ */
+export type Homography = readonly [
+  number, number, number,
+  number, number, number,
+  number, number, number,
+];
+
+/**
+ * 左上原点・y 下向きの単位矩形 (0,0)-(1,1) を仮想キャンバス px の quad へ写す。
+ * DOM / 描画エンジン非依存。CSS 出力とプレビュー用 GPU 合成で同じ係数を使う。
+ * 退化・非凸・非有限の quad は null（従来の CSS 出力でも非表示）。
  *
  * 単位矩形 → 任意四角形 への 2D ホモグラフィー（perspective 込み）を直接構築:
  *   x' = (a*u + b*v + c) / (g*u + h*v + 1)
  *   y' = (d*u + e*v + f) / (g*u + h*v + 1)
  * 8 個の係数を 4 隅の写像条件から閉形式で解く（Heckbert の公式）。
  */
-function homographyMatrix3d(quad: Quad, width: number, height: number): string {
-  if (width <= 0 || height <= 0) return 'none';
-  if (!isConvexQuad(quad)) return 'none';
+export function quadHomography(quad: Quad): Homography | null {
+  if (!quadVertices(quad).every(p => Number.isFinite(p.x) && Number.isFinite(p.y))) return null;
+  if (!isConvexQuad(quad)) return null;
 
   const { topLeft: p0, topRight: p1, bottomRight: p2, bottomLeft: p3 } = quad;
 
   const det = (p1.x - p2.x) * (p3.y - p2.y) - (p3.x - p2.x) * (p1.y - p2.y);
-  if (Math.abs(det) < 1e-9) return 'none';
+  if (Math.abs(det) < 1e-9) return null;
 
   const rhsX = p0.x + p2.x - p1.x - p3.x;
   const rhsY = p0.y + p2.y - p1.y - p3.y;
@@ -1007,6 +1017,63 @@ function homographyMatrix3d(quad: Quad, width: number, height: number): string {
   const d = p1.y * (g + 1) - p0.y;
   const e = p3.y * (h + 1) - p0.y;
   const f = p0.y;
+
+  const matrix: Homography = [a, b, c, d, e, f, g, h, 1];
+  return matrix.every(Number.isFinite) ? matrix : null;
+}
+
+/** 逆変換。特異・非有限の行列は null。quad の内外判定や crop は行わない。 */
+export function invertHomography(matrix: Homography): Homography | null {
+  if (!matrix.every(Number.isFinite)) return null;
+  const [a, b, c, d, e, f, g, h, i] = matrix;
+  const A = e * i - f * h, B = c * h - b * i, C = b * f - c * e;
+  const D = f * g - d * i, E = a * i - c * g, F = c * d - a * f;
+  const G = d * h - e * g, H = b * g - a * h, I = a * e - b * d;
+  const det = a * A + b * D + c * G;
+  if (det === 0 || !Number.isFinite(det)) return null;
+  const inverse: Homography = [
+    A / det, B / det, C / det,
+    D / det, E / det, F / det,
+    G / det, H / det, I / det,
+  ];
+  return inverse.every(Number.isFinite) ? inverse : null;
+}
+
+/** 同次除算を含む点の変換。無限遠・非有限の結果は null。範囲外の点はクランプしない。 */
+export function transformPoint(matrix: Homography, point: Point): Point | null {
+  const [a, b, c, d, e, f, g, h, i] = matrix;
+  const w = g * point.x + h * point.y + i;
+  if (w === 0 || !Number.isFinite(w)) return null;
+  const x = (a * point.x + b * point.y + c) / w;
+  const y = (d * point.x + e * point.y + f) / w;
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+/** 出力内 UV（左上原点・y 下向き）→ 仮想キャンバス px。pixelSize / 3D 位置とは独立。 */
+export function outputUvToCanvas(output: OutputDef, uv: Point): Point {
+  return {
+    x: output.position.x + uv.x * output.size.width,
+    y: output.position.y + uv.y * output.size.height,
+  };
+}
+
+/**
+ * quad 内 UV → 元映像 UV（いずれも左上原点）。applyVideoCrop と同じ最小寸法を使う。
+ * 0..1 外は映像の無い領域。GPU 側では discard し、端の画素へクランプして引き伸ばさない。
+ */
+export function cropUvToSourceUv(source: SourceRect, uv: Point): Point {
+  return {
+    x: (source.x + uv.x * Math.max(source.width, MIN_DIMENSION)) / 100,
+    y: (source.y + uv.y * Math.max(source.height, MIN_DIMENSION)) / 100,
+  };
+}
+
+/** pixel 矩形を quad へ写す CSS 表現。既存の演算順と column-major の配置を維持する。 */
+function homographyMatrix3d(quad: Quad, width: number, height: number): string {
+  if (width <= 0 || height <= 0) return 'none';
+  const matrix = quadHomography(quad);
+  if (!matrix) return 'none';
+  const [a, b, c, d, e, f, g, h] = matrix;
 
   // 単位矩形の代わりに pixel 矩形 (width × height) を入力にしたいので u,v を割る
   const A = a / width,  B = b / height;
