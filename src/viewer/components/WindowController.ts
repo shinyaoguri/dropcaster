@@ -69,6 +69,8 @@ export class WindowController {
   private sourceDocumentObserver: MutationObserver | null = null;
   private waitingForSourceLoad = false;
   private detachRecoveryVideo: (() => void) | null = null;
+  /** テスト表示や停止で監視を外しても、復帰先 canvas の未復旧を忘れない。 */
+  private knownLostCanvases = new WeakSet<HTMLCanvasElement>();
   /** テストパターン用のソース。校正中だけ生成し、'off' に戻すと破棄せず stop する（再利用）。 */
   private testPattern: TestPatternSource | null = null;
   private testPatternKind: TestPatternKind | 'off' = 'off';
@@ -727,6 +729,8 @@ export class WindowController {
       const stream = this.testPattern.start(kind);
       if (!stream) {
         console.error('WindowController: テストパターン stream の生成に失敗');
+        // UI の optimistic な選択を、維持している実際のソースへ戻す。
+        this.events.testPattern.set(this.testPatternKind);
         return;
       }
       this.testPatternKind = kind;
@@ -790,10 +794,16 @@ export class WindowController {
     this.detachCanvasContextMonitor?.();
     const generation = this.sourceGeneration;
 
-    const onLost = (e: Event) => {
-      e.preventDefault(); // これで初めて webglcontextrestored の発火が許可される
+    const onLost = (e?: Event) => {
+      e?.preventDefault(); // これで初めて webglcontextrestored の発火が許可される
+      this.knownLostCanvases.add(canvas);
       console.warn('WindowController: WebGL context lost — 復帰を待機して、ダメなら iframe をリロードします');
       this.broadcastWebglContextStatus('lost');
+      // mute が先に届いていた場合も、単発再 capture で復旧待ちを解除させない。
+      if (this.recaptureTimer !== null) {
+        clearTimeout(this.recaptureTimer);
+        this.recaptureTimer = null;
+      }
       if (this.contextLostReloadTimer !== null) clearTimeout(this.contextLostReloadTimer);
       this.contextLostReloadTimer = window.setTimeout(() => {
         this.contextLostReloadTimer = null;
@@ -819,6 +829,7 @@ export class WindowController {
     };
     const onRestored = () => {
       console.info('WindowController: WebGL context restored');
+      this.knownLostCanvases.delete(canvas);
       if (this.contextLostReloadTimer !== null) {
         clearTimeout(this.contextLostReloadTimer);
         this.contextLostReloadTimer = null;
@@ -837,6 +848,13 @@ export class WindowController {
         this.contextLostReloadTimer = null;
       }
     };
+    if (this.knownLostCanvases.has(canvas)) {
+      // ロストを観測済みの WebGL canvas に限り、既存 context の状態を調べる。
+      // テスト表示中に自然復帰していればリロードしない。
+      const context = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+      if (context?.isContextLost()) onLost();
+      else this.knownLostCanvases.delete(canvas);
+    }
   }
 
   private broadcastWebglContextStatus(status: 'lost' | 'ok'): void {
@@ -845,7 +863,7 @@ export class WindowController {
 
   /** 復旧成功は live track の存在だけでなく、最初の映像データで確認する。 */
   private clearWebglWarningWhenReady(stream: MediaStream): void {
-    if (this.events.webglContext.get() !== 'lost') return;
+    if (this.events.webglContext.get() !== 'lost' || this.contextLostReloadTimer !== null) return;
     this.detachRecoveryVideo?.();
     const generation = this.sourceGeneration;
     const video = document.createElement('video');

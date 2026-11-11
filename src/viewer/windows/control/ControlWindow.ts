@@ -126,6 +126,7 @@ export class ControlWindow extends BaseWindow {
     this.ctrl.applyExternal(host.getState());
     this.setupHostSubscriptions();
     this.setupControls();
+    this.updateTestPatternUI(host.getTestPatternKind());
     this.setupMessageListener();
     // state が丸ごと差し替わった時の UI 一括再描画。disposeHost で外れる。
     this.hostUnsubs.push(this.ctrl.onChange(() => this.refreshAllFromState()));
