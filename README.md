@@ -363,8 +363,10 @@ FFmpeg / Chromium が無い環境ではプレビュー生成だけスキップ�
 ## 開発
 
 背景付き 2D 編集・3D 練習（[#124](https://github.com/shinyaoguri/dropcaster/issues/124)）は
-基盤整備中で、利用者向け機能は未提供です。[設計契約](docs/decisions/0009-3d-practice-contracts.md)と
-[着手範囲・検証記録](docs/verification/124-projection-foundation.md)を参照してください。
+開発中です。`npm run dev:poc` で[独立した3D描画PoC](poc/projection-3d/README.md)を
+ローカルで試せます。通常の作品・スライドショーや保存設定にはまだ接続していません。
+[設計契約](docs/decisions/0009-3d-practice-contracts.md)と
+[描画・遮蔽・性能の検証記録](docs/verification/124-projection-poc.md)を参照してください。
 
 このリポジトリ自体の開発（CLI のローカルテスト、`dropcaster dev`/`build` の仕組み、配布など）は
 [DEVELOPMENT.md](DEVELOPMENT.md) を参照。

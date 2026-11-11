@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:,"><title>dropcaster · Projection lab</title></head>
+<body>
+  <header><div><span class="eyebrow">DROPCASTER / EXPERIMENT 01</span><h1 data-text="title">投影を、別の視点から。</h1><p data-text="intro"></p></div><select id="language" aria-label="Language"><option value="ja">日本語</option><option value="en">English</option></select></header>
+  <main>
+    <div class="toolbar">
+      <label><span data-text="preset"></span><select id="preset"></select></label>
+      <label><span data-text="pattern"></span><select id="pattern"><option value="grid">Grid</option><option value="white">White</option><option value="black">Black</option><option value="alpha">Alpha</option></select></label>
+      <label><span data-text="resolution"></span><select id="resolution"><option>320</option><option selected>640</option><option>1280</option></select></label>
+      <button id="start" data-text="start"></button><button id="stop" data-text="stop" disabled></button>
+    </div>
+    <div class="panels">
+      <section><div class="panel-heading"><h2 data-text="css"></h2><span>2D / CSS</span></div>
+        <div id="css-wrap"><iframe id="css" title="CSS projection reference"></iframe><svg id="handles" aria-label="Mapping corners"></svg></div>
+        <p class="hint" data-text="editHint"></p>
+        <div class="panel-heading"><h2 data-text="gpu"></h2><span>GPU / OUTPUT</span></div><canvas id="gpu" width="640" height="360"></canvas>
+      </section>
+      <section><div class="panel-heading"><h2 data-text="venue"></h2><span>1 PROJECTOR / METRES</span></div><canvas id="venue"></canvas>
+        <div class="view-controls"><button id="reset" data-text="reset"></button><button id="projector-view" data-text="projectorView"></button><label><input id="box" type="checkbox" checked><span data-text="box"></span></label><label><input id="projection" type="checkbox" checked><span data-text="projection"></span></label></div>
+        <p class="hint" data-text="orbitHint"></p><output id="stats"></output>
+      </section>
+    </div>
+    <p id="status" role="status" aria-live="polite"></p><p class="scope" data-text="scope"></p>
+  </main><script type="module" src="./main.ts"></script>
+</body></html>

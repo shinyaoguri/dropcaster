@@ -41,6 +41,15 @@ jobs:
       - name: Build hosted web app
         run: npm run build:web
 
+      - name: Build isolated 3D projection PoC
+        run: npm run build:poc
+
+      - name: Install Chromium for projection checks
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify CSS/GPU projection and preview lifecycle
+        run: npm run test:poc
+
       # デプロイ経路の破損を PR 時点で検出する (#44 は CI が緑のまま deploy.yml だけが
       # 1.5 ヶ月落ち続けていた)。--dry-run は API トークン不要でバンドルまで実行する。
       - name: Dry-run deploy (Cloudflare Workers)
