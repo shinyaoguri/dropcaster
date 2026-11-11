@@ -36,6 +36,10 @@ async function setup(context, base, route = '/a') {
   const requests = []; page.on('request', r => requests.push(r.url()));
   await page.goto(base.url + route); await page.waitForSelector('#practice-btn');
   assert.ok(!requests.some(url => /three(?:\.js|\.module|_addons)|PracticePanel/.test(url)), '3D dependencies are lazy');
+  await observeControllers(page, base);
+  return page;
+}
+async function observeControllers(page, base) {
   // Observe real controller/renderer instances through prototype instrumentation only in the test.
   await page.evaluate(async moduleBase => {
     const { WindowController } = await import(`${moduleBase}/components/WindowController.ts`);
@@ -45,7 +49,6 @@ async function setup(context, base, route = '/a') {
     const setState = ProjectionPreview.prototype.setState;
     ProjectionPreview.prototype.setState = function (...args) { window.practicePreview = this; return setState.apply(this, args); };
   }, base.modules);
-  return page;
 }
 async function start(page, width = 640) {
   await page.locator('#practice-btn').click();
@@ -195,6 +198,7 @@ async function projects(page, base) {
   } finally { await second.close(); }
 }
 async function slideshow(page, base) {
+  await snapshot(page, base.name + '-slideshow-entry');
   await start(page); await page.locator('#play-pause-btn').click();
   await page.locator('[data-pattern="grid"]').click(); await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 1920);
   await page.evaluate(() => { window.patternTrack = document.querySelector('#source-video').srcObject.getVideoTracks()[0]; });
@@ -204,7 +208,12 @@ async function slideshow(page, base) {
   await page.locator('#prev-btn').click(); await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 640);
   await change(page, '#interval-input', 45);
   const p = await exportProject(page); assert.equal(p.show.intervalSeconds, 45); assert.equal(p.content.length, 3);
+  // Venue imports must not freeze source references or roll back the receiving show's clock.
+  const { portableVenue } = await import('../../src/viewer/practice/project.ts');
+  const shared = portableVenue(p);
+  await importProject(page, shared);
   await page.locator('#next-btn').click(); await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 1280);
+  const continued = await exportProject(page); assert.equal(continued.show.currentIndex, 1); assert.equal(continued.show.intervalSeconds, 45);
   await page.evaluate(() => { window.previousWC = window.practiceWC; });
   await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 1280);
@@ -322,6 +331,89 @@ async function sample(page, base) {
   await snapshot(page, base.name + '-sample');
 }
 
+async function venue(page, base) {
+  await snapshot(page, base.name + '-practice-entry');
+  await start(page);
+  const layout = await state(page);
+  const matrix = await page.evaluate(() => window.practicePreview.diagnostics().projectorMatrix);
+  const oldBackground = await page.locator('.dc-practice-background').getAttribute('src');
+  const oldProject = await exportProject(page);
+  await page.evaluate(() => {
+    const original = File.prototype.text;
+    File.prototype.text = function () {
+      const value = original.call(this); File.prototype.text = original;
+      return new Promise(resolve => { window.finishVenueFileRead = async () => resolve(await value); });
+    };
+  });
+  await page.locator('#practice-project-file').setInputFiles({ name:'delayed.json', mimeType:'application/json', buffer:Buffer.from(JSON.stringify(oldProject)) });
+  await page.locator('#practice-venue').click();
+  await change(page, '#practice-room-width', 8); await change(page, '#practice-room-height', 3); await change(page, '#practice-room-depth', 6);
+  await page.locator('#practice-create-room').click();
+  await page.waitForFunction(() => document.querySelector('#practice-object')?.options.length === 4);
+  await page.evaluate(() => window.finishVenueFileRead());
+  assert.equal((await exportProject(page)).venue.scene.kind, 'objects', 'a late file read cannot replace the newly authored room');
+  await page.locator('#practice-venue').click();
+  const dimensions = await page.evaluate(() => window.practicePreview.venueDimensions());
+  for (const [i, expected] of [8.3, 3.1, 6.15].entries()) assert.ok(Math.abs(dimensions[i] - expected) < 0.00001, 'rendered room uses measured dimensions');
+  assert.deepEqual(await state(page), layout, 'building a room keeps calibrated mappings');
+  assert.deepEqual(await page.evaluate(() => window.practicePreview.diagnostics().projectorMatrix), matrix);
+  assert.notEqual(await page.locator('.dc-practice-background').getAttribute('src'), oldBackground);
+  await change(page, '#practice-object-name', 'Projection wall');
+  await change(page, '#practice-object-size-0', 5.5);
+  await change(page, '#practice-object-position-0', 1.2);
+  await change(page, '#practice-object-rotation-1', 20);
+  await page.locator('#practice-object-color').evaluate(el => { el.value = '#b8c4d8'; el.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.locator('#practice-add-box').click();
+  await change(page, '#practice-object-name', 'Stage'); await change(page, '#practice-object-size-0', 2);
+  await change(page, '#practice-object-position-2', -1);
+  await page.locator('#practice-copy-object').click();
+  assert.equal(await page.locator('#practice-object option').count(), 6);
+  await page.locator('#practice-delete-object').click();
+  assert.equal(await page.locator('#practice-object option').count(), 5);
+  const authored = await exportProject(page); assert.equal(authored.schemaVersion, 2);
+  assert.equal(authored.venue.scene.kind, 'objects'); assert.equal(authored.venue.scene.objects.length, 5);
+  const wall = authored.venue.scene.objects.find(o => o.name === 'Projection wall');
+  assert.equal(wall.size[0], 5.5); assert.equal(wall.position[0], 1.2); assert.equal(wall.color, '#b8c4d8');
+  assert.ok(Math.abs(wall.quaternion[1] - Math.sin(Math.PI / 18)) < 0.00001);
+  assert.equal(page.context().pages().length, 1);
+  const sharing = page.waitForEvent('download'); await page.locator('#practice-export-venue').click();
+  const chunks = []; for await (const chunk of await (await sharing).createReadStream()) chunks.push(chunk);
+  const shared = JSON.parse(Buffer.concat(chunks).toString());
+  assert.equal(shared.format, 'dropcaster-venue'); assert.equal('content' in shared, false); assert.equal('show' in shared, false);
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+  const errors = []; context.on('page', p => p.on('pageerror', e => errors.push(e.message)));
+  try {
+    const recipient = await setup(context, base, '/b'); await start(recipient, 1280);
+    const before = await exportProject(recipient);
+    await recipient.evaluate(() => { window.recipientTrack = document.querySelector('#source-video').srcObject.getVideoTracks()[0]; });
+    await importProject(recipient, shared);
+    await recipient.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.includes('Your sketch'));
+    const received = await exportProject(recipient);
+    assert.deepEqual(received.venue.scene.objects, authored.venue.scene.objects);
+    assert.deepEqual(received.content, before.content); assert.deepEqual(received.show, before.show); assert.equal(received.id, before.id);
+    assert.equal(await recipient.evaluate(() => document.querySelector('#source-video').srcObject.getVideoTracks()[0] === window.recipientTrack), true);
+    assert.equal(context.pages().length, 1);
+    const bad = structuredClone(shared); bad.venue.scene.objects[0].size[0] = 0;
+    await importProject(recipient, bad);
+    assert.deepEqual((await exportProject(recipient)).venue.scene.objects, received.venue.scene.objects, 'invalid geometry keeps the live venue');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+  await page.locator('#practice-venue').click();
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  await snapshot(page, base.name + '-venue-desktop-ja');
+  await page.setViewportSize({ width: 900, height: 800 }); await snapshot(page, base.name + '-venue-narrow-ja');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.setViewportSize({ width:1440, height:900 });
+  await page.locator('#practice-undo-venue').click();
+  await page.waitForFunction(() => document.querySelector('#practice-object')?.options.length === 6);
+  await page.locator('#practice-project').click();
+  await page.waitForFunction(() => document.querySelector('#practice-storage').textContent.includes('保存済み'));
+  await page.locator('#practice-stop').click(); await page.reload(); await observeControllers(page, base); await start(page);
+  const restored = await exportProject(page); assert.equal(restored.venue.scene.objects.length, 6);
+  assert.deepEqual(restored.venue.projectors, authored.venue.projectors);
+  assert.ok(await page.evaluate(() => window.practicePreview.diagnostics().memory.geometries < 15));
+}
+
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
     const hosted = config.startsWith('apps/'), name = hosted ? 'hosted' : 'gallery';
@@ -331,7 +423,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, sample })) {
+      for (const [testName, run] of Object.entries({ lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, sample, venue })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));

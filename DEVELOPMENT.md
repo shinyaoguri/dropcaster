@@ -114,7 +114,7 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 `npm run test:practice` は製品の個別作品／スライドショー UI から練習を起動し、実出力との併用、
 既存編集、GLB／パッケージ保存、異常 import、容量不足、描画復旧・終了を両エントリで検証する。
 `PRACTICE_ARTIFACT_DIR=/tmp/practice-images` でスクリーンショットを保存できる。
-`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample`
+`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample|venue`
 で失敗箇所だけを再実行できる。内蔵サンプルの実 UI は `/practice`。GLB サンプルは `docs/samples/`。
 
 ## 注意点 / 既知の TODO

@@ -1,0 +1,221 @@
+{
+  "format": "dropcaster-venue",
+  "schemaVersion": 1,
+  "name": "小会場 8m × 6m",
+  "venue": {
+    "id": "room-8x6",
+    "revision": 1,
+    "layout": {
+      "version": 2,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "outputs": [
+        {
+          "id": "output-1",
+          "name": "Output 1",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "size": {
+            "width": 1920,
+            "height": 1080
+          }
+        }
+      ],
+      "mappings": [
+        {
+          "id": "mapping-1",
+          "name": "Mapping 1",
+          "source": {
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "height": 100
+          },
+          "quad": {
+            "topLeft": {
+              "x": 480,
+              "y": 270
+            },
+            "topRight": {
+              "x": 1440,
+              "y": 270
+            },
+            "bottomRight": {
+              "x": 1440,
+              "y": 810
+            },
+            "bottomLeft": {
+              "x": 480,
+              "y": 810
+            }
+          }
+        }
+      ],
+      "activeId": "mapping-1",
+      "activeOutputId": "output-1"
+    },
+    "scene": {
+      "kind": "objects",
+      "objects": [
+        {
+          "id": "floor",
+          "name": "床",
+          "kind": "floor",
+          "size": [
+            8.3,
+            0.1,
+            6.15
+          ],
+          "position": [
+            0,
+            -0.05,
+            -0.075
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "color": "#8b93a0"
+        },
+        {
+          "id": "back-wall",
+          "name": "奥の壁",
+          "kind": "wall",
+          "size": [
+            8.3,
+            3,
+            0.15
+          ],
+          "position": [
+            0,
+            1.5,
+            -3.075
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "color": "#dddddd"
+        },
+        {
+          "id": "left-wall",
+          "name": "左の壁",
+          "kind": "wall",
+          "size": [
+            0.15,
+            3,
+            6
+          ],
+          "position": [
+            -4.075,
+            1.5,
+            0
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "color": "#dddddd"
+        },
+        {
+          "id": "right-wall",
+          "name": "右の壁",
+          "kind": "wall",
+          "size": [
+            0.15,
+            3,
+            6
+          ],
+          "position": [
+            4.075,
+            1.5,
+            0
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "color": "#dddddd"
+        },
+        {
+          "id": "stage",
+          "name": "ステージ",
+          "kind": "box",
+          "size": [
+            2,
+            0.6,
+            1.2
+          ],
+          "position": [
+            0,
+            0.3,
+            -1
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "color": "#dddddd"
+        }
+      ],
+      "metersPerUnit": 1,
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "quaternion": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "color": "#ffffff"
+    },
+    "projectors": [
+      {
+        "id": "projector-output-1",
+        "outputId": "output-1",
+        "position": [
+          0,
+          2.5,
+          4.5
+        ],
+        "quaternion": [
+          -0.07274986500432551,
+          0,
+          0,
+          0.997350217898333
+        ],
+        "verticalFovDegrees": 43,
+        "aspect": 1.7777777777777777,
+        "lensShift": [
+          0,
+          0
+        ],
+        "near": 0.1,
+        "far": 30
+      }
+    ]
+  },
+  "assets": []
+}

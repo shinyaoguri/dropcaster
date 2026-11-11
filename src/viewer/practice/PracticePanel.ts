@@ -1,8 +1,7 @@
-import { Euler, MathUtils, Quaternion } from 'three';
 import { ProjectionPreview } from './ProjectionPreview';
-import { prepareVenue } from './loadVenue';
-import { defaultProjector, defaultScene, encodeAsset, parseProject, portableProject, ProjectFormatError,
-  MAX_GLB_BYTES, MAX_PACKAGE_BYTES, type Project, type Vec3, type Quaternion as Quat } from './project';
+import { prepareVenue, prepareObjects } from './loadVenue';
+import { defaultProjector, defaultScene, encodeAsset, parseProject, portableProject, portableVenue, importVenue, ProjectFormatError,
+  MAX_GLB_BYTES, MAX_PACKAGE_BYTES, type Project, type Vec3, type VenueScene } from './project';
 import { listProjects, readProject } from './projectStore';
 import type { ProjectSession } from './ProjectSession';
 import type { WindowController } from '../components/WindowController';
@@ -10,18 +9,8 @@ import type { ControlWindow } from '../windows/control/ControlWindow';
 import { applyControlTranslations } from '../windows/control/ControlWindow.template';
 import { t, onLangChange, type MessageKey } from '../i18n/index';
 import { routeHref } from '../utils/paths';
-
-const label = (key: MessageKey) => `<span data-i18n="${key}">${t(key)}</span>`;
-const button = (id: string, key: MessageKey) => `<button type="button" id="${id}" class="tool-button">${label(key)}</button>`;
-const field = (id: string, key: MessageKey, min: number, max: number, _step = 0.1) =>
-  `<label class="dc-practice-field">${label(key)}<input id="${id}" type="number" min="${min}" max="${max}" step="any" required></label>`;
-const vectorFields = (id: string, key: MessageKey, min = -10000, max = 10000, _step = 0.1, axes = ['X', 'Y', 'Z']) =>
-  `<fieldset><legend>${label(key)}</legend><div class="dc-practice-vector">${axes.map((axis, index) => `<label>${axis}<input id="${id}-${index}" type="number" min="${min}" max="${max}" step="any" required aria-label="${t(key)} ${axis}"></label>`).join('')}</div></fieldset>`;
-const rotation = (q: Quat): Vec3 => {
-  const e = new Euler().setFromQuaternion(new Quaternion(...q), 'YXZ');
-  return [e.x, e.y, e.z].map(MathUtils.radToDeg) as Vec3;
-};
-const quaternion = (angles: Vec3): Quat => new Quaternion().setFromEuler(new Euler(...angles.map(MathUtils.degToRad) as Vec3, 'YXZ')).toArray();
+import { label, button, field, vectorFields, rotation, quaternion } from './controls';
+import { VenueBuilder } from './VenueBuilder';
 
 export class PracticePanel {
   readonly preview: ProjectionPreview;
@@ -39,11 +28,13 @@ export class PracticePanel {
   private opticsKey = '';
   private venueKey = '';
   private previous: Project | null = null;
+  private previousMode: 'project' | 'venue' | 'model' = 'project';
   private session: ProjectSession;
   private editor: ControlWindow;
   private status: (key: MessageKey, error?: boolean) => void;
   private onFailure: () => void;
   private canvas = document.createElement('canvas');
+  private builder: VenueBuilder;
 
   constructor(scope: HTMLElement, wc: WindowController, session: ProjectSession, editor: ControlWindow,
     status: (key: MessageKey, error?: boolean) => void, onFailure: () => void) {
@@ -87,10 +78,15 @@ export class PracticePanel {
       <p id="practice-storage" class="dc-practice-hint" role="status"></p>
       <label class="dc-practice-field">${label('practice.savedProjects')}<select id="practice-saved-projects"></select></label>
       ${button('practice-open-project', 'practice.openProject')}${button('practice-export', 'practice.export')}${button('practice-import', 'practice.import')}
+      ${button('practice-export-venue', 'practice.exportVenue')}<p class="dc-practice-hint">${label('practice.shareVenueHint')}</p>
       <input id="practice-project-file" type="file" accept=".json,application/json" hidden>
       ${button('practice-undo-import', 'practice.undoImport')}
       <h3>${label('practice.content')}</h3><ul id="practice-content-list"></ul>
       <p class="dc-practice-hint">${label('practice.referencesOnly')}</p>${button('practice-open-content', 'practice.openContent')}</details>`;
+    this.builder = new VenueBuilder((scene, fit) => this.editVenue(scene, fit), () => {
+      if (this.previous && this.previousMode === 'model') void this.apply(this.previous, false);
+    });
+    this.settings.prepend(this.builder.element);
     scope.querySelector('.source-column')!.append(this.root);
     scope.querySelector('.tool-content')!.append(this.settings);
     this.observer = new ResizeObserver(() => { this.resizePending = true; }); this.observer.observe(this.canvas.parentElement!);
@@ -171,6 +167,8 @@ export class PracticePanel {
     this.setVec('practice-shift', projector.lensShift.map(v => v * 100));
     this.value('practice-near', projector.near); this.value('practice-far', projector.far);
     const scene = project.venue.scene;
+    this.builder.update(scene, !!this.previous && this.previousMode === 'model');
+    this.get('practice-venue-form').hidden = scene.kind === 'objects';
     this.setVec('practice-v-position', scene.position); this.setVec('practice-v-rotation', rotation(scene.quaternion));
     this.setVec('practice-v-scale', scene.scale); this.value('practice-unit', scene.metersPerUnit); this.value('practice-color', scene.color);
     this.get('practice-dimensions').textContent = t('practice.dimensions', { size: this.preview.venueDimensions().map(n => n.toFixed(2)).join(' × ') });
@@ -234,7 +232,10 @@ export class PracticePanel {
     click('practice-duplicate', () => void this.saveNamed(true));
     click('practice-open-project', () => void this.openSaved());
     click('practice-export', () => this.export());
-    click('practice-undo-import', () => { if (this.previous) void this.apply(this.previous); });
+    click('practice-export-venue', () => this.export(true));
+    click('practice-undo-import', () => {
+      if (this.previous) void this.apply(this.previous, this.previousMode !== 'model', this.previousMode === 'venue');
+    });
     click('practice-open-content', () => void this.openContent());
   }
   private error(error: unknown): void {
@@ -244,28 +245,52 @@ export class PracticePanel {
   private async readFile(model: boolean): Promise<void> {
     const input = this.get<HTMLInputElement>(model ? 'practice-glb-file' : 'practice-project-file'), file = input.files?.[0];
     input.value = ''; if (!file) return;
+    const action = ++this.action;
     try {
       if (file.size > (model ? MAX_GLB_BYTES : MAX_PACKAGE_BYTES)) throw new ProjectFormatError('size');
       if (model) {
         const project = this.session.changes.get(), id = crypto.randomUUID();
-        const asset = { id, name: file.name, mimeType: 'model/gltf-binary' as const, data: encodeAsset(new Uint8Array(await file.arrayBuffer())) };
+        const bytes = await file.arrayBuffer();
+        if (this.disposed || action !== this.action) return;
+        const asset = { id, name: file.name, mimeType: 'model/gltf-binary' as const, data: encodeAsset(new Uint8Array(bytes)) };
         const next = parseProject({ ...project, assets: [asset], venue: { ...project.venue, revision: project.venue.revision + 1, scene: { ...defaultScene(), kind: 'glb', assetId: id } } });
         await this.apply(next, false);
-      } else await this.apply(parseProject(JSON.parse(await file.text())));
-    } catch (error) { if (!this.disposed) this.error(error); }
+      } else {
+        const text = await file.text();
+        if (this.disposed || action !== this.action) return;
+        const value = JSON.parse(text);
+        if (value?.format === 'dropcaster-venue') await this.apply(importVenue(value, this.session.changes.get()), true, true);
+        else await this.apply(parseProject(value));
+      }
+    } catch (error) { if (!this.disposed && action === this.action) this.error(error); }
   }
-  private async apply(project: Project, layout = true): Promise<void> {
+  private async apply(project: Project, layout = true, venueOnly = false): Promise<void> {
     if (this.disposed) return;
     const action = ++this.action; this.status('practice.busy');
     try {
       const prepared = await prepareVenue(project);
       if (this.disposed || action !== this.action) { prepared.dispose(); return; }
       this.previous = this.session.changes.get();
+      this.previousMode = venueOnly ? 'venue' : layout ? 'project' : 'model';
+      // A slideshow may have advanced while the venue asset was being decoded.
+      if (venueOnly) project = { ...this.previous, venue: project.venue, assets: project.assets };
       if (!layout) project = { ...this.previous, assets: project.assets, venue: { ...this.previous.venue,
         revision: this.previous.venue.revision + 1, scene: project.venue.scene } };
       this.preview.setVenue(prepared.group, prepared.dispose); this.venueKey = ''; this.opticsKey = '';
-      this.session.update(project, layout); this.preview.overview(); this.status(layout ? 'practice.imported' : 'practice.modelLoaded');
+      this.session.update(project, layout, !venueOnly);
+      this.preview.overview(); this.status(venueOnly ? 'practice.venueImported' : layout ? 'practice.imported' : 'practice.modelLoaded');
     } catch (error) { if (!this.disposed && action === this.action) this.error(error); }
+  }
+  private editVenue(scene: VenueScene, fit: boolean): void {
+    if (this.disposed) return;
+    const current = this.session.changes.get();
+    try {
+      const next = parseProject({ ...current, assets: [], venue: { ...current.venue, revision: current.venue.revision + 1, scene } });
+      const prepared = prepareObjects(next.venue.scene.objects!);
+      this.action++; this.previous = current; this.previousMode = 'model';
+      this.preview.setVenue(prepared.group, prepared.dispose); this.venueKey = '';
+      this.session.update(next); if (fit) this.preview.overview(); this.status('practice.venueEdited');
+    } catch (error) { this.error(error); }
   }
   private async refreshSaved(): Promise<void> {
     try {
@@ -281,15 +306,16 @@ export class PracticePanel {
     } catch { this.status('practice.storageError', true); }
   }
   private async openSaved(): Promise<void> {
+    const action = ++this.action;
     try {
       const project = await readProject(this.get<HTMLSelectElement>('practice-saved-projects').value);
-      if (project && !this.disposed) await this.apply(parseProject(project));
-    } catch (error) { this.error(error); }
+      if (project && !this.disposed && action === this.action) await this.apply(parseProject(project));
+    } catch (error) { if (!this.disposed && action === this.action) this.error(error); }
   }
-  private export(): void {
-    const project = portableProject(this.session.changes.get());
-    const url = URL.createObjectURL(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }));
-    const link = document.createElement('a'); link.href = url; link.download = `${project.name.replace(/[^\p{L}\p{N}._-]/gu, '_')}.dropcaster.json`;
+  private export(venueOnly = false): void {
+    const project = this.session.changes.get();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(venueOnly ? portableVenue(project) : portableProject(project), null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a'); link.href = url; link.download = `${project.name.replace(/[^\p{L}\p{N}._-]/gu, '_')}.${venueOnly ? 'venue' : 'dropcaster'}.json`;
     link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   private async openContent(): Promise<void> {
