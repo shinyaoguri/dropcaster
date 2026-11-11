@@ -1,7 +1,9 @@
 // viewer (ブラウザ) の翻訳辞書。
 // 新キーを追加するときは ja / en の両方に揃えること（fallback は en）。
 
+import { practiceEn, practiceJa } from '../practice/messages';
 const en = {
+  ...practiceEn,
   // 言語切替
   'lang.label': 'Language',
   'lang.en': 'English',
@@ -231,6 +233,7 @@ const en = {
 } as const;
 
 const ja: Record<keyof typeof en, string> = {
+  ...practiceJa,
   'lang.label': '言語',
   'lang.en': 'English',
   'lang.ja': '日本語',

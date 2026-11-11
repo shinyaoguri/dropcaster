@@ -245,6 +245,10 @@ export class ControlWindow extends BaseWindow {
     this.disposeHost();
   }
 
+  setPracticeBackground(outputId: string, url: string | null, opacity = 0.65): void {
+    this.outputViz.setPracticeBackground(outputId, url, opacity);
+  }
+
   protected getContent(): string {
     return controlPanelHtml();
   }

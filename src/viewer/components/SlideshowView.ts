@@ -5,6 +5,8 @@ import { WindowController } from './WindowController';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import { InlineControlHost } from '../windows/control/InlineControlHost';
 import { t, onLangChange } from '../i18n/index.js';
+import { PracticeController } from '../practice/PracticeController';
+import type { Project } from '../practice/project';
 
 export class SlideshowView {
   private currentIndex: number = 0;
@@ -24,10 +26,13 @@ export class SlideshowView {
   /** projection 中だけ #dc-inline-editor 内にマウントする ControlWindow（inline 経路）。 */
   private inlinePanel: ControlWindow | null = null;
   private langUnsub: (() => void) | null = null;
+  private practice: PracticeController | null = null;
+  private projectionUnsubs: (() => void)[] = [];
 
-  render(sketchIds: string[], sketches: Sketch[]): void {
+  render(sketchIds: string[], sketches: Sketch[], show?: { currentIndex: number; intervalSeconds: number }): void {
     this.sketchIds = sketchIds;
     this.sketches = sketches;
+    if (show) this.SLIDE_INTERVAL = show.intervalSeconds * 1000;
     
     const app = document.getElementById('app');
     if (!app) return;
@@ -73,6 +78,7 @@ export class SlideshowView {
                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
               </svg>
             </button>
+            <button id="practice-btn" class="practice-start-button" data-i18n="practice.start">${t('practice.start')}</button>
             <button id="mapping-btn" class="control-btn" data-i18n-title="slideshow.mapping" title="${t('slideshow.mapping')}">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2"/>
@@ -103,6 +109,15 @@ export class SlideshowView {
     this.langUnsub = onLangChange(() => this.applyTranslations(app));
 
     this.addStyles();
+    this.windowController = new WindowController();
+    this.practice = new PracticeController({ wc: this.windowController, getFrame: () => this.pool?.current ?? null,
+      mountEditor: () => this.mountInlineEditor(), getContext: () => ({ sketches: this.sketches, currentIndex: this.currentIndex, intervalSeconds: this.SLIDE_INTERVAL / 1000 }) });
+    document.getElementById('practice-btn')?.addEventListener('click', () => this.practice?.toggle());
+    this.projectionUnsubs.push(this.windowController.events.streaming.subscribe(active => {
+      if (!active && !this.practice?.isActive) this.unmountInlineEditor();
+    }), this.windowController.events.outputBounds.subscribe(bounds => {
+      this.mappingActive = Object.keys(bounds).length > 0; this.updateMappingButton();
+    }));
     this.setupEventListeners();
     // タブが閉じられたらマッピング用の出力ウィンドウも閉じる
     window.addEventListener('pagehide', this.boundCloseProjectionWindows);
@@ -113,7 +128,7 @@ export class SlideshowView {
     if (sketchIds.length > 0) {
       // URLから現在のインデックスを取得
       const urlParams = new URLSearchParams(window.location.search);
-      const startIndex = parseInt(urlParams.get('index') || '0', 10);
+      const startIndex = show?.currentIndex ?? parseInt(urlParams.get('index') || '0', 10);
       this.currentIndex = Number.isFinite(startIndex)
         ? Math.max(0, Math.min(startIndex, sketchIds.length - 1))
         : 0;
@@ -161,6 +176,12 @@ export class SlideshowView {
       .slideshow-container:hover .slideshow-header {
         opacity: 1;
       }
+
+      .slideshow-container:has(.dc-inline-editor:not([hidden])) .slideshow-header {
+        opacity: 1; z-index: 1501; height: 64px; padding: 10px 16px; box-sizing: border-box; background: #202020;
+      }
+      .slideshow-container .dc-inline-editor { top: 64px; }
+      .slideshow-container:has(.dc-inline-editor:not([hidden])) .slideshow-info { position: static; transform: none; margin: 0 20px; }
 
       .slideshow-controls {
         display: flex;
@@ -352,6 +373,7 @@ export class SlideshowView {
       const newInterval = parseInt((e.target as HTMLInputElement).value) * 1000;
       if (newInterval >= 5000 && newInterval <= 300000) {
         this.SLIDE_INTERVAL = newInterval;
+        this.practice?.updateContent();
         // 自動再生中なら再スタート
         if (!this.isPaused) {
           this.restartAutoPlay();
@@ -364,6 +386,8 @@ export class SlideshowView {
   }
 
   private handleKeydown(e: KeyboardEvent): void {
+    // Arrow keys in the editor belong to quad/crop controls, not slide navigation.
+    if (this.inlinePanel || (e.target as HTMLElement)?.closest('input, textarea, select, [contenteditable]')) return;
     switch(e.key) {
       case 'ArrowLeft':
         this.previousSketch();
@@ -402,13 +426,12 @@ export class SlideshowView {
     this.resetProgressBar();
 
     // スケッチをプール経由で表示（先読み済みなら即時、未ロードなら読み込み完了後にクロスフェード）
-    const sketchId = this.sketchIds[index];
     try {
-      await this.pool.show(publicAssetPath(`sketches/${sketchId}/index.html`));
+      await this.pool.show(this.sourceAt(index));
     } catch {
       return; // プールが破棄された（ルート遷移）— 中断
     }
-    if (!this.pool) return;
+    if (!this.pool || this.currentIndex !== index) return;
 
     // 情報パネルのテキストを更新。fade-in は初回だけ実効（以降はクラスが付いたままなので no-op）。
     // 切替ごとに remove/add するとフェード途中に隠れて「一瞬しか見えない」状態になるので、
@@ -418,10 +441,17 @@ export class SlideshowView {
 
     // 次のスケッチを先読みしておく（次の自動送りが即時になる）
     const nextIndex = (index + 1) % this.sketchIds.length;
-    this.pool.preload(publicAssetPath(`sketches/${this.sketchIds[nextIndex]}/index.html`));
+    this.pool.preload(this.sourceAt(nextIndex));
 
     // マッピング中なら、表示中スケッチをマッピングのソースに切り替える
-    if (this.mappingActive) void this.refreshMappingSource();
+    if (this.mappingActive || this.practice?.isActive) void this.refreshMappingSource();
+    this.practice?.updateContent();
+  }
+
+  private sourceAt(index: number): string | { srcdoc: string; tag: string } {
+    const sketch = this.sketches[index];
+    return sketch.srcdoc !== undefined ? { srcdoc: sketch.srcdoc, tag: sketch.id }
+      : publicAssetPath(sketch.path || `sketches/${sketch.id}/index.html`);
   }
 
   private updateSketchInfo(index: number): void {
@@ -607,17 +637,17 @@ export class SlideshowView {
       clearTimeout(this.mappingStartTimeout);
       this.mappingStartTimeout = null;
     }
-    this.unmountInlineEditor();
-    // closeAllWindows() が stopCanvasStreaming() ＋ コントロール／出力ウィンドウのクローズを行う
-    this.windowController?.closeAllWindows();
+    this.windowController?.closeOutputWindows();
+    if (!this.practice?.isActive) this.unmountInlineEditor();
     this.mappingActive = false;
     this.updateMappingButton();
   }
 
-  private mountInlineEditor(): void {
-    if (this.inlinePanel || !this.windowController) return;
+  private mountInlineEditor(): ControlWindow | null {
+    if (this.inlinePanel) return this.inlinePanel;
+    if (!this.windowController) return null;
     const aside = document.getElementById('dc-inline-editor');
-    if (!aside) return;
+    if (!aside) return null;
     aside.removeAttribute('hidden');
     const wc = this.windowController;
     this.inlinePanel = new ControlWindow();
@@ -626,6 +656,7 @@ export class SlideshowView {
     );
     // 既にストリームが流れていれば bind し直す（mount が broadcastStream より後に来た場合の保険）
     wc.rebindStreamToInlinePanel();
+    return this.inlinePanel;
   }
 
   private unmountInlineEditor(): void {
@@ -642,10 +673,10 @@ export class SlideshowView {
   /** いま表示中のスケッチをマッピングのソースにする。canvas が出来るのを待ってから差し替える。 */
   private async refreshMappingSource(opts: { start?: boolean } = {}): Promise<void> {
     const frame = this.pool?.current;
-    if (!frame || !this.windowController || !this.mappingActive) return;
-    await frame.whenCanvasReady();
-    if (!this.windowController || !this.mappingActive) return;
-    if (opts.start) {
+    if (!frame || !this.windowController || (!this.mappingActive && !this.practice?.isActive)) return;
+    await frame.ready;
+    if (!this.windowController || frame !== this.pool?.current || (!this.mappingActive && !this.practice?.isActive)) return;
+    if (opts.start || !this.windowController.events.streaming.get()) {
       this.windowController.startCanvasStreaming(frame.iframe);
     } else {
       this.windowController.setSource(frame.iframe);
@@ -665,6 +696,8 @@ export class SlideshowView {
       clearTimeout(this.mappingStartTimeout);
       this.mappingStartTimeout = null;
     }
+    this.practice?.dispose(); this.practice = null;
+    this.projectionUnsubs.forEach(off => off()); this.projectionUnsubs = [];
     this.unmountInlineEditor();
     this.windowController?.stopCanvasStreaming();
     this.windowController?.destroy();
@@ -675,4 +708,5 @@ export class SlideshowView {
     this.langUnsub?.();
     this.langUnsub = null;
   }
+  public async openProject(project: Project): Promise<void> { await this.practice?.openProject(project); }
 }

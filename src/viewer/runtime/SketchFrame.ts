@@ -90,7 +90,7 @@ export class SketchFrame {
 
     this.loadedUrl = url;
     this.loadedTag = null;
-    return this.startLoad((iframe) => { iframe.src = url; });
+    return this.startLoad((iframe) => { iframe.removeAttribute('srcdoc'); iframe.src = url; });
   }
 
   /**

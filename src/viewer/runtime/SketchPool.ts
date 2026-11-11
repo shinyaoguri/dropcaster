@@ -43,6 +43,13 @@ export interface SketchPoolOptions {
   size?: number;
 }
 
+/** A resolved remote sketch uses srcdoc; gallery sketches keep their existing URL path. */
+export type PoolSource = string | { srcdoc: string; tag: string };
+const matches = (frame: SketchFrame, source: PoolSource) => typeof source === 'string'
+  ? frame.currentUrl === source : frame.currentTag === source.tag;
+const load = (frame: SketchFrame, source: PoolSource) => typeof source === 'string'
+  ? frame.load(source) : frame.loadSrcdoc(source.srcdoc, { tag: source.tag });
+
 export class SketchPool {
   private readonly frames: SketchFrame[];
   private visibleFrame: SketchFrame | null = null;
@@ -50,7 +57,8 @@ export class SketchPool {
   private idleOrder: SketchFrame[];
   private destroyed = false;
   /** クロスフェード中に呼ばれた preload を保留しておき、遷移完了後にまとめて実行する。 */
-  private pendingPreloadUrl: string | null = null;
+  private pendingPreloadUrl: PoolSource | null = null;
+  private showGeneration = 0;
 
   /**
    * @param container プールの土俵となる要素。子に iframe を絶対配置で重ねる。
@@ -72,10 +80,11 @@ export class SketchPool {
    * 指定 URL のスケッチを表示する。先読み済みなら即座に、未読み込みなら読み込み完了後に表示し、
    * クロスフェードで切り替える。表示後の SketchFrame を返す。
    */
-  async show(url: string): Promise<SketchFrame> {
+  async show(url: PoolSource): Promise<SketchFrame> {
     if (this.destroyed) throw new Error('SketchPool is destroyed');
+    const generation = ++this.showGeneration;
 
-    let target = this.frames.find(f => f.currentUrl === url) ?? null;
+    let target = this.frames.find(f => matches(f, url)) ?? null;
 
     if (target && target === this.visibleFrame) {
       return target; // すでに表示中
@@ -83,11 +92,11 @@ export class SketchPool {
 
     if (!target) {
       target = this.takeIdleFrame();
-      await target.load(url);
+      await load(target, url);
     } else {
       await target.ready; // 先読み中ならその完了を待つ
     }
-    if (this.destroyed) return target;
+    if (this.destroyed || generation !== this.showGeneration) return target;
     this.markBusy(target);
 
     const previous = this.visibleFrame;
@@ -112,9 +121,9 @@ export class SketchPool {
   }
 
   /** 指定 URL を非表示の frame に先読みしておく（次の show が即座になる）。すでにどこかに読み込み済みなら何もしない。 */
-  preload(url: string): void {
+  preload(url: PoolSource): void {
     if (this.destroyed) return;
-    if (this.frames.some(f => f.currentUrl === url)) return;
+    if (this.frames.some(f => matches(f, url))) return;
     const idle = this.idleOrder.find(f => f !== this.visibleFrame) ?? null;
     if (!idle) {
       // クロスフェード中で idle 扱いの frame が無い。遷移完了後に show() が flush する。
@@ -122,7 +131,7 @@ export class SketchPool {
       return;
     }
     this.pendingPreloadUrl = null;
-    void idle.load(url).catch(() => { /* 先読みの失敗は握りつぶす（show 時に再試行される） */ });
+    void load(idle, url).catch(() => { /* 先読みの失敗は握りつぶす（show 時に再試行される） */ });
   }
 
   private flushPendingPreload(): void {
