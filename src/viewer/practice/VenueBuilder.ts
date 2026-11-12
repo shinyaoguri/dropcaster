@@ -17,6 +17,7 @@ export class VenueBuilder {
       <p class="dc-practice-hint">${label('practice.buildHint')}</p>
       <a class="dc-practice-help" href="https://github.com/shinyaoguri/dropcaster/blob/main/docs/venue-authoring.md" target="_blank" rel="noopener noreferrer">${label('practice.authoringGuide')}</a>
       ${button('practice-undo-venue', 'practice.undoVenue')}
+      ${button('practice-start-objects', 'practice.startObjects')}
       <details id="practice-room" open><summary>${label('practice.room')}</summary><form id="practice-room-form">
       ${field('practice-room-width', 'practice.roomWidth', 0.1, 500)}
       ${field('practice-room-height', 'practice.roomHeight', 0.1, 500)}
@@ -24,7 +25,7 @@ export class VenueBuilder {
       ${button('practice-create-room', 'practice.createRoom')}</form>
       <p class="dc-practice-hint">${label('practice.replaceVenueHint')}</p></details>
       <div id="practice-object-editor" hidden>
-      <div class="dc-practice-object-actions">${button('practice-add-wall', 'practice.addWall')}${button('practice-add-floor', 'practice.addFloor')}${button('practice-add-box', 'practice.addBox')}</div>
+      <div class="dc-practice-object-actions"><label class="dc-practice-field">${label('practice.addShape')}<select id="practice-object-kind">${['box','tetrahedron','prism','wall','floor'].map(kind => `<option value="${kind}">${label(`practice.${kind}` as Parameters<typeof label>[0])}</option>`).join('')}</select></label>${button('practice-add-object', 'practice.addObject')}</div>
       <label class="dc-practice-field">${label('practice.objects')}<select id="practice-object"></select></label>
       <p id="practice-object-count" class="dc-practice-hint"></p>
       <form id="practice-object-form">
@@ -44,8 +45,14 @@ export class VenueBuilder {
       this.selected = scene.objects![1].id; this.change(scene, true);
       this.get<HTMLDetailsElement>('practice-room').open = false;
     });
-    for (const kind of ['wall', 'floor', 'box'] as const) this.click(`practice-add-${kind}`, () => {
+    this.click('practice-start-objects', () => {
+      const object = venueObject('box', t('practice.box')); this.selected = object.id;
+      this.change({ ...defaultScene(), kind: 'objects', objects: [object] }, true);
+      this.get<HTMLDetailsElement>('practice-room').open = false;
+    });
+    this.click('practice-add-object', () => {
       const objects = this.objects(); if (!objects.length || objects.length >= MAX_VENUE_OBJECTS) return;
+      const kind = this.get<HTMLSelectElement>('practice-object-kind').value as VenueObject['kind'];
       const object = venueObject(kind, `${t(`practice.${kind}`)} ${objects.length + 1}`);
       this.selected = object.id; this.change({ ...this.scene, objects: [...objects, object] }, false);
     });
@@ -97,7 +104,7 @@ export class VenueBuilder {
     this.value('practice-object-name', selected.name); this.value('practice-object-color', selected.color);
     for (const [id, values] of [['size', selected.size], ['position', selected.position], ['rotation', rotation(selected.quaternion)]] as const)
       values.forEach((value, index) => this.value(`practice-object-${id}-${index}`, value));
-    for (const id of ['practice-add-wall', 'practice-add-floor', 'practice-add-box', 'practice-copy-object']) this.get<HTMLButtonElement>(id).disabled = objects.length >= MAX_VENUE_OBJECTS;
+    for (const id of ['practice-add-object', 'practice-copy-object']) this.get<HTMLButtonElement>(id).disabled = objects.length >= MAX_VENUE_OBJECTS;
     this.get<HTMLButtonElement>('practice-delete-object').disabled = objects.length <= 1;
   }
 }

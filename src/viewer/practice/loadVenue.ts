@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { venueGeometry } from './venueGeometry';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { decodeAsset, validateGlb, ProjectFormatError, type Project, type VenueObject } from './project';
 
@@ -43,7 +44,7 @@ export function prepareObjects(objects: VenueObject[]): PreparedVenue {
   const group = new THREE.Group();
   const geometries: THREE.BufferGeometry[] = [], materials: THREE.Material[] = [];
   for (const object of objects) {
-    const geometry = new THREE.BoxGeometry(...object.size);
+    const geometry = venueGeometry(object);
     const material = new THREE.MeshStandardMaterial({ color: object.color });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = object.name; mesh.position.fromArray(object.position); mesh.quaternion.fromArray(object.quaternion);

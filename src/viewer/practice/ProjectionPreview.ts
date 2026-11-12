@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MappingCompositor } from './MappingCompositor';
+import { ProjectorGuide } from './ProjectorGuide';
 import type { MappingsState } from '../utils/mappingTransform';
 import type { Projector, VenueScene } from './project';
 
@@ -46,6 +47,7 @@ export class ProjectionPreview {
   private readonly projectionMatrix = new THREE.Matrix4();
   private depthDirty = true;
   private disposed = false;
+  private guide?: ProjectorGuide;
   depthRenders = 0;
 
   constructor(canvas: HTMLCanvasElement, video: HTMLVideoElement, width = 640, height = 360) {
@@ -75,6 +77,9 @@ export class ProjectionPreview {
       this.controls.enableDamping = true;
       this.controls.minDistance = 1;
       this.controls.maxDistance = 25;
+      this.guide = new ProjectorGuide(); this.scene.add(this.guide.group);
+      this.observer.layers.enable(1);
+      this.updateGuide();
       this.resetView();
     } catch (error) {
       this.dispose();
@@ -130,7 +135,13 @@ export class ProjectionPreview {
     this.projector.updateProjectionMatrix(); this.projector.updateMatrixWorld(true);
     this.projectionMatrix.multiplyMatrices(this.projector.projectionMatrix, this.projector.matrixWorldInverse);
     this.depthDirty = true;
+    this.updateGuide();
   }
+
+  private updateGuide(): void {
+    this.guide?.update(this.projector, new THREE.Box3().setFromObject(this.venue ?? this.sample));
+  }
+  setGuidesVisible(visible: boolean): void { if (this.guide) this.guide.group.visible = visible; }
 
   setState(state: MappingsState, outputId: string): void { this.compositor.setState(state, outputId); }
   setBoxVisible(visible: boolean): void { this.box.visible = visible; this.depthDirty = true; }
@@ -157,6 +168,7 @@ export class ProjectionPreview {
     this.projectionMatrix.multiplyMatrices(this.projector.projectionMatrix, this.projector.matrixWorldInverse);
     this.setPreviewWidth(this.previewWidth);
     this.depthDirty = true;
+    this.updateGuide();
   }
 
   setVenue(group: THREE.Group | null, cleanup: (() => void) | null = null): void {
@@ -189,6 +201,7 @@ export class ProjectionPreview {
     }
     this.setProjectionEnabled(this.projectionEnabled);
     this.depthDirty = true;
+    this.updateGuide();
   }
 
   setVenueTransform(config: VenueScene): void {
@@ -201,6 +214,7 @@ export class ProjectionPreview {
       material.uniforms.baseColor.value.copy(material.userData.originalColor).multiply(new THREE.Color(config.color));
     }
     group.updateMatrixWorld(true); this.depthDirty = true;
+    this.updateGuide();
   }
 
   venueDimensions(): [number, number, number] {
@@ -210,6 +224,7 @@ export class ProjectionPreview {
 
   overview(): void {
     const bounds = new THREE.Box3().setFromObject(this.venue ?? this.sample);
+    if (this.guide?.group.visible) bounds.expandByPoint(this.projector.position);
     const center = bounds.getCenter(new THREE.Vector3()), size = bounds.getSize(new THREE.Vector3()).length();
     this.observer.far = Math.max(50, size * 10); this.observer.updateProjectionMatrix();
     this.controls.maxDistance = Math.max(25, size * 5); this.controls.minDistance = Math.max(0.01, size / 1000);
@@ -310,6 +325,7 @@ export class ProjectionPreview {
     if (this.disposed) return;
     this.disposed = true;
     this.controls?.dispose(); this.compositor?.dispose(); this.depthTarget.dispose(); this.depthMaterial.dispose();
+    this.guide?.dispose();
     this.importedMaterials.forEach(m => m.dispose()); this.venueCleanup?.();
     this.materials.forEach(m => m.dispose()); this.geometries.forEach(g => g.dispose());
     this.scene.clear(); this.renderer.dispose();

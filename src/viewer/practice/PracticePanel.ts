@@ -43,12 +43,13 @@ export class PracticePanel {
     const state = session.changes.get().venue.layout;
     this.selected = state.activeOutputId ?? state.outputs[0].id;
     this.video.muted = true; this.video.playsInline = true;
-    this.preview = new ProjectionPreview(this.canvas, this.video);
+    this.preview = new ProjectionPreview(this.canvas, this.video); this.preview.setGuidesVisible(true);
     this.root.className = 'dc-practice-panel';
     this.canvas.id = 'dc-practice-canvas'; this.canvas.tabIndex = 0;
     this.root.innerHTML = `<div class="column-header"><h2>${label('practice.previewTitle')}</h2><div class="dc-practice-view-actions">
       ${button('practice-overview', 'practice.overview')}${button('practice-audience', 'practice.audience')}
       ${button('practice-projector-view', 'practice.projectorView')}${button('practice-reset-view', 'practice.resetView')}</div></div>
+      <div class="dc-practice-guide-row"><label class="dc-practice-check"><input id="practice-guides" type="checkbox" checked>${label('practice.guides')}</label><span class="dc-practice-hint">${label('practice.guideHint')}</span></div>
       <p class="dc-practice-hint">${label('practice.viewHint')}</p><div class="dc-practice-viewport"></div>`;
     this.root.querySelector('.dc-practice-viewport')!.append(this.canvas);
     this.settings.className = 'dc-practice-settings';
@@ -92,6 +93,7 @@ export class PracticePanel {
     scope.querySelector('.tool-content')!.append(this.settings);
     this.observer = new ResizeObserver(() => { this.resizePending = true; }); this.observer.observe(this.canvas.parentElement!);
     this.canvas.addEventListener('webglcontextlost', this.contextLost);
+    this.root.querySelector<HTMLInputElement>('#practice-guides')!.addEventListener('change', event => this.preview.setGuidesVisible((event.target as HTMLInputElement).checked));
     this.wireControls();
     this.off.push(wc.events.stream.subscribe(stream => this.bindStream(stream)), session.changes.subscribe(project => this.update(project)),
       session.storage.subscribe(() => this.storageStatus()), onLangChange(() => this.translate()));

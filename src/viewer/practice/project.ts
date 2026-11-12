@@ -3,7 +3,7 @@ import { defaultMappingsState, parseMappingsState, CORNER_KEYS, type MappingsSta
 export type Vec3 = [number, number, number];
 export type Quaternion = [number, number, number, number];
 export interface VenueObject {
-  id: string; name: string; kind: 'wall' | 'floor' | 'box';
+  id: string; name: string; kind: 'wall' | 'floor' | 'box' | 'tetrahedron' | 'prism';
   size: Vec3; position: Vec3; quaternion: Quaternion; color: string;
 }
 export interface Projector {
@@ -19,7 +19,7 @@ export interface ContentReference {
   path?: string; revision: string | null; revisionPinned: false;
 }
 export interface Project {
-  format: 'dropcaster-project'; schemaVersion: 2; id: string; name: string; createdAt: string; updatedAt: string;
+  format: 'dropcaster-project'; schemaVersion: 3; id: string; name: string; createdAt: string; updatedAt: string;
   venue: { id: string; revision: number; layout: MappingsState; scene: VenueScene; projectors: Projector[] };
   content: ContentReference[];
   show: { contentIds: string[]; intervalSeconds: number; currentIndex: number };
@@ -29,7 +29,7 @@ export const MAX_GLB_BYTES = 20 * 1024 * 1024;
 export const MAX_PACKAGE_BYTES = 30 * 1024 * 1024;
 export const MAX_VENUE_OBJECTS = 128;
 export interface VenuePackage {
-  format: 'dropcaster-venue'; schemaVersion: 1; name: string;
+  format: 'dropcaster-venue'; schemaVersion: 2; name: string;
   venue: Project['venue']; assets: Project['assets'];
 }
 export class ProjectFormatError extends Error {
@@ -92,7 +92,7 @@ export function defaultScene(): VenueScene {
 }
 export function createProject(layout = defaultMappingsState()): Project {
   const now = new Date().toISOString();
-  return { format: 'dropcaster-project', schemaVersion: 2, id: crypto.randomUUID(), name: 'Untitled', createdAt: now, updatedAt: now,
+  return { format: 'dropcaster-project', schemaVersion: 3, id: crypto.randomUUID(), name: 'Untitled', createdAt: now, updatedAt: now,
     venue: { id: crypto.randomUUID(), revision: 1, layout, scene: defaultScene(), projectors: layout.outputs.map(o => defaultProjector(o.id)) },
     content: [], show: { contentIds: [], intervalSeconds: 30, currentIndex: 0 }, assets: [] };
 }
@@ -178,7 +178,7 @@ export function parseProject(value: unknown): Project {
     return createProject(parseLayout(root));
   }
   if (root.format !== 'dropcaster-project') fail();
-  if (root.schemaVersion !== 1 && root.schemaVersion !== 2) fail('version');
+  if (root.schemaVersion !== 1 && root.schemaVersion !== 2 && root.schemaVersion !== 3) fail('version');
   const venue = record(root.venue), scene = record(venue.scene), show = record(root.show);
   const layout = parseLayout(venue.layout);
   const projectors = list(venue.projectors, 4).map(value => {
@@ -201,10 +201,11 @@ export function parseProject(value: unknown): Project {
   });
   unique(assets.map(a => a.id));
   if (scene.kind !== 'sample' && scene.kind !== 'glb' && scene.kind !== 'objects') fail();
-  if (scene.kind === 'objects' && root.schemaVersion !== 2) fail('version');
+  if (scene.kind === 'objects' && root.schemaVersion === 1) fail('version');
   const objects = scene.kind === 'objects' ? list(scene.objects, MAX_VENUE_OBJECTS).map(value => {
     const o = record(value);
-    if (o.kind !== 'wall' && o.kind !== 'floor' && o.kind !== 'box') fail();
+    if (!['wall', 'floor', 'box', 'tetrahedron', 'prism'].includes(String(o.kind))) fail();
+    if ((o.kind === 'tetrahedron' || o.kind === 'prism') && root.schemaVersion !== 3) fail('version');
     const color = str(o.color); if (!/^#[0-9a-f]{6}$/i.test(color)) fail();
     return { id: str(o.id), name: str(o.name), kind: o.kind as VenueObject['kind'],
       size: vector(o.size, 3, 0.001, 1000) as Vec3, position: vector(o.position, 3) as Vec3, quaternion: quat(o.quaternion), color };
@@ -240,7 +241,7 @@ export function parseProject(value: unknown): Project {
   if (!Number.isFinite(Date.parse(createdAt)) || !Number.isFinite(Date.parse(updatedAt))) fail();
   const revision = num(venue.revision, 1, Number.MAX_SAFE_INTEGER);
   if (!Number.isInteger(revision)) fail();
-  return { format: 'dropcaster-project', schemaVersion: 2, id: str(root.id), name: str(root.name), createdAt, updatedAt,
+  return { format: 'dropcaster-project', schemaVersion: 3, id: str(root.id), name: str(root.name), createdAt, updatedAt,
     venue: { id: str(venue.id), revision, layout,
       scene: { kind: scene.kind as VenueScene['kind'], assetId, ...(objects ? { objects } : {}), ...transform }, projectors },
     content, show: { contentIds, intervalSeconds: num(show.intervalSeconds, 5, 300), currentIndex }, assets };
@@ -258,14 +259,14 @@ export function portableProject(project: Project): Project {
 /** Share calibration and geometry without the author's sketches or playback settings. */
 export function portableVenue(project: Project): VenuePackage {
   const { name, venue, assets } = portableProject(project);
-  return { format: 'dropcaster-venue', schemaVersion: 1, name, venue, assets };
+  return { format: 'dropcaster-venue', schemaVersion: 2, name, venue, assets };
 }
 
 /** Validate the entire venue before replacing anything; preserve the receiving show. */
 export function importVenue(value: unknown, current: Project): Project {
   const root = record(value);
   if (root.format !== 'dropcaster-venue') fail();
-  if (root.schemaVersion !== 1) fail('version');
+  if (root.schemaVersion !== 1 && root.schemaVersion !== 2) fail('version');
   str(root.name);
-  return parseProject({ ...current, venue: root.venue, assets: root.assets });
+  return parseProject({ ...current, schemaVersion: root.schemaVersion === 1 ? 2 : 3, venue: root.venue, assets: root.assets });
 }
