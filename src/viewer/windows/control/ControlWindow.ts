@@ -30,9 +30,9 @@ import type {
   WebglContextStatus,
 } from './ControlHost';
 
+export type ControlTab = 'mapping' | 'layout' | 'preview';
+
 export class ControlWindow extends BaseWindow {
-  private practiceMode = false;
-  setPracticeMode(active: boolean): void { this.practiceMode = active; }
   private sourceVideo: HTMLVideoElement | null = null;
   private inactivePreviews = new InactivePreviewPool();
   private videoActualDimensions = {
@@ -62,7 +62,12 @@ export class ControlWindow extends BaseWindow {
   private layoutPanel = new LayoutPanel();
   private outputSettings = new OutputSettingsPanel();
   /** 現在 active なタブ（'mapping' / 'layout'）。タブ切替時に LayoutPanel.refresh() を駆動。 */
-  private activeTab: 'mapping' | 'layout' = 'mapping';
+  private activeTab: ControlTab = 'mapping';
+  private tabListeners = new Set<(tab: ControlTab) => void>();
+  get selectedTab(): ControlTab { return this.activeTab; }
+  onTabChange(listener: (tab: ControlTab) => void): () => void {
+    this.tabListeners.add(listener); return () => this.tabListeners.delete(listener);
+  }
   // canonical state（および active alias）は MappingsController が所有する。
   // ローカル mutation 後の broadcast 経路（commit）だけ親側から差し込む。
   private ctrl = new MappingsController((state) => this.controlHost?.emitStateMutation(state));
@@ -240,6 +245,7 @@ export class ControlWindow extends BaseWindow {
     this.maskEdit.destroy();
     this.layoutPanel.destroy();
     this.outputSettings.destroy();
+    this.tabListeners.clear(); this.activeTab = 'mapping';
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
@@ -409,7 +415,7 @@ ${CONTROL_PANEL_CSS}
       this.mappingsList.attach(scope, this.hostDoc, this.ctrl, {
         getHostWin: () => this.hostWin,
         openOutputWindow: (outputId) => host.openOutputWindow(outputId),
-        autoOpenAddedOutput: () => !this.practiceMode,
+        autoOpenAddedOutput: () => false,
         closeOutputWindow: (outputId) => host.closeOutputWindow(outputId),
         isOutputWindowOpen: (outputId) => this.outputBounds[outputId] !== undefined,
       });
@@ -461,37 +467,38 @@ ${CONTROL_PANEL_CSS}
    * このタイミングで正しい寸法で再計算される。
    */
   private setupTabs(): void {
-    const scope = this.scopeEl;
-    if (!scope) return;
-    const tabs = scope.querySelectorAll<HTMLButtonElement>('.dc-tab');
-    const panes = scope.querySelectorAll<HTMLElement>('.dc-tab-pane');
-    tabs.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const name = btn.dataset.tab as 'mapping' | 'layout' | undefined;
-        if (!name || name === this.activeTab) return;
-        this.activeTab = name;
-        tabs.forEach(b => {
-          const active = b.dataset.tab === name;
-          b.classList.toggle('is-active', active);
-          b.setAttribute('aria-selected', active ? 'true' : 'false');
-        });
-        panes.forEach(p => {
-          p.classList.toggle('is-active', p.dataset.tabPane === name);
-        });
-        const win = this.controlHost?.window;
-        const fullRefresh = () => {
-          if (name === 'layout') {
-            this.layoutPanel.refresh();
-          } else {
-            this.outputViz.refresh();
-            this.mappingArea.refreshActiveMount();
-            this.mappingArea.refreshTransform();
-            this.inactivePreviews.sync(this.ctrl.getState());
-          }
-        };
-        if (win) win.requestAnimationFrame(fullRefresh);
-        else fullRefresh();
+    const tabs = [...this.scopeEl!.querySelectorAll<HTMLButtonElement>('.dc-tab')];
+    tabs.forEach((button, index) => {
+      button.addEventListener('click', () => this.selectTab(button.dataset.tab as ControlTab));
+      button.addEventListener('keydown', event => {
+        const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+          : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
+          : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
+        if (next < 0) return;
+        event.preventDefault(); event.stopPropagation();
+        this.selectTab(tabs[next].dataset.tab as ControlTab); tabs[next].focus();
       });
+    });
+  }
+
+  selectTab(name: ControlTab): void {
+    const scope = this.scopeEl;
+    if (!scope || name === this.activeTab) return;
+    this.activeTab = name; this.keyboardNudge.clearSelection();
+    scope.querySelectorAll<HTMLButtonElement>('.dc-tab').forEach(button => {
+      const active = button.dataset.tab === name;
+      button.classList.toggle('is-active', active); button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+    });
+    scope.querySelectorAll<HTMLElement>('.dc-tab-pane').forEach(pane => pane.classList.toggle('is-active', pane.dataset.tabPane === name));
+    this.tabListeners.forEach(listener => listener(name));
+    this.controlHost?.window.requestAnimationFrame(() => {
+      if (!this.controlHost || this.activeTab !== name) return;
+      if (name === 'layout') this.layoutPanel.refresh();
+      if (name === 'mapping') {
+        this.outputViz.refresh(); this.mappingArea.refreshActiveMount(); this.mappingArea.refreshTransform();
+        this.inactivePreviews.sync(this.ctrl.getState());
+      }
     });
   }
 

@@ -2,8 +2,8 @@ export function installPracticeStyles(): void {
   if (document.getElementById('dc-practice-styles')) return;
   const style = document.createElement('style'); style.id = 'dc-practice-styles';
   style.textContent = `
-    .dc-control-shell.dc-practice-mode { display:flex; flex-direction:column; min-height:0; }
-    .dc-inline-editor .dc-practice-mode > .control-container { flex:1; height:auto; min-height:0; }
+    .dc-control-shell.dc-mapping-workspace { display:flex; flex-direction:column; min-height:0; }
+    .dc-inline-editor .dc-mapping-workspace > .control-container { flex:1; height:auto; min-height:0; }
     .dc-practice-toolbar { display:flex; align-items:center; gap:12px; padding:8px 14px; min-height:46px; box-sizing:border-box; background:#242424; border-bottom:1px solid #444; color:#eee; font:13px system-ui; }
     .dc-practice-toolbar strong { white-space:nowrap; font-size:14px; }
     #dc-practice-status { flex:1; color:#aaa; font-size:12px; }
@@ -11,9 +11,9 @@ export function installPracticeStyles(): void {
     .dc-practice-toolbar button { border:1px solid #555; border-radius:5px; color:#eee; background:#333; padding:7px 11px; cursor:pointer; white-space:nowrap; }
     .dc-practice-toolbar button:hover { background:#444; border-color:#888; }
     .dc-practice-toolbar button:focus-visible { outline:2px solid #3b82f6; outline-offset:2px; }
-    .dc-practice-mode .source-column, .dc-practice-mode .mapping-column { min-width:240px; min-height:0; }
-    .dc-practice-mode .source-container { flex:0 0 34%; min-height:140px; overflow:hidden; }
-    .dc-practice-panel { flex:1; min-height:200px; display:flex; flex-direction:column; overflow:hidden; border-top:1px solid #444; }
+    .dc-mapping-workspace .source-column, .dc-mapping-workspace .mapping-column { min-width:240px; min-height:0; }
+    #preview-stage { flex:1; min-height:0; flex-direction:column; }
+    .dc-practice-panel { flex:1; min-height:200px; display:flex; flex-direction:column; overflow:hidden;  }
     .dc-practice-panel .column-header { height:auto; min-height:44px; gap:8px; padding:8px 12px; flex-wrap:wrap; }
     .dc-practice-view-actions { display:flex; gap:4px; flex-wrap:wrap; }
     .dc-practice-view-actions .tool-button { padding:4px 7px; width:auto; font-size:11px; margin:0; }
@@ -39,14 +39,11 @@ export function installPracticeStyles(): void {
     .dc-practice-settings button:disabled { opacity:.45; cursor:not-allowed; }
     .dc-practice-help { display:block; color:#93c5fd; font-size:12px; margin:8px 0; }
     @media(max-width:1000px) {
-      .dc-practice-mode .control-container { display:grid; grid-template-columns:230px minmax(0,1fr); grid-template-rows:minmax(260px,1fr) minmax(280px,1fr); overflow:auto; }
-      .dc-practice-mode .tool-column { grid-row:1/3; width:auto; min-width:0; max-width:none; }
-      .dc-practice-mode .dc-column-resizer { display:none; }
-      .dc-practice-mode .source-column { grid-column:2; grid-row:1; min-height:0; display:grid; grid-template-columns:minmax(130px,1fr) minmax(180px,1.4fr); grid-template-rows:44px minmax(0,1fr); }
-      .dc-practice-mode .source-column > .column-header { grid-column:1; }
-      .dc-practice-mode .source-container { grid-column:1; grid-row:2; min-height:0; }
-      .dc-practice-mode .dc-practice-panel { grid-column:2; grid-row:1/3; min-height:0; border-left:1px solid #444; }
-      .dc-practice-mode .mapping-column { grid-column:2; grid-row:2; }
+      .dc-mapping-workspace .control-container { display:grid; grid-template-columns:230px minmax(0,1fr); grid-template-rows:minmax(160px,.7fr) minmax(300px,1.3fr); overflow:auto; }
+      .dc-mapping-workspace .tool-column { grid-row:1/3; width:auto; min-width:0; max-width:none; }
+      .dc-mapping-workspace .dc-column-resizer { display:none; }
+      .dc-mapping-workspace .source-column { grid-column:2; grid-row:1; min-height:0; }
+      .dc-mapping-workspace .mapping-column { grid-column:2; grid-row:2; }
       .dc-practice-toolbar { flex-wrap:wrap; gap:7px; }
       #dc-practice-status { flex-basis:50%; }
     }

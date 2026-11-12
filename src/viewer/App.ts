@@ -194,13 +194,15 @@ export class App {
       }
     });
 
-    this.router.registerRoute('/practice', async () => {
+    const openSampleMapping = async () => {
       this.teardownCurrent();
       const controller = new SketchPageController();
       this.sketchPageController = controller;
       await controller.renderSketch(sampleSketch());
-      if (this.sketchPageController === controller) await controller.startPractice();
-    });
+      if (this.sketchPageController === controller) await controller.startMapping();
+    };
+    this.router.registerRoute('/mapping', openSampleMapping);
+    this.router.registerRoute('/practice', openSampleMapping); // Existing bookmarks remain valid.
 
     // スライドショーページ
     this.router.registerRoute('/slideshow', () => {

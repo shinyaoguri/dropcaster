@@ -97,7 +97,7 @@ const en = {
 
   // スケッチページ
   'sketchPage.fullscreen': 'Fullscreen',
-  'sketchPage.openWindows': 'Open windows',
+  'sketchPage.openWindows': 'Mapping',
   'sketchPage.fullscreenFailed': 'Failed to enter fullscreen',
 
   // ウィンドウ管理
@@ -118,6 +118,7 @@ const en = {
   'control.column.source': 'Source selection',
   'control.tab.mapping': 'Mapping',
   'control.tab.layout': 'Output layout',
+  'control.tab.preview': '3D preview',
   'control.tabstrip.label': 'Mapping column view switcher',
 
   // ツール: 出力ウィンドウセクション
@@ -314,7 +315,7 @@ const ja: Record<keyof typeof en, string> = {
   'slideshow.author.anonymous': 'Anonymous',
 
   'sketchPage.fullscreen': 'フルスクリーン',
-  'sketchPage.openWindows': 'ウィンドウを開く',
+  'sketchPage.openWindows': 'マッピング',
   'sketchPage.fullscreenFailed': 'フルスクリーン化に失敗しました',
 
   'window.createFailed': 'WindowManager: "{title}" の作成に失敗（ポップアップがブロックされた可能性があります）',
@@ -331,6 +332,7 @@ const ja: Record<keyof typeof en, string> = {
   'control.column.source': 'ソース選択',
   'control.tab.mapping': 'マッピング',
   'control.tab.layout': '出力レイアウト',
+  'control.tab.preview': '3Dプレビュー',
   'control.tabstrip.label': 'マッピングカラムのビュー切替',
 
   'control.outputs.title': '出力ウィンドウ',

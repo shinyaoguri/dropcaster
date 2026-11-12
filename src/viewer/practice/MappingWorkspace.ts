@@ -7,27 +7,29 @@ import { installPracticeStyles } from './style';
 import { t, onLangChange, type MessageKey } from '../i18n/index';
 import type { Project } from './project';
 
-export interface PracticeOptions {
+export interface MappingWorkspaceOptions {
   wc: WindowController; getFrame: () => SketchFrame | null;
-  mountEditor: () => ControlWindow | null; getContext: () => ShowContext;
+  mountEditor: () => ControlWindow | null; unmountEditor: () => void; getContext: () => ShowContext;
 }
-/** Lightweight entry point. Three.js/GLTFLoader are loaded only after Start. */
-export class PracticeController {
-  private options: PracticeOptions;
+/** The editor owns a stream consumer independently of real outputs and the optional 3D tab. */
+export class MappingWorkspace {
+  private options: MappingWorkspaceOptions;
   private session: ProjectSession | null = null;
   private panel: PracticePanel | null = null;
+  private pendingPanel: Promise<void> | null = null;
   private editor: ControlWindow | null = null;
   private toolbar: HTMLElement | null = null;
   private scope: HTMLElement | null = null;
   private release: (() => void) | null = null;
+  private offTab: (() => void) | null = null;
   private generation = 0;
   private off: (() => void)[] = [];
   private active = false;
-  private statusKey: MessageKey = 'practice.loading';
+  private statusKey: MessageKey = 'practice.waiting';
   private error = false;
   private disposed = false;
 
-  constructor(options: PracticeOptions) {
+  constructor(options: MappingWorkspaceOptions) {
     this.options = options; installPracticeStyles();
     this.off.push(onLangChange(() => this.translate()), options.wc.events.streaming.subscribe(active => {
       if (!active && this.active) this.stop();
@@ -45,42 +47,46 @@ export class PracticeController {
     this.session ??= new ProjectSession(this.options.wc, this.options.getContext);
     await this.session.ready;
     if (this.disposed) return;
-    this.session.update(project, true);
-    this.session.followCurrentContent();
+    this.session.update(project, true); this.session.followCurrentContent();
     await this.start();
+    await this.ensurePanel(); // Explicitly opening a saved venue prepares its fixed editing background.
   }
 
   async start(): Promise<void> {
     if (this.active || this.disposed) return;
-    this.active = true;
-    const generation = ++this.generation;
+    this.active = true; ++this.generation;
     this.release = this.options.wc.acquireStreamConsumer();
     const editor = this.options.mountEditor();
     this.scope = document.querySelector('#dc-inline-editor .dc-control-shell');
     if (!editor || !this.scope) { this.stop(); return; }
-    this.editor = editor; editor.setPracticeMode(true);
-    this.scope.classList.add('dc-practice-mode');
+    this.editor = editor;
+    this.scope.classList.add('dc-mapping-workspace');
     this.toolbar = document.createElement('header'); this.toolbar.className = 'dc-practice-toolbar';
-    this.toolbar.innerHTML = '<strong data-i18n="practice.title"></strong><span id="dc-practice-status" role="status" aria-live="polite"></span><button type="button" id="practice-retry" data-i18n="practice.retry" hidden></button><button type="button" id="practice-settings" data-i18n="practice.settings"></button><button type="button" id="practice-venue" data-i18n="practice.buildVenue"></button><button type="button" id="practice-project" data-i18n="practice.project"></button><button type="button" id="practice-open-output" data-i18n="practice.openOutput"></button><button type="button" id="practice-stop" data-i18n="practice.stop"></button>';
+    this.toolbar.innerHTML = '<strong data-i18n="practice.title"></strong><span id="dc-practice-status" role="status" aria-live="polite"></span><button type="button" id="practice-retry" data-i18n="practice.retry" hidden></button><button type="button" id="practice-settings" data-i18n="practice.settings"></button><button type="button" id="practice-venue" data-i18n="practice.buildVenue"></button><button type="button" id="practice-project" data-i18n="practice.project"></button><button type="button" id="practice-stop" data-i18n="practice.stop"></button>';
     this.scope.prepend(this.toolbar);
     this.toolbar.querySelector('#practice-stop')!.addEventListener('click', () => this.stop());
-    this.toolbar.querySelector('#practice-open-output')!.addEventListener('click', () => this.options.wc.openOutputWindow());
-    this.toolbar.querySelector('#practice-retry')!.addEventListener('click', () => void this.startPanel(editor, ++this.generation));
+    this.toolbar.querySelector('#practice-retry')!.addEventListener('click', () => {
+      editor.selectTab('preview'); void this.ensurePanel();
+    });
     for (const [button, id] of [['practice-settings', 'dc-practice-settings'], ['practice-venue', 'dc-practice-venue'], ['practice-project', 'dc-practice-project']]) {
-      this.toolbar.querySelector(`#${button}`)!.addEventListener('click', () => {
+      this.toolbar.querySelector(`#${button}`)!.addEventListener('click', async () => {
+        if (button === 'practice-venue') editor.selectTab('preview');
+        await this.ensurePanel();
         const element = this.scope?.querySelector<HTMLElement>(`#${id}`);
         if (element instanceof HTMLDetailsElement) element.open = true;
         element?.scrollIntoView({ block: 'start' });
       });
     }
-    this.status('practice.loading'); this.translate();
+    this.offTab = editor.onTabChange(tab => {
+      this.panel?.setVisible(tab === 'preview');
+      if (tab === 'preview') void this.ensurePanel();
+    });
     this.session ??= new ProjectSession(this.options.wc, this.options.getContext);
+    this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting'); this.translate();
     void this.connectSource();
-    await this.startPanel(editor, generation);
   }
 
-  /** Re-read the current frame after async readiness; never reconnect a previous slide. */
-  async connectSource(): Promise<void> {
+  private async connectSource(): Promise<void> {
     const generation = this.generation;
     while (this.active && !this.disposed) {
       const frame = this.options.getFrame();
@@ -92,28 +98,36 @@ export class PracticeController {
       return;
     }
   }
-  private async startPanel(editor: ControlWindow, generation: number): Promise<void> {
-    this.panel?.dispose(); this.panel = null; this.status('practice.loading');
-    this.toolbar?.querySelector('#practice-retry')?.setAttribute('hidden', '');
+
+  private ensurePanel(): Promise<void> {
+    if (!this.active || this.disposed || this.panel) return Promise.resolve();
+    if (this.pendingPanel) return this.pendingPanel;
+    const generation = this.generation;
+    const pending = this.loadPanel(generation).finally(() => { if (this.pendingPanel === pending) this.pendingPanel = null; });
+    this.pendingPanel = pending;
+    return pending;
+  }
+  private async loadPanel(generation: number): Promise<void> {
+    this.status('practice.loading'); this.toolbar?.querySelector('#practice-retry')?.setAttribute('hidden', '');
     try {
       const [{ PracticePanel }] = await Promise.all([import('./PracticePanel'), this.session!.ready]);
-      if (!this.active || this.disposed || generation !== this.generation || !this.scope) return;
-      const panel = new PracticePanel(this.scope, this.options.wc, this.session!, editor,
-        (key, error) => this.status(key, error), () => {
-          this.panel?.dispose(); this.panel = null;
-          this.toolbar?.querySelector('#practice-retry')?.removeAttribute('hidden');
-        });
+      if (!this.active || this.disposed || generation !== this.generation || !this.scope || !this.editor) return;
+      const panel = new PracticePanel(this.scope, this.options.wc, this.session!, this.editor,
+        (key, error) => this.status(key, error), () => this.previewFailed());
       this.panel = panel;
       await panel.initialize();
       if (!this.active || generation !== this.generation) { panel.dispose(); return; }
+      panel.setVisible(this.editor.selectedTab === 'preview');
       this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting');
-      // Retry may have invalidated a pending source wait.
-      if (!this.options.wc.events.stream.get()) void this.connectSource();
     } catch {
       if (!this.active || this.disposed || generation !== this.generation) return;
-      this.panel?.dispose(); this.panel = null; this.status('practice.error', true);
-      this.toolbar?.querySelector('#practice-retry')?.removeAttribute('hidden');
+      this.status('practice.error', true); this.previewFailed();
     }
+  }
+  private previewFailed(): void {
+    this.panel?.dispose(); this.panel = null;
+    this.toolbar?.querySelector('#practice-retry')?.removeAttribute('hidden');
+    this.editor?.selectTab('mapping');
   }
   private status(key: MessageKey, error = false): void {
     this.statusKey = key; this.error = error;
@@ -126,11 +140,12 @@ export class PracticeController {
   }
   stop(): void {
     if (!this.active) return;
-    this.active = false; this.generation++;
-    this.editor?.setPracticeMode(false); this.editor = null;
-    this.panel?.dispose(); this.panel = null;
+    this.active = false; this.generation++; this.pendingPanel = null;
+    this.offTab?.(); this.offTab = null;
+    this.panel?.dispose(); this.panel = null; this.editor = null;
     this.toolbar?.remove(); this.toolbar = null;
-    this.scope?.classList.remove('dc-practice-mode'); this.scope = null;
+    this.scope?.classList.remove('dc-mapping-workspace'); this.scope = null;
+    this.options.unmountEditor();
     const release = this.release; this.release = null; release?.();
   }
   dispose(): void {

@@ -1,8 +1,8 @@
 const labels = {
-  start: ['3D practice', '3D練習'], stop: ['End practice', '練習を終了'], loading: ['Preparing 3D…', '3Dを準備中…'],
-  title: ['3D practice · one projector', '3D練習・1プロジェクタ'], openOutput: ['Open real output', '実出力を開く'],
+  start: ['Mapping', 'マッピング'], stop: ['Close editor', '編集を閉じる'], loading: ['Preparing 3D…', '3Dを準備中…'],
+  title: ['Mapping', 'マッピング'], previewTitle: ['One projector', '1プロジェクタ'], openOutput: ['Open real output', '実出力を開く'],
   settings: ['3D settings', '3D設定'],
-  trySample: ['Try 3D practice with a sample', 'サンプル映像で3D練習を試す'], sampleSource: ['Built-in calibration sample', '内蔵の調整用サンプル'],
+  trySample: ['Try mapping with a sample', 'サンプル映像でマッピングを試す'], sampleSource: ['Built-in calibration sample', '内蔵の調整用サンプル'],
   retry: ['Retry 3D', '3Dを再試行'], error: ['3D is unavailable. You can continue editing in 2D.', '3Dを表示できません。2D編集はそのまま続けられます。'],
   contextLost: ['3D graphics stopped. Retry to restore the preview.', '3D描画が停止しました。再試行でプレビューを復旧できます。'],
   waiting: ['Waiting for the sketch canvas…', '作品のcanvasを待っています…'],
@@ -48,7 +48,7 @@ const labels = {
   externalAsset: ['Use a GLB with its buffers and images embedded.', '画像と形状データを埋め込んだGLBを使用してください。'],
   unsupportedAsset: ['Use a static, uncompressed GLB without skinning or required unsupported extensions.', 'スキンや必須の未対応拡張を含まない、非圧縮の静的GLBを使用してください。'],
   size: ['Venue limit: 20 MB / 300,000 triangles. Package limit: 30 MB.', '会場は20 MB・30万ポリゴン、パッケージは30 MBまでです。'],
-  busy: ['Loading venue…', '会場を読み込み中…'], ready: ['Edit in 2D; inspect from any angle in 3D.', '2Dで位置を合わせ、3Dで映り方を確認できます。'],
+  busy: ['Loading venue…', '会場を読み込み中…'], ready: ['Open an output from the output list when ready to project.', '出力一覧の「開く」で投影を開始できます。'],
 } as const;
 type Dictionary = { [K in keyof typeof labels as `practice.${K}`]: string };
 export const practiceEn = Object.fromEntries(Object.entries(labels).map(([key, value]) => [`practice.${key}`, value[0]])) as Dictionary;

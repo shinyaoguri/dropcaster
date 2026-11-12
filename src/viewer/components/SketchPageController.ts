@@ -7,7 +7,7 @@ import { WindowController } from './WindowController';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import { InlineControlHost } from '../windows/control/InlineControlHost';
 import { publicAssetPath } from '../utils/paths.js';
-import { PracticeController } from '../practice/PracticeController';
+import { MappingWorkspace } from '../practice/MappingWorkspace';
 import type { Project } from '../practice/project';
 
 export class SketchPageController {
@@ -16,22 +16,19 @@ export class SketchPageController {
   private cursorManager: CursorManager;
   private view: SketchPageView;
   private windowController: WindowController;
-  private openWindowsTimeout: ReturnType<typeof setTimeout> | null = null;
   private isDestroyed = false;
   /** projection 中だけ #dc-inline-editor 内にマウントする ControlWindow（inline 経路）。 */
   private inlinePanel: ControlWindow | null = null;
-  private practice: PracticeController;
+  private workspace: MappingWorkspace;
   private sketch: Sketch | null = null;
-  /** unsubscribe: projection-mode-change のリスナを destroy で外すため。 */
-  private boundProjectionChange = (e: Event) => this.handleProjectionChange(e);
 
   constructor() {
     this.fullscreenManager = new FullscreenManager();
     this.cursorManager = new CursorManager();
     this.view = new SketchPageView();
     this.windowController = new WindowController();
-    this.practice = new PracticeController({ wc: this.windowController, getFrame: () => this.sketchFrame,
-      mountEditor: () => this.mountInlineEditor(), getContext: () => ({ sketches: this.sketch ? [this.sketch] : [], currentIndex: 0, intervalSeconds: 30 }) });
+    this.workspace = new MappingWorkspace({ wc: this.windowController, getFrame: () => this.sketchFrame,
+      mountEditor: () => this.mountInlineEditor(), unmountEditor: () => this.unmountInlineEditor(), getContext: () => ({ sketches: this.sketch ? [this.sketch] : [], currentIndex: 0, intervalSeconds: 30 }) });
   }
 
   async renderSketch(sketch: Sketch): Promise<void> {
@@ -41,7 +38,6 @@ export class SketchPageController {
     // ビューのレンダリング（#sketch-stage を含む空のステージを描画）
     this.view.render(sketch);
     this.setupEventListeners();
-    window.addEventListener('projection-mode-change', this.boundProjectionChange);
 
     // スケッチ iframe を SketchFrame で差し込む
     const stage = document.getElementById('sketch-stage');
@@ -69,14 +65,8 @@ export class SketchPageController {
 
   }
 
-  async openProject(project: Project): Promise<void> { await this.practice.openProject(project); }
-  async startPractice(): Promise<void> { if (!this.isDestroyed) await this.practice.start(); }
-
-  private handleProjectionChange(event: Event): void {
-    const active = !!(event as CustomEvent).detail?.active;
-    if (active) this.mountInlineEditor();
-    else this.unmountInlineEditor();
-  }
+  async openProject(project: Project): Promise<void> { await this.workspace.openProject(project); }
+  async startMapping(): Promise<void> { if (!this.isDestroyed) await this.workspace.start(); }
 
   /**
    * #dc-inline-editor に ControlPanel をマウントする。
@@ -88,6 +78,7 @@ export class SketchPageController {
     const aside = document.getElementById('dc-inline-editor');
     if (!aside) return null;
     aside.removeAttribute('hidden');
+    this.view.setMappingActive(true);
     this.inlinePanel = new ControlWindow();
     this.inlinePanel.mountInline(aside, (shell) =>
       new InlineControlHost(window, shell, this.windowController),
@@ -101,6 +92,7 @@ export class SketchPageController {
     if (!this.inlinePanel) return;
     this.inlinePanel.destroy(); // ControlHost の購読を全部外す（WindowController.events リーク防止）
     this.inlinePanel = null;
+    this.view.setMappingActive(false);
     const aside = document.getElementById('dc-inline-editor');
     if (aside) {
       aside.setAttribute('hidden', '');
@@ -115,38 +107,7 @@ export class SketchPageController {
       this.view.updateFullscreenState(isFullscreen);
     });
 
-    // ウィンドウ開くボタンのイベント
-    this.view.onOpenWindowsToggle(() => this.openWindows());
-    this.view.onPracticeToggle(() => this.practice.toggle());
-  }
-
-  private openWindows(): void {
-    // クリックの user gesture 内で出力ウィンドウを開く。
-    // 編集 UI は inline ペインとして main の右側に出てくる。
-    this.windowController.openOutputWindow();
-    // inline panel を即マウントしておく。startCanvasStreaming 内の broadcastStream が
-    // 走るより前にペイン内 <video> を DOM に存在させて、bind を確実に届くようにするため。
-    this.mountInlineEditor();
-
-    // 出力ウィンドウが開かれた後、Canvas ストリーミングを開始（少し待って確実に）
-    this.openWindowsTimeout = setTimeout(() => {
-      this.openWindowsTimeout = null;
-      if (this.isDestroyed) return;
-      void this.startCanvasStreamingToWindows();
-    }, 2000);
-  }
-
-  private async startCanvasStreamingToWindows(): Promise<void> {
-    const frame = this.sketchFrame;
-    if (!frame) return;
-    // iframe内のcanvasが読み込まれる（p5 の setup() で生成される）のを待ってから開始
-    const canvas = await frame.whenCanvasReady();
-    if (this.isDestroyed) return;
-    if (canvas) {
-      this.windowController.startCanvasStreaming(frame.iframe);
-    } else {
-      console.error('SketchPageController: Canvas が見つからないため、プロジェクションを開始できません');
-    }
+    this.view.onOpenWindowsToggle(() => this.workspace.toggle());
   }
 
   private isInternalNavigation = false;
@@ -189,14 +150,8 @@ export class SketchPageController {
 
     window.removeEventListener('beforeunload', this.beforeUnloadHandler);
     window.removeEventListener('pagehide', this.pagehideHandler);
-    window.removeEventListener('projection-mode-change', this.boundProjectionChange);
 
-    if (this.openWindowsTimeout) {
-      clearTimeout(this.openWindowsTimeout);
-      this.openWindowsTimeout = null;
-    }
-
-    this.practice.dispose();
+    this.workspace.dispose();
     this.unmountInlineEditor();
     this.fullscreenManager.destroy();
     this.sketchFrame?.dispose();
