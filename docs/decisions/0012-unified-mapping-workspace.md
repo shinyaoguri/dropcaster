@@ -1,5 +1,7 @@
 # 0012: マッピングの入口を統一し、3Dを右側の任意タブにする
 
+上部の操作と3Dの投影ガイドは[ADR 0013](0013-simple-venue-and-projector-guides.md)で拡張する。
+
 ## 状態
 
 採用（2026-11-12 JST）。#132 / #133。[0010](0010-portable-project-and-practice-ui.md) の

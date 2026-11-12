@@ -224,11 +224,14 @@ export class ProjectionPreview {
 
   overview(): void {
     const bounds = new THREE.Box3().setFromObject(this.venue ?? this.sample);
-    if (this.guide?.group.visible) bounds.expandByPoint(this.projector.position);
+    if (this.guide?.group.visible) bounds.expandByObject(this.guide.group);
     const center = bounds.getCenter(new THREE.Vector3()), size = bounds.getSize(new THREE.Vector3()).length();
     this.observer.far = Math.max(50, size * 10); this.observer.updateProjectionMatrix();
     this.controls.maxDistance = Math.max(25, size * 5); this.controls.minDistance = Math.max(0.01, size / 1000);
-    this.controls.target.copy(center); this.observer.position.copy(center).add(new THREE.Vector3(0.7, 0.45, 0.8).multiplyScalar(Math.max(size, 1)));
+    const halfFov = THREE.MathUtils.degToRad(this.observer.fov / 2);
+    const fitAngle = Math.min(halfFov, Math.atan(Math.tan(halfFov) * this.observer.aspect));
+    const distance = Math.max(size / 2, .5) / Math.sin(fitAngle) * 1.1;
+    this.controls.target.copy(center); this.observer.position.copy(center).add(new THREE.Vector3(0.7, 0.45, 0.8).normalize().multiplyScalar(distance));
     this.controls.update();
   }
   audienceView(): void {

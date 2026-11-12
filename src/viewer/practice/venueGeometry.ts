@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { VenueObject } from './project';
+import type { VenueObject } from './project.ts';
 
 /** Flat faces; size always describes the axis-aligned bounds before rotation. */
 export function venueGeometry(object: Pick<VenueObject, 'kind' | 'size'>): THREE.BufferGeometry {

@@ -9,6 +9,8 @@ export class ProjectorGuide {
   private materials: THREE.Material[] = [];
   constructor() {
     this.group.name = 'projector-guide'; this.group.visible = false;
+    this.rays.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(48), 3));
+    this.range.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(36), 3));
     const body = new THREE.BoxGeometry(.38, .18, .28);
     const lens = new THREE.CylinderGeometry(.06, .06, .08, 16);
     lens.rotateX(Math.PI / 2); lens.translate(0, 0, -.04);
@@ -25,9 +27,10 @@ export class ProjectorGuide {
   }
   update(projector: THREE.PerspectiveCamera, bounds: THREE.Box3): void {
     this.group.position.copy(projector.position); this.group.quaternion.copy(projector.quaternion);
-    const center = bounds.getCenter(new THREE.Vector3()).applyMatrix4(projector.matrixWorldInverse);
-    const radius = bounds.getSize(new THREE.Vector3()).length() / 2;
-    const length = THREE.MathUtils.clamp(-center.z + radius, projector.near, projector.far);
+    let depth = projector.near;
+    for (const x of [bounds.min.x, bounds.max.x]) for (const y of [bounds.min.y, bounds.max.y]) for (const z of [bounds.min.z, bounds.max.z])
+      depth = Math.max(depth, -new THREE.Vector3(x,y,z).applyMatrix4(projector.matrixWorldInverse).z);
+    const length = Math.min(depth, projector.far);
     const corners = [[-1,-1],[1,-1],[1,1],[-1,1]].map(([x,y]) => {
       const ray = new THREE.Vector3(x,y,-1).applyMatrix4(projector.projectionMatrixInverse);
       return ray.multiplyScalar(length / -ray.z);
@@ -38,8 +41,10 @@ export class ProjectorGuide {
       lines.push(0,0,0,...corner.toArray(),...corner.toArray(),...next.toArray());
       faces.push(0,0,0,...corner.toArray(),...next.toArray());
     });
-    this.rays.setAttribute('position', new THREE.Float32BufferAttribute(lines,3)); this.rays.computeBoundingSphere();
-    this.range.setAttribute('position', new THREE.Float32BufferAttribute(faces,3)); this.range.computeBoundingSphere();
+    const rayPositions = this.rays.getAttribute('position') as THREE.BufferAttribute;
+    const facePositions = this.range.getAttribute('position') as THREE.BufferAttribute;
+    rayPositions.copyArray(lines); rayPositions.needsUpdate = true; this.rays.computeBoundingSphere(); this.rays.computeBoundingBox();
+    facePositions.copyArray(faces); facePositions.needsUpdate = true; this.range.computeBoundingSphere(); this.range.computeBoundingBox();
     this.group.updateMatrixWorld(true);
   }
   dispose(): void { this.geometries.forEach(g => g.dispose()); this.materials.forEach(m => m.dispose()); this.group.clear(); }

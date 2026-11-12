@@ -87,8 +87,8 @@ export class PracticePanel {
       <p class="dc-practice-hint">${label('practice.referencesOnly')}</p>${button('practice-open-content', 'practice.openContent')}</details>`;
     this.builder = new VenueBuilder((scene, fit) => this.editVenue(scene, fit), () => {
       if (this.previous && this.previousMode === 'model') void this.apply(this.previous, false);
-    });
-    this.settings.prepend(this.builder.element);
+    }, () => this.export(true), () => this.get<HTMLInputElement>('practice-project-file').click());
+    this.settings.append(this.builder.element);
     scope.querySelector('#preview-stage')!.append(this.root);
     scope.querySelector('.tool-content')!.append(this.settings);
     this.observer = new ResizeObserver(() => { this.resizePending = true; }); this.observer.observe(this.canvas.parentElement!);

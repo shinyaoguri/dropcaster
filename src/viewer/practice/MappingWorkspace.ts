@@ -74,7 +74,7 @@ export class MappingWorkspace {
       </summary><div class="dc-workspace-menu-items">
         <button type="button" id="practice-settings" data-i18n="practice.settings"></button>
         <button type="button" id="practice-venue" data-i18n="practice.buildVenue"></button>
-        <button type="button" id="practice-project" data-i18n="practice.project"></button>
+        <button type="button" id="practice-project" data-i18n="practice.storage"></button>
       </div></details>
       <button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>`;
     this.scope.prepend(this.toolbar);
@@ -98,7 +98,7 @@ export class MappingWorkspace {
         const element = this.scope?.querySelector<HTMLElement>(`#${id}`);
         if (element instanceof HTMLDetailsElement) element.open = true;
         element?.scrollIntoView({ block: 'start' });
-        element?.querySelector<HTMLElement>('summary, input, select')?.focus({ preventScroll: true });
+        if (element) { element.tabIndex = -1; element.focus({ preventScroll: true }); }
       });
     }
     this.offTab = editor.onTabChange(tab => {
