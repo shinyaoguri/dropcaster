@@ -1,7 +1,7 @@
 name: Bug report
 description: 不具合報告（個人開発用）
 title: "[bug][area] 症状の要約"
-labels: ["type/bug"]
+labels: ["bug"]
 assignees: []
 
 body:
@@ -9,7 +9,7 @@ body:
     id: area
     attributes:
       label: 対象領域 (Area)
-      options: [ui, api, auth, db, infra, other]
+      options: [viewer, cli, core, pwa, hosted, docs, infra, other]
     validations: { required: true }
 
   - type: textarea
@@ -34,7 +34,32 @@ body:
     id: env
     attributes:
       label: 実行環境
-      placeholder: OS/ブラウザ/バージョン等
+      placeholder: "OS・ブラウザ・対象版、gallery / hosted、作品・出力設定等"
+    validations: { required: false }
+
+  - type: textarea
+    id: contract
+    attributes:
+      label: 破られた仕様・影響範囲
+      description: 調査時に記入。守られるべき仕様、同じ原因の入口・呼び出し元を探したrg式と結果、仮説・未確認範囲を書く。起票時は不明でもよい。
+    validations: { required: false }
+
+  - type: textarea
+    id: done
+    attributes:
+      label: 完了条件
+      description: 調査時に、再現操作で観察できる期待結果と回帰確認を書く。未確定でも起票でき、実装前に確定する。
+      placeholder: |
+        - [ ] 再現手順の操作後に期待する結果となる
+        - [ ] 同じ仕様を負う経路を回帰テストで確認できる
+    validations: { required: false }
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 証跡・未確認範囲
+      description: 現在の症状の画像・動画、対象版・入力・環境。動きは動画。なければ理由と未確認事項を書く。
+      placeholder: "画像・動画URL / 証跡なし: 理由。原因の仮説は未確認と明記。"
     validations: { required: false }
 
   - type: dropdown

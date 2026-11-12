@@ -1,6 +1,6 @@
 name: Task
 description: 個人開発タスク（機能追加・修正・調査・Epic）
-title: "[feat][area] 簡潔な説明 or [bug][area] 簡潔な説明"
+title: "[type][area] 変更の要約"
 labels: []
 assignees: []
 
@@ -15,6 +15,7 @@ body:
         - chore
         - docs
         - experiment
+        - design
     validations:
       required: true
 
@@ -23,10 +24,12 @@ body:
     attributes:
       label: 対象領域 (Area)
       options:
-        - ui
-        - api
-        - auth
-        - db
+        - viewer
+        - cli
+        - core
+        - pwa
+        - hosted
+        - docs
         - infra
         - other
     validations:
@@ -37,9 +40,18 @@ body:
     attributes:
       label: 目的
       description: なぜこれをやるのか？達成すると何が変わるのか？
-      placeholder: 例）ユーザープロフィール編集を可能にする
+      placeholder: 例）出力を削除しても残った出力の投影位置を保つ
     validations:
       required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: 具体例・変更前後
+      description: 起票時は未確定でもよい。実装前に、入力・操作、現在と期待する結果、対処・代償を最低1例書く。仮説・想定と実測を区別する。
+      placeholder: "例）出力を3台追加して左端を削除 → 空きが残る → 残る2台を詰め、出力から見た映像の位置を保つ"
+    validations:
+      required: false
 
   - type: checkboxes
     id: epic
@@ -53,13 +65,30 @@ body:
     id: done
     attributes:
       label: 完了条件
-      description: 終了の判断基準（チェックリスト）
-      value: |
-        - [ ] 実装完了
-        - [ ] テスト追加
-        - [ ] ドキュメント更新
+      description: 起票時は未確定でもよい。実装前に、観察できる結果と確かめ方を書き、現行コードと突き合わせる。
+      placeholder: |
+        - [ ] 左端を削除すると残る2台が詰まり、各出力上のmapping/maskの相対位置が変わらない
+        - [ ] gallery / hosted の実操作と回帰テストで確認できる
     validations:
-      required: true
+      required: false
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 証跡・未確認範囲
+      description: 見た目は画像、動きは動画。対象版・入力・環境・実測か想定かを添える。なければ理由と未確認事項を書く。
+      placeholder: "画像・動画URL / 証跡なし: 理由。外部ディスプレイは未確認、など。"
+    validations:
+      required: false
+
+  - type: textarea
+    id: decisions
+    attributes:
+      label: 判断事項・依存関係
+      description: 未合意の仕様・互換性・権限の選択は、選択肢と推奨を示す。前提タスクは blocked by、工程は sub-issue で関連付ける。
+      placeholder: "人が判断すること: なし / 選択肢・推奨・未実装の範囲。前提Issue: #N"
+    validations:
+      required: false
 
   - type: dropdown
     id: priority
