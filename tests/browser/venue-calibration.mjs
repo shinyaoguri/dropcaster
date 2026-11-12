@@ -66,7 +66,7 @@ async function workflow(page,base){
   await page.locator('.dc-venue-header a').click();assert.equal(await page.locator('#venue-canvas').count(),0);
   assert.equal(await page.evaluate(()=>window.practicePreview.diagnostics().disposed),true);
   await page.locator('a[href="/venue"]').click();await ready(page);assert.deepEqual((await current(page)).venue,saved.venue);assert.equal((await current(page)).name,'Measured stage');
-  await page.evaluate(async modules=>(await import(`${modules}/i18n/index.ts`)).setLang('ja'),base.modules);
+  await page.locator('[data-lang-set=ja]').click();assert.equal(await page.locator('[data-lang-set=ja]').getAttribute('aria-pressed'),'true');
   await snapshot(page,base.name+'-venue-desktop-ja');await page.setViewportSize({width:900,height:800});await snapshot(page,base.name+'-venue-narrow-ja');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.ok((await page.locator('#venue-canvas').boundingBox()).height>=200);
@@ -133,10 +133,17 @@ async function recovery(page){
   await page.evaluate(()=>{window.realTransaction=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(...args){if(args[1]==='readwrite')throw new DOMException('quota','QuotaExceededError');return window.realTransaction.apply(this,args)}});
   await change(page,'#venue-name','Exportable venue');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('Could not save'));
   assert.equal((await download(page)).name,'Exportable venue');await page.evaluate(()=>{IDBDatabase.prototype.transaction=window.realTransaction});
+  await change(page,'#venue-name','Recovered venue');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
   const outputPromise=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const output=await outputPromise;await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
   await page.evaluate(()=>{window.track=window.calibrationPage.projection.stream.getVideoTracks()[0];window.calibrationPage.projection.renderer.getContext().getExtension('WEBGL_lose_context').loseContext()});
   await page.waitForFunction(()=>document.querySelector('#venue-reload')?.hidden===false);assert.equal(output.isClosed(),true);assert.equal(await page.evaluate(()=>window.track.readyState),'ended');assert.equal(await page.locator('#venue-open-output').isDisabled(),true);
-  assert.equal((await download(page)).name,'Exportable venue','graphics loss preserves exportable document');
+  assert.equal((await download(page)).name,'Recovered venue','graphics loss preserves exportable document');
+  await page.locator('.dc-venue-header a').click();
+  await page.evaluate(()=>{window.getContext=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){if(/webgl/.test(type))return null;return window.getContext.call(this,type,...args)}});
+  await page.locator('a[href="/venue"]').click();await page.waitForSelector('#venue-reload');
+  assert.equal(await page.locator('#venue-open-output').isDisabled(),true);assert.equal((await download(page)).name,'Recovered venue','initial WebGL failure preserves saved document and export');
+  await page.locator('.dc-venue-header a').click();assert.equal(await page.locator('#venue-canvas').count(),0);
+  await page.evaluate(()=>{HTMLCanvasElement.prototype.getContext=window.getContext});
 }
 
 async function isolation(page,base){
@@ -166,7 +173,7 @@ async function isolation(page,base){
   await venue.locator('#venue-objects-tab').click();await venue.locator('#practice-start-objects').click();
   await venue.locator('#venue-files-tab').click();await change(venue,'#venue-name','Independent room');
   await venue.waitForFunction(()=>document.querySelector('#venue-storage').textContent==='Venue draft saved in this browser');
-  const shared=await download(venue);assert.equal('content' in shared,false);assert.deepEqual(shared.venue.layout,baseline.layout);
+  const shared=await download(venue);assert.equal('content' in shared,false);assert.deepEqual(shared.venue.layout,{...baseline.draft.venue.layout,activeOutputId:baseline.draft.venue.layout.activeOutputId??baseline.layout.outputs[0].id});
   const check=await page.evaluate(async modules=>({layout:structuredClone(window.mappingWC.events.state.get()),draft:await(await import(`${modules}/practice/projectStore.ts`)).readProject(),storage:{...localStorage},track:window.originalTrack.readyState}),base.modules);
   assert.deepEqual(check.layout,baseline.layout);assert.deepEqual(check.draft,baseline.draft);assert.deepEqual(check.storage,baseline.storage);assert.equal(check.track,'live');
   const calibrationPromise=venue.waitForEvent('popup');await venue.locator('#venue-open-output').click();const calibration=await calibrationPromise;
@@ -182,7 +189,7 @@ async function isolation(page,base){
   await page.waitForFunction(()=>document.querySelector('#dc-practice-status').textContent.includes('Venue loaded'));
   await page.waitForTimeout(800);
   const received=await page.evaluate(async modules=>(await import(`${modules}/practice/projectStore.ts`)).readProject(),base.modules);
-  assert.deepEqual(received.venue,shared.venue);assert.deepEqual(received.content,baseline.draft.content);assert.deepEqual(received.show,baseline.draft.show);
+  assert.deepEqual(JSON.parse(JSON.stringify(received.venue)),shared.venue);assert.deepEqual(received.content,baseline.draft.content);assert.deepEqual(received.show,baseline.draft.show);
   assert.equal(await page.evaluate(()=>window.originalTrack.readyState),'live');assert.equal(live.isClosed(),false);
   assert.deepEqual(await page.evaluate(async modules=>(await import(`${modules}/practice/projectStore.ts`)).listProjects(),base.modules),[],'venue draft is absent from named mapping projects');
   await live.close();

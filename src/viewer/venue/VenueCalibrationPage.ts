@@ -7,7 +7,7 @@ import { createProject, defaultProjector, defaultScene, encodeAsset, importVenue
 import { readProject } from '../practice/projectStore';
 import { button, field, label, quaternion, rotation, vectorFields } from '../practice/controls';
 import { applyControlTranslations } from '../windows/control/ControlWindow.template';
-import { onLangChange, t, type MessageKey } from '../i18n';
+import { getLang, onLangChange, t, type MessageKey } from '../i18n';
 import { langSwitcherHtml, wireLangSwitcher } from '../i18n/LanguageSwitcher';
 import { routeHref } from '../utils/paths';
 import { installPracticeStyles } from '../practice/style';
@@ -242,7 +242,18 @@ export class VenueCalibrationPage {
   private status(key: MessageKey,error=false):void { this.statusKey=key;this.errorStatus=error;this.get('venue-status').textContent=t(key);this.get('venue-status').classList.toggle('is-error',error); }
   private error(error:unknown):void { this.status(error instanceof ProjectFormatError?`practice.${error.message}` as MessageKey:'practice.invalid',true); }
   private storageStatus():void { const state=this.session.storage.get(); this.get('venue-storage').textContent=t(state==='error'?'practice.storageError':state==='saving'?'practice.saving':'calibration.saved'); }
-  private translate():void { applyControlTranslations(this.root);this.status(this.statusKey,this.errorStatus);this.storageStatus();this.update(this.session.changes.get());this.canvas.setAttribute('aria-label',t('practice.viewHint')); }
+  private translate(): void {
+    applyControlTranslations(this.root);
+    this.root.querySelector('[data-lang-switcher]')?.setAttribute('aria-label',t('lang.toggle.title'));
+    this.root.querySelectorAll<HTMLElement>('[data-lang-set]').forEach(button=>{
+      const active=button.dataset.langSet===getLang();button.classList.toggle('is-active',active);button.setAttribute('aria-pressed',String(active));
+    });
+    this.root.querySelectorAll('fieldset input').forEach(input=>{
+      const axis=input.closest('label')?.textContent?.trim(),name=input.closest('fieldset')?.querySelector('legend')?.textContent;
+      if(axis&&name)input.setAttribute('aria-label',`${name} ${axis}`);
+    });
+    this.status(this.statusKey,this.errorStatus);this.storageStatus();this.update(this.session.changes.get());this.canvas.setAttribute('aria-label',t('practice.viewHint'));
+  }
   private graphicsLost=(event:Event):void=>{event.preventDefault();this.fail();};
   private fail():void {this.failed=true;this.setReady();this.editor?.cancel();this.output?.close();cancelAnimationFrame(this.frame);this.status('calibration.graphicsError',true);this.get<HTMLButtonElement>('venue-open-output').disabled=true;this.get('venue-reload').hidden=false;}
   destroy():void {

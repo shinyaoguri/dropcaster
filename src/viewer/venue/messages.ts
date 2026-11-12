@@ -11,7 +11,6 @@ const labels = {
   saved: ['Venue draft saved in this browser', '会場用の下書きをこのブラウザに保存済み'],
   isolated: ['Venue setup has its own draft. It does not change your sketches or running mappings. To use it, export the venue and load that file in the 3D preview.', '会場用の下書きとして保存します。作品や再生中のマッピングは変更しません。利用時は会場を書き出し、3Dプレビューでそのファイルを読み込んでください。'],
   copyMapping: ['Copy venue from mapping', 'マッピングの会場をコピー'], noMapping: ['No saved mapping venue was found.', '保存されたマッピングの会場がありません。'],
-  copied: ['Copied the venue. Your mapping workspace is unchanged.', '会場をコピーしました。マッピング側の設定はそのままです。'],
   venueName: ['Venue name', '会場の名前'], load: ['Load venue / project', '会場・プロジェクトを読み込む'],
   previewHint: ['Load a venue to preview your content. Create or align the venue in the separate Venue setup screen.', '会場を読み込んで作品の投影を確認できます。会場の作成・位置合わせは、別画面の「会場の作成・調整」で行います。'],
   previewSettings: ['Preview settings', 'プレビュー設定'], loadPreview: ['Load venue file', '会場ファイルを読み込む'],
