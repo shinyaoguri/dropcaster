@@ -61,6 +61,7 @@ export function installPracticeStyles(): void {
     .dc-practice-help { display:block; color:#93c5fd; font-size:12px; margin:8px 0; }
     @media(max-width:1000px) {
       .dc-mapping-workspace .control-container { display:grid; grid-template-columns:230px minmax(0,1fr); grid-template-rows:minmax(160px,.7fr) minmax(300px,1.3fr); overflow:auto; }
+      .dc-mapping-workspace:has(.dc-venue-editor:not([hidden])) .control-container { grid-template-rows:minmax(120px,.4fr) minmax(480px,1.6fr); }
       .dc-mapping-workspace .tool-column { grid-row:1/3; width:auto; min-width:0; max-width:none; }
       .dc-mapping-workspace .dc-column-resizer { display:none; }
       .dc-mapping-workspace .source-column { grid-column:2; grid-row:1; min-height:0; }

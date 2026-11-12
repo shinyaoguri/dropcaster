@@ -311,7 +311,12 @@ export class PracticePanel {
       const prepared = prepareObjects(next.venue.scene.objects!);
       this.action++; this.previous = current; this.previousMode = 'model';
       this.preview.setVenue(prepared.group, prepared.dispose); this.venueKey = '';
-      this.session.update(next); if (fit) this.preview.overview(); this.status('practice.venueEdited');
+      this.session.update(next);
+      if (fit) {
+        this.preview.overview();
+        if (!this.venueEditor.element.hidden && scene.objects?.length === 1) this.venueEditor.focusSelection();
+      }
+      this.status('practice.venueEdited');
     } catch (error) { this.error(error); }
   }
   private async refreshSaved(): Promise<void> {

@@ -629,6 +629,16 @@ async function gui(page, base) {
   await venueDrag(page,'rotate','Y'); const rotated=await objects(); assert.notDeepEqual(rotated[0].quaternion,original[0].quaternion);
   await venueDrag(page,'scale','X'); const sized=await objects(); assert.notDeepEqual(sized[0].size,rotated[0].size);
   assert.deepEqual(sized[0].quaternion,rotated[0].quaternion,'resizing preserves rotation');
+  await page.locator('#venue-snap').check(); await venueDrag(page,'translate','X');
+  const snapped=(await objects())[0].position[0];assert.ok(Math.abs(snapped*10-Math.round(snapped*10))<1e-8,'translation snaps to measured 0.1m');
+  await page.locator('#venue-snap').uncheck();await page.locator('#venue-undo').click();
+  await page.waitForFunction(x=>JSON.stringify(window.venueEditor.objects)===JSON.stringify(x),sized);
+  await page.locator('#venue-focus').click();await venueDrag(page,'translate','X',false);
+  await page.locator('#dc-practice-canvas').dispatchEvent('pointercancel');await page.mouse.up();
+  assert.deepEqual(await objects(),sized,'pointer cancellation cannot save partial geometry');
+  await venueDrag(page,'translate','X',false);
+  await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await page.mouse.up();
+  assert.deepEqual(await objects(),sized,'losing the window cancels pending geometry');
   await page.locator('#venue-focus').click();
   await venueDrag(page,'translate','X',false); await page.keyboard.press('Escape'); await page.mouse.up();
   assert.deepEqual(await objects(),sized,'Escape discards the entire drag');

@@ -71,7 +71,7 @@ export class VenueEditor {
     this.click('venue-start', () => builder.startObjects());
     this.click('venue-add', () => builder.add(this.get<HTMLSelectElement>('venue-kind').value as VenueObject['kind']));
     this.click('venue-copy', () => builder.duplicate()); this.click('venue-delete', () => builder.remove());
-    this.click('venue-undo', undo); this.click('venue-focus', () => this.focus());
+    this.click('venue-undo', undo); this.click('venue-focus', () => this.focusSelection());
     for (const mode of ['translate', 'rotate', 'scale'] as const) this.click(`venue-${mode}`, () => {
       this.cancel(); this.transform.setMode(mode); this.transform.setSpace(mode === 'translate' ? 'world' : 'local'); this.updateButtons();
     });
@@ -111,20 +111,23 @@ export class VenueEditor {
     this.outline.visible = this.active && !!mesh;
     if (mesh) this.outline.box.setFromObject(mesh);
   }
-  private focus(): void {
+  focusSelection(): void {
     this.cancel();
     if (this.outline.box.isEmpty()) return;
     const center = this.outline.box.getCenter(new THREE.Vector3()), size = this.outline.box.getSize(new THREE.Vector3()).length();
     const camera = this.preview.observer, orbit = this.preview.controls;
+    camera.near = Math.min(.1, Math.max(.0001, size / 1000)); camera.far = Math.max(50, size * 10); camera.updateProjectionMatrix();
+    orbit.minDistance = Math.max(.001, size / 1000); orbit.maxDistance = Math.max(25, size * 5);
     const angle = Math.min(THREE.MathUtils.degToRad(camera.fov / 2), Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect));
     const direction = camera.position.clone().sub(orbit.target).normalize();
-    orbit.target.copy(center); camera.position.copy(center).addScaledVector(direction, Math.max(size, .1) / (2 * Math.sin(angle)) * 1.4);
+    orbit.target.copy(center); camera.position.copy(center).addScaledVector(direction, Math.max(size, .01) / (2 * Math.sin(angle)) * 1.4);
     orbit.update();
   }
   private pointerDown = (event: PointerEvent): void => {
     if (!this.active || event.button !== 0 || !event.isPrimary) return;
     this.down = { x: event.clientX, y: event.clientY, id: event.pointerId };
     const rect = this.canvas.getBoundingClientRect();
+    // Three expects normalized coordinates here; its declaration incorrectly uses PointerEvent.
     this.transform.pointerHover({ x: (event.clientX - rect.left) / rect.width * 2 - 1, y: -(event.clientY - rect.top) / rect.height * 2 + 1, button: 0 } as PointerEvent);
     if (this.transform.axis) this.preview.controls.enabled = false;
   };
