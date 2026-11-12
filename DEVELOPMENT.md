@@ -2,6 +2,9 @@
 
 このリポジトリ自体（= dropcaster ツール本体）の開発メモです。
 ギャラリーを作る側の使い方は [README.md](README.md) を参照してください。
+Issue・PR・着手・レビューの共通規約は [AGENTS.md](AGENTS.md)、参加の入口は
+[CONTRIBUTING.md](CONTRIBUTING.md)、エージェント設定は
+[docs/agent-environment.md](docs/agent-environment.md) を参照してください。
 
 ## リポジトリ構成
 
@@ -68,13 +71,34 @@ npx /path/to/dropcaster init my-gallery
   （`npm run build` / `npm run build:web`、それぞれ tsc を含む）、加えて
   `wrangler deploy --dry-run` を検証する。PR は CI が green であることを merge の前提とする
   （`verify` ジョブは main のブランチ保護で必須チェックに設定済み）。
-  PR 時は `pr-policy` ジョブが `scripts/check-pr-title.sh` で PR タイトルの
-  Conventional Commits 形式も検査する（squash merge でタイトルがそのまま履歴に残るため）。
+- `.github/workflows/pr-policy.yml` — `pr-policy` ジョブが現在の PR タイトルを API から取得し、
+  `scripts/check-pr-title.sh` で Conventional Commits 形式を検査する（squash merge の履歴に残るため）。
+  タイトル・本文編集、Ready 化ではこの軽いワークフローだけ起動する。コード push では両方を起動する。
+  `verify` / `pr-policy` のジョブ名と検査内容は分離前から維持し、ブランチ保護の必須チェック名を変えない。
+  PR の base を変更した場合は、reopen または追加 push で新しい base に対する `verify` を実行してから merge する。
 - `.github/workflows/deploy.yml` — main への push（対象パス変更時）で
   Cloudflare Workers へデプロイする。
 - `.github/workflows/freshness.yml` — 週次（月曜 09:00 JST）で `npm audit` と
   Markdown のリンク切れを検査し、検知したら label:freshness の Issue へ自動起票する。
 - `.github/dependabot.yml` — npm と GitHub Actions の定期 version update（cooldown 7 日）。
+
+### 手元で検証する範囲
+
+手元では次の対応から触った範囲を確認し、CI が全段を実行する。
+テスト・ビルドは変更したソースと同じ版で実行し、失敗ログを再実行前に git 管理外へ保存する。
+
+| 変更するもの | 確認するもの |
+| --- | --- |
+| CLI / core / scripts / JS テスト | `npm run check`、`npm test`。CLI の利用経路は上記の別ギャラリーでも確認 |
+| viewer / 共有型 | `npm test`、`npm run build`、`npm run build:web` と、以下の該当ブラウザテストを両エントリで確認 |
+| Worker / hosted 設定 | `npm run build:web`、`cd apps/web && npx wrangler deploy --dry-run` |
+| 3D PoC | `npm run build:poc`、`npm run test:poc` |
+| Issue / PR テンプレート・文書 | YAML / Markdown リンク / symlink、変更前後の例と手順の整合性 |
+| GitHub Actions | `actionlint`、起動イベント・権限・必須ジョブ名・既存検証段の維持、PR の実行結果 |
+
+表示・動きの証跡と独立した反証は AGENTS.md の場面別スキルを使う。
+性能の判断は dev サーバの数値で決めず、本番ビルドと同じ入力・解像度・ブラウザ・GPU で測る。
+待ちを含むテストや外部プロセスにはタイムアウトと後始末を持たせる。
 
 ### wrangler は devDependency で固定し、直接呼ぶ
 

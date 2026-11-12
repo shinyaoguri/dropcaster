@@ -419,6 +419,8 @@ FFmpeg / Chromium が無い環境ではプレビュー生成だけスキップ�
 ## 貢献
 
 Pull Requestを歓迎します！問題や提案がある場合は [Issues](https://github.com/shinyaoguri/dropcaster/issues) にお願いします。
+参加の手順は [CONTRIBUTING.md](CONTRIBUTING.md)、人間・エージェント共通の開発規約は
+[AGENTS.md](AGENTS.md) を参照してください。
 
 ## ライセンス
 

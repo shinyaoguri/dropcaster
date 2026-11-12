@@ -26,3 +26,4 @@
 | [0013](0013-simple-venue-and-projector-guides.md) | 基本立体の会場編集、観察専用の投影ガイド、設定・共有メニュー | 採用 |
 | [0014](0014-interactive-venue-editing.md) | 会場のGUI編集を1ドラッグ単位で確定し、3D操作と数値入力を共有する | 採用 |
 | [0015](0015-standalone-venue-calibration.md) | 会場作成と実プロジェクタでの位置合わせを独立させ、3Dを作品のプレビューに特化する | 採用 |
+| [0016](0016-shared-development-workflow.md) | エージェント共通の開発規約、完了条件と検証の対応、反証と視覚的証跡、CI責務の分離 | 採用 |
