@@ -114,7 +114,7 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 `npm run test:practice` は製品の個別作品／スライドショー UI からマッピングを起動し、実出力との併用、
 3Dの遅延初期化・タブ非表示中の描画休止・明示的な実出力開始、基本立体の共有、投影ガイドの分離、既存編集、GLB／パッケージ保存、異常 import、容量不足、描画復旧・終了を両エントリで検証する。
 `PRACTICE_ARTIFACT_DIR=/tmp/practice-images` でスクリーンショットを保存できる。
-`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=workspace|workspaceSlideshow|lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample|venue|solids`
+`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=workspace|workspaceSlideshow|lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample|venue|solids|gui`
 で失敗箇所だけを再実行できる。内蔵サンプルの実 UI は `/mapping`（`/practice` も互換 URL として維持）。GLB サンプルは `docs/samples/`。
 
 ## 注意点 / 既知の TODO
@@ -136,3 +136,5 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
   Claude Code に許可する。書き込み / 破壊系（`npm install`・`git push`・`gh pr create`・
   `wrangler deploy` など）は都度確認させるため意図的に入れていない。個人の一時的な許可は
   gitignore 済みの `.claude/settings.local.json` 側に置く。
+
+`gui` は実ポインタで3Dハンドルをドラッグし、選択・移動・回転・サイズ変更、確定前の保存防止、取消・タブ切替、1操作のundo、既存2D状態維持とファイル再読込を両viewerで検証する。

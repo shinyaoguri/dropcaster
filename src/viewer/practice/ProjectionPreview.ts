@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MappingCompositor } from './MappingCompositor';
 import { ProjectorGuide } from './ProjectorGuide';
 import type { MappingsState } from '../utils/mappingTransform';
-import type { Projector, VenueScene } from './project';
+import type { Projector, VenueScene, VenueObject } from './project';
 
 const projection = `
   uniform sampler2D projectionTexture;
@@ -215,6 +215,17 @@ export class ProjectionPreview {
     }
     group.updateMatrixWorld(true); this.depthDirty = true;
     this.updateGuide();
+  }
+
+  editableMeshes(): THREE.Mesh[] {
+    return this.venue?.children.filter((object): object is THREE.Mesh => object instanceof THREE.Mesh && !!object.userData.venueObjectId) ?? [];
+  }
+  previewObject(object: VenueObject): void {
+    const mesh = this.editableMeshes().find(mesh => mesh.userData.venueObjectId === object.id);
+    if (!mesh) return;
+    mesh.position.fromArray(object.position); mesh.quaternion.fromArray(object.quaternion);
+    mesh.scale.fromArray(object.size.map((size, axis) => size / mesh.userData.venueObjectSize[axis]) as [number, number, number]);
+    mesh.updateMatrixWorld(true); this.depthDirty = true; this.updateGuide();
   }
 
   venueDimensions(): [number, number, number] {

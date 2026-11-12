@@ -578,6 +578,119 @@ async function solids(page, base) {
   } finally {await recipientContext.close()}
 }
 
+
+// Locate the actual handle via the same public hover hit test, then use real pointer events.
+async function venueHandle(page, axis) {
+  await page.waitForTimeout(150);
+  return page.evaluate(axis => {
+    const editor = window.venueEditor, control = editor.transform, canvas = window.practicePreview.renderer.domElement;
+    const rect = canvas.getBoundingClientRect(), center = control.object.position.clone().project(window.practicePreview.observer);
+    const cx=(center.x+1)*rect.width/2, cy=(1-center.y)*rect.height/2;
+    const matches=[];
+    for(let y=Math.max(4,cy-110);y<Math.min(rect.height-4,cy+110);y+=4) for(let x=Math.max(4,cx-110);x<Math.min(rect.width-4,cx+110);x+=4) {
+      control.pointerHover({x:x/rect.width*2-1,y:1-y/rect.height*2,button:0});
+      if(control.axis===axis) matches.push({x:rect.x+x,y:rect.y+y,d:Math.hypot(x-cx,y-cy)});
+    }
+    matches.sort((a,b)=>b.d-a.d);
+    if(!matches.length) throw Error(`No ${control.mode}/${axis} handle in viewport ${rect.width}x${rect.height}`);
+    return matches[Math.floor(matches.length/4)];
+  },axis);
+}
+async function venueDrag(page, mode, axis='X', finish=true) {
+  await page.locator(`#venue-${mode}`).click();
+  const point=await venueHandle(page,axis);
+  await page.mouse.move(point.x,point.y); await page.mouse.down();
+  assert.equal(await page.evaluate(()=>window.venueEditor.transform.dragging),true,'real pointer hits transform handle');
+  await page.mouse.move(point.x+45,point.y-30,{steps:10});
+  if(finish) await page.mouse.up();
+}
+async function gui(page, base) {
+  await page.evaluate(async modules => {
+    const {VenueEditor}=await import(`${modules}/practice/VenueEditor.ts`), update=VenueEditor.prototype.update;
+    VenueEditor.prototype.update=function(...args){window.venueEditor=this;return update.apply(this,args)};
+  },base.modules);
+  await start(page); assert.equal(await page.locator('#practice-venue-tools').isVisible(),false);
+  await menuAction(page,'#practice-venue');
+  assert.equal(await page.locator('#venue-create').isVisible(),true,'sample is not silently replaced');
+  await page.locator('#venue-start').click(); await page.locator('#venue-focus').click();
+  const objects=()=>page.evaluate(()=>structuredClone(window.venueEditor.objects));
+  const original=await objects(), layout=await state(page);
+  const canvas=await page.locator('#dc-practice-canvas').boundingBox();
+  const cameraBefore=await page.evaluate(()=>window.practicePreview.observer.position.toArray());
+  await page.mouse.move(canvas.x+8,canvas.y+8);await page.mouse.down();
+  await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
+  await page.mouse.move(canvas.x+38,canvas.y+28);await page.mouse.up();
+  assert.deepEqual(await page.evaluate(()=>window.practicePreview.observer.position.toArray()),cameraBefore,'blur releases an interrupted camera gesture');
+  const background=await page.evaluate(()=>window.practicePreview.backgroundImage());
+  await page.locator('#venue-edit-done').click();
+  assert.equal(await page.evaluate(()=>window.practicePreview.backgroundImage()),background,'editing helpers never enter fixed background');
+  await menuAction(page,'#practice-venue');
+  await venueDrag(page,'translate','X',false);
+  assert.deepEqual(await objects(),original,'drag is not committed on pointermove');
+  assert.notDeepEqual(await page.evaluate(()=>window.practicePreview.editableMeshes()[0].position.toArray()),original[0].position,'geometry previews the live drag');
+  await page.mouse.up(); const moved=await objects(); assert.notDeepEqual(moved[0].position,original[0].position);
+  assert.equal(Number(await page.locator('#practice-object-position-0').inputValue()),Number(moved[0].position[0].toFixed(5)),'numeric panel reflects GUI');
+  await page.locator('#venue-undo').click(); await page.waitForFunction(x=>JSON.stringify(window.venueEditor.objects)===JSON.stringify(x),original);
+  await page.locator('#venue-focus').click();
+  await venueDrag(page,'rotate','Y'); const rotated=await objects(); assert.notDeepEqual(rotated[0].quaternion,original[0].quaternion);
+  await venueDrag(page,'scale','X'); const sized=await objects(); assert.notDeepEqual(sized[0].size,rotated[0].size);
+  assert.deepEqual(sized[0].quaternion,rotated[0].quaternion,'resizing preserves rotation');
+  await page.locator('#venue-snap').check(); await venueDrag(page,'translate','X');
+  const snapped=(await objects())[0].position[0];assert.ok(Math.abs(snapped*10-Math.round(snapped*10))<1e-8,'translation snaps to measured 0.1m');
+  await page.locator('#venue-snap').uncheck();await page.locator('#venue-undo').click();
+  await page.waitForFunction(x=>JSON.stringify(window.venueEditor.objects)===JSON.stringify(x),sized);
+  await page.locator('#venue-focus').click();await venueDrag(page,'translate','X',false);
+  await page.locator('#dc-practice-canvas').dispatchEvent('pointercancel', {pointerId:await page.evaluate(()=>window.venueEditor.down.id)});await page.mouse.up();
+  assert.deepEqual(await objects(),sized,'pointer cancellation cannot save partial geometry');
+  await venueDrag(page,'translate','X',false);
+  await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await page.mouse.up();
+  assert.deepEqual(await objects(),sized,'losing the window cancels pending geometry');
+  await page.locator('#venue-focus').click();
+  await venueDrag(page,'translate','X',false); await page.keyboard.press('Escape'); await page.mouse.up();
+  assert.deepEqual(await objects(),sized,'Escape discards the entire drag');
+  assert.deepEqual(await page.evaluate(()=>window.practicePreview.editableMeshes()[0].position.toArray()),sized[0].position);
+  await venueDrag(page,'translate','X',false);
+  await page.locator('#mapping-tab').dispatchEvent('click'); await page.mouse.up(); await page.locator('#preview-tab').click();
+  assert.deepEqual(await objects(),sized,'tab switch cancels pending transform');
+  assert.equal(await page.evaluate(()=>window.practicePreview.controls.enabled),true);
+  await page.locator('#venue-kind').selectOption('tetrahedron'); await page.locator('#venue-add').click();
+  await page.locator('#venue-focus').click(); await venueDrag(page,'translate','X');
+  const two=await objects(); assert.equal(two.length,2); assert.equal(two[1].kind,'tetrahedron');
+  await page.locator('#venue-copy').click(); assert.equal((await objects()).length,3);
+  await page.locator('#venue-delete').click(); assert.equal((await objects()).length,2);
+  // Select using the visible solid, with the previous selection well away from the click.
+  await page.locator('#practice-object').selectOption(two[0].id); await page.locator('#venue-focus').click();
+  await page.locator('#practice-overview').click(); await page.waitForTimeout(250);
+  const target=await page.evaluate(()=>{
+    const editor=window.venueEditor,p=window.practicePreview,mesh=p.editableMeshes()[1],point=mesh.position.clone().project(p.observer),r=p.renderer.domElement.getBoundingClientRect();
+    const matches=[];
+    for(let y=4;y<r.height-4;y+=3)for(let x=4;x<r.width-4;x+=3){
+      const ndc={x:x/r.width*2-1,y:1-y/r.height*2,button:0};
+      editor.ray.setFromCamera(ndc,p.observer);
+      const hit=editor.ray.intersectObjects(p.editableMeshes(),false)[0];
+      if(hit?.object!==mesh)continue;
+      editor.transform.pointerHover(ndc);if(editor.transform.axis)continue;
+      matches.push({x:r.x+x,y:r.y+y,d:Math.hypot(ndc.x-point.x,ndc.y-point.y)});
+    }
+    matches.sort((a,b)=>a.d-b.d);if(!matches.length)throw Error('Second solid has no exposed clickable surface');return matches[0];
+  });
+  await page.mouse.click(target.x,target.y);
+  assert.equal(await page.locator('#practice-object').inputValue(),two[1].id,'3D click syncs sidebar selection');
+  assert.deepEqual(await state(page),layout,'GUI venue edits preserve 2D mappings and outputs');
+  const saved=await exportProject(page); await importProject(page,saved); assert.deepEqual(await objects(),saved.venue.scene.objects);
+  await menuAction(page,'#practice-venue');
+  await page.evaluate(async modules=>(await import(`${modules}/i18n/index.ts`)).setLang('ja'),base.modules);
+  assert.equal(await page.locator('#venue-scale').innerText(),'サイズ');
+  await snapshot(page,base.name+'-gui-desktop-ja'); await page.setViewportSize({width:900,height:800});
+  await snapshot(page,base.name+'-gui-narrow-ja'); assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  assert.ok((await page.locator('#source-video').boundingBox()).height>=30,'narrow editor keeps the source visible');
+  assert.ok((await page.locator('#dc-practice-canvas').boundingBox()).height>=180,'narrow editor retains room for 3D gestures');
+  await page.locator('#venue-edit-done').click(); assert.equal(await page.locator('#practice-venue-tools').isVisible(),false);
+  assert.equal(await page.evaluate(()=>window.practicePreview.controls.enabled),true);
+  assert.equal(await page.locator('#source-video').evaluate(v=>v.srcObject.getVideoTracks()[0].readyState),'live');
+  assert.equal(page.context().pages().length,1);
+}
+
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
     const hosted = config.startsWith('apps/'), name = hosted ? 'hosted' : 'gallery';
@@ -587,7 +700,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, sample, venue, solids })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, sample, venue, solids, gui })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));

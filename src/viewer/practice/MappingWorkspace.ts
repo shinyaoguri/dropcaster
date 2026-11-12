@@ -95,6 +95,7 @@ export class MappingWorkspace {
         if (button === 'practice-venue') editor.selectTab('preview');
         await this.ensurePanel();
         if (!this.active || generation !== this.generation) return;
+        if (button === 'practice-venue') this.panel?.startVenueEditing();
         const element = this.scope?.querySelector<HTMLElement>(`#${id}`);
         if (element instanceof HTMLDetailsElement) element.open = true;
         element?.scrollIntoView({ block: 'start' });
