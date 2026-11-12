@@ -48,7 +48,7 @@ export async function listProjects(): Promise<{ id: string; name: string }[]> {
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) { resolve(items); return; }
-      if (cursor.key !== 'draft') items.push({ id: String(cursor.key), name: String(cursor.value.name) });
+      if (cursor.key !== 'draft' && cursor.key !== 'venue-draft') items.push({ id: String(cursor.key), name: String(cursor.value.name) });
       cursor.continue();
     };
     request.onerror = () => reject(request.error);
