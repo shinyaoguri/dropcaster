@@ -112,9 +112,9 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 対象と検出確認は [状態・復旧の検証記録](docs/verification/124-runtime-recovery.md) を参照。
 
 `npm run test:practice` は製品の個別作品／スライドショー UI からマッピングを起動し、実出力との併用、
-3Dの遅延初期化・タブ非表示中の描画休止・明示的な実出力開始、基本立体の共有、投影ガイドの分離、既存編集、GLB／パッケージ保存、異常 import、容量不足、描画復旧・終了を両エントリで検証する。
+3Dの遅延初期化・タブ非表示中の描画休止・明示的な実出力開始、投影ガイドの分離、既存編集、GLB／パッケージ保存、異常 import、容量不足、描画復旧・終了を両エントリで検証する。
 `PRACTICE_ARTIFACT_DIR=/tmp/practice-images` でスクリーンショットを保存できる。
-`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=workspace|workspaceSlideshow|lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample|venue|solids|gui`
+`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=workspace|workspaceSlideshow|lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample`
 で失敗箇所だけを再実行できる。内蔵サンプルの実 UI は `/mapping`（`/practice` も互換 URL として維持）。GLB サンプルは `docs/samples/`。
 
 ## 注意点 / 既知の TODO
@@ -137,4 +137,9 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
   `wrangler deploy` など）は都度確認させるため意図的に入れていない。個人の一時的な許可は
   gitignore 済みの `.claude/settings.local.json` 側に置く。
 
-`gui` は実ポインタで3Dハンドルをドラッグし、選択・移動・回転・サイズ変更、確定前の保存防止、取消・タブ切替、1操作のundo、既存2D状態維持とファイル再読込を両viewerで検証する。
+`npm run test:venue` は独立した `/venue` のGUI操作・実出力・共有・マッピングとの分離を両viewerで検証する。
+`VENUE_ENTRY=gallery|hosted`、`VENUE_CASE=workflow|interaction|recovery|isolation` で絞り込める。
+`VENUE_ARTIFACT_DIR=/tmp/venue-images` でスクリーンショットを保存できる。
+`interaction` は実ポインタで移動・回転・サイズ・取消・undoを検証し、`workflow` は輪郭／グリッド／白黒の実ピクセル・popup・解像度・保存再開を確認する。
+`recovery` は不正・遅延読込、GLB、容量不足、WebGL停止時の出力終了と書出を確認する。
+`isolation` は作品の再生・マッピングの下書き・出力を保ったまま会場を作り、ファイルで明示反映する経路を確認する。

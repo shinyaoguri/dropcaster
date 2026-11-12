@@ -19,6 +19,7 @@ export class SketchGalleryView {
           <h1>${t('gallery.title')}</h1>
           <div class="header-actions">
             ${langSwitcherHtml()}
+            <a href="${routeHref('/venue')}" class="slideshow-btn">${t('calibration.title')}</a>
             <a href="${routeHref('/slideshow')}" class="slideshow-btn" target="_blank">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>

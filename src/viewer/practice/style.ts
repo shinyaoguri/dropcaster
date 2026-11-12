@@ -17,7 +17,9 @@ export function installPracticeStyles(): void {
     .dc-workspace-menu > summary:hover { background:#444; }
     .dc-workspace-menu > summary:focus-visible { outline:2px solid #3b82f6; outline-offset:2px; }
     .dc-workspace-menu-items { position:absolute; right:0; top:calc(100% + 6px); z-index:100; width:210px; padding:5px; background:#292929; border:1px solid #555; border-radius:6px; box-shadow:0 8px 24px #0008; }
-    .dc-workspace-menu-items button { display:block; width:100%; border:0; background:transparent; text-align:left; }
+    .dc-workspace-menu-items a { color:#eee;padding:7px 11px;text-decoration:none;border-radius:5px;font-size:13px; }
+    .dc-workspace-menu-items a:hover { background:#444; }
+    .dc-workspace-menu-items button, .dc-workspace-menu-items a { display:block; width:100%; border:0; background:transparent; text-align:left; }
     .dc-practice-toolbar .dc-workspace-close { display:flex; align-items:center; padding:7px; background:transparent; border-color:transparent; }
     .dc-practice-guide-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:0 10px; }
     .dc-mapping-workspace .source-column, .dc-mapping-workspace .mapping-column { min-width:240px; min-height:0; }

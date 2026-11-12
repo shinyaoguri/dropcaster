@@ -65,6 +65,10 @@ jobs:
         timeout-minutes: 10
         run: npm run test:practice
 
+      - name: Verify standalone venue calibration (both viewer entries)
+        timeout-minutes: 10
+        run: npm run test:venue
+
       - name: Verify existing CSS output pixels (both viewer entries)
         timeout-minutes: 5
         run: node tests/browser/mapping-css-regression.mjs

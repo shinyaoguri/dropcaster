@@ -5,6 +5,7 @@ import type { PracticePanel } from './PracticePanel';
 import { ProjectSession, type ShowContext } from './ProjectSession';
 import { installPracticeStyles } from './style';
 import { t, onLangChange, type MessageKey } from '../i18n/index';
+import { routeHref } from '../utils/paths';
 import type { Project } from './project';
 import { applyControlTranslations } from '../windows/control/ControlWindow.template';
 
@@ -72,8 +73,8 @@ export class MappingWorkspace {
       <details id="practice-menu" class="dc-workspace-menu"><summary>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 3v6m8 0v6m-6 0v6"/></svg><span data-i18n="practice.menu"></span>
       </summary><div class="dc-workspace-menu-items">
-        <button type="button" id="practice-settings" data-i18n="practice.settings"></button>
-        <button type="button" id="practice-venue" data-i18n="practice.buildVenue"></button>
+        <button type="button" id="practice-settings" data-i18n="calibration.previewSettings"></button>
+        <a id="practice-venue" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer" data-i18n="calibration.open"></a>
         <button type="button" id="practice-project" data-i18n="practice.storage"></button>
       </div></details>
       <button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>`;
@@ -88,14 +89,12 @@ export class MappingWorkspace {
     this.toolbar.querySelector('#practice-retry')!.addEventListener('click', () => {
       editor.selectTab('preview'); void this.ensurePanel();
     });
-    for (const [button, id] of [['practice-settings', 'dc-practice-settings'], ['practice-venue', 'dc-practice-venue'], ['practice-project', 'dc-practice-project']]) {
+    for (const [button, id] of [['practice-settings', 'dc-practice-settings'], ['practice-project', 'dc-practice-project']]) {
       this.toolbar.querySelector(`#${button}`)!.addEventListener('click', async () => {
         menu.open = false;
         const generation = this.generation;
-        if (button === 'practice-venue') editor.selectTab('preview');
         await this.ensurePanel();
         if (!this.active || generation !== this.generation) return;
-        if (button === 'practice-venue') this.panel?.startVenueEditing();
         const element = this.scope?.querySelector<HTMLElement>(`#${id}`);
         if (element instanceof HTMLDetailsElement) element.open = true;
         element?.scrollIntoView({ block: 'start' });

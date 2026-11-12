@@ -1,7 +1,7 @@
 import { ProjectionPreview } from './ProjectionPreview';
-import { prepareVenue, prepareObjects } from './loadVenue';
-import { defaultProjector, defaultScene, encodeAsset, parseProject, portableProject, portableVenue, importVenue, ProjectFormatError,
-  MAX_GLB_BYTES, MAX_PACKAGE_BYTES, type Project, type Vec3, type VenueScene } from './project';
+import { prepareVenue } from './loadVenue';
+import { parseProject, portableProject, portableVenue, importVenue, ProjectFormatError,
+  MAX_PACKAGE_BYTES, type Project } from './project';
 import { listProjects, readProject } from './projectStore';
 import type { ProjectSession } from './ProjectSession';
 import type { WindowController } from '../components/WindowController';
@@ -9,9 +9,7 @@ import type { ControlWindow } from '../windows/control/ControlWindow';
 import { applyControlTranslations } from '../windows/control/ControlWindow.template';
 import { t, onLangChange, type MessageKey } from '../i18n/index';
 import { routeHref } from '../utils/paths';
-import { label, button, field, vectorFields, rotation, quaternion } from './controls';
-import { VenueBuilder } from './VenueBuilder';
-import { VenueEditor } from './VenueEditor';
+import { label, button } from './controls';
 
 export class PracticePanel {
   readonly preview: ProjectionPreview;
@@ -30,14 +28,12 @@ export class PracticePanel {
   private opticsKey = '';
   private venueKey = '';
   private previous: Project | null = null;
-  private previousMode: 'project' | 'venue' | 'model' = 'project';
+  private previousMode: 'project' | 'venue' = 'project';
   private session: ProjectSession;
   private editor: ControlWindow;
   private status: (key: MessageKey, error?: boolean) => void;
   private onFailure: () => void;
   private canvas = document.createElement('canvas');
-  private builder: VenueBuilder;
-  private venueEditor: VenueEditor;
 
   constructor(scope: HTMLElement, wc: WindowController, session: ProjectSession, editor: ControlWindow,
     status: (key: MessageKey, error?: boolean) => void, onFailure: () => void) {
@@ -62,20 +58,9 @@ export class PracticePanel {
       <label class="dc-practice-check"><input id="practice-background" type="checkbox" checked>${label('practice.background')}</label>
       <label class="dc-practice-field">${label('practice.blend')}<input id="practice-blend" type="range" min="0.1" max="1" step="0.05" value="0.65"></label>
       <p class="dc-practice-hint">${label('practice.geometryHint')}</p></div>
-      <details class="tool-section" open><summary>${label('practice.projector')}</summary><form id="practice-projector-form">
-      ${vectorFields('practice-p-position', 'practice.position')}${vectorFields('practice-p-rotation', 'practice.rotation', -360, 360, 0.1)}
-      ${field('practice-fov', 'practice.fov', 1, 170)}${field('practice-aspect', 'practice.aspect', 0.2, 5, 0.0001)}
-      ${vectorFields('practice-shift', 'practice.shift', -200, 200, 0.1, ['X', 'Y'])}
-      ${field('practice-near', 'practice.near', 0.001, 1000, 0.001)}${field('practice-far', 'practice.far', 0.002, 10000, 0.001)}
-      ${button('practice-reset-projector', 'practice.resetProjector')}</form></details>
-      <details class="tool-section"><summary>${label('practice.venue')}</summary>
-      ${button('practice-sample', 'practice.sample')}${button('practice-load-glb', 'practice.loadGlb')}
-      <input id="practice-glb-file" type="file" accept=".glb,model/gltf-binary" hidden>
-      <p id="practice-dimensions" class="dc-practice-hint"></p><form id="practice-venue-form">
-      ${field('practice-unit', 'practice.unit', 0.00001, 10000, 0.00001)}
-      ${vectorFields('practice-v-position', 'practice.position')}${vectorFields('practice-v-rotation', 'practice.rotation', -360, 360, 0.1)}
-      ${vectorFields('practice-v-scale', 'practice.scale', 0.0001, 1000, 0.0001)}
-      <label class="dc-practice-field">${label('practice.color')}<input id="practice-color" type="color"></label></form></details>
+      <div class="tool-section"><p class="dc-practice-hint">${label('calibration.previewHint')}</p>
+      ${button('practice-load-venue', 'calibration.loadPreview')}<p id="practice-dimensions" class="dc-practice-hint"></p>
+      <a class="dc-practice-help" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer">${label('calibration.open')}</a></div>
       <details id="dc-practice-project" class="tool-section"><summary>${label('practice.project')}</summary>
       <label class="dc-practice-field">${label('practice.projectName')}<input id="practice-project-name" maxlength="200" required></label>
       ${button('practice-save', 'practice.save')}${button('practice-duplicate', 'practice.duplicate')}
@@ -87,16 +72,6 @@ export class PracticePanel {
       ${button('practice-undo-import', 'practice.undoImport')}
       <h3>${label('practice.content')}</h3><ul id="practice-content-list"></ul>
       <p class="dc-practice-hint">${label('practice.referencesOnly')}</p>${button('practice-open-content', 'practice.openContent')}</details>`;
-    this.builder = new VenueBuilder((scene, fit) => this.editVenue(scene, fit), () => {
-      if (this.previous && this.previousMode === 'model') void this.apply(this.previous, false);
-    }, () => this.export(true), () => this.get<HTMLInputElement>('practice-project-file').click());
-    this.venueEditor = new VenueEditor(this.preview, this.builder, object => {
-      const scene = this.session.changes.get().venue.scene;
-      if (scene.kind === 'objects') this.editVenue({ ...scene, objects: scene.objects!.map(current => current.id === object.id ? object : current) }, false);
-    }, () => { if (this.previous && this.previousMode === 'model') void this.apply(this.previous, false); });
-    this.builder.onSelection = () => this.update(this.session.changes.get());
-    this.root.querySelector('.dc-practice-viewport')!.before(this.venueEditor.element);
-    this.settings.append(this.builder.element);
     scope.querySelector('#preview-stage')!.append(this.root);
     scope.querySelector('.tool-content')!.append(this.settings);
     this.observer = new ResizeObserver(() => { this.resizePending = true; }); this.observer.observe(this.canvas.parentElement!);
@@ -109,10 +84,9 @@ export class PracticePanel {
     void this.refreshSaved();
   }
 
-  startVenueEditing(): void { this.venueEditor.setActive(true); }
   setVisible(visible: boolean): void {
     this.visible = visible; cancelAnimationFrame(this.frame); this.frame = 0;
-    if (!visible || this.disposed) { this.venueEditor.cancel(); return; }
+    if (!visible || this.disposed) return;
     this.resizePending = true; this.frame = requestAnimationFrame(this.render);
   }
   private render = (): void => {
@@ -131,12 +105,10 @@ export class PracticePanel {
   }
   private get<T extends HTMLElement = HTMLInputElement>(id: string): T { return this.settings.querySelector(`#${id}`)!; }
   private val(id: string): number { return this.get<HTMLInputElement>(id).valueAsNumber; }
-  private vec(id: string): Vec3 { return [0, 1, 2].map(i => this.val(`${id}-${i}`)) as Vec3; }
   private value(id: string, value: string | number): void {
     const input = this.get<HTMLInputElement>(id);
     if (document.activeElement !== input) input.value = typeof value === 'number' ? String(Number(value.toFixed(5))) : value;
   }
-  private setVec(id: string, values: number[]): void { values.forEach((v, i) => this.value(`${id}-${i}`, v)); }
   private translate(): void {
     applyControlTranslations(this.root); applyControlTranslations(this.settings);
     this.update(this.session.changes.get()); this.storageStatus();
@@ -180,16 +152,6 @@ export class PracticePanel {
     this.preview.setState(layout, this.selected);
     if (backgroundChanged) this.background = this.preview.backgroundImage();
     this.showBackground();
-    this.setVec('practice-p-position', projector.position); this.setVec('practice-p-rotation', rotation(projector.quaternion));
-    this.value('practice-fov', projector.verticalFovDegrees); this.value('practice-aspect', projector.aspect);
-    this.setVec('practice-shift', projector.lensShift.map(v => v * 100));
-    this.value('practice-near', projector.near); this.value('practice-far', projector.far);
-    const scene = project.venue.scene;
-    this.builder.update(scene, !!this.previous && this.previousMode === 'model');
-    this.venueEditor.update(scene, this.builder.selectedId, !!this.previous && this.previousMode === 'model');
-    this.get('practice-venue-form').hidden = scene.kind === 'objects';
-    this.setVec('practice-v-position', scene.position); this.setVec('practice-v-rotation', rotation(scene.quaternion));
-    this.setVec('practice-v-scale', scene.scale); this.value('practice-unit', scene.metersPerUnit); this.value('practice-color', scene.color);
     this.get('practice-dimensions').textContent = t('practice.dimensions', { size: this.preview.venueDimensions().map(n => n.toFixed(2)).join(' × ') });
     this.value('practice-project-name', project.name === 'Untitled' ? t('practice.untitled') : project.name);
     const contents = this.get('practice-content-list');
@@ -215,34 +177,9 @@ export class PracticePanel {
     });
     this.get('practice-background').addEventListener('change', () => this.showBackground());
     this.get('practice-blend').addEventListener('input', () => this.showBackground());
-    for (const id of ['practice-projector-form', 'practice-venue-form']) this.get(id).addEventListener('submit', e => e.preventDefault());
-    this.get('practice-projector-form').addEventListener('change', () => {
-      if (!this.get<HTMLFormElement>('practice-projector-form').reportValidity() || this.val('practice-far') <= this.val('practice-near')) { this.status('practice.invalid', true); return; }
-      const project = this.session.changes.get();
-      this.session.update({ ...project, venue: { ...project.venue, revision: project.venue.revision + 1,
-        projectors: project.venue.projectors.map(p => p.outputId !== this.selected ? p : { ...p, position: this.vec('practice-p-position'), quaternion: quaternion(this.vec('practice-p-rotation')),
-          verticalFovDegrees: this.val('practice-fov'), aspect: this.val('practice-aspect'), lensShift: [this.val('practice-shift-0') / 100, this.val('practice-shift-1') / 100],
-          near: this.val('practice-near'), far: this.val('practice-far') }) } });
-    });
-    this.get('practice-venue-form').addEventListener('change', () => {
-      if (!this.get<HTMLFormElement>('practice-venue-form').reportValidity()) return;
-      const project = this.session.changes.get();
-      this.session.update({ ...project, venue: { ...project.venue, revision: project.venue.revision + 1, scene: { ...project.venue.scene,
-        position: this.vec('practice-v-position'), quaternion: quaternion(this.vec('practice-v-rotation')), scale: this.vec('practice-v-scale'),
-        metersPerUnit: this.val('practice-unit'), color: this.get<HTMLInputElement>('practice-color').value } } });
-    });
-    click('practice-reset-projector', () => {
-      const project = this.session.changes.get();
-      this.session.update({ ...project, venue: { ...project.venue, projectors: project.venue.projectors.map(p => p.outputId === this.selected ? defaultProjector(this.selected) : p) } });
-    });
-    click('practice-sample', () => {
-      const project = this.session.changes.get();
-      void this.apply({ ...project, assets: [], venue: { ...project.venue, scene: defaultScene(), revision: project.venue.revision + 1 } }, false);
-    });
-    click('practice-load-glb', () => this.get<HTMLInputElement>('practice-glb-file').click());
-    this.get('practice-glb-file').addEventListener('change', () => void this.readFile(true));
+    click('practice-load-venue', () => this.get<HTMLInputElement>('practice-project-file').click());
     click('practice-import', () => this.get<HTMLInputElement>('practice-project-file').click());
-    this.get('practice-project-file').addEventListener('change', () => void this.readFile(false));
+    this.get('practice-project-file').addEventListener('change', () => void this.readFile());
     this.get('practice-project-name').addEventListener('change', () => {
       const name = this.get<HTMLInputElement>('practice-project-name').value.trim();
       if (name) this.session.update({ ...this.session.changes.get(), name });
@@ -253,7 +190,7 @@ export class PracticePanel {
     click('practice-export', () => this.export());
     click('practice-export-venue', () => this.export(true));
     click('practice-undo-import', () => {
-      if (this.previous) void this.apply(this.previous, this.previousMode !== 'model', this.previousMode === 'venue');
+      if (this.previous) void this.apply(this.previous, this.previousMode === 'venue');
     });
     click('practice-open-content', () => void this.openContent());
   }
@@ -261,63 +198,33 @@ export class PracticePanel {
     const codes = ['invalid', 'version', 'asset', 'reference', 'externalAsset', 'unsupportedAsset', 'size'];
     this.status(error instanceof ProjectFormatError && codes.includes(error.message) ? `practice.${error.message}` as MessageKey : 'practice.invalid', true);
   }
-  private async readFile(model: boolean): Promise<void> {
-    const input = this.get<HTMLInputElement>(model ? 'practice-glb-file' : 'practice-project-file'), file = input.files?.[0];
+  private async readFile(): Promise<void> {
+    const input = this.get<HTMLInputElement>('practice-project-file'), file = input.files?.[0];
     input.value = ''; if (!file) return;
-    const action = ++this.action;
+    const action = ++this.action; this.status('practice.busy');
     try {
-      if (file.size > (model ? MAX_GLB_BYTES : MAX_PACKAGE_BYTES)) throw new ProjectFormatError('size');
-      if (model) {
-        const project = this.session.changes.get(), id = crypto.randomUUID();
-        const bytes = await file.arrayBuffer();
-        if (this.disposed || action !== this.action) return;
-        const asset = { id, name: file.name, mimeType: 'model/gltf-binary' as const, data: encodeAsset(new Uint8Array(bytes)) };
-        const next = parseProject({ ...project, assets: [asset], venue: { ...project.venue, revision: project.venue.revision + 1, scene: { ...defaultScene(), kind: 'glb', assetId: id } } });
-        await this.apply(next, false);
-      } else {
-        const text = await file.text();
-        if (this.disposed || action !== this.action) return;
-        const value = JSON.parse(text);
-        if (value?.format === 'dropcaster-venue') await this.apply(importVenue(value, this.session.changes.get()), true, true);
-        else await this.apply(parseProject(value));
-      }
+      if (file.size > MAX_PACKAGE_BYTES) throw new ProjectFormatError('size');
+      const text = await file.text();
+      if (this.disposed || action !== this.action) return;
+      const value = JSON.parse(text);
+      if (value?.format === 'dropcaster-venue') await this.apply(importVenue(value, this.session.changes.get()), true);
+      else await this.apply(parseProject(value));
     } catch (error) { if (!this.disposed && action === this.action) this.error(error); }
   }
-  private async apply(project: Project, layout = true, venueOnly = false): Promise<void> {
+  private async apply(project: Project, venueOnly = false): Promise<void> {
     if (this.disposed) return;
-    this.venueEditor.cancel();
     const action = ++this.action; this.status('practice.busy');
     try {
       const prepared = await prepareVenue(project);
       if (this.disposed || action !== this.action) { prepared.dispose(); return; }
       this.previous = this.session.changes.get();
-      this.previousMode = venueOnly ? 'venue' : layout ? 'project' : 'model';
+      this.previousMode = venueOnly ? 'venue' : 'project';
       // A slideshow may have advanced while the venue asset was being decoded.
       if (venueOnly) project = { ...this.previous, venue: project.venue, assets: project.assets };
-      if (!layout) project = { ...this.previous, assets: project.assets, venue: { ...this.previous.venue,
-        revision: this.previous.venue.revision + 1, scene: project.venue.scene } };
-      this.venueEditor.cancel();
       this.preview.setVenue(prepared.group, prepared.dispose); this.venueKey = ''; this.opticsKey = '';
-      this.session.update(project, layout, !venueOnly);
-      this.preview.overview(); this.status(venueOnly ? 'practice.venueImported' : layout ? 'practice.imported' : 'practice.modelLoaded');
+      this.session.update(project, true, !venueOnly);
+      this.preview.overview(); this.status(venueOnly ? 'practice.venueImported' : 'practice.imported');
     } catch (error) { if (!this.disposed && action === this.action) this.error(error); }
-  }
-  private editVenue(scene: VenueScene, fit: boolean): void {
-    if (this.disposed) return;
-    this.venueEditor.cancel();
-    const current = this.session.changes.get();
-    try {
-      const next = parseProject({ ...current, assets: [], venue: { ...current.venue, revision: current.venue.revision + 1, scene } });
-      const prepared = prepareObjects(next.venue.scene.objects!);
-      this.action++; this.previous = current; this.previousMode = 'model';
-      this.preview.setVenue(prepared.group, prepared.dispose); this.venueKey = '';
-      this.session.update(next);
-      if (fit) {
-        this.preview.overview();
-        if (!this.venueEditor.element.hidden && scene.objects?.length === 1) this.venueEditor.focusSelection();
-      }
-      this.status('practice.venueEdited');
-    } catch (error) { this.error(error); }
   }
   private async refreshSaved(): Promise<void> {
     try {
@@ -355,7 +262,7 @@ export class PracticePanel {
     if (this.disposed) return; this.disposed = true; this.action++;
     cancelAnimationFrame(this.frame); this.observer.disconnect(); this.off.forEach(off => off());
     this.canvas.removeEventListener('webglcontextlost', this.contextLost);
-    this.editor.setPracticeBackground(this.selected, null); this.venueEditor.dispose(); this.preview.dispose();
+    this.editor.setPracticeBackground(this.selected, null); this.preview.dispose();
     this.video.pause(); this.video.srcObject = null; this.root.remove(); this.settings.remove();
     // WindowController owns the borrowed stream and all of its tracks.
   }

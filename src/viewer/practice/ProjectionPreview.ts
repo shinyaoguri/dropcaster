@@ -217,6 +217,19 @@ export class ProjectionPreview {
     this.updateGuide();
   }
 
+  venueMeshes(): THREE.Mesh[] {
+    const meshes: THREE.Mesh[] = [];
+    (this.venue ?? this.sample).traverseVisible(object => { if (object instanceof THREE.Mesh && object.visible) meshes.push(object); });
+    return meshes;
+  }
+
+  /** Content-free authoring view. Calibration owns its separate projector canvas. */
+  renderGeometry(): void {
+    if (this.disposed) return;
+    this.setProjectionEnabled(false); this.controls.update();
+    this.renderer.setRenderTarget(null); this.renderer.render(this.scene, this.observer);
+  }
+
   editableMeshes(): THREE.Mesh[] {
     return this.venue?.children.filter((object): object is THREE.Mesh => object instanceof THREE.Mesh && !!object.userData.venueObjectId) ?? [];
   }

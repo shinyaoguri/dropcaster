@@ -14,6 +14,7 @@ import { API_CONFIG, GIST_CONFIG } from '../core/modules/constants.js';
 import { readProject } from './practice/projectStore';
 import { parseProject } from './practice/project';
 import { t } from './i18n';
+import type { VenueCalibrationPage } from './venue/VenueCalibrationPage';
 import { sampleSketch } from './practice/sampleSketch';
 
 export class App {
@@ -24,6 +25,7 @@ export class App {
   private sketchPageController: SketchPageController | null = null;
   private slideshowController: SlideshowController | null = null;
   private routeGeneration = 0;
+  private venuePage: VenueCalibrationPage | null = null;
 
   constructor() {
     this.sketchService = new SketchServiceImpl();
@@ -46,6 +48,7 @@ export class App {
    */
   private teardownCurrent(): void {
     this.routeGeneration++;
+    this.venuePage?.destroy(); this.venuePage = null;
     if (this.sketchPageController) {
       this.sketchPageController.destroy();
       this.sketchPageController = null;
@@ -201,6 +204,17 @@ export class App {
       await controller.renderSketch(sampleSketch());
       if (this.sketchPageController === controller) await controller.startMapping();
     };
+    this.router.registerRoute('/venue', async () => {
+      this.teardownCurrent(); const generation = this.routeGeneration;
+      try {
+        const { VenueCalibrationPage } = await import('./venue/VenueCalibrationPage');
+        if (generation !== this.routeGeneration) return;
+        const page = new VenueCalibrationPage(); this.venuePage = page;
+        await page.initialize();
+      } catch {
+        if (generation === this.routeGeneration) { this.venuePage?.destroy(); this.venuePage = null; SketchErrorView.render('not-found', { detail: t('calibration.graphicsError') }); }
+      }
+    });
     this.router.registerRoute('/mapping', openSampleMapping);
     this.router.registerRoute('/practice', openSampleMapping); // Existing bookmarks remain valid.
 

@@ -8,7 +8,7 @@
 
 - [textured-wall.dropcaster.json](textured-wall.dropcaster.json): 6 m × 4 m の壁、GLB 内画像、投影条件、2D 配置、内蔵映像の参照を含む portable package。
 - [textured-wall.glb](textured-wall.glb): 同じ壁のモデルだけ。モデル1単位 = 1 m、壁は Z=-3、法線は +Z。
-- 壁・床・箱の会場はアプリに内蔵。設定・共有 → 3D設定 → 会場 →「壁・床・箱のサンプル」で戻せる。
+- 壁・床・箱の会場はアプリに内蔵。会場の作成・調整 → 保存・読込 →「壁・床・箱のサンプル」で戻せる。
 
 1. [マッピング](https://dropcaster.soui.dev/mapping)を開く。実出力窓は不要。
 2. 上部「設定・共有」→「保存・共有」→「プロジェクト・会場・旧JSONを読む」で JSON を選ぶ。
