@@ -683,6 +683,8 @@ async function gui(page, base) {
   assert.equal(await page.locator('#venue-scale').innerText(),'サイズ');
   await snapshot(page,base.name+'-gui-desktop-ja'); await page.setViewportSize({width:900,height:800});
   await snapshot(page,base.name+'-gui-narrow-ja'); assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  assert.ok((await page.locator('#source-video').boundingBox()).height>=30,'narrow editor keeps the source visible');
+  assert.ok((await page.locator('#dc-practice-canvas').boundingBox()).height>=180,'narrow editor retains room for 3D gestures');
   await page.locator('#venue-edit-done').click(); assert.equal(await page.locator('#practice-venue-tools').isVisible(),false);
   assert.equal(await page.evaluate(()=>window.practicePreview.controls.enabled),true);
   assert.equal(await page.locator('#source-video').evaluate(v=>v.srcObject.getVideoTracks()[0].readyState),'live');
