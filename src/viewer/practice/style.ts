@@ -37,6 +37,7 @@ export function installPracticeStyles(): void {
     .dc-venue-shape { display:flex; align-items:center; gap:5px; }
     .dc-venue-shape select { border:1px solid #555; border-radius:4px; background:#191919; color:#eee; padding:5px; }
     .dc-practice-viewport { flex:1; min-height:120px; position:relative; background:#151b25; }
+    .dc-practice-panel:has(.dc-venue-editor:not([hidden])) .dc-practice-viewport { min-height:200px; }
     #dc-practice-canvas { position:absolute; width:100%; height:100%; display:block; touch-action:none; }
     .dc-practice-hint { color:#aaa; font-size:11px; line-height:1.5; margin:7px 0; }
     .dc-practice-panel > .dc-practice-hint { margin:5px 10px; }
