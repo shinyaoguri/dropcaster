@@ -1,4 +1,9 @@
 const labels = {
+  editingVenue: ['Venue editing', '会場を編集中'], finishVenue: ['Done', '編集完了'],
+  translate: ['Move', '移動'], rotate: ['Rotate', '回転'], resizeObject: ['Size', 'サイズ'], focusObject: ['Focus selection', '選択に寄る'],
+  snap: ['Snap: 0.1 m / 15°', 'スナップ: 0.1 m / 15°'], selectedObject: ['Selected: {name}', '選択中: {name}'],
+  guiStartHint: ['Start with a box, or use the room template in the left panel. This replaces the current venue; you can undo it.', '箱1つから作るか、左側の部屋テンプレートを使います。現在の会場を置き換えますが、元に戻せます。'],
+  guiHint: ['Click a solid and drag a colored handle. Move uses world axes; rotation and size use local axes. Esc cancels. Drag empty space to orbit.', '立体をクリックし、色付きのハンドルをドラッグ。移動は会場の軸、回転・サイズは立体の軸に沿って操作します。Escで取消。空いた場所のドラッグで視点を回せます。'],
   start: ['Mapping', 'マッピング'], stop: ['Close editor', '編集を閉じる'], loading: ['Preparing 3D…', '3Dを準備中…'],
   title: ['Mapping', 'マッピング'], previewTitle: ['One projector', '1プロジェクタ'], openOutput: ['Open real output', '実出力を開く'],
   settings: ['3D settings', '3D設定'], menu: ['Settings & sharing', '設定・共有'], storage: ['Save & share', '保存・共有'], receiveVenue: ['Load venue file', '会場ファイルを読み込む'],

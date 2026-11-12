@@ -26,6 +26,16 @@ export function installPracticeStyles(): void {
     .dc-practice-panel .column-header { height:auto; min-height:44px; gap:8px; padding:8px 12px; flex-wrap:wrap; }
     .dc-practice-view-actions { display:flex; gap:4px; flex-wrap:wrap; }
     .dc-practice-view-actions .tool-button { padding:4px 7px; width:auto; font-size:11px; margin:0; }
+    .dc-venue-editor { padding:7px 10px; border-top:1px solid #444; border-bottom:1px solid #444; background:#252525; color:#ddd; font:12px system-ui; max-height:45%; overflow:auto; }
+    .dc-venue-editor[hidden], .dc-venue-editor [hidden] { display:none; }
+    .dc-venue-actions { display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin:3px 0; }
+    .dc-venue-actions strong { flex:1; }
+    .dc-venue-editor .tool-button { width:auto; padding:5px 8px; margin:0; font-size:12px; }
+    .dc-venue-editor .tool-button[aria-pressed=true] { background:#2563eb; border-color:#60a5fa; color:white; }
+    .dc-venue-editor button:disabled { opacity:.45; cursor:not-allowed; }
+    .dc-venue-editor .dc-practice-check { margin:2px 0; }
+    .dc-venue-shape { display:flex; align-items:center; gap:5px; }
+    .dc-venue-shape select { border:1px solid #555; border-radius:4px; background:#191919; color:#eee; padding:5px; }
     .dc-practice-viewport { flex:1; min-height:120px; position:relative; background:#151b25; }
     #dc-practice-canvas { position:absolute; width:100%; height:100%; display:block; touch-action:none; }
     .dc-practice-hint { color:#aaa; font-size:11px; line-height:1.5; margin:7px 0; }

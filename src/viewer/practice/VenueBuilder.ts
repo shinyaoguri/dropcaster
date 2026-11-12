@@ -9,6 +9,12 @@ export class VenueBuilder {
   private scene: VenueScene = defaultScene();
   private selected = '';
   private canUndo = false;
+  onSelection: (id: string) => void = () => {};
+  get selectedId(): string { return this.selected; }
+  select(id: string): void {
+    if (!this.objects().some(object => object.id === id)) return;
+    this.selected = id; this.update(this.scene); this.onSelection(id);
+  }
   private change: (scene: VenueScene, fit: boolean) => void;
   constructor(change: (scene: VenueScene, fit: boolean) => void, undo: () => void, share: () => void, receive: () => void) {
     this.change = change;
@@ -47,18 +53,9 @@ export class VenueBuilder {
       this.selected = scene.objects![1].id; this.change(scene, true);
       this.get<HTMLDetailsElement>('practice-room').open = false;
     });
-    this.click('practice-start-objects', () => {
-      const object = venueObject('box', t('practice.box')); this.selected = object.id;
-      this.change({ ...defaultScene(), kind: 'objects', objects: [object] }, true);
-      this.get<HTMLDetailsElement>('practice-room').open = false;
-    });
-    this.click('practice-add-object', () => {
-      const objects = this.objects(); if (!objects.length || objects.length >= MAX_VENUE_OBJECTS) return;
-      const kind = this.get<HTMLSelectElement>('practice-object-kind').value as VenueObject['kind'];
-      const object = venueObject(kind, `${t(`practice.${kind}`)} ${objects.length + 1}`);
-      this.selected = object.id; this.change({ ...this.scene, objects: [...objects, object] }, false);
-    });
-    this.get('practice-object').addEventListener('change', () => { this.selected = this.get<HTMLSelectElement>('practice-object').value; this.update(this.scene); });
+    this.click('practice-start-objects', () => this.startObjects());
+    this.click('practice-add-object', () => this.add(this.get<HTMLSelectElement>('practice-object-kind').value as VenueObject['kind']));
+    this.get('practice-object').addEventListener('change', () => this.select(this.get<HTMLSelectElement>('practice-object').value));
     this.get('practice-object-form').addEventListener('change', () => {
       if (!this.get<HTMLFormElement>('practice-object-form').reportValidity()) return;
       const name = this.input('practice-object-name').value.trim(); if (!name) return;
@@ -66,18 +63,30 @@ export class VenueBuilder {
         size: this.vector('practice-object-size'), position: this.vector('practice-object-position'),
         quaternion: quaternion(this.vector('practice-object-rotation')), color: this.input('practice-object-color').value }) }, false);
     });
-    this.click('practice-copy-object', () => {
-      const objects = this.objects(), source = objects.find(o => o.id === this.selected);
-      if (!source || objects.length >= MAX_VENUE_OBJECTS) return;
-      const object = structuredClone(source); object.id = crypto.randomUUID();
-      object.name = `${source.name.slice(0, 180)} ${t('practice.copySuffix')}`;
-      object.position[0] = Math.min(10000, object.position[0] + 0.25); object.position[2] = Math.min(10000, object.position[2] + 0.25);
-      this.selected = object.id; this.change({ ...this.scene, objects: [...objects, object] }, false);
-    });
-    this.click('practice-delete-object', () => {
-      const objects = this.objects(); if (objects.length < 2) return;
-      this.change({ ...this.scene, objects: objects.filter(o => o.id !== this.selected) }, false);
-    });
+    this.click('practice-copy-object', () => this.duplicate());
+    this.click('practice-delete-object', () => this.remove());
+  }
+  startObjects(): void {
+    const object = venueObject('box', t('practice.box')); this.selected = object.id;
+    this.change({ ...defaultScene(), kind: 'objects', objects: [object] }, true);
+    this.get<HTMLDetailsElement>('practice-room').open = false;
+  }
+  add(kind: VenueObject['kind']): void {
+    const objects = this.objects(); if (!objects.length || objects.length >= MAX_VENUE_OBJECTS) return;
+    const object = venueObject(kind, `${t(`practice.${kind}`)} ${objects.length + 1}`);
+    this.selected = object.id; this.change({ ...this.scene, objects: [...objects, object] }, false);
+  }
+  duplicate(): void {
+    const objects = this.objects(), source = objects.find(o => o.id === this.selected);
+    if (!source || objects.length >= MAX_VENUE_OBJECTS) return;
+    const object = structuredClone(source); object.id = crypto.randomUUID();
+    object.name = `${source.name.slice(0, 180)} ${t('practice.copySuffix')}`;
+    object.position[0] = Math.min(10000, object.position[0] + 0.25); object.position[2] = Math.min(10000, object.position[2] + 0.25);
+    this.selected = object.id; this.change({ ...this.scene, objects: [...objects, object] }, false);
+  }
+  remove(): void {
+    const objects = this.objects(); if (objects.length < 2) return;
+    this.change({ ...this.scene, objects: objects.filter(o => o.id !== this.selected) }, false);
   }
   private get<T extends HTMLElement>(id: string): T { return this.element.querySelector(`#${id}`)!; }
   private input(id: string): HTMLInputElement { return this.get<HTMLInputElement>(id); }

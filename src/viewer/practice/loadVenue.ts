@@ -48,7 +48,7 @@ export function prepareObjects(objects: VenueObject[]): PreparedVenue {
     const material = new THREE.MeshStandardMaterial({ color: object.color });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = object.name; mesh.position.fromArray(object.position); mesh.quaternion.fromArray(object.quaternion);
-    mesh.userData.venueObjectId = object.id;
+    mesh.userData.venueObjectId = object.id; mesh.userData.venueObjectSize = [...object.size];
     geometries.push(geometry); materials.push(material); group.add(mesh);
   }
   let disposed = false;
