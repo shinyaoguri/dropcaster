@@ -615,6 +615,12 @@ async function gui(page, base) {
   await page.locator('#venue-start').click(); await page.locator('#venue-focus').click();
   const objects=()=>page.evaluate(()=>structuredClone(window.venueEditor.objects));
   const original=await objects(), layout=await state(page);
+  const canvas=await page.locator('#dc-practice-canvas').boundingBox();
+  const cameraBefore=await page.evaluate(()=>window.practicePreview.observer.position.toArray());
+  await page.mouse.move(canvas.x+8,canvas.y+8);await page.mouse.down();
+  await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
+  await page.mouse.move(canvas.x+38,canvas.y+28);await page.mouse.up();
+  assert.deepEqual(await page.evaluate(()=>window.practicePreview.observer.position.toArray()),cameraBefore,'blur releases an interrupted camera gesture');
   const background=await page.evaluate(()=>window.practicePreview.backgroundImage());
   await page.locator('#venue-edit-done').click();
   assert.equal(await page.evaluate(()=>window.practicePreview.backgroundImage()),background,'editing helpers never enter fixed background');

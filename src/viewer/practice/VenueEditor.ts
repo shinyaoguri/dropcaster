@@ -152,6 +152,7 @@ export class VenueEditor {
     const down = this.down; this.down = null;
     this.transform.dragging = false; this.transform.axis = null;
     if (down && this.canvas.hasPointerCapture(down.id)) this.canvas.releasePointerCapture(down.id);
+    if (down) { this.preview.controls.disconnect(); this.preview.controls.connect(this.canvas); }
     // Also remove TransformControls' temporary pointermove listener after cancellation.
     this.transform.disconnect(); this.transform.connect(this.canvas);
     this.preview.controls.enabled = true; this.attach();
