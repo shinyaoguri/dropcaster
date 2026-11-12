@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProject, parseProject, portableProject, portableVenue, importVenue, reconcileProjectLayout, encodeAsset, decodeAsset, validateGlb } from '../src/viewer/practice/project.ts';
-import { roomScene } from '../src/viewer/practice/venueObjects.ts';
+import { roomScene, venueObject } from '../src/viewer/practice/venueObjects.ts';
 import { withAddedOutput, withRemovedOutput } from '../src/viewer/utils/mappingTransform.ts';
 import { venueFixture } from './fixtures/venue-glb.mjs';
 
@@ -64,7 +64,7 @@ test('v1 projects migrate without changing calibrated geometry or embedded asset
   p.venue.scene.kind = 'glb'; p.venue.scene.assetId = 'wall';
   p.venue.projectors[0].position = [3, 2, 1];
   const restored = parseProject({ ...p, schemaVersion: 1 });
-  assert.equal(restored.schemaVersion, 2);
+  assert.equal(restored.schemaVersion, 3);
   assert.deepEqual(restored.venue.projectors, p.venue.projectors);
   assert.deepEqual(restored.venue.layout, parseProject(p).venue.layout);
   assert.deepEqual(restored.assets, p.assets);
@@ -108,4 +108,20 @@ test('venue sharing strips screen and source details while retaining the receivi
   assert.throws(() => importVenue({ ...shared, schemaVersion:99 }, recipient));
   assert.throws(() => importVenue({ ...shared, venue: { ...shared.venue, projectors:[] } }, recipient));
   assert.equal(recipient.venue.scene.kind, 'sample');
+});
+
+test('v2 projects and v1 venues migrate while new solid types roundtrip in versioned packages', () => {
+  const p = createProject(); p.venue.scene = roomScene(8, 3, 6, ['F','B','L','R']);
+  const old = { ...p, schemaVersion: 2 };
+  assert.deepEqual(parseProject(old).venue.scene.objects, p.venue.scene.objects);
+  assert.deepEqual(importVenue({ ...portableVenue(p), schemaVersion: 1 }, createProject()).venue.scene.objects, p.venue.scene.objects);
+  p.venue.scene.objects.push(venueObject('tetrahedron', 'Tetra'), venueObject('prism', 'Prism'));
+  const shared = portableVenue(p);
+  assert.equal(shared.schemaVersion, 2); assert.equal(p.schemaVersion, 3);
+  const restored = importVenue(JSON.parse(JSON.stringify(shared)), createProject());
+  assert.deepEqual(restored.venue.scene.objects, p.venue.scene.objects);
+  assert.throws(() => parseProject({ ...p, schemaVersion: 2 }), /version/);
+  assert.throws(() => importVenue({ ...shared, schemaVersion: 1 }, createProject()), /version/);
+  const bad = JSON.parse(JSON.stringify(shared)); bad.venue.scene.objects[0].kind = 'sphere';
+  assert.throws(() => importVenue(bad, createProject()));
 });

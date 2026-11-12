@@ -23,3 +23,4 @@
 | [0010](0010-portable-project-and-practice-ui.md) | 共通 Project v1・GLB パッケージ・既存 UI への練習統合 | 採用（UIは0012で更新） |
 | [0011](0011-measured-venue-authoring.md) | メートル単位の部材編集、Project v2、作品を含めない会場配布 | 採用 |
 | [0012](0012-unified-mapping-workspace.md) | マッピング入口を統一し、実出力を明示操作、3Dを右側タブに置く | 採用 |
+| [0013](0013-simple-venue-and-projector-guides.md) | 基本立体の会場編集、観察専用の投影ガイド、設定・共有メニュー | 採用 |

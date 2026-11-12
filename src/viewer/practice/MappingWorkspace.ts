@@ -6,6 +6,7 @@ import { ProjectSession, type ShowContext } from './ProjectSession';
 import { installPracticeStyles } from './style';
 import { t, onLangChange, type MessageKey } from '../i18n/index';
 import type { Project } from './project';
+import { applyControlTranslations } from '../windows/control/ControlWindow.template';
 
 export interface MappingWorkspaceOptions {
   wc: WindowController; getFrame: () => SketchFrame | null;
@@ -28,6 +29,10 @@ export class MappingWorkspace {
   private statusKey: MessageKey = 'practice.waiting';
   private error = false;
   private disposed = false;
+  private closeMenuOutside = (event: PointerEvent): void => {
+    const menu = this.toolbar?.querySelector<HTMLDetailsElement>('#practice-menu');
+    if (menu && !menu.contains(event.target as Node)) menu.open = false;
+  };
 
   constructor(options: MappingWorkspaceOptions) {
     this.options = options; installPracticeStyles();
@@ -62,19 +67,38 @@ export class MappingWorkspace {
     this.editor = editor;
     this.scope.classList.add('dc-mapping-workspace');
     this.toolbar = document.createElement('header'); this.toolbar.className = 'dc-practice-toolbar';
-    this.toolbar.innerHTML = '<strong data-i18n="practice.title"></strong><span id="dc-practice-status" role="status" aria-live="polite"></span><button type="button" id="practice-retry" data-i18n="practice.retry" hidden></button><button type="button" id="practice-settings" data-i18n="practice.settings"></button><button type="button" id="practice-venue" data-i18n="practice.buildVenue"></button><button type="button" id="practice-project" data-i18n="practice.project"></button><button type="button" id="practice-stop" data-i18n="practice.stop"></button>';
+    this.toolbar.innerHTML = `<strong data-i18n="practice.title"></strong><span id="dc-practice-status" role="status" aria-live="polite"></span>
+      <button type="button" id="practice-retry" data-i18n="practice.retry" hidden></button>
+      <details id="practice-menu" class="dc-workspace-menu"><summary>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 3v6m8 0v6m-6 0v6"/></svg><span data-i18n="practice.menu"></span>
+      </summary><div class="dc-workspace-menu-items">
+        <button type="button" id="practice-settings" data-i18n="practice.settings"></button>
+        <button type="button" id="practice-venue" data-i18n="practice.buildVenue"></button>
+        <button type="button" id="practice-project" data-i18n="practice.storage"></button>
+      </div></details>
+      <button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>`;
     this.scope.prepend(this.toolbar);
+    const menu = this.toolbar.querySelector<HTMLDetailsElement>('#practice-menu')!;
+    menu.addEventListener('keydown', event => {
+      if (event.key !== 'Escape' || !menu.open) return;
+      event.preventDefault(); event.stopPropagation(); menu.open = false; menu.querySelector('summary')!.focus();
+    });
+    document.addEventListener('pointerdown', this.closeMenuOutside);
     this.toolbar.querySelector('#practice-stop')!.addEventListener('click', () => this.stop());
     this.toolbar.querySelector('#practice-retry')!.addEventListener('click', () => {
       editor.selectTab('preview'); void this.ensurePanel();
     });
     for (const [button, id] of [['practice-settings', 'dc-practice-settings'], ['practice-venue', 'dc-practice-venue'], ['practice-project', 'dc-practice-project']]) {
       this.toolbar.querySelector(`#${button}`)!.addEventListener('click', async () => {
+        menu.open = false;
+        const generation = this.generation;
         if (button === 'practice-venue') editor.selectTab('preview');
         await this.ensurePanel();
+        if (!this.active || generation !== this.generation) return;
         const element = this.scope?.querySelector<HTMLElement>(`#${id}`);
         if (element instanceof HTMLDetailsElement) element.open = true;
         element?.scrollIntoView({ block: 'start' });
+        if (element) { element.tabIndex = -1; element.focus({ preventScroll: true }); }
       });
     }
     this.offTab = editor.onTabChange(tab => {
@@ -136,12 +160,13 @@ export class MappingWorkspace {
     if (element) { element.textContent = t(key); element.classList.toggle('is-error', error); }
   }
   private translate(): void {
-    this.toolbar?.querySelectorAll<HTMLElement>('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n as MessageKey); });
+    if (this.toolbar) applyControlTranslations(this.toolbar);
     this.status(this.statusKey, this.error);
   }
   stop(): void {
     if (!this.active) return;
     this.active = false; this.generation++; this.pendingPanel = null;
+    document.removeEventListener('pointerdown', this.closeMenuOutside);
     this.offTab?.(); this.offTab = null;
     this.panel?.dispose(); this.panel = null; this.editor = null;
     this.toolbar?.remove(); this.toolbar = null;

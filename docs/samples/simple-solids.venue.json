@@ -1,0 +1,199 @@
+{
+  "format": "dropcaster-venue",
+  "schemaVersion": 2,
+  "name": "基本立体の会場",
+  "venue": {
+    "id": "708702c7-cca2-4df9-89bf-9492066b1ae3",
+    "revision": 1,
+    "layout": {
+      "version": 2,
+      "canvas": {
+        "width": 1920,
+        "height": 1080
+      },
+      "outputs": [
+        {
+          "id": "omwd4jsti_1",
+          "name": "Output 1",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "size": {
+            "width": 1920,
+            "height": 1080
+          }
+        }
+      ],
+      "mappings": [
+        {
+          "id": "mmwd4jsti_1",
+          "name": "Mapping 1",
+          "source": {
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "height": 100
+          },
+          "quad": {
+            "topLeft": {
+              "x": 480,
+              "y": 270
+            },
+            "topRight": {
+              "x": 1440,
+              "y": 270
+            },
+            "bottomRight": {
+              "x": 1440,
+              "y": 810
+            },
+            "bottomLeft": {
+              "x": 480,
+              "y": 810
+            }
+          }
+        }
+      ],
+      "activeId": "mmwd4jsti_1",
+      "activeOutputId": "omwd4jsti_1"
+    },
+    "scene": {
+      "kind": "objects",
+      "metersPerUnit": 1,
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "quaternion": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "color": "#ffffff",
+      "objects": [
+        {
+          "id": "solid-floor",
+          "name": "床",
+          "kind": "floor",
+          "size": [
+            6,
+            0.1,
+            6
+          ],
+          "position": [
+            0,
+            -0.05,
+            0
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "color": "#8b93a0"
+        },
+        {
+          "id": "solid-box",
+          "name": "箱",
+          "kind": "box",
+          "size": [
+            1.4,
+            1.4,
+            1.4
+          ],
+          "position": [
+            0,
+            0.7,
+            -1
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "color": "#dddddd"
+        },
+        {
+          "id": "solid-tetrahedron",
+          "name": "四面体",
+          "kind": "tetrahedron",
+          "size": [
+            2,
+            2,
+            2
+          ],
+          "position": [
+            2,
+            1,
+            -1
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "color": "#dddddd"
+        },
+        {
+          "id": "solid-prism",
+          "name": "三角柱",
+          "kind": "prism",
+          "size": [
+            1.5,
+            1.5,
+            2
+          ],
+          "position": [
+            -2,
+            0.75,
+            -1
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "color": "#dddddd"
+        }
+      ]
+    },
+    "projectors": [
+      {
+        "id": "projector-omwd4jsti_1",
+        "outputId": "omwd4jsti_1",
+        "position": [
+          0,
+          2.5,
+          4.5
+        ],
+        "quaternion": [
+          -0.07274986500432551,
+          0,
+          0,
+          0.997350217898333
+        ],
+        "verticalFovDegrees": 43,
+        "aspect": 1.7777777777777777,
+        "lensShift": [
+          0,
+          0
+        ],
+        "near": 0.1,
+        "far": 30
+      }
+    ]
+  },
+  "assets": []
+}

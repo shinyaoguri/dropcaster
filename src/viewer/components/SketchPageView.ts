@@ -1,3 +1,4 @@
+import { mappingIcon } from './mappingIcon';
 import type { Sketch } from '../types/sketch.js';
 import { UIElementController } from '../ui/services/UIElementController';
 import { escapeHtml } from '../utils/html.js';
@@ -81,7 +82,7 @@ export class SketchPageView {
           title="${t('sketchPage.openWindows')}"
           aria-label="${t('sketchPage.openWindows')}"
         >
-          <i class="fas fa-external-link-alt button-icon"></i>
+          ${mappingIcon}
         </button>
 
         <!-- 投影中のソース可視化レイヤ（前面化して、各マッピングのソース矩形を枠で描く。子は動的生成） -->

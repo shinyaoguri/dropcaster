@@ -1,3 +1,4 @@
+import { mappingIcon } from './mappingIcon';
 import type { Sketch } from '../types/sketch.js';
 import { publicAssetPath } from '../utils/paths.js';
 import { SketchPool } from '../runtime/SketchPool.js';
@@ -76,10 +77,7 @@ export class SlideshowView {
               </svg>
             </button>
             <button id="mapping-btn" class="control-btn" data-i18n-title="slideshow.mapping" title="${t('slideshow.mapping')}">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                <path d="M8 21h8M12 17v4"/>
-              </svg>
+              ${mappingIcon}
             </button>
           </div>
           <div class="progress-bar-container">

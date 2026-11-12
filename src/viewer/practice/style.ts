@@ -11,6 +11,15 @@ export function installPracticeStyles(): void {
     .dc-practice-toolbar button { border:1px solid #555; border-radius:5px; color:#eee; background:#333; padding:7px 11px; cursor:pointer; white-space:nowrap; }
     .dc-practice-toolbar button:hover { background:#444; border-color:#888; }
     .dc-practice-toolbar button:focus-visible { outline:2px solid #3b82f6; outline-offset:2px; }
+    .dc-workspace-menu { position:relative; flex-shrink:0; }
+    .dc-workspace-menu > summary { display:flex; gap:7px; align-items:center; padding:7px 10px; border:1px solid #555; border-radius:5px; cursor:pointer; list-style:none; background:#333; }
+    .dc-workspace-menu > summary::-webkit-details-marker { display:none; }
+    .dc-workspace-menu > summary:hover { background:#444; }
+    .dc-workspace-menu > summary:focus-visible { outline:2px solid #3b82f6; outline-offset:2px; }
+    .dc-workspace-menu-items { position:absolute; right:0; top:calc(100% + 6px); z-index:100; width:210px; padding:5px; background:#292929; border:1px solid #555; border-radius:6px; box-shadow:0 8px 24px #0008; }
+    .dc-workspace-menu-items button { display:block; width:100%; border:0; background:transparent; text-align:left; }
+    .dc-practice-toolbar .dc-workspace-close { display:flex; align-items:center; padding:7px; background:transparent; border-color:transparent; }
+    .dc-practice-guide-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:0 10px; }
     .dc-mapping-workspace .source-column, .dc-mapping-workspace .mapping-column { min-width:240px; min-height:0; }
     #preview-stage { flex:1; min-height:0; flex-direction:column; }
     .dc-practice-panel { flex:1; min-height:200px; display:flex; flex-direction:column; overflow:hidden;  }
@@ -35,6 +44,8 @@ export function installPracticeStyles(): void {
     .dc-practice-settings ul { padding-left:18px; font-size:12px; color:#ccc; overflow-wrap:anywhere; }
     .dc-practice-settings .tool-button { margin:4px 0; }
     .dc-practice-object-actions { display:flex; gap:5px; flex-wrap:wrap; }
+    .dc-practice-object-actions .dc-practice-field { flex:1; min-width:110px; margin:4px 0; }
+    .dc-practice-object-actions #practice-add-object { flex:0; align-self:flex-end; }
     .dc-practice-object-actions .tool-button { width:auto; flex:1; min-width:65px; }
     .dc-practice-settings button:disabled { opacity:.45; cursor:not-allowed; }
     .dc-practice-help { display:block; color:#93c5fd; font-size:12px; margin:8px 0; }
