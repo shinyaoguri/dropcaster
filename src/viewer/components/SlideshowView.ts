@@ -635,12 +635,12 @@ export class SlideshowView {
   }
 
   /** いま表示中のスケッチをマッピングのソースにする。canvas が出来るのを待ってから差し替える。 */
-  private async refreshMappingSource(opts: { start?: boolean } = {}): Promise<void> {
+  private async refreshMappingSource(): Promise<void> {
     const frame = this.pool?.current;
     if (!frame || !this.windowController || !this.windowController.hasStreamConsumers()) return;
     await frame.ready;
     if (!this.windowController || frame !== this.pool?.current || !this.windowController.hasStreamConsumers()) return;
-    if (opts.start || !this.windowController.events.streaming.get()) {
+    if (!this.windowController.events.streaming.get()) {
       this.windowController.startCanvasStreaming(frame.iframe);
     } else {
       this.windowController.setSource(frame.iframe);

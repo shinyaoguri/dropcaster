@@ -144,6 +144,7 @@ export class ControlWindow extends BaseWindow {
     this.langUnsub = onLangChange(() => {
       if (this.scopeEl) applyControlTranslations(this.scopeEl);
       // panel 側にも refresh を促す（dynamic な textContent 更新を巻き直す）
+      this.mappingsList.invalidate();
       this.mappingsList.rerender();
       this.outputViz.refresh();
     });

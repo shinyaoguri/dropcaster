@@ -100,8 +100,9 @@ export class MappingWorkspace {
   }
 
   private ensurePanel(): Promise<void> {
-    if (!this.active || this.disposed || this.panel) return Promise.resolve();
+    if (!this.active || this.disposed) return Promise.resolve();
     if (this.pendingPanel) return this.pendingPanel;
+    if (this.panel) return Promise.resolve();
     const generation = this.generation;
     const pending = this.loadPanel(generation).finally(() => { if (this.pendingPanel === pending) this.pendingPanel = null; });
     this.pendingPanel = pending;
@@ -116,7 +117,7 @@ export class MappingWorkspace {
         (key, error) => this.status(key, error), () => this.previewFailed());
       this.panel = panel;
       await panel.initialize();
-      if (!this.active || generation !== this.generation) { panel.dispose(); return; }
+      if (!this.active || generation !== this.generation || this.panel !== panel) { panel.dispose(); return; }
       panel.setVisible(this.editor.selectedTab === 'preview');
       this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting');
     } catch {

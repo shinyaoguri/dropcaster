@@ -2,6 +2,8 @@
 
 編集可能な実寸部材、Project v2、会場のみの配布は[ADR 0011](0011-measured-venue-authoring.md)で拡張する。
 
+UI配置・入口・3Dの読み込み時期は[ADR 0012](0012-unified-mapping-workspace.md)で更新する。
+
 ## 状態
 
 採用（2026-11-11）。[0009](0009-3d-practice-contracts.md) の保存最小案を具体化する。

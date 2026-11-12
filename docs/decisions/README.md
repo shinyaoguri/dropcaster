@@ -20,5 +20,6 @@
 | [0007](0007-mapping-quad-stays-convex.md) | マッピングの quad は凸四角形に限り、隅の移動を凸の範囲へ制限する | 採用 |
 | [0008](0008-output-removal-collapses-canvas.md) | 出力の削除は追加の逆操作として仮想キャンバスを詰め直し、取り残しを残った出力へ寄せる | 採用 |
 | [0009](0009-3d-practice-contracts.md) | 3D 練習は既存 2D と座標・状態・保存を共有し、描画 PoC から段階導入する | 採用（保存形式は 0010 で確定） |
-| [0010](0010-portable-project-and-practice-ui.md) | 共通 Project v1・GLB パッケージ・既存 UI への練習統合 | 採用 |
+| [0010](0010-portable-project-and-practice-ui.md) | 共通 Project v1・GLB パッケージ・既存 UI への練習統合 | 採用（UIは0012で更新） |
 | [0011](0011-measured-venue-authoring.md) | メートル単位の部材編集、Project v2、作品を含めない会場配布 | 採用 |
+| [0012](0012-unified-mapping-workspace.md) | マッピング入口を統一し、実出力を明示操作、3Dを右側タブに置く | 採用 |
