@@ -634,7 +634,7 @@ async function gui(page, base) {
   await page.locator('#venue-snap').uncheck();await page.locator('#venue-undo').click();
   await page.waitForFunction(x=>JSON.stringify(window.venueEditor.objects)===JSON.stringify(x),sized);
   await page.locator('#venue-focus').click();await venueDrag(page,'translate','X',false);
-  await page.locator('#dc-practice-canvas').dispatchEvent('pointercancel');await page.mouse.up();
+  await page.locator('#dc-practice-canvas').dispatchEvent('pointercancel', {pointerId:await page.evaluate(()=>window.venueEditor.down.id)});await page.mouse.up();
   assert.deepEqual(await objects(),sized,'pointer cancellation cannot save partial geometry');
   await venueDrag(page,'translate','X',false);
   await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await page.mouse.up();
