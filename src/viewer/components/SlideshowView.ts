@@ -5,7 +5,7 @@ import { WindowController } from './WindowController';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import { InlineControlHost } from '../windows/control/InlineControlHost';
 import { t, onLangChange } from '../i18n/index.js';
-import { PracticeController } from '../practice/PracticeController';
+import { MappingWorkspace } from '../practice/MappingWorkspace';
 import type { Project } from '../practice/project';
 
 export class SlideshowView {
@@ -20,14 +20,11 @@ export class SlideshowView {
   private pool: SketchPool | null = null;
   // プロジェクションマッピング（出力ウィンドウと inline コントロールパネル）
   private windowController: WindowController | null = null;
-  private mappingActive = false;
-  private mappingStartTimeout: number | null = null;
   private boundCloseProjectionWindows = () => this.windowController?.closeAllWindows();
   /** projection 中だけ #dc-inline-editor 内にマウントする ControlWindow（inline 経路）。 */
   private inlinePanel: ControlWindow | null = null;
   private langUnsub: (() => void) | null = null;
-  private practice: PracticeController | null = null;
-  private projectionUnsubs: (() => void)[] = [];
+  private workspace: MappingWorkspace | null = null;
 
   render(sketchIds: string[], sketches: Sketch[], show?: { currentIndex: number; intervalSeconds: number }): void {
     this.sketchIds = sketchIds;
@@ -78,12 +75,6 @@ export class SlideshowView {
                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
               </svg>
             </button>
-            <button id="practice-btn" class="control-btn" data-i18n-title="practice.start" data-i18n-aria-label="practice.start"
-              title="${t('practice.start')}" aria-label="${t('practice.start')}">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="m12 2 9 5v10l-9 5-9-5V7Zm0 10 9-5M12 12 3 7m9 5v10"/>
-              </svg>
-            </button>
             <button id="mapping-btn" class="control-btn" data-i18n-title="slideshow.mapping" title="${t('slideshow.mapping')}">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2"/>
@@ -115,14 +106,8 @@ export class SlideshowView {
 
     this.addStyles();
     this.windowController = new WindowController();
-    this.practice = new PracticeController({ wc: this.windowController, getFrame: () => this.pool?.current ?? null,
-      mountEditor: () => this.mountInlineEditor(), getContext: () => ({ sketches: this.sketches, currentIndex: this.currentIndex, intervalSeconds: this.SLIDE_INTERVAL / 1000 }) });
-    document.getElementById('practice-btn')?.addEventListener('click', () => this.practice?.toggle());
-    this.projectionUnsubs.push(this.windowController.events.streaming.subscribe(active => {
-      if (!active && !this.practice?.isActive) this.unmountInlineEditor();
-    }), this.windowController.events.outputBounds.subscribe(bounds => {
-      this.mappingActive = Object.keys(bounds).length > 0; this.updateMappingButton();
-    }));
+    this.workspace = new MappingWorkspace({ wc: this.windowController, getFrame: () => this.pool?.current ?? null,
+      mountEditor: () => this.mountInlineEditor(), unmountEditor: () => this.unmountInlineEditor(), getContext: () => ({ sketches: this.sketches, currentIndex: this.currentIndex, intervalSeconds: this.SLIDE_INTERVAL / 1000 }) });
     this.setupEventListeners();
     // タブが閉じられたらマッピング用の出力ウィンドウも閉じる
     window.addEventListener('pagehide', this.boundCloseProjectionWindows);
@@ -371,14 +356,14 @@ export class SlideshowView {
     nextBtn?.addEventListener('click', () => this.nextSketch());
     playPauseBtn?.addEventListener('click', () => this.togglePlayPause());
     fullscreenBtn?.addEventListener('click', () => this.toggleFullscreen());
-    mappingBtn?.addEventListener('click', () => this.toggleMapping());
+    mappingBtn?.addEventListener('click', () => this.workspace?.toggle());
     
     // 間隔変更
     intervalInput?.addEventListener('change', (e) => {
       const newInterval = parseInt((e.target as HTMLInputElement).value) * 1000;
       if (newInterval >= 5000 && newInterval <= 300000) {
         this.SLIDE_INTERVAL = newInterval;
-        this.practice?.updateContent();
+        this.workspace?.updateContent();
         // 自動再生中なら再スタート
         if (!this.isPaused) {
           this.restartAutoPlay();
@@ -449,8 +434,8 @@ export class SlideshowView {
     this.pool.preload(this.sourceAt(nextIndex));
 
     // マッピング中なら、表示中スケッチをマッピングのソースに切り替える
-    if (this.mappingActive || this.practice?.isActive) void this.refreshMappingSource();
-    this.practice?.updateContent();
+    if (this.windowController?.hasStreamConsumers()) void this.refreshMappingSource();
+    this.workspace?.updateContent();
   }
 
   private sourceAt(index: number): string | { srcdoc: string; tag: string } {
@@ -618,46 +603,14 @@ export class SlideshowView {
 
   // --- プロジェクションマッピング（ポップアウトのコントロール／出力ウィンドウ） ---
 
-  private toggleMapping(): void {
-    if (this.mappingActive) {
-      this.stopMapping();
-    } else {
-      this.startMapping();
-    }
-  }
-
-  private startMapping(): void {
-    if (!this.windowController) this.windowController = new WindowController();
-    // クリックの user gesture 内で出力ウィンドウを開く。
-    // 編集 UI は inline ペインとしてスライドショーの右側にマウントする。
-    this.windowController.openOutputWindow();
-    this.mappingActive = true;
-    this.updateMappingButton();
-    this.mountInlineEditor();
-    // 出力ウィンドウが開いてから（SketchPageController と同じく）少し待ってストリーミング開始
-    this.mappingStartTimeout = window.setTimeout(() => {
-      this.mappingStartTimeout = null;
-      void this.refreshMappingSource({ start: true });
-    }, 2000);
-  }
-
-  private stopMapping(): void {
-    if (this.mappingStartTimeout) {
-      clearTimeout(this.mappingStartTimeout);
-      this.mappingStartTimeout = null;
-    }
-    this.windowController?.closeOutputWindows();
-    if (!this.practice?.isActive) this.unmountInlineEditor();
-    this.mappingActive = false;
-    this.updateMappingButton();
-  }
-
   private mountInlineEditor(): ControlWindow | null {
     if (this.inlinePanel) return this.inlinePanel;
     if (!this.windowController) return null;
     const aside = document.getElementById('dc-inline-editor');
     if (!aside) return null;
     aside.removeAttribute('hidden');
+    document.getElementById('mapping-btn')?.classList.add('mapping-active');
+    document.getElementById('mapping-btn')?.setAttribute('aria-pressed', 'true');
     const wc = this.windowController;
     this.inlinePanel = new ControlWindow();
     this.inlinePanel.mountInline(aside, (shell) =>
@@ -672,6 +625,8 @@ export class SlideshowView {
     if (!this.inlinePanel) return;
     this.inlinePanel.destroy();
     this.inlinePanel = null;
+    document.getElementById('mapping-btn')?.classList.remove('mapping-active');
+    document.getElementById('mapping-btn')?.setAttribute('aria-pressed', 'false');
     const aside = document.getElementById('dc-inline-editor');
     if (aside) {
       aside.setAttribute('hidden', '');
@@ -680,42 +635,31 @@ export class SlideshowView {
   }
 
   /** いま表示中のスケッチをマッピングのソースにする。canvas が出来るのを待ってから差し替える。 */
-  private async refreshMappingSource(opts: { start?: boolean } = {}): Promise<void> {
+  private async refreshMappingSource(): Promise<void> {
     const frame = this.pool?.current;
-    if (!frame || !this.windowController || (!this.mappingActive && !this.practice?.isActive)) return;
+    if (!frame || !this.windowController || !this.windowController.hasStreamConsumers()) return;
     await frame.ready;
-    if (!this.windowController || frame !== this.pool?.current || (!this.mappingActive && !this.practice?.isActive)) return;
-    if (opts.start || !this.windowController.events.streaming.get()) {
+    if (!this.windowController || frame !== this.pool?.current || !this.windowController.hasStreamConsumers()) return;
+    if (!this.windowController.events.streaming.get()) {
       this.windowController.startCanvasStreaming(frame.iframe);
     } else {
       this.windowController.setSource(frame.iframe);
     }
   }
 
-  private updateMappingButton(): void {
-    document.getElementById('mapping-btn')?.classList.toggle('mapping-active', this.mappingActive);
-  }
-
-
   public destroy(): void {
     this.stopAutoPlay();
     document.removeEventListener('keydown', this.boundHandleKeydown);
     window.removeEventListener('pagehide', this.boundCloseProjectionWindows);
-    if (this.mappingStartTimeout) {
-      clearTimeout(this.mappingStartTimeout);
-      this.mappingStartTimeout = null;
-    }
-    this.practice?.dispose(); this.practice = null;
-    this.projectionUnsubs.forEach(off => off()); this.projectionUnsubs = [];
+    this.workspace?.dispose(); this.workspace = null;
     this.unmountInlineEditor();
     this.windowController?.stopCanvasStreaming();
     this.windowController?.destroy();
     this.windowController = null;
-    this.mappingActive = false;
     this.pool?.destroy();
     this.pool = null;
     this.langUnsub?.();
     this.langUnsub = null;
   }
-  public async openProject(project: Project): Promise<void> { await this.practice?.openProject(project); }
+  public async openProject(project: Project): Promise<void> { await this.workspace?.openProject(project); }
 }

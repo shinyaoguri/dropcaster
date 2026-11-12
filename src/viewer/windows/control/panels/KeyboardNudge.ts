@@ -45,6 +45,10 @@ export class KeyboardNudge {
 
   setSelection(sel: NudgeSelection): void {
     this.selection = sel;
+    // Drag handles prevent the browser's default focus change. Release stale tab focus
+    // so arrow keys edit the selected handle after switching back to the mapping pane.
+    const focused = this.doc?.activeElement;
+    if (sel && focused?.getAttribute('role') === 'tab') (focused as HTMLElement).blur();
     this.refreshUI();
   }
 

@@ -183,8 +183,9 @@ export function controlPanelHtml(): string {
         <div class="column mapping-column">
           <div class="column-header">
             <div class="dc-tab-strip" role="tablist" data-i18n-aria-label="control.tabstrip.label" aria-label="${t('control.tabstrip.label')}">
-              <button class="dc-tab is-active" role="tab" aria-selected="true" data-tab="mapping" data-i18n="control.tab.mapping">${t('control.tab.mapping')}</button>
-              <button class="dc-tab" role="tab" aria-selected="false" data-tab="layout" data-i18n="control.tab.layout">${t('control.tab.layout')}</button>
+              <button class="dc-tab is-active" id="mapping-tab" role="tab" aria-selected="true" aria-controls="output-stage" data-tab="mapping" data-i18n="control.tab.mapping">${t('control.tab.mapping')}</button>
+              <button class="dc-tab" id="layout-tab" role="tab" aria-selected="false" tabindex="-1" aria-controls="layout-stage" data-tab="layout" data-i18n="control.tab.layout">${t('control.tab.layout')}</button>
+              <button class="dc-tab" id="preview-tab" role="tab" aria-selected="false" tabindex="-1" aria-controls="preview-stage" data-tab="preview" data-i18n="control.tab.preview">${t('control.tab.preview')}</button>
             </div>
           </div>
           <div class="mapping-container">
@@ -193,9 +194,10 @@ export function controlPanelHtml(): string {
               <p data-i18n="control.source.loading">${t('control.source.loading')}</p>
             </video>
             <!-- マッピング編集ビュー: 出力ごとのフレームを横並びに並べたステージ。OutputVizPanel が組み立てる -->
-            <div id="output-stage" class="output-stage dc-tab-pane is-active" data-tab-pane="mapping"></div>
+            <div id="output-stage" class="output-stage dc-tab-pane is-active" role="tabpanel" aria-labelledby="mapping-tab" data-tab-pane="mapping"></div>
             <!-- 出力レイアウトビュー: 仮想キャンバス全体を縮小表示して、各出力を 2D ドラッグ・リサイズで配置する -->
-            <div id="layout-stage" class="layout-stage dc-tab-pane" data-tab-pane="layout"></div>
+            <div id="layout-stage" class="layout-stage dc-tab-pane" role="tabpanel" aria-labelledby="layout-tab" data-tab-pane="layout"></div>
+            <div id="preview-stage" class="dc-tab-pane" role="tabpanel" aria-labelledby="preview-tab" data-tab-pane="preview"></div>
           </div>
         </div>
       </div>

@@ -9,6 +9,8 @@ import { venueFixture } from '../fixtures/venue-glb.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const artifactDir = process.env.PRACTICE_ARTIFACT_DIR;
+const entryButton = '#open-windows-btn, #mapping-btn';
+const observedRequests = new WeakMap();
 if (artifactDir) await mkdir(artifactDir, { recursive: true });
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--enable-unsafe-swiftshader'] });
 function sketchHtml(width = 640, color = '#dc9030', webgl = false, delay = 0) {
@@ -28,30 +30,32 @@ const catalog = [
   { id: 'b', title: 'Blue srcdoc', path: '', srcdoc: sketchHtml(1280, '#33c4ec') },
   { id: 'w', title: 'WebGL', path: 'sketches/w/index.html' },
 ].map(s => ({ description: '', type: 'html', tags: [], interactiveElements: [], lastModified: '2026-11-11', ...s }));
-async function setup(context, base, route = '/a') {
+async function setup(context, base, route = '/a', observePreview = true) {
   await context.route('**/sketches.json', r => r.fulfill({ json: catalog }));
   await context.route('**/sketches/a/index.html', r => r.fulfill({ contentType: 'text/html', body: sketchHtml() }));
   await context.route('**/sketches/w/index.html', r => r.fulfill({ contentType: 'text/html', body: sketchHtml(320, '', true, 100) }));
   const page = await context.newPage(); page.setDefaultTimeout(20000);
   const requests = []; page.on('request', r => requests.push(r.url()));
-  await page.goto(base.url + route); await page.waitForSelector('#practice-btn');
+  await page.goto(base.url + route); await page.waitForSelector(entryButton);
   assert.ok(!requests.some(url => /three(?:\.js|\.module|_addons)|PracticePanel/.test(url)), '3D dependencies are lazy');
-  await observeControllers(page, base);
+  observedRequests.set(page, requests);
+  await observeControllers(page, base, observePreview);
   return page;
 }
-async function observeControllers(page, base) {
+async function observeControllers(page, base, observePreview = true) {
   // Observe real controller/renderer instances through prototype instrumentation only in the test.
-  await page.evaluate(async moduleBase => {
+  await page.evaluate(async ({ moduleBase, observePreview }) => {
     const { WindowController } = await import(`${moduleBase}/components/WindowController.ts`);
     const acquire = WindowController.prototype.acquireStreamConsumer;
     WindowController.prototype.acquireStreamConsumer = function (...args) { window.practiceWC = this; return acquire.apply(this, args); };
+    if (!observePreview) return;
     const { ProjectionPreview } = await import(`${moduleBase}/practice/ProjectionPreview.ts`);
     const setState = ProjectionPreview.prototype.setState;
     ProjectionPreview.prototype.setState = function (...args) { window.practicePreview = this; return setState.apply(this, args); };
-  }, base.modules);
+  }, { moduleBase: base.modules, observePreview });
 }
 async function start(page, width = 640) {
-  await page.locator('#practice-btn').click();
+  await page.locator(entryButton).click(); await page.locator('#preview-tab').click();
   await page.waitForSelector('#dc-practice-canvas');
   await page.waitForFunction(w => document.querySelector('#source-video')?.videoWidth === w && window.practicePreview?.diagnostics().memory.textures > 0, width);
   await page.waitForFunction(() => !document.querySelector('#dc-practice-status')?.textContent.includes('Preparing'));
@@ -72,6 +76,97 @@ async function importProject(page, value) {
 }
 async function snapshot(page, name) { if (artifactDir) await page.screenshot({ path: resolve(artifactDir, name + '.png') }); }
 async function state(page) { return page.evaluate(() => structuredClone(window.practiceWC.events.state.get())); }
+async function workspace(page, base) {
+  const isSlideshow = new URL(page.url()).pathname.endsWith('/slideshow');
+  if (isSlideshow) await page.locator('#play-pause-btn').click();
+  assert.equal(await page.locator('#practice-btn').count(), 0, 'one mapping entry');
+  await page.evaluate(() => {
+    window.webglAttempts = 0; window.originalGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+      if (/webgl/.test(type)) { window.webglAttempts++; return null; }
+      return window.originalGetContext.call(this, type, ...args);
+    };
+  });
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true');
+  await page.locator('#add-output-btn').click(); await page.locator('#add-mapping-btn').click();
+  assert.equal(page.context().pages().length, 1, 'entering and adding outputs never opens a popup');
+  assert.equal(await page.evaluate(() => window.webglAttempts), 0, '2D does not initialize WebGL');
+  assert.ok(!observedRequests.get(page).some(url => /three(?:\.js|\.module|_addons)|PracticePanel/.test(url)), '2D does not load Three');
+  assert.equal(await page.locator('#dc-practice-canvas').count(), 0);
+  await page.evaluate(() => { window.workspaceTrack = document.querySelector('#source-video').srcObject.getVideoTracks()[0]; });
+  const popupPromise = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click();
+  const popup = await popupPromise;
+  await popup.waitForFunction(() => [...document.querySelectorAll('video')].some(v => v.videoWidth === 640));
+  await popup.close(); await page.waitForTimeout(1200);
+  assert.equal(await page.locator('#dc-inline-editor').isVisible(), true);
+  assert.equal(await page.evaluate(() => window.workspaceTrack.readyState), 'live');
+  const nextPopup = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click();
+  const output = await nextPopup;
+  await output.waitForFunction(() => [...document.querySelectorAll('video')].some(v => v.videoWidth === 640));
+  await page.locator('#practice-stop').click();
+  assert.equal(await page.locator('#dc-inline-editor').isHidden(), true);
+  assert.equal(await page.evaluate(() => window.workspaceTrack.readyState), 'live');
+  const width = isSlideshow ? 1280 : 640;
+  if (isSlideshow) await page.locator('#next-btn').click();
+  await output.waitForFunction(w => [...document.querySelectorAll('video')].some(v => v.videoWidth === w && v.srcObject.getVideoTracks()[0].readyState === 'live'), width);
+  await page.locator(entryButton).click();
+  await page.waitForFunction(w => document.querySelector('#source-video')?.videoWidth === w, width);
+  assert.equal(page.context().pages().length, 2, 'reopening editor does not open another output');
+  await output.close(); await page.waitForTimeout(1200);
+  assert.equal(await page.locator('#dc-inline-editor').isVisible(), true);
+  await page.evaluate(() => { HTMLCanvasElement.prototype.getContext = window.originalGetContext; });
+  await observeControllers(page, base);
+  const sourceBox = await page.locator('.source-column').boundingBox();
+  let releasePanel, panelRequested;
+  const pendingRequest = new Promise(resolve => { panelRequested = resolve; });
+  await page.route('**/practice/PracticePanel.ts', async route => {
+    panelRequested(); await new Promise(resolve => { releasePanel = resolve; }); await route.continue();
+  });
+  await page.locator('#preview-tab').click(); await pendingRequest;
+  await page.locator('#mapping-tab').click(); releasePanel();
+  await page.waitForSelector('#dc-practice-canvas', { state: 'attached' });
+  assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true', 'late 3D load preserves the selected tab');
+  assert.equal(await page.locator('#dc-practice-canvas').isVisible(), false);
+  await page.locator('#preview-tab').click(); await page.waitForSelector('#dc-practice-canvas');
+  await page.waitForFunction(() => window.practicePreview?.diagnostics().memory.textures > 0);
+  assert.equal(await page.locator('#preview-stage #dc-practice-canvas').count(), 1);
+  assert.equal(await page.locator('.source-column #dc-practice-canvas').count(), 0);
+  assert.equal((await page.locator('.source-column').boundingBox()).height, sourceBox.height);
+  await page.locator('#practice-audience').click();
+  await page.evaluate(() => {
+    const preview = window.practicePreview;
+    window.renderCount = 0; const render = preview.render.bind(preview);
+    preview.render = () => { window.renderCount++; render(); };
+  });
+  await page.locator('#mapping-tab').click();
+  const paused = await page.evaluate(() => window.renderCount);
+  const camera = await page.evaluate(() => window.practicePreview.observer.position.toArray());
+  await page.waitForTimeout(200);
+  assert.equal(await page.evaluate(() => window.renderCount), paused, 'hidden preview stops rendering');
+  const before = await state(page);
+  await page.locator('#output-stage [data-corner]').first().click(); await page.keyboard.press('ArrowRight');
+  assert.notDeepEqual((await state(page)).mappings, before.mappings, 'mapping still edits after visiting 3D');
+  const edited = await state(page);
+  await page.locator('#mapping-tab').focus(); await page.keyboard.press('ArrowRight');
+  assert.equal(await page.locator('#layout-tab').getAttribute('aria-selected'), 'true');
+  await page.keyboard.press('End');
+  assert.equal(await page.locator('#preview-tab').getAttribute('aria-selected'), 'true');
+  assert.deepEqual(await state(page), edited, 'tab navigation never nudges mappings');
+  await page.waitForFunction(n => window.renderCount > n, paused);
+  assert.deepEqual(await page.evaluate(() => window.practicePreview.observer.position.toArray()), camera, 'tab changes preserve the observer');
+  assert.equal(await page.locator('.dc-tab-pane.is-active').count(), 1);
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  assert.equal(await page.locator('#outputs-list .open-btn').first().innerText(), '開く');
+  await snapshot(page, `${base.name}-workspace${isSlideshow ? '-slideshow' : ''}-desktop-ja`);
+  await page.setViewportSize({ width:900, height:800 });
+  await snapshot(page, `${base.name}-workspace${isSlideshow ? '-slideshow' : ''}-narrow-ja`);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.evaluate(() => { window.finalTrack = document.querySelector('#source-video').srcObject.getVideoTracks()[0]; });
+  await page.locator('#practice-stop').click();
+  assert.equal(await page.evaluate(() => window.finalTrack.readyState), 'ended');
+}
 async function lifecycle(page, base) {
   await start(page); assert.equal(page.context().pages().length, 1, 'practice needs no popup');
   const initial = await state(page);
@@ -88,6 +183,7 @@ async function lifecycle(page, base) {
   assert.deepEqual(await state(page), initial, 'observer cannot alter mappings');
   await change(page, '#practice-p-position-0', 1.25); await change(page, '#practice-shift-0', 12);
   assert.notEqual(await page.locator('.dc-practice-background').getAttribute('src'), initialBackground, 'optics update the fixed background');
+  await page.locator('#mapping-tab').click();
   await page.locator('#add-mapping-btn').click();
   const beforeEdit = await state(page);
   const handles = page.locator('#output-stage [data-corner]');
@@ -107,19 +203,19 @@ async function lifecycle(page, base) {
   const afterMask = await page.evaluate(() => { const p=window.practicePreview; p.render(); return [...p.compositor.readPixels()].reduce((a,b)=>a+b,0); });
   assert.ok(afterMask < beforeMask, 'existing mask editing updates the real GPU composite');
   await page.evaluate(async base => (await import(`${base}/i18n/index.ts`)).setLang('ja'), base.modules);
-  assert.equal(await page.locator('#practice-stop').innerText(), '練習を終了');
+  assert.equal(await page.locator('#practice-stop').innerText(), '編集を閉じる');
   await page.locator('#practice-settings').click(); await snapshot(page, base.name + '-desktop-ja');
   await page.setViewportSize({ width: 900, height: 800 }); await snapshot(page, base.name + '-narrow-ja');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.setViewportSize({ width: 1440, height: 900 });
-  const popupPromise = page.waitForEvent('popup'); await page.locator('#practice-open-output').click(); const popup = await popupPromise;
+  const popupPromise = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click(); const popup = await popupPromise;
   await popup.waitForFunction(() => [...document.querySelectorAll('video')].some(v => v.videoWidth === 640));
   assert.equal(await popup.locator('.dc-practice-background, #dc-practice-canvas').count(), 0, 'editor background never appears in real output');
   await popup.close(); await page.waitForTimeout(1200);
   assert.equal(await page.evaluate(() => window.firstTrack.readyState), 'live', 'closing last output preserves practice');
-  const popupPromise2 = page.waitForEvent('popup'); await page.locator('#practice-open-output').click(); const popup2 = await popupPromise2;
+  const popupPromise2 = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click(); const popup2 = await popupPromise2;
   await page.locator('#practice-stop').click();
-  assert.equal(await page.locator('#dc-inline-editor').isVisible(), true);
+  assert.equal(await page.locator('#dc-inline-editor').isHidden(), true);
   assert.deepEqual(await page.evaluate(() => ({ track: window.firstTrack.readyState, disposed: window.firstPreview.diagnostics().disposed })), { track: 'live', disposed: true });
   await popup2.close(); await page.waitForFunction(() => window.firstTrack.readyState === 'ended');
   assert.equal(await page.locator('#dc-inline-editor').isHidden(), true);
@@ -170,7 +266,8 @@ async function projects(page, base) {
   await importProject(page, saved);
   await page.evaluate(() => { window.previousWC = window.practiceWC; });
   await page.locator('#practice-open-content').click();
-  await page.waitForURL('**/project'); await page.waitForSelector('#dc-practice-canvas');
+  await page.waitForURL('**/project'); await page.waitForSelector('#dc-practice-canvas', { state: 'attached' });
+  await page.locator('#preview-tab').click();
   await page.waitForFunction(() => document.querySelector('#practice-fov')?.value === '50');
   await page.waitForFunction(() => window.practiceWC !== window.previousWC);
   assert.equal(page.context().pages().length, 1, 'opening project does not open outputs');
@@ -272,7 +369,7 @@ async function unavailable(page) {
     window.originalGetContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function(type, ...args) { return /webgl/.test(type) ? null : window.originalGetContext.call(this, type, ...args); };
   });
-  await page.locator('#practice-btn').click(); await page.waitForSelector('#practice-retry:not([hidden])');
+  await page.locator(entryButton).click(); await page.locator('#preview-tab').click(); await page.waitForSelector('#practice-retry:not([hidden])');
   assert.match(await page.locator('#dc-practice-status').innerText(), /3D is unavailable/);
   await page.locator('#add-mapping-btn').click(); assert.equal((await state(page)).mappings.length, 2);
   await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 640);
@@ -285,7 +382,7 @@ async function unavailable(page) {
 async function cancellation(page) {
   let release;
   await page.route('**/practice/PracticePanel.ts', async route => { await new Promise(resolve => { release = resolve; }); await route.continue(); });
-  await page.locator('#practice-btn').click();
+  await page.locator(entryButton).click(); await page.locator('#preview-tab').click();
   await page.waitForSelector('#practice-stop');
   await page.waitForFunction(() => window.practiceWC.events.stream.get());
   await page.evaluate(() => { window.pendingTrack = window.practiceWC.events.stream.get().getVideoTracks()[0]; });
@@ -309,7 +406,7 @@ async function loading(page) {
     await route.fulfill({ contentType: 'text/html', body: sketchHtml(320, '', true, 5500) });
   });
   await page.evaluate(() => { const link=document.createElement('a');link.href='/w';document.body.append(link);link.click();link.remove(); });
-  await page.locator('#practice-btn').click();
+  await page.locator(entryButton).click(); await page.locator('#preview-tab').click();
   await page.waitForSelector('#dc-practice-canvas');
   await page.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.includes('Waiting'));
   await page.locator('#practice-stop').click();
@@ -321,6 +418,7 @@ async function loading(page) {
 
 async function sample(page, base) {
   await page.goto(base.url + '/practice');
+  await page.locator('#preview-tab').click();
   await page.waitForSelector('#dc-practice-canvas');
   await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 1920);
   const project = await exportProject(page);
@@ -423,12 +521,12 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, sample, venue })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, sample, venue })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
         try {
-          const page = await setup(context, base, testName === 'slideshow' ? '/slideshow' : testName === 'recovery' ? '/w' : '/a');
+          const page = await setup(context, base, testName.toLowerCase().includes('slideshow') ? '/slideshow' : testName === 'recovery' ? '/w' : '/a', !testName.startsWith('workspace'));
           await run(page, base); assert.deepEqual(errors, [], `${name}/${testName}: browser errors`);
           console.log(`${name}/${testName}: PASS`);
         } finally { await context.close(); }

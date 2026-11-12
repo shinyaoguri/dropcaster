@@ -46,7 +46,7 @@ function heroHtml(): string {
       </div>
       <p class="op-id-error" hidden>${t('op.error.invalid')}</p>
     </form>
-    <p class="op-hero-practice"><a href="${routeHref('/practice')}">${t('practice.trySample')}</a></p>
+    <p class="op-hero-practice"><a href="${routeHref('/mapping')}">${t('practice.trySample')}</a></p>
     <footer class="op-hero-footer">
       <p>${t(getConfig().assetProxyBaseUrl ? 'op.hero.footer' : 'op.hero.footer.noProxy')}
         <span class="op-hero-help" tabindex="0" aria-label="${t('op.hero.help.label')}">?<span

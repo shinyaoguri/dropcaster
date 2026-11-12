@@ -11,7 +11,6 @@ import { t, onLangChange } from '../i18n/index.js';
 
 export class SketchPageView {
   private openWindowsToggleCallback: (() => void) | null = null;
-  private practiceToggleCallback: (() => void) | null = null;
   private uiController: UIElementController;
   // 投影中、各マッピングのソース切り抜き範囲を示すワイヤーフレーム枠（.dc-source-crop-box）はここに生成される
   private projectionStage: HTMLDivElement | null = null;
@@ -24,7 +23,6 @@ export class SketchPageView {
   private lastCropSignature: string | null = null;
   private boundMappingOverlayUpdate = this.handleMappingOverlayUpdate.bind(this);
   private boundResize = this.handleResize.bind(this);
-  private boundProjectionModeChange = this.handleProjectionModeChange.bind(this);
   private langUnsub: (() => void) | null = null;
 
   constructor() {
@@ -74,7 +72,7 @@ export class SketchPageView {
           <i class="fas fa-expand fullscreen-icon button-icon"></i>
         </button>
 
-        <!-- ウィンドウ開くボタン -->
+        <!-- マッピング編集の入口。実出力は編集画面の「開く」で開始する -->
         <button
           id="open-windows-btn"
           class="open-windows-button top-right-button ui-element"
@@ -87,13 +85,6 @@ export class SketchPageView {
         </button>
 
         <!-- 投影中のソース可視化レイヤ（前面化して、各マッピングのソース矩形を枠で描く。子は動的生成） -->
-        <button id="practice-btn" class="practice-start-button top-right-button ui-element"
-          data-i18n-title="practice.start" data-i18n-aria-label="practice.start"
-          title="${t('practice.start')}" aria-label="${t('practice.start')}">
-          <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-            <path d="m12 2 9 5v10l-9 5-9-5V7Zm0 10 9-5M12 12 3 7m9 5v10"/>
-          </svg>
-        </button>
         <div id="iframe-content-overlay" class="iframe-content-overlay"></div>
 
         <!-- inline マウントされた ControlPanel のシェル。投影モードでだけ表示される -->
@@ -104,7 +95,6 @@ export class SketchPageView {
     this.setupEventListeners();
 
     // 投影モード／マッピング更新／リサイズの購読（innerHTML は同期なので #iframe-content-overlay は既に存在）
-    window.addEventListener('projection-mode-change', this.boundProjectionModeChange);
     this.projectionStage = document.getElementById('iframe-content-overlay') as HTMLDivElement;
     this.setupMappingOverlayListener();
 
@@ -150,7 +140,6 @@ export class SketchPageView {
     openWindowsBtn.addEventListener('click', () => {
       this.openWindowsToggleCallback?.();
     });
-    document.getElementById('practice-btn')?.addEventListener('click', () => this.practiceToggleCallback?.());
   }
 
   private updateFullscreenUI(isFullscreen: boolean): void {
@@ -189,9 +178,7 @@ export class SketchPageView {
     this.renderSourceCropBoxes();
   }
 
-  private handleProjectionModeChange(event: Event): void {
-    const detail = (event as CustomEvent).detail;
-    const active = !!detail?.active;
+  setMappingActive(active: boolean): void {
     this.isProjecting = active;
     document.querySelector('.fullscreen-sketch-container')?.classList.toggle('projecting', active);
 
@@ -327,7 +314,6 @@ export class SketchPageView {
     this.openWindowsToggleCallback = callback;
   }
 
-  onPracticeToggle(callback: () => void): void { this.practiceToggleCallback = callback; }
 
   destroy(): void {
     if (this.cropRefreshInterval !== null) {
@@ -336,10 +322,8 @@ export class SketchPageView {
     }
     window.removeEventListener('mapping-overlay-update', this.boundMappingOverlayUpdate);
     window.removeEventListener('resize', this.boundResize);
-    window.removeEventListener('projection-mode-change', this.boundProjectionModeChange);
     this.langUnsub?.();
     this.langUnsub = null;
     this.openWindowsToggleCallback = null;
-    this.practiceToggleCallback = null;
   }
 }

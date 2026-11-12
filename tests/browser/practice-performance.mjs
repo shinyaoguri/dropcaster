@@ -14,14 +14,16 @@ try {
   page.setDefaultTimeout(20000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}`);
-  await page.waitForSelector('a[href="/practice"]');
+  await page.waitForSelector('a[href="/mapping"]');
   await page.evaluate(async moduleBase => {
     const { ProjectionPreview } = await import(`${moduleBase}/practice/ProjectionPreview.ts`);
     const setState = ProjectionPreview.prototype.setState;
     ProjectionPreview.prototype.setState = function (...args) { window.measuredPreview = this; return setState.apply(this, args); };
   }, `/@fs${root}src/viewer`);
-  await page.locator('a[href="/practice"]').click();
+  await page.locator('a[href="/mapping"]').click();
+  await page.locator('#preview-tab').click();
   await page.waitForSelector('#dc-practice-canvas');
+  await page.locator('#mapping-tab').click();
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 1920);
   await page.waitForTimeout(1000); // warm up shaders and video decode before sampling
   const measures = [];
@@ -50,7 +52,7 @@ try {
   }
   if (errors.length) throw new Error(errors.join('\n'));
   const result = { browser: browser.version(), platform: `${process.platform}/${process.arch}`, viewport: [1440, 900],
-    operation: '120 pointer moves while dragging the existing top-left quad handle; static built-in 1080p source', measures };
+    operation: '120 pointer moves while dragging the existing top-left quad handle; static built-in 1080p source; 3D tab hidden and rendering paused', measures };
   console.log(JSON.stringify(result, null, 2));
   if (process.env.PRACTICE_PERFORMANCE_FILE) await writeFile(process.env.PRACTICE_PERFORMANCE_FILE, JSON.stringify(result, null, 2) + '\n');
   if (process.env.PRACTICE_SCREENSHOT) await page.screenshot({ path: process.env.PRACTICE_SCREENSHOT });

@@ -440,10 +440,6 @@ body {
   top: 5rem;
 }
 
-.practice-start-button {
-  top: 9rem;
-}
-
 /* 美術館の壁掛けラベル風の情報パネル。スライドショーと個別スケッチ表示で共用。
    位置決め・透明度（フェード）は各 View 側で上書きする。 */
 .dc-info-panel {

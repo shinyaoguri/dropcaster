@@ -18,6 +18,7 @@ export class PracticePanel {
   private settings = document.createElement('div');
   private video = document.createElement('video');
   private frame = 0;
+  private visible = false;
   private observer: ResizeObserver;
   private resizePending = true;
   private off: (() => void)[] = [];
@@ -45,7 +46,7 @@ export class PracticePanel {
     this.preview = new ProjectionPreview(this.canvas, this.video);
     this.root.className = 'dc-practice-panel';
     this.canvas.id = 'dc-practice-canvas'; this.canvas.tabIndex = 0;
-    this.root.innerHTML = `<div class="column-header"><h2>${label('practice.view')}</h2><div class="dc-practice-view-actions">
+    this.root.innerHTML = `<div class="column-header"><h2>${label('practice.previewTitle')}</h2><div class="dc-practice-view-actions">
       ${button('practice-overview', 'practice.overview')}${button('practice-audience', 'practice.audience')}
       ${button('practice-projector-view', 'practice.projectorView')}${button('practice-reset-view', 'practice.resetView')}</div></div>
       <p class="dc-practice-hint">${label('practice.viewHint')}</p><div class="dc-practice-viewport"></div>`;
@@ -87,7 +88,7 @@ export class PracticePanel {
       if (this.previous && this.previousMode === 'model') void this.apply(this.previous, false);
     });
     this.settings.prepend(this.builder.element);
-    scope.querySelector('.source-column')!.append(this.root);
+    scope.querySelector('#preview-stage')!.append(this.root);
     scope.querySelector('.tool-content')!.append(this.settings);
     this.observer = new ResizeObserver(() => { this.resizePending = true; }); this.observer.observe(this.canvas.parentElement!);
     this.canvas.addEventListener('webglcontextlost', this.contextLost);
@@ -96,14 +97,19 @@ export class PracticePanel {
       session.storage.subscribe(() => this.storageStatus()), onLangChange(() => this.translate()));
     this.bindStream(wc.events.stream.get()); this.translate();
     void this.refreshSaved();
-    const render = () => {
-      if (this.disposed) return;
-      if (this.resizePending) { this.resizePending = false; this.resize(); }
-      this.preview.setProjectionEnabled(this.video.readyState >= 2 && !!this.video.srcObject);
-      this.preview.render(); this.frame = requestAnimationFrame(render);
-    };
-    this.resize(); this.frame = requestAnimationFrame(render);
   }
+
+  setVisible(visible: boolean): void {
+    this.visible = visible; cancelAnimationFrame(this.frame); this.frame = 0;
+    if (!visible || this.disposed) return;
+    this.resizePending = true; this.frame = requestAnimationFrame(this.render);
+  }
+  private render = (): void => {
+    if (this.disposed || !this.visible) return;
+    if (this.resizePending) { this.resizePending = false; this.resize(); }
+    this.preview.setProjectionEnabled(this.video.readyState >= 2 && !!this.video.srcObject);
+    this.preview.render(); this.frame = requestAnimationFrame(this.render);
+  };
 
   async initialize(): Promise<void> {
     const action = ++this.action;
@@ -136,6 +142,7 @@ export class PracticePanel {
   private resize(): void {
     if (this.disposed) return;
     const rect = this.canvas.parentElement!.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
     this.preview.resize(Math.max(1, Math.round(rect.width)), Math.max(1, Math.round(rect.height)));
   }
   private bindStream(stream: MediaStream | null): void {
