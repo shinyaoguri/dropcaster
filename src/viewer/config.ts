@@ -17,6 +17,14 @@ export interface DropcasterConfig {
   assetProxyBaseUrl?: string;
 
   /**
+   * GitHub Gist API の中継のベース。同一オリジン下のパス指定を推奨 (例: '/gist-api')。
+   * 指定すると `${gistApiBaseUrl}/gists/{id}` を先に試し、使えないときだけ
+   * api.github.com へ直接つなぐ。未設定なら直接取得のみ (未認証、60 req/時・IP 単位)。
+   * ホスト版は Worker の中継を指す (#142)。
+   */
+  gistApiBaseUrl?: string;
+
+  /**
    * OpenProcessing API のトークン。指定すれば Authorization: Bearer で送信。
    * 未指定なら無認証 (公開作品は読める、レート制限 40 req/min)。
    */

@@ -42,6 +42,12 @@ export default {
   // ください（ホスト版の apps/web/src/worker.ts の /op-cdn 実装が参考になります）。
   // assetProxyBaseUrl: '/op-cdn',
 
+  // GitHub Gist API の中継（任意）。未設定なら viewer が api.github.com へ直接つなぐ
+  // （未認証、60 req/時・IP 単位）。同じネットワークから大人数が使うなら、トークン付きで
+  // 中継する Worker を置いてそのパスを指定する（ホスト版の apps/web/src/gist-proxy.ts が参考になります）。
+  // 中継が使えないときは自動で直接取得に切り替わります。
+  // gistApiBaseUrl: '/gist-api',
+
   // カスタムアイコン: public/icon.png（512x512）または public/icon.svg を置けば
   // 自動で manifest に組み込まれます。どちらも無ければデフォルトの SVG が生成されます。
 };

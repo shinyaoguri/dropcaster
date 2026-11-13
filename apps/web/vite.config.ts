@@ -42,6 +42,13 @@ export default defineConfig({
           });
         },
       },
+      // 本番の /gist-api/* は Worker がトークン付きで GitHub に中継する (#142)。dev では
+      // Worker もトークンも無いので、同じパスを api.github.com へ認証なしで転送するだけ。
+      '/gist-api': {
+        target: 'https://api.github.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/gist-api/, ''),
+      },
     },
   },
   build: {

@@ -295,6 +295,7 @@ export default {
   start_url: '/',
   // base: '/my-gallery/',             // GitHub Pages のサブパスなど（dropcaster build --base でも可）
   // assetProxyBaseUrl: '/op-cdn',     // OP CDN の CORS proxy（下記参照）
+  // gistApiBaseUrl: '/gist-api',      // GitHub Gist API の中継（下記参照）
 }
 ```
 
@@ -304,6 +305,12 @@ export default {
 （fetch のデフォルトはアセット同梱なので通常は不要）。proxy 本体は自分でデプロイして
 ください — ホスト版の [apps/web/src/worker.ts](apps/web/src/worker.ts) の `/op-cdn` 実装が
 そのまま参考になります。
+
+`gistApiBaseUrl` を設定すると、viewer は Gist を `<gistApiBaseUrl>/gists/<id>` から先に取得し、
+使えないときだけ `api.github.com` へ直接つなぎます。直接取得は未認証で「60 req/時・IP 単位」なので、
+授業や会場のように同じネットワークから大人数が使うと枯渇します。中継はトークン付きで問い合わせる
+Worker として自分でデプロイしてください — ホスト版の [apps/web/src/gist-proxy.ts](apps/web/src/gist-proxy.ts)
+が参考になります（[ADR 0017](docs/decisions/0017-hosted-gist-api-proxy.md)）。
 
 ## プロジェクト構造（`dropcaster init` で作る user gallery）
 
@@ -357,16 +364,16 @@ dropcaster/
 - コンテンツ作者のコードを改変せずにそのまま利用可能
 
 ### ブラウザネイティブなアーキテクチャ
-- PWA として配布できる。Service Worker は 6 つのキャッシュバケット (app shell / local sketches / OP API meta / Gist API / 外部 CDN / runtime) に振り分けて、一度開いた作品はオフラインでも再生可能。Gist だけは同じ ID のまま更新されるので NetworkFirst（キャッシュはオフライン時の保険）
+- PWA として配布できる。Service Worker は 6 つのキャッシュバケット (app shell / local sketches / OP API meta / Gist API / 外部 CDN / runtime) に振り分けて、一度開いた作品はオフラインでも再生可能。Gist（直接取得とホスト版の `/gist-api/*` 中継）だけは同じ ID のまま更新されるので NetworkFirst（キャッシュはオフライン時の保険）
 - プロジェクションマッピングは `window.open()` + Window Management API でプロジェクタ画面にポップアウト、
   同一オリジンの `window.opener` 参照経由で窓間連携
 - `canvas.captureStream()` を共有 `<video>` 群へ bind し、CSS `matrix3d` でワープ（クローンなし）
 
 ### ホスト版の構成
-- Cloudflare Workers (Static Assets) **1 つ**でアプリ本体 (`apps/web/dist/`) と `/op-cdn/*` proxy を兼任
+- Cloudflare Workers (Static Assets) **1 つ**でアプリ本体 (`apps/web/dist/`) と `/op-cdn/*`・`/gist-api/*` の中継を兼任
 - `/op-cdn/*` は OpenProcessing CDN (`deckard.openprocessing.org`) への中継。CORS ヘッダを後付けして同一オリジン化することで、`captureStream` が tainted にならないようにしている
-- OpenProcessing API (`/api/sketch/*`) は viewer から直接叩く構造。per-IP 40 req/min の制限はユーザ単位なので、利用者が増えても全体で枯れない
-- Gist は GitHub API (`api.github.com/gists/*`) を viewer から直接叩く。こちらも proxy 不要（ACAO が `*`）
+- OpenProcessing API (`/api/sketch/*`) は viewer から認証なしで直接叩く構造。OpenProcessing は現在、全リクエストにトークンを求めており（毎分 40 回）、認証なしでは IP 単位の非常に低い制限ですぐ 429 になる。中継の導入は規約の確認待ち（[#142](https://github.com/shinyaoguri/dropcaster/issues/142)）
+- Gist は同一オリジンの `/gist-api/gists/<id>` を優先する。Worker が secret の `GITHUB_TOKEN`（権限なし）で GitHub API に問い合わせ、ETag で鮮度を確かめるので、同じネットワークから大人数が使っても利用者の IP の枠（未認証 60 req/時）を消費しない。中継が使えないとき（トークン未設定・障害）は viewer が `api.github.com` へ直接つなぐ（[ADR 0017](docs/decisions/0017-hosted-gist-api-proxy.md)）
 - レート制限 (OP は HTTP 429、GitHub は 60 req/時) に当たった場合は countdown UI で自動再試行
 
 ## 長時間運用のコツ

@@ -23,8 +23,11 @@
       // 実体は同じ Worker (apps/web/src/worker.ts) が deckard.openprocessing.org への
       // proxy として捌く。これにより iframe (about:srcdoc) 内のアセット参照は
       // 全て同一オリジンとなり、crossOrigin・SW・キャッシュの取り扱いがシンプルになる。
+      // gistApiBaseUrl ('/gist-api') も同じ Worker の GitHub Gist API 中継を指す。
+      // 共有回線から数十人が使っても利用者の IP の枠を消費しない (#142)。
       window.__DROPCASTER_CONFIG__ = {
         assetProxyBaseUrl: '/op-cdn',
+        gistApiBaseUrl: '/gist-api',
         enablePwa: true,
         cacheVersion: '0.2.0',
       };

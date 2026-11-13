@@ -28,5 +28,10 @@ export class GistNotFoundError extends Error {
   constructor(gistId: string);
 }
 
-export function fetchGist(gistId: string): Promise<GistData>;
+export interface FetchGistOptions {
+  /** 同一オリジンの中継のベース (例: '/gist-api')。指定すると `${proxyBaseUrl}/gists/{id}` を先に試す */
+  proxyBaseUrl?: string;
+}
+
+export function fetchGist(gistId: string, options?: FetchGistOptions): Promise<GistData>;
 export function normalizeGistId(value: unknown): string;
