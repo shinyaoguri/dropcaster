@@ -47,7 +47,7 @@ function fakeFetch(responses) {
 }
 
 /**
- * @param {{ responses?: Array<Response | Error>, token?: string, cache?: ReturnType<typeof fakeCache> }} [options]
+ * @param {{ responses?: Array<Response | Error>, token?: string, cache?: ReturnType<typeof fakeCache>, log?: (message: string) => void }} [options]
  */
 function setup(options = {}) {
   const { responses = [], cache = fakeCache() } = options;
@@ -63,6 +63,7 @@ function setup(options = {}) {
     token,
     now: () => now,
     waitUntil: (p) => { pending.push(p); },
+    log: options.log ?? (() => {}),
   };
   return {
     fetch,
@@ -154,13 +155,11 @@ test('a deleted gist (404) drops the cache and returns 404', async () => {
 });
 
 /** @type {Array<[string, () => Response | Error]>} */
-const upstreamFailures = [
-  ['rate limit (403 + remaining 0)', () => upstream(403, '{}', { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1794590000' })],
-  ['secondary rate limit (429)', () => upstream(429, '{}', { 'retry-after': '60' })],
+const transientFailures = [
   ['server error (502)', () => upstream(502, 'bad gateway')],
   ['network failure', () => new Error('network down')],
 ];
-for (const [label, res] of upstreamFailures) {
+for (const [label, res] of transientFailures) {
   test(`upstream ${label} serves the cached copy marked stale`, async () => {
     const s = setup({ responses: [upstream(200, gistBody('v1'), { etag: 'W/"v1"' }), res()] });
     await s.request();
@@ -170,6 +169,29 @@ for (const [label, res] of upstreamFailures) {
     assert.equal(out.headers.get('x-dc-gist-proxy'), 'stale');
     assert.equal(out.headers.get('x-dc-stale'), '1');
     assert.match(await out.text(), /v1/);
+  });
+}
+
+// トークンの失効・枠の枯渇は一時的な障害ではない。古い版を 200 で返し続けると、
+// 作者が直しても反映されないまま (エッジ TTL の間) 気付けない。キャッシュがあっても
+// 上流のステータスを返し、クライアントに直接取得 (最新) へ切り替えさせる。
+/** @type {Array<[string, () => Response]>} */
+const tokenFailures = [
+  ['token rejected (401)', () => upstream(401, '{"message":"Bad credentials"}')],
+  ['rate limit (403 + remaining 0)', () => upstream(403, '{}', { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1794590000' })],
+  ['secondary rate limit (429)', () => upstream(429, '{}', { 'retry-after': '60' })],
+];
+for (const [label, res] of tokenFailures) {
+  test(`upstream ${label} is passed through even with a cache, and logged`, async () => {
+    const logs = [];
+    const s = setup({ responses: [upstream(200, gistBody('v1'), { etag: 'W/"v1"' }), res()], log: (m) => logs.push(m) });
+    await s.request();
+    s.advance(GIST_PROXY_FRESH_MS);
+    const out = await s.request();
+    assert.notEqual(out.status, 200);
+    assert.equal(out.headers.get('x-dc-gist-proxy'), 'error');
+    assert.equal(out.headers.get('x-dc-stale'), null);
+    assert.equal(logs.length, 1, 'メンテナが失効・枯渇に気付けるよう記録する');
   });
 }
 
@@ -211,6 +233,12 @@ test('only GET /gist-api/gists/<hex id> is proxied', async () => {
   }
   assert.equal((await s.request(`/gist-api/gists/${ID}`, { method: 'POST' })).status, 405);
   assert.equal(s.fetch.calls.length, 0);
+});
+
+test('the cache key stays on the request origin (Cloudflare caches only in-zone URLs)', async () => {
+  const s = setup({ responses: [upstream(200, gistBody('v1'), { etag: 'W/"v1"' })] });
+  await s.request();
+  assert.deepEqual([...s.cache.store.keys()], [`https://dropcaster.example/gist-api/gists/${ID}`]);
 });
 
 test('upper-case ids are normalized to the same cache entry', async () => {

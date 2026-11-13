@@ -47,6 +47,7 @@ export default {
         token: env.GITHUB_TOKEN,
         now: () => Date.now(),
         waitUntil: (promise) => ctx.waitUntil(promise),
+        log: (message) => console.warn(message),
       });
     }
 

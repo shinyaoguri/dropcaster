@@ -6,8 +6,15 @@
 // 枠を使わない。
 //
 // 鮮度は ETag で確かめる。認証付きの 304 は GitHub の枠を消費しないので、毎回最新を
-// 確かめつつ、枠を使うのは Gist の中身が変わったときだけになる。FRESH_MS 以内の
-// 再要求は問い合わせずに返し、同時アクセス (教室で一斉に開く等) をまとめる。
+// 確かめつつ、枠を使うのは Gist の中身が変わったときだけになる。直前の取得から
+// FRESH_MS 以内の再要求は問い合わせずに返す (教室で続けて開かれる分をまとめる)。
+// キャッシュが空のとき・期限切れ直後に同時に来た要求は、それぞれ問い合わせる
+// (多くは 304 で枠を使わないので、要求を待ち合わせる仕組みは持たない)。
+//
+// 手元の版 (stale) を返すのは、GitHub 側の一時的な障害 (5xx・通信失敗) のときだけ。
+// トークンの失効 (401) や枠の枯渇 (403 + remaining 0 / 429) は一時的ではなく、古い版を
+// 返し続けると作者の修正が反映されないまま気付けない。上流のステータスを返して
+// クライアントに直接取得 (最新) へ切り替えさせ、log でメンテナに知らせる。
 //
 // worker.ts から振り分けるだけにして、fetch / cache / 時刻を差し替えられる形にしている
 // (tests/gist-proxy.test.js が Node から直接 import する。他モジュールを import しないこと)。
@@ -37,6 +44,8 @@ export interface GistProxyDeps {
   token?: string;
   now: () => number;
   waitUntil: (promise: Promise<unknown>) => void;
+  /** トークンの失効・枠の枯渇など、メンテナが対処すべき事象の記録 (Workers Logs)。 */
+  log: (message: string) => void;
 }
 
 type ProxyState = 'hit' | 'revalidated' | 'miss' | 'stale' | 'error' | 'unconfigured';
@@ -54,7 +63,8 @@ export async function handleGistApi(req: Request, url: URL, deps: GistProxyDeps)
   // すぐ枯れる。中継を断り、クライアントに GitHub への直接取得へ切り替えさせる。
   if (!deps.token) return respond(req, new Response('Gist proxy is not configured', { status: 503 }), 'unconfigured');
 
-  const cacheKey = new Request(`https://gist-proxy.internal/gists/${id}`);
+  // Cloudflare の Cache API はゾーン内の URL を鍵にする。要求元のオリジンで、ID を正規化した URL を使う。
+  const cacheKey = new Request(`${url.origin}${GIST_PROXY_PREFIX}gists/${id}`);
   const cached = await deps.cache.match(cacheKey);
   if (cached && deps.now() - Number(cached.headers.get(FETCHED_AT_HEADER) || 0) < GIST_PROXY_FRESH_MS) {
     return respond(req, cached, 'hit');
@@ -92,9 +102,18 @@ export async function handleGistApi(req: Request, url: URL, deps: GistProxyDeps)
     deps.waitUntil(deps.cache.delete(cacheKey));
     return respond(req, passthrough(upstream), 'error');
   }
-  // 制限 (403 + remaining 0 / 429)・認証失敗・5xx。手元に版があればそれを返して投影を止めない。
+  if (isTokenProblem(upstream)) {
+    deps.log(`gist-proxy: GitHub responded ${upstream.status} (remaining=${upstream.headers.get('x-ratelimit-remaining') ?? '-'}); check GITHUB_TOKEN`);
+    return respond(req, passthrough(upstream), 'error');
+  }
+  // GitHub 側の一時的な障害 (5xx など)。手元に版があればそれを返して投影を止めない。
   if (cached) return respond(req, cached, 'stale');
   return respond(req, passthrough(upstream), 'error');
+}
+
+/** トークンの失効・権限不足・枠の枯渇。待っても直らないか、待つ間はトークンの枠が使えない。 */
+function isTokenProblem(upstream: Response): boolean {
+  return upstream.status === 401 || upstream.status === 403 || upstream.status === 429;
 }
 
 /** キャッシュに置く形。本文と、再検証・表示に要るヘッダだけを持つ。 */

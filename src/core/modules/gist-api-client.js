@@ -5,7 +5,7 @@
 // ファイル内容まで含めて返すので、OP のように meta と code の 2 本を叩く必要はない。
 //
 // Browser (viewer の GistSource) と Node (テスト) の両方から import される想定:
-//   - api.github.com は Access-Control-Allow-Origin: * なので proxy は不要
+//   - api.github.com は Access-Control-Allow-Origin: * なので、直接取得に CORS 用の proxy は要らない
 //   - User-Agent は Browser だと禁止ヘッダなので付けない
 //
 // 直接取得には認証を付けない (未認証は 60 req/時・IP 単位)。共有回線から数十人が
@@ -60,8 +60,9 @@ export class GistNotFoundError extends Error {
  * 公開 Gist を取得して、扱いやすい形に正規化して返す。
  *
  * `options.proxyBaseUrl` (例: '/gist-api') があれば `${proxyBaseUrl}/gists/{id}` を先に試す。
- * 中継の 404 は「Gist が無い」として確定させ、それ以外の失敗 (503 未設定・制限・5xx・
- * 通信失敗・JSON でない応答) では GitHub への直接取得を 1 回試す。
+ * 中継が返した 404 (x-dc-gist-proxy 付き) は「Gist が無い」として確定させ、それ以外の失敗
+ * (中継の無い 404・503 未設定・トークンの失効や枯渇・5xx・通信失敗・JSON でない応答) では
+ * GitHub への直接取得を 1 回試す。
  *
  * @param {string} gistId 32 桁 hex の Gist ID
  * @param {{ proxyBaseUrl?: string }} [options]
@@ -97,8 +98,9 @@ async function fetchViaProxy(id, proxyBaseUrl) {
   } catch {
     return undefined;
   }
-  // 中継は GitHub の 404 をそのまま返す。直接取得しても結果は同じなので枠を使わない。
-  if (response.status === 404) throw new GistNotFoundError(id);
+  // 中継 (x-dc-gist-proxy 付き) の 404 は GitHub の 404 そのもの。直接取得しても結果は同じなので枠を使わない。
+  // ヘッダの無い 404 は、そのパスに中継が居ない (静的ホスト等) か対象外の ID なので直接取得へ。
+  if (response.status === 404 && response.headers.has('x-dc-gist-proxy')) throw new GistNotFoundError(id);
   if (!response.ok) return undefined;
   try {
     return await response.json();

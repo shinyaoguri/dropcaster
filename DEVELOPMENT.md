@@ -89,8 +89,12 @@ viewer は従来どおり `api.github.com` へ直接つなぐので、登録前�
    「Public repositories (read-only)」、Permissions は何も付けない（公開 Gist の読み取りに権限は要らない）。
    有効期限を設け、失効前に作り直す。
 2. `cd apps/web && npx wrangler secret put GITHUB_TOKEN` で登録する（値はプロンプトで入力し、ファイルやコマンドラインに残さない）。
-3. デプロイ後に `/gist-api/gists/<公開 Gist の ID>` を開き、応答ヘッダの `x-dc-gist-proxy` が
-   `miss` / `revalidated` / `hit` のいずれかであること（`unconfigured` でないこと）を確かめる。
+3. デプロイ後に `curl -sI https://<ホスト版のドメイン>/gist-api/gists/<公開 Gist の ID>` を実行し、
+   応答ヘッダの `x-dc-gist-proxy` が `miss` / `revalidated` / `hit` のいずれかであること
+   （`unconfigured` や `error` でないこと）を確かめる。ブラウザのアドレス欄で開くとナビゲーション要求になり、
+   SPA fallback の index.html が返ることがあるので、curl か `fetch` で確かめる。
+4. トークンが失効したり枠が尽きたりすると、中継は上流のエラーを返し、viewer は直接取得へ戻る。
+   Workers Logs に `gist-proxy: GitHub responded ...` が出ていたらトークンを作り直して登録し直す。
 
 手元で Worker ごと確かめるときは、`npm run build:web` のあと `apps/web` で `npx wrangler dev` を起動する。
 トークンは gitignore 済みの `apps/web/.dev.vars` に `GITHUB_TOKEN=...` と書くか、
