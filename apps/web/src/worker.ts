@@ -1,18 +1,23 @@
 // dropcaster 統合 Worker
 //
-// 1 つの Cloudflare Worker で 2 つの責務を兼ねる:
+// 1 つの Cloudflare Worker で 3 つの責務を兼ねる:
 //   1. /op-cdn/* — OpenProcessing CDN (deckard.openprocessing.org) への proxy。
 //                  Access-Control-Allow-Origin: * を後付けして CORS を有効化。
 //                  これにより viewer の iframe (about:srcdoc) から
 //                  crossOrigin='anonymous' で取得しても canvas が tainted に
 //                  ならず、captureStream → 投影マッピングが成立する。
-//   2. それ以外  — wrangler.toml の `[assets]` で宣言した dist/ の静的ファイルを返す。
+//   2. /gist-api/gists/<id> — GitHub Gist API の中継 (gist-proxy.ts)。共有回線から
+//                  数十人が使っても利用者の IP の枠を消費しないよう、secret の
+//                  GITHUB_TOKEN で問い合わせ、ETag で鮮度を確かめる (ADR 0017)。
+//   3. それ以外  — wrangler.toml の `[assets]` で宣言した dist/ の静的ファイルを返す。
 //                  not_found_handling = "single-page-application" により、未マッチ時は
 //                  index.html を返すので /op/<id> のような SPA ルートも自然に動く。
 //
 // 旧構成では proxy が別 Worker (workers.dev) にあり、viewer はクロスオリジン URL を
 // 書き換えていた。本統合により proxy は **同一オリジン** (`/op-cdn/...`) になり、
 // CORS の特殊扱い・SW の cross-origin キャッシュ判定・dev/prod 間の URL 差異が消える。
+
+import { GIST_PROXY_PREFIX, handleGistApi } from './gist-proxy';
 
 const OP_CDN_PREFIX = '/op-cdn/';
 const UPSTREAM_ORIGIN = 'https://deckard.openprocessing.org';
@@ -23,6 +28,8 @@ const CACHE_TTL_EDGE = 60 * 60 * 24 * 30;   // 30 日 (Cloudflare エッジ s-ma
 
 export interface Env {
   ASSETS: Fetcher;
+  /** Gist 中継用の GitHub トークン (権限なし)。`wrangler secret put GITHUB_TOKEN` で登録する。 */
+  GITHUB_TOKEN?: string;
 }
 
 export default {
@@ -31,6 +38,16 @@ export default {
 
     if (url.pathname.startsWith(OP_CDN_PREFIX)) {
       return proxyOpCdn(req, url, ctx);
+    }
+
+    if (url.pathname.startsWith(GIST_PROXY_PREFIX)) {
+      return handleGistApi(req, url, {
+        fetch: (input, init) => fetch(input, init),
+        cache: caches.default,
+        token: env.GITHUB_TOKEN,
+        now: () => Date.now(),
+        waitUntil: (promise) => ctx.waitUntil(promise),
+      });
     }
 
     // 静的アセット (HTML / JS / CSS / sw.js / manifest / アイコン)。

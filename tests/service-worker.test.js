@@ -28,6 +28,20 @@ test('generateServiceWorker emits a multi-bucket SW with all expected cache buck
   });
 });
 
+test('generateServiceWorker sends the same-origin Gist proxy through NetworkFirst, not the SWR runtime bucket', async () => {
+  await withTempDir(async (dir) => {
+    await generateServiceWorker(dir);
+    const sw = await readFile(join(dir, 'sw.js'), 'utf-8');
+    // ホスト版の /gist-api/* (Worker の中継, #142) が同一オリジン GET の SWR に落ちると、
+    // 作者が直した後も古い Gist を返してしまう。api.github.com 直と同じ NetworkFirst に乗せる。
+    const branch = sw.match(/if \(url\.pathname\.startsWith\('\/gist-api\/'\)\) \{\s*event\.respondWith\(([^;]+)\);/);
+    assert.ok(branch, '/gist-api/ の分岐が無い');
+    assert.equal(branch[1], 'networkFirst(req, GIST_CACHE)');
+    assert.ok(sw.indexOf("startsWith('/gist-api/')") < sw.indexOf('staleWhileRevalidate(req, RUNTIME_CACHE)'),
+      '/gist-api/ の分岐は同一オリジンの SWR より前に置く');
+  });
+});
+
 test('generateServiceWorker respects an explicit cacheVersion option', async () => {
   await withTempDir(async (dir) => {
     await generateServiceWorker(dir, { cacheVersion: 'v42-test' });

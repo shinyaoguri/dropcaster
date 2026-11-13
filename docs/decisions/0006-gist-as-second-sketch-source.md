@@ -11,6 +11,7 @@
   - **CORS shim は入れない**。OP の html モードと同じく作者のドキュメント構造を尊重する。p5 の `loadImage` は自前で `crossOrigin='anonymous'` を立てるため、実害は小さい
   - **Service Worker の戦略は OP メタと変える**。OP の作品が実質固定なのに対し、Gist は同じ ID のまま更新される（canvastage は同じ Gist を PATCH で上書きする）。OP メタの CacheFirst（24h）ではなく NetworkFirst + キャッシュ fallback にし、鮮度を優先してキャッシュはオフライン時の保険として持つ
   - 認証は付けない。未認証の GitHub API は 60 req/時・IP 単位で、投影用に作品を開く頻度なら足りる
+    （**ホスト版については [ADR 0017](0017-hosted-gist-api-proxy.md) で改めた**。授業のように同じ IP から数十人が使うと枯渇するため、Worker がトークン付きで中継する）
 - **影響**:
   - 3 つ目の取り込み元を足すときは `html-doc-builder` に載せ、`parseSketchRef` に判定を足し、ルートを 1 本増やすだけで済む。逆に、ID 空間が OP や Gist と重なるソースを足すときは「入力欄 1 つ」の前提が崩れるのでこの ADR を見直すこと
   - 同一オリジン・sandbox なし iframe で第三者コードを実行するリスク（[ADR 0001](0001-same-origin-sandboxless-iframe.md)）の母集団が Gist にも広がる。新しい種類のリスクではないが範囲は広がるので、隔離実行の検討（[#35](https://github.com/shinyaoguri/dropcaster/issues/35)）の優先度はその分上がる

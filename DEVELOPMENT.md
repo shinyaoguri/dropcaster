@@ -78,6 +78,24 @@ npx /path/to/dropcaster init my-gallery
   PR の base を変更した場合は、reopen または追加 push で新しい base に対する `verify` を実行してから merge する。
 - `.github/workflows/deploy.yml` — main への push（対象パス変更時）で
   Cloudflare Workers へデプロイする。
+
+### ホスト版の secret（Gist 中継）
+
+ホスト版の `/gist-api/*` は、Worker の secret `GITHUB_TOKEN` で GitHub API に問い合わせる
+（[ADR 0017](docs/decisions/0017-hosted-gist-api-proxy.md)）。未設定のあいだ Worker は 503 を返し、
+viewer は従来どおり `api.github.com` へ直接つなぐので、登録前にデプロイしても壊れない。
+
+1. GitHub で fine-grained personal access token を作る。Repository access は
+   「Public repositories (read-only)」、Permissions は何も付けない（公開 Gist の読み取りに権限は要らない）。
+   有効期限を設け、失効前に作り直す。
+2. `cd apps/web && npx wrangler secret put GITHUB_TOKEN` で登録する（値はプロンプトで入力し、ファイルやコマンドラインに残さない）。
+3. デプロイ後に `/gist-api/gists/<公開 Gist の ID>` を開き、応答ヘッダの `x-dc-gist-proxy` が
+   `miss` / `revalidated` / `hit` のいずれかであること（`unconfigured` でないこと）を確かめる。
+
+手元で Worker ごと確かめるときは、`npm run build:web` のあと `apps/web` で `npx wrangler dev` を起動する。
+トークンは gitignore 済みの `apps/web/.dev.vars` に `GITHUB_TOKEN=...` と書くか、
+`CLOUDFLARE_INCLUDE_PROCESS_ENV=true` を付けて環境変数で渡す。`npm run dev:web`（Vite）は
+`/gist-api` を `api.github.com` へ認証なしで転送するだけなので、中継の挙動は確かめられない。
 - `.github/workflows/freshness.yml` — 週次（月曜 09:00 JST）で `npm audit` と
   Markdown のリンク切れを検査し、検知したら label:freshness の Issue へ自動起票する。
 - `.github/dependabot.yml` — npm と GitHub Actions の定期 version update（cooldown 7 日）。

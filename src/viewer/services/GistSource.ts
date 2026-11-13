@@ -3,10 +3,12 @@
 // 組み立て、SketchPageController が扱う Sketch 型に詰めて返す。
 //
 // OpenProcessingSource と対になる 2 つ目の取り込み元。OP と違い
-// アセット proxy も engine の概念も無いので、設定 (getConfig) には依存しない。
+// アセット proxy も engine の概念も無い。設定から読むのは API 中継のベース
+// (gistApiBaseUrl) だけで、ホスト版は Worker の /gist-api を優先する (#142)。
 
 import { fetchGist } from '../../core/modules/gist-api-client.js';
 import { assembleGistSketchHtml, resolveGistTitle } from '../../core/modules/gist-sketch-builder.js';
+import { getConfig } from '../config.js';
 import type { Sketch } from '../types/sketch.js';
 
 export class GistSource {
@@ -16,7 +18,7 @@ export class GistSource {
    * (GistNotFoundError / GistRateLimitError / GistFormatError)。
    */
   async resolve(gistId: string): Promise<Sketch> {
-    const gist = await fetchGist(gistId);
+    const gist = await fetchGist(gistId, { proxyBaseUrl: getConfig().gistApiBaseUrl });
     const html = assembleGistSketchHtml({ gist });
     const title = resolveGistTitle(gist);
 

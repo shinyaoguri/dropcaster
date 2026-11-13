@@ -4,7 +4,7 @@
 //   shell    アプリ本体の HTML / JS / CSS / 画像 (same-origin の navigate + assets)
 //   local    ローカル sketch (/sketches/*, /sketches.json)
 //   op-meta  OpenProcessing API (/api/sketch/* / /code)
-//   gist     GitHub Gist API (api.github.com/gists/*)
+//   gist     GitHub Gist API (api.github.com/gists/* と、ホスト版の同一オリジン中継 /gist-api/*)
 //   op-cdn   外部 CDN (cdn.jsdelivr.net 等) と asset proxy のレスポンス
 //   runtime  上記いずれにも該当しない GET (大網)
 //
@@ -104,6 +104,13 @@ self.addEventListener('fetch', (event) => {
     // URL に content hash (h<32hex>) が乗るので immutable 扱いで CacheFirst。
     if (url.pathname.startsWith('/op-cdn/')) {
       event.respondWith(cacheFirst(req, OP_CDN_CACHE));
+      return;
+    }
+    // /gist-api/* は dropcaster Worker の GitHub Gist API 中継 (ホスト版)。
+    // api.github.com 直と同じく NetworkFirst。下の SWR に落とすと、作者が
+    // 直した後も古い Gist を返してしまう。
+    if (url.pathname.startsWith('/gist-api/')) {
+      event.respondWith(networkFirst(req, GIST_CACHE));
       return;
     }
     // local sketch 系 (/sketches.json, /sketches/*)
