@@ -4,10 +4,12 @@ import {
   fetchGist,
   GistNotFoundError,
   GistRateLimitError,
+  GistFormatError,
 } from '../src/core/modules/gist-api-client.js';
 
-// viewer の Gist 取得: ホスト版は同一オリジンの中継 (/gist-api) を優先し、
-// 中継が使えないときだけ GitHub に直接つなぐ (#142)。ギャラリーは中継を設定しない。
+// viewer の Gist 取得: GitHub への直接取得が基本の経路 (#144, ADR 0018)。
+// ホスト版は同一オリジンの中継 (/gist-api) を予備に持ち、直接取得が使えない
+// (教室の IP の枠が枯れた・障害) ときだけ中継を試す。ギャラリーは中継を設定しない。
 
 const ID = '5880276ae98f45363351a5ba4c835ce2';
 const DIRECT = `https://api.github.com/gists/${ID}`;
@@ -40,6 +42,11 @@ function routeFetch(routes) {
 }
 
 const ok = (content) => () => new Response(gistJson(content), { status: 200 });
+const resetIn = (seconds) => String(Math.floor(Date.now() / 1000) + seconds);
+const rateLimited = () => new Response('{}', {
+  status: 403,
+  headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': resetIn(120) },
+});
 
 test('without a proxy it fetches GitHub directly (gallery)', async () => {
   const calls = routeFetch({ [DIRECT]: ok('direct') });
@@ -48,60 +55,78 @@ test('without a proxy it fetches GitHub directly (gallery)', async () => {
   assert.deepEqual(calls, [DIRECT]);
 });
 
-test('with a proxy it uses the proxy and does not touch GitHub directly', async () => {
-  const calls = routeFetch({ [PROXY]: ok('proxied') });
+test('without a proxy a rate limit is reported as is (gallery)', async () => {
+  const calls = routeFetch({ [DIRECT]: rateLimited });
+  await assert.rejects(fetchGist(ID), GistRateLimitError);
+  assert.deepEqual(calls, [DIRECT]);
+});
+
+test('with a proxy configured it still fetches GitHub directly first and leaves the proxy alone', async () => {
+  const calls = routeFetch({ [DIRECT]: ok('direct') });
   const gist = await fetchGist(ID, { proxyBaseUrl: '/gist-api' });
-  assert.equal(gist.files.get('index.html'), 'proxied');
-  assert.deepEqual(calls, [PROXY]);
+  assert.equal(gist.files.get('index.html'), 'direct');
+  assert.deepEqual(calls, [DIRECT]);
 });
 
-test('a trailing slash on the proxy base is tolerated', async () => {
-  const calls = routeFetch({ [PROXY]: ok('proxied') });
-  await fetchGist(ID, { proxyBaseUrl: '/gist-api/' });
-  assert.deepEqual(calls, [PROXY]);
+test('a 404 from GitHub means the gist does not exist; the proxy is not asked', async () => {
+  const calls = routeFetch({ [DIRECT]: () => new Response('{"message":"Not Found"}', { status: 404 }) });
+  await assert.rejects(fetchGist(ID, { proxyBaseUrl: '/gist-api' }), GistNotFoundError);
+  assert.deepEqual(calls, [DIRECT]);
 });
 
-for (const [label, proxy] of [
-  ['unconfigured (503)', () => new Response('', { status: 503 })],
-  ['rate limited (403 + remaining 0)', () => new Response('{}', { status: 403, headers: { 'x-ratelimit-remaining': '0' } })],
+test('a gist without usable files is a format error; the proxy is not asked', async () => {
+  const calls = routeFetch({ [DIRECT]: () => new Response('{"id":"x","files":{}}', { status: 200 }) });
+  await assert.rejects(fetchGist(ID, { proxyBaseUrl: '/gist-api' }), GistFormatError);
+  assert.deepEqual(calls, [DIRECT]);
+});
+
+/** @type {Array<[string, () => Response | Error]>} */
+const directFailures = [
+  ['rate limited (403 + remaining 0)', rateLimited],
+  ['secondary rate limited (429)', () => new Response('{}', { status: 429 })],
   ['server error (502)', () => new Response('', { status: 502 })],
   ['network failure', () => new TypeError('Failed to fetch')],
   ['non-JSON 200', () => new Response('<html>', { status: 200 })],
-]) {
-  test(`falls back to GitHub directly when the proxy is ${label}`, async () => {
-    const calls = routeFetch({ [PROXY]: proxy, [DIRECT]: ok('direct') });
+];
+for (const [label, direct] of directFailures) {
+  test(`falls back to the proxy when GitHub directly is ${label}`, async () => {
+    const calls = routeFetch({ [DIRECT]: direct, [PROXY]: ok('proxied') });
     const gist = await fetchGist(ID, { proxyBaseUrl: '/gist-api' });
-    assert.equal(gist.files.get('index.html'), 'direct');
-    assert.deepEqual(calls, [PROXY, DIRECT]);
+    assert.equal(gist.files.get('index.html'), 'proxied');
+    assert.deepEqual(calls, [DIRECT, PROXY]);
   });
 }
 
-test('a 404 from the proxy means the gist does not exist; GitHub is not asked again', async () => {
-  const calls = routeFetch({ [PROXY]: () => new Response('{}', { status: 404, headers: { 'x-dc-gist-proxy': 'error' } }) });
-  await assert.rejects(fetchGist(ID, { proxyBaseUrl: '/gist-api' }), GistNotFoundError);
-  assert.deepEqual(calls, [PROXY]);
+test('a trailing slash on the proxy base is tolerated', async () => {
+  const calls = routeFetch({ [DIRECT]: rateLimited, [PROXY]: ok('proxied') });
+  await fetchGist(ID, { proxyBaseUrl: '/gist-api/' });
+  assert.deepEqual(calls, [DIRECT, PROXY]);
 });
 
-test('a 404 that did not come from the proxy (no proxy deployed there) falls back to GitHub directly', async () => {
-  // gistApiBaseUrl を設定したが、そのパスに中継が居ない静的ホスト。全 Gist が「見つからない」にならない。
-  const calls = routeFetch({ [PROXY]: () => new Response('Not Found', { status: 404 }), [DIRECT]: ok('direct') });
-  const gist = await fetchGist(ID, { proxyBaseUrl: '/gist-api' });
-  assert.equal(gist.files.get('index.html'), 'direct');
-  assert.deepEqual(calls, [PROXY, DIRECT]);
-});
-
-test('when both the proxy and GitHub are rate limited it reports the direct rate limit', async () => {
-  const reset = Math.floor(Date.now() / 1000) + 120;
-  routeFetch({
-    [PROXY]: () => new Response('', { status: 503 }),
-    [DIRECT]: () => new Response('{}', {
-      status: 403,
-      headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) },
-    }),
-  });
+test('when GitHub directly is rate limited and the proxy is unavailable it reports the direct rate limit', async () => {
+  routeFetch({ [DIRECT]: rateLimited, [PROXY]: () => new Response('', { status: 503 }) });
   await assert.rejects(fetchGist(ID, { proxyBaseUrl: '/gist-api' }), (err) => {
     assert.ok(err instanceof GistRateLimitError);
     assert.ok(err.retryAfterMs > 60_000 && err.retryAfterMs <= 120_000);
     return true;
   });
+});
+
+test('when both fail with errors other than a rate limit it reports the direct error', async () => {
+  routeFetch({ [DIRECT]: () => new Response('{"message":"boom"}', { status: 500 }), [PROXY]: () => new TypeError('Failed to fetch') });
+  await assert.rejects(fetchGist(ID, { proxyBaseUrl: '/gist-api' }), /GitHub API error \(500\): boom/);
+});
+
+test('a 404 from the proxy after a direct failure means the gist does not exist', async () => {
+  routeFetch({
+    [DIRECT]: rateLimited,
+    [PROXY]: () => new Response('{}', { status: 404, headers: { 'x-dc-gist-proxy': 'error' } }),
+  });
+  await assert.rejects(fetchGist(ID, { proxyBaseUrl: '/gist-api' }), GistNotFoundError);
+});
+
+test('a 404 that did not come from the proxy (no proxy deployed there) reports the direct error', async () => {
+  // gistApiBaseUrl を設定したが、そのパスに中継が居ない静的ホスト。全 Gist が「見つからない」にならない。
+  routeFetch({ [DIRECT]: rateLimited, [PROXY]: () => new Response('Not Found', { status: 404 }) });
+  await assert.rejects(fetchGist(ID, { proxyBaseUrl: '/gist-api' }), GistRateLimitError);
 });

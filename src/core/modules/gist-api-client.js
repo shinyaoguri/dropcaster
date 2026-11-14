@@ -8,11 +8,12 @@
 //   - api.github.com は Access-Control-Allow-Origin: * なので、直接取得に CORS 用の proxy は要らない
 //   - User-Agent は Browser だと禁止ヘッダなので付けない
 //
-// 直接取得には認証を付けない (未認証は 60 req/時・IP 単位)。共有回線から数十人が
-// 使うと枯渇するので、ホスト版は同一オリジンの中継 (/gist-api、Worker がトークン付きで
-// 問い合わせる) を proxyBaseUrl で渡し、そちらを優先する (#142, ADR 0017)。
-// 中継が使えないとき (未設定・制限・障害) だけ直接取得へ切り替え、それも枯渇したら
-// GistRateLimitError にして UI 側で待ち時間を出す。
+// 直接取得には認証を付けない (未認証は 60 req/時・IP 単位)。これが基本の経路で、ふだんは
+// ギャラリーもホスト版も同じく各利用者の IP から GitHub へつなぐ (#144, ADR 0018)。
+// 共有回線から数十人が使うと枠が枯れるので、ホスト版は同一オリジンの中継 (/gist-api、
+// Worker がトークン付きで問い合わせる) を proxyBaseUrl で渡し、直接取得が使えないとき
+// (制限・障害) だけ中継を試す (#142, ADR 0017)。中継も使えなければ直接取得のエラーを投げ、
+// 制限なら GistRateLimitError にして UI 側で待ち時間を出す。
 
 import { GIST_CONFIG } from './constants.js';
 
@@ -59,10 +60,11 @@ export class GistNotFoundError extends Error {
 /**
  * 公開 Gist を取得して、扱いやすい形に正規化して返す。
  *
- * `options.proxyBaseUrl` (例: '/gist-api') があれば `${proxyBaseUrl}/gists/{id}` を先に試す。
- * 中継が返した 404 (x-dc-gist-proxy 付き) は「Gist が無い」として確定させ、それ以外の失敗
- * (中継の無い 404・503 未設定・トークンの失効や枯渇・5xx・通信失敗・JSON でない応答) では
- * GitHub への直接取得を 1 回試す。
+ * まず GitHub へ直接取得する。成功・404 (Gist が無い)・中身が扱えない (GistFormatError) なら
+ * その結果で確定する。それ以外の失敗 (制限・その他の 4xx/5xx・通信失敗・JSON でない応答) で
+ * `options.proxyBaseUrl` (例: '/gist-api') があれば `${proxyBaseUrl}/gists/{id}` を予備として試す。
+ * 中継が返した 404 (x-dc-gist-proxy 付き) は「Gist が無い」として確定させ、中継も使えなければ
+ * 直接取得のエラーを投げる。
  *
  * @param {string} gistId 32 桁 hex の Gist ID
  * @param {{ proxyBaseUrl?: string }} [options]
@@ -73,16 +75,22 @@ export async function fetchGist(gistId, options = {}) {
   const id = normalizeGistId(gistId);
   if (!id) throw new Error(`invalid gist id: "${gistId}"`);
 
+  const direct = await fetchDirect(id);
+  if ('data' in direct) return normalizeGist(id, direct.data);
+  // 直接の 404 は GitHub の答えそのもの。中継に聞いても同じなので、トークンの枠を使わない。
+  if (direct.error instanceof GistNotFoundError) throw direct.error;
+
   const proxyBaseUrl = normalizeString(options.proxyBaseUrl).replace(/\/+$/, '');
   if (proxyBaseUrl) {
     const data = await fetchViaProxy(id, proxyBaseUrl);
     if (data !== undefined) return normalizeGist(id, data);
   }
-  return fetchDirect(id);
+  throw direct.error;
 }
 
 /**
- * 中継から Gist の JSON を取る。使えなかったら undefined を返し、呼び出し側が直接取得へ切り替える。
+ * 中継 (予備の経路) から Gist の JSON を取る。使えなかったら undefined を返し、
+ * 呼び出し側が直接取得のエラーを投げる。
  *
  * @param {string} id
  * @param {string} proxyBaseUrl
@@ -98,8 +106,8 @@ async function fetchViaProxy(id, proxyBaseUrl) {
   } catch {
     return undefined;
   }
-  // 中継 (x-dc-gist-proxy 付き) の 404 は GitHub の 404 そのもの。直接取得しても結果は同じなので枠を使わない。
-  // ヘッダの無い 404 は、そのパスに中継が居ない (静的ホスト等) か対象外の ID なので直接取得へ。
+  // 中継 (x-dc-gist-proxy 付き) の 404 は GitHub の 404 そのもの (直前に消された・非公開化された)。
+  // ヘッダの無い 404 は、そのパスに中継が居ない (静的ホスト等) ので使えないとみなす。
   if (response.status === 404 && response.headers.has('x-dc-gist-proxy')) throw new GistNotFoundError(id);
   if (!response.ok) return undefined;
   try {
@@ -110,10 +118,11 @@ async function fetchViaProxy(id, proxyBaseUrl) {
 }
 
 /**
- * GitHub API へ認証なしで直接取得する (ギャラリー、または中継が使えないとき)。
+ * GitHub API へ認証なしで直接取得する (基本の経路)。失敗は投げずに返し、
+ * 呼び出し側が中継へ切り替えるか、そのまま投げるかを決める。
  *
  * @param {string} id
- * @returns {Promise<import('./gist-api-client.js').GistData>}
+ * @returns {Promise<{ data: unknown } | { error: unknown }>}
  */
 async function fetchDirect(id) {
   /** @type {Record<string, string>} */
@@ -124,27 +133,29 @@ async function fetchDirect(id) {
   // User-Agent は Browser だと禁止ヘッダ。Node でだけ付ける (GitHub API は UA 必須)。
   if (!IS_BROWSER) headers['User-Agent'] = 'dropcaster';
 
-  const response = await fetch(`${GIST_CONFIG.apiBaseUrl}/gists/${id}`, {
-    headers,
-    signal: AbortSignal.timeout(GIST_CONFIG.apiRequestTimeout),
-  });
+  let response;
+  try {
+    response = await fetch(`${GIST_CONFIG.apiBaseUrl}/gists/${id}`, {
+      headers,
+      signal: AbortSignal.timeout(GIST_CONFIG.apiRequestTimeout),
+    });
+  } catch (error) {
+    return { error };
+  }
 
-  if (response.status === 404) throw new GistNotFoundError(id);
+  if (response.status === 404) return { error: new GistNotFoundError(id) };
   if (isRateLimited(response)) {
-    throw new GistRateLimitError(rateLimitRetryAfterMs(response.headers.get('x-ratelimit-reset')));
+    return { error: new GistRateLimitError(rateLimitRetryAfterMs(response.headers.get('x-ratelimit-reset'))) };
   }
   if (!response.ok) {
-    throw new Error(await formatApiError(response));
+    return { error: new Error(await formatApiError(response)) };
   }
 
-  /** @type {unknown} */
-  let data;
   try {
-    data = await response.json();
+    return { data: await response.json() };
   } catch {
-    throw new Error('GitHub API returned a non-JSON response');
+    return { error: new Error('GitHub API returned a non-JSON response') };
   }
-  return normalizeGist(id, data);
 }
 
 /**

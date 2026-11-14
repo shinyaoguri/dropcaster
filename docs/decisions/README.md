@@ -27,4 +27,5 @@
 | [0014](0014-interactive-venue-editing.md) | 会場のGUI編集を1ドラッグ単位で確定し、3D操作と数値入力を共有する | 採用 |
 | [0015](0015-standalone-venue-calibration.md) | 会場作成と実プロジェクタでの位置合わせを独立させ、3Dを作品のプレビューに特化する | 採用 |
 | [0016](0016-shared-development-workflow.md) | エージェント共通の開発規約、完了条件と検証の対応、反証と視覚的証跡、CI責務の分離 | 採用 |
-| [0017](0017-hosted-gist-api-proxy.md) | ホスト版は Gist API を Worker がトークン付きで中継し、利用者の IP の枠に依存しない | 採用 |
+| [0017](0017-hosted-gist-api-proxy.md) | ホスト版は Gist API を Worker がトークン付きで中継し、利用者の IP の枠に依存しない | 採用（取得順は0018で更新） |
+| [0018](0018-gist-direct-first.md) | Gist は直接取得を基本とし、ホスト版の Worker 中継は直接取得が使えないときの予備にする | 採用 |

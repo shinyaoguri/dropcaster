@@ -82,8 +82,10 @@ npx /path/to/dropcaster init my-gallery
 ### ホスト版の secret（Gist 中継）
 
 ホスト版の `/gist-api/*` は、Worker の secret `GITHUB_TOKEN` で GitHub API に問い合わせる
-（[ADR 0017](docs/decisions/0017-hosted-gist-api-proxy.md)）。未設定のあいだ Worker は 503 を返し、
-viewer は従来どおり `api.github.com` へ直接つなぐので、登録前にデプロイしても壊れない。
+（[ADR 0017](docs/decisions/0017-hosted-gist-api-proxy.md)）。viewer が使うのは、`api.github.com` への
+直接取得が制限や障害で使えないときだけ（[ADR 0018](docs/decisions/0018-gist-direct-first.md)）。
+未設定のあいだ Worker は 503 を返し、viewer は直接取得のエラーを出すので、登録前にデプロイしても
+挙動は中継の無い場合と同じになる。
 
 1. GitHub で fine-grained personal access token を作る。Repository access は
    「Public repositories (read-only)」、Permissions は何も付けない（公開 Gist の読み取りに権限は要らない）。
@@ -93,7 +95,8 @@ viewer は従来どおり `api.github.com` へ直接つなぐので、登録前�
    応答ヘッダの `x-dc-gist-proxy` が `miss` / `revalidated` / `hit` のいずれかであること
    （`unconfigured` や `error` でないこと）を確かめる。ブラウザのアドレス欄で開くとナビゲーション要求になり、
    SPA fallback の index.html が返ることがあるので、curl か `fetch` で確かめる。
-4. トークンが失効したり枠が尽きたりすると、中継は上流のエラーを返し、viewer は直接取得へ戻る。
+4. トークンが失効したり枠が尽きたりすると、中継は上流のエラーを返し、IP の枠が枯れた利用者には
+   直接取得の制限エラーが出る。
    Workers Logs に `gist-proxy: GitHub responded ...` が出ていたらトークンを作り直して登録し直す。
 
 手元で Worker ごと確かめるときは、`npm run build:web` のあと `apps/web` で `npx wrangler dev` を起動する。

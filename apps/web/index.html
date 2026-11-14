@@ -24,7 +24,7 @@
       // proxy として捌く。これにより iframe (about:srcdoc) 内のアセット参照は
       // 全て同一オリジンとなり、crossOrigin・SW・キャッシュの取り扱いがシンプルになる。
       // gistApiBaseUrl ('/gist-api') も同じ Worker の GitHub Gist API 中継を指す。
-      // 共有回線から数十人が使っても利用者の IP の枠を消費しない (#142)。
+      // Gist は直接取得が基本で、共有回線で IP の枠が枯れたときだけ中継を使う (#142, #144)。
       window.__DROPCASTER_CONFIG__ = {
         assetProxyBaseUrl: '/op-cdn',
         gistApiBaseUrl: '/gist-api',
