@@ -4,23 +4,27 @@ export function installPracticeStyles(): void {
   style.textContent = `
     .dc-control-shell.dc-mapping-workspace { display:flex; flex-direction:column; min-height:0; }
     .dc-inline-editor .dc-mapping-workspace > .control-container { flex:1; height:auto; min-height:0; }
-    .dc-practice-toolbar { display:flex; align-items:center; gap:12px; padding:8px 14px; min-height:46px; box-sizing:border-box; background:#242424; border-bottom:1px solid #444; color:#eee; font:13px system-ui; }
-    .dc-practice-toolbar strong { white-space:nowrap; font-size:14px; }
-    #dc-practice-status { flex:1; color:#aaa; font-size:12px; }
-    #dc-practice-status.is-error { color:#fbbf24; }
-    .dc-practice-toolbar button { border:1px solid #555; border-radius:5px; color:#eee; background:#333; padding:7px 11px; cursor:pointer; white-space:nowrap; }
-    .dc-practice-toolbar button:hover { background:#444; border-color:#888; }
-    .dc-practice-toolbar button:focus-visible { outline:2px solid #3b82f6; outline-offset:2px; }
-    .dc-workspace-menu { position:relative; flex-shrink:0; }
-    .dc-workspace-menu > summary { display:flex; gap:7px; align-items:center; padding:7px 10px; border:1px solid #555; border-radius:5px; cursor:pointer; list-style:none; background:#333; }
+    /* 上部バーは持たず、「設定・共有」と閉じるはツールカラムの見出し行に置く。
+       見出しは狭い画面で全体が縦スクロールしても流れないよう固定し、メニューの包含ブロックにもする。 */
+    .dc-mapping-workspace .tool-column > .column-header { position:sticky; top:0; z-index:20; gap:8px; padding:0 8px 0 16px; }
+    .dc-workspace-actions { display:flex; align-items:center; gap:2px; margin-left:auto; color:#eee; font:12px system-ui; }
+    .dc-workspace-actions button { border:1px solid transparent; border-radius:5px; color:#eee; background:transparent; cursor:pointer; white-space:nowrap; }
+    .dc-workspace-actions button:focus-visible { outline:2px solid #3b82f6; outline-offset:2px; }
+    .dc-workspace-menu { flex-shrink:0; }
+    .dc-workspace-menu > summary { display:flex; gap:5px; align-items:center; padding:5px 7px; border:1px solid #555; border-radius:5px; cursor:pointer; list-style:none; background:#333; white-space:nowrap; }
     .dc-workspace-menu > summary::-webkit-details-marker { display:none; }
     .dc-workspace-menu > summary:hover { background:#444; }
     .dc-workspace-menu > summary:focus-visible { outline:2px solid #3b82f6; outline-offset:2px; }
-    .dc-workspace-menu-items { position:absolute; right:0; top:calc(100% + 6px); z-index:100; width:210px; padding:5px; background:#292929; border:1px solid #555; border-radius:6px; box-shadow:0 8px 24px #0008; }
-    .dc-workspace-menu-items a { color:#eee;padding:7px 11px;text-decoration:none;border-radius:5px;font-size:13px; }
-    .dc-workspace-menu-items a:hover { background:#444; }
-    .dc-workspace-menu-items button, .dc-workspace-menu-items a { display:block; width:100%; border:0; background:transparent; text-align:left; }
-    .dc-practice-toolbar .dc-workspace-close { display:flex; align-items:center; padding:7px; background:transparent; border-color:transparent; }
+    .dc-workspace-menu-items { position:absolute; left:8px; right:8px; top:calc(100% + 4px); z-index:100; padding:5px; background:#292929; border:1px solid #555; border-radius:6px; box-shadow:0 8px 24px #0008; }
+    .dc-workspace-menu-items button, .dc-workspace-menu-items a { display:block; width:100%; box-sizing:border-box; border:0; background:transparent; text-align:left; color:#eee; padding:7px 11px; text-decoration:none; border-radius:5px; font:13px system-ui; white-space:normal; }
+    .dc-workspace-menu-items button:hover, .dc-workspace-menu-items a:hover { background:#444; }
+    .dc-workspace-actions .dc-workspace-close { display:flex; align-items:center; padding:5px; }
+    .dc-workspace-actions .dc-workspace-close:hover { background:#444; }
+    /* 平常時の状態文は読み上げ用に残し、見た目からは外す。エラーと再試行があるときだけ出す。 */
+    .dc-workspace-notice:not(.is-visible) { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+    .dc-workspace-notice.is-visible { display:flex; flex-direction:column; gap:6px; padding:8px 12px; border-bottom:1px solid #444; background:#2a2a2a; font:12px system-ui; color:#aaa; }
+    #dc-practice-status.is-error { color:#fbbf24; }
+    .dc-workspace-notice .tool-button { width:auto; align-self:flex-start; margin:0; }
     .dc-practice-guide-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:0 10px; }
     .dc-mapping-workspace .source-column, .dc-mapping-workspace .mapping-column { min-width:240px; min-height:0; }
     #preview-stage { flex:1; min-height:0; flex-direction:column; }
@@ -69,8 +73,6 @@ export function installPracticeStyles(): void {
       .dc-mapping-workspace .dc-column-resizer { display:none; }
       .dc-mapping-workspace .source-column { grid-column:2; grid-row:1; min-height:0; }
       .dc-mapping-workspace .mapping-column { grid-column:2; grid-row:2; }
-      .dc-practice-toolbar { flex-wrap:wrap; gap:7px; }
-      #dc-practice-status { flex-basis:50%; }
     }
   `;
   document.head.append(style);
