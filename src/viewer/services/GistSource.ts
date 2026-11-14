@@ -4,7 +4,7 @@
 //
 // OpenProcessingSource と対になる 2 つ目の取り込み元。OP と違い
 // アセット proxy も engine の概念も無い。設定から読むのは API 中継のベース
-// (gistApiBaseUrl) だけで、ホスト版は Worker の /gist-api を優先する (#142)。
+// (gistApiBaseUrl) だけで、ホスト版は直接取得が使えないときに Worker の /gist-api を使う (#144)。
 
 import { fetchGist } from '../../core/modules/gist-api-client.js';
 import { assembleGistSketchHtml, resolveGistTitle } from '../../core/modules/gist-sketch-builder.js';

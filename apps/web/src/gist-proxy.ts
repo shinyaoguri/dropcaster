@@ -13,8 +13,9 @@
 //
 // 手元の版 (stale) を返すのは、GitHub 側の一時的な障害 (5xx・通信失敗) のときだけ。
 // トークンの失効 (401) や枠の枯渇 (403 + remaining 0 / 429) は一時的ではなく、古い版を
-// 返し続けると作者の修正が反映されないまま気付けない。上流のステータスを返して
-// クライアントに直接取得 (最新) へ切り替えさせ、log でメンテナに知らせる。
+// 返し続けると作者の修正が反映されないまま気付けない。上流のステータスを返し、
+// log でメンテナに知らせる。viewer は直接取得が使えないときだけここへ来る予備の経路
+// (ADR 0018) なので、利用者には直接取得のエラー (制限なら待ち時間) が出る。
 //
 // worker.ts から振り分けるだけにして、fetch / cache / 時刻を差し替えられる形にしている
 // (tests/gist-proxy.test.js が Node から直接 import する。他モジュールを import しないこと)。
@@ -60,7 +61,7 @@ export async function handleGistApi(req: Request, url: URL, deps: GistProxyDeps)
   const id = match[1].toLowerCase();
 
   // トークン無しで Cloudflare の共有 IP から認証なしで叩くと、他テナントと枠を分け合って
-  // すぐ枯れる。中継を断り、クライアントに GitHub への直接取得へ切り替えさせる。
+  // すぐ枯れる。中継を断り、viewer には直接取得のエラーを出させる。
   if (!deps.token) return respond(req, new Response('Gist proxy is not configured', { status: 503 }), 'unconfigured');
 
   // Cloudflare の Cache API はゾーン内の URL を鍵にする。要求元のオリジンで、ID を正規化した URL を使う。

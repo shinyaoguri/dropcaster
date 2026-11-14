@@ -29,7 +29,7 @@ export class GistNotFoundError extends Error {
 }
 
 export interface FetchGistOptions {
-  /** 同一オリジンの中継のベース (例: '/gist-api')。指定すると `${proxyBaseUrl}/gists/{id}` を先に試す */
+  /** 同一オリジンの中継のベース (例: '/gist-api')。直接取得が制限・障害で使えないときだけ `${proxyBaseUrl}/gists/{id}` を試す */
   proxyBaseUrl?: string;
 }
 

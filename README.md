@@ -306,11 +306,12 @@ export default {
 ください — ホスト版の [apps/web/src/worker.ts](apps/web/src/worker.ts) の `/op-cdn` 実装が
 そのまま参考になります。
 
-`gistApiBaseUrl` を設定すると、viewer は Gist を `<gistApiBaseUrl>/gists/<id>` から先に取得し、
-使えないときだけ `api.github.com` へ直接つなぎます。直接取得は未認証で「60 req/時・IP 単位」なので、
-授業や会場のように同じネットワークから大人数が使うと枯渇します。中継はトークン付きで問い合わせる
-Worker として自分でデプロイしてください — ホスト版の [apps/web/src/gist-proxy.ts](apps/web/src/gist-proxy.ts)
-が参考になります（[ADR 0017](docs/decisions/0017-hosted-gist-api-proxy.md)）。
+viewer は Gist を `api.github.com` へ直接取得します。直接取得は未認証で「60 req/時・IP 単位」なので、
+授業や会場のように同じネットワークから大人数が使うと枯渇します。`gistApiBaseUrl` を設定すると、
+直接取得が制限や障害で使えないときだけ `<gistApiBaseUrl>/gists/<id>` を予備として試します。
+中継はトークン付きで問い合わせる Worker として自分でデプロイしてください — ホスト版の
+[apps/web/src/gist-proxy.ts](apps/web/src/gist-proxy.ts) が参考になります
+（[ADR 0017](docs/decisions/0017-hosted-gist-api-proxy.md)・[ADR 0018](docs/decisions/0018-gist-direct-first.md)）。
 
 ## プロジェクト構造（`dropcaster init` で作る user gallery）
 
@@ -373,7 +374,7 @@ dropcaster/
 - Cloudflare Workers (Static Assets) **1 つ**でアプリ本体 (`apps/web/dist/`) と `/op-cdn/*`・`/gist-api/*` の中継を兼任
 - `/op-cdn/*` は OpenProcessing CDN (`deckard.openprocessing.org`) への中継。CORS ヘッダを後付けして同一オリジン化することで、`captureStream` が tainted にならないようにしている
 - OpenProcessing API (`/api/sketch/*`) は viewer から認証なしで直接叩く構造。OpenProcessing は現在、全リクエストにトークンを求めており（毎分 40 回）、認証なしでは IP 単位の非常に低い制限ですぐ 429 になる。中継の導入は規約の確認待ち（[#142](https://github.com/shinyaoguri/dropcaster/issues/142)）
-- Gist は同一オリジンの `/gist-api/gists/<id>` を優先する。Worker が secret の `GITHUB_TOKEN`（権限なし）で GitHub API に問い合わせ、ETag で鮮度を確かめるので、同じネットワークから大人数が使っても利用者の IP の枠（未認証 60 req/時）を消費しない。中継が使えないとき（トークン未設定・障害）は viewer が `api.github.com` へ直接つなぐ（[ADR 0017](docs/decisions/0017-hosted-gist-api-proxy.md)）
+- Gist はギャラリーと同じく `api.github.com` へ直接取得するのが基本。同じネットワークから大人数が使って利用者の IP の枠（未認証 60 req/時）が枯れたときや障害のときだけ、予備として同一オリジンの `/gist-api/gists/<id>` を使う。Worker が secret の `GITHUB_TOKEN`（権限なし）で GitHub API に問い合わせ、ETag で鮮度を確かめる（[ADR 0017](docs/decisions/0017-hosted-gist-api-proxy.md)・[ADR 0018](docs/decisions/0018-gist-direct-first.md)）
 - レート制限 (OP は HTTP 429、GitHub は 60 req/時) に当たった場合は countdown UI で自動再試行
 
 ## 長時間運用のコツ

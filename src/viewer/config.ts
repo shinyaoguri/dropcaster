@@ -18,9 +18,9 @@ export interface DropcasterConfig {
 
   /**
    * GitHub Gist API の中継のベース。同一オリジン下のパス指定を推奨 (例: '/gist-api')。
-   * 指定すると `${gistApiBaseUrl}/gists/{id}` を先に試し、使えないときだけ
-   * api.github.com へ直接つなぐ。未設定なら直接取得のみ (未認証、60 req/時・IP 単位)。
-   * ホスト版は Worker の中継を指す (#142)。
+   * Gist はまず api.github.com へ直接取得し (未認証、60 req/時・IP 単位)、制限・障害で
+   * 使えないときだけ `${gistApiBaseUrl}/gists/{id}` を予備として試す。未設定なら直接取得のみ。
+   * ホスト版は Worker の中継を指す (#142, #144)。
    */
   gistApiBaseUrl?: string;
 

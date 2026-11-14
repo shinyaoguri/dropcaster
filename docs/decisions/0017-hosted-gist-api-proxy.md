@@ -5,6 +5,8 @@
 採用 — 2026-11-14。メンテナが会話で案 D (Worker による中継) を選び、PoC で動くことを確かめてから実装した。
 [#142](https://github.com/shinyaoguri/dropcaster/issues/142)。[ADR 0006](0006-gist-as-second-sketch-source.md)
 の「認証は付けない」をホスト版について改める。
+**取得順 (中継を先に使う) は [ADR 0018](0018-gist-direct-first.md) で改めた**。いまは直接取得が基本で、
+中継は直接取得が使えないときの予備。中継そのものの仕組みはこの ADR のとおり。
 
 ## 文脈
 
@@ -73,9 +75,9 @@ ADR 0006 では、Gist を viewer から GitHub API へ認証なしで直接取�
   に戻る。サービスは止まらないが、授業規模では元の症状に戻るので、Workers Logs の
   `gist-proxy: GitHub responded ...` を見てトークンを更新する。乱用が問題になったら、
   Cloudflare のレート制限ルールなどで絞る。
-- エッジのキャッシュ (`caches.default`) がホスト版のドメインで効くかは、本番で確かめていない
-  (PoC は `wrangler dev`)。効かない場合でも正しさは変わらず、毎回トークンの枠を 1 回使う
-  (授業規模の見積もりなら枠に収まる)。
+- エッジのキャッシュ (`caches.default`) は、ホスト版のドメインで効くことを本番で確かめた
+  (2026-11-14、[#142 のコメント](https://github.com/shinyaoguri/dropcaster/issues/142#issuecomment-6870144587))。
+  キャッシュは Cloudflare の拠点ごとなので、拠点ごとに最初の 1 回は GitHub から取り直す。
 - トークンの発行・登録・更新はメンテナが行う (手順は DEVELOPMENT.md)。トークンの名義は運用で決める。
 - OpenProcessing API も同じ問題を抱える (全リクエストにトークンが必要・毎分 40 回、認証なしではすぐ 429)。
   ただし、1 つのトークンで他人のリクエストを中継してよいかが規約上はっきりしない。応答も `no-store` で
