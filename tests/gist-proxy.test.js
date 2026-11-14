@@ -174,7 +174,7 @@ for (const [label, res] of transientFailures) {
 
 // トークンの失効・枠の枯渇は一時的な障害ではない。古い版を 200 で返し続けると、
 // 作者が直しても反映されないまま (エッジ TTL の間) 気付けない。キャッシュがあっても
-// 上流のステータスを返し、クライアントに直接取得 (最新) へ切り替えさせる。
+// 上流のステータスを返す (viewer は直接取得のエラーを出す。ADR 0018)。
 /** @type {Array<[string, () => Response]>} */
 const tokenFailures = [
   ['token rejected (401)', () => upstream(401, '{"message":"Bad credentials"}')],
@@ -212,7 +212,7 @@ test('network failure without a cache returns 502', async () => {
   assert.equal(res.status, 502);
 });
 
-test('without a token it refuses with 503 so the client falls back to GitHub directly', async () => {
+test('without a token it refuses with 503 instead of calling GitHub unauthenticated', async () => {
   const s = setup({ token: undefined });
   const res = await s.request();
   assert.equal(res.status, 503);

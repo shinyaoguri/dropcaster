@@ -27,7 +27,7 @@ test('hosted config routes OpenProcessing assets through the same-origin proxy',
   assert.equal(config.assetProxyBaseUrl, '/op-cdn');
 });
 
-test('hosted config routes Gist API requests through the same-origin Worker proxy', async () => {
+test('hosted config sets the same-origin Worker proxy as the Gist fallback', async () => {
   // 共有回線から数十人が使っても利用者の IP の枠を消費しないよう、ホスト版は
   // Worker の /gist-api 中継を優先する (#142)。
   const config = await readHostedConfig();
