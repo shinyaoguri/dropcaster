@@ -517,6 +517,49 @@ async function history(page) {
   await undoBtn.click();
   assert.deepEqual(await ids(), beforeRemove, 'undo restores the removed mapping in place');
 
+  // 1 回で確定する操作 (表示切替・名前変更・出力の数値入力) はそれぞれ 1 件
+  const undoRestores = async (label, act) => {
+    const before = await state(page);
+    await act();
+    const changed = await state(page);
+    assert.notDeepEqual({ m: changed.mappings, o: changed.outputs }, { m: before.mappings, o: before.outputs }, `${label} changed the state`);
+    // 数値入力の後はフォーカスが次の入力欄にあり、Cmd/Ctrl+Z は文字入力の Undo になるのでボタンで戻す
+    await undoBtn.click();
+    const after = await state(page);
+    assert.deepEqual({ m: after.mappings, o: after.outputs }, { m: before.mappings, o: before.outputs }, `one undo reverts ${label}`);
+  };
+  await undoRestores('toggle', () => page.locator(`.mapping-list-item[data-id="${other}"] .toggle-btn`).click());
+  await undoRestores('rename', async () => {
+    await page.locator(`.mapping-list-item[data-id="${other}"] .name`).dblclick();
+    await page.locator('.mapping-list-item .name-input').fill('renamed'); await page.locator('.mapping-list-item .name-input').press('Enter');
+  });
+  await undoRestores('output x', () => change(page, '#output-x-input', 40));
+
+  // ソースの crop ドラッグ 1 回 = 1 件
+  await undoRestores('crop drag', async () => {
+    const handle = await page.locator('#selection-box .handle-se').boundingBox();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2); await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(handle.x + handle.width / 2 - i * 6, handle.y + handle.height / 2 - i * 4);
+    await page.mouse.up();
+  });
+
+  // マスクのペン描画: 描画中は Undo できず、描き終えた 1 件を Undo するとマスクごと消える
+  const beforeMask = await ids();
+  await page.locator('#add-mask-btn').click();
+  assert.equal(await undoBtn.isDisabled(), true, 'undo is disabled while drawing a mask');
+  const host = await page.locator('#output-stage .dc-canvas-host').boundingBox();
+  for (const [fx, fy] of [[.2, .2], [.45, .25], [.3, .5]]) await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
+  await page.keyboard.press('ControlOrMeta+z');
+  assert.equal((await state(page)).mappings.find(m => m.drafting)?.points.length, 3, 'Cmd/Ctrl+Z does not touch a mask being drawn');
+  await page.keyboard.press('Enter');
+  assert.equal((await state(page)).mappings.some(m => m.drafting), false, 'the mask is closed');
+  assert.equal(await undoBtn.isDisabled(), false);
+  await undoBtn.click();
+  assert.deepEqual(await ids(), beforeMask, 'one undo removes the whole drawn mask');
+  await redoBtn.click();
+  assert.equal((await ids()).length, beforeMask.length + 1, 'redo brings the closed mask back');
+  await undoBtn.click();
+
   // 名前の入力欄では Cmd/Ctrl+Z は文字入力の Undo で、編集の履歴は動かない
   const beforeRename = await state(page);
   await page.locator(`.mapping-list-item[data-id="${other}"] .name`).dblclick();
