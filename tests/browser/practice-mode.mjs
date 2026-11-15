@@ -320,6 +320,46 @@ async function projects(page, base) {
     assert.equal(await other.locator('#practice-dimensions').textContent(), 'Venue size: 12.00 × 4.00 × 0.00 m');
   } finally { await second.close(); }
 }
+// #168: 確定した変更は保存待ちのまま再読み込みで失われない (スライドショーと単独作品ページのマッピング)。
+async function draftProject(page, base) { return page.evaluate(async modules => (await import(`${modules}/practice/projectStore.ts`)).readProject(), base.modules); }
+async function storageSaved(page) { await page.waitForFunction(() => document.querySelector('#practice-storage').textContent.includes('saved')); }
+async function reopen(page, base) { await page.waitForSelector(entryButton); await observeControllers(page, base); await start(page); await projectControls(page); }
+async function slideshowDraft(page, base) {
+  let answer = 'accept'; const dialogs = [];
+  page.on('dialog', dialog => { dialogs.push(dialog.type()); void (answer === 'accept' ? dialog.accept() : dialog.dismiss()); });
+  await start(page); await projectControls(page);
+  await change(page, '#practice-project-name', 'First'); await storageSaved(page);
+  await change(page, '#practice-project-name', 'Second'); await page.waitForTimeout(100);
+  await page.reload(); await reopen(page, base);
+  assert.equal(await page.inputValue('#practice-project-name'), 'Second', 'a committed name survives a reload 100 ms later');
+  assert.deepEqual(dialogs, [], 'a finished save does not ask before leaving');
+  // 確定と同じタスクで離脱すると保存中なので確認を出す。キャンセルすれば変更は残り、待てば保存済みになる。
+  answer = 'dismiss'; await page.locator('#practice-project-name').click();
+  try { await page.evaluate(() => { const name = document.querySelector('#practice-project-name'); name.value = 'Third'; name.dispatchEvent(new Event('change', { bubbles: true })); location.reload(); }); } catch { /* the page navigated away */ }
+  assert.deepEqual(dialogs, ['beforeunload'], 'leaving in the same task as the commit asks first');
+  assert.equal(await page.inputValue('#practice-project-name'), 'Third', 'cancelling keeps the edit');
+  await storageSaved(page); assert.equal((await draftProject(page, base)).name, 'Third', 'staying finishes the save');
+  // ドラッグ中は書き込まず、操作の終わりで 1 回だけ保存する。
+  await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click(); await page.waitForTimeout(700); await storageSaved(page);
+  await page.evaluate(() => { window.draftWrites = 0; const put = IDBObjectStore.prototype.put; IDBObjectStore.prototype.put = function (...args) { window.draftWrites++; return put.apply(this, args); }; });
+  const box = await page.locator('#output-stage .quad-handle[data-corner="topLeft"]').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+  for (let i = 1; i <= 12; i++) await page.mouse.move(box.x + box.width / 2 + i * 3, box.y + box.height / 2 + i * 2);
+  assert.equal(await page.evaluate(() => window.draftWrites), 0, 'a drag does not write while it moves');
+  await page.mouse.up(); await page.waitForFunction(() => window.draftWrites === 1); await storageSaved(page);
+  await page.waitForTimeout(700); assert.equal(await page.evaluate(() => window.draftWrites), 1, 'the drag is saved once when it ends');
+  const dragged = (await state(page)).mappings.at(-1).quad;
+  // 保存済みなら新たな確認を出さない。
+  answer = 'accept'; await page.reload(); await reopen(page, base);
+  assert.deepEqual(dialogs, ['beforeunload'], 'a saved draft reloads without asking');
+  assert.equal(await page.inputValue('#practice-project-name'), 'Third');
+  assert.deepEqual((await draftProject(page, base)).venue.layout.mappings.at(-1).quad, dragged);
+  // 単独作品ページは従来の離脱確認を承諾して再読み込みしても、100 ms 前の確定が残る。
+  await page.goto(base.url + '/a'); await reopen(page, base);
+  await change(page, '#practice-project-name', 'Fourth'); await page.waitForTimeout(100);
+  await page.reload(); await reopen(page, base);
+  assert.equal(await page.inputValue('#practice-project-name'), 'Fourth', 'the sketch page keeps a commit made 100 ms before reloading');
+}
 async function slideshow(page, base) {
   await snapshot(page, base.name + '-slideshow-entry');
   await start(page); await page.locator('#play-pause-btn').click();
@@ -680,6 +720,61 @@ async function history(page, base) {
   await snapshot(page, 'history');
   await closeEditor(page);
 }
+// プレビュー上のクリックは、押した時点で前面にある項目を選ぶ。ペン描画中は切り替えない (#112)
+async function maskSelect(page, base) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await page.locator('#add-mapping-btn').click();
+  const host = await page.locator('#output-stage .dc-canvas-host').boundingBox();
+  const at = (fx, fy) => page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
+  const history = () => Promise.all(['#dc-undo-btn', '#dc-redo-btn'].map(s => page.locator(s).isDisabled()));
+  const [added, initial] = (await state(page)).mappings.map(m => m.id);
+  // 非 active なマッピングのプレビューを押すとそのマッピングが選ばれる
+  await at(.26, .6);
+  assert.equal((await state(page)).activeId, initial, 'clicking an inactive mapping on the preview selects it');
+  await page.locator('#add-mask-btn').click();
+  for (const [fx, fy] of [[.35, .35], [.65, .35], [.5, .65]]) await at(fx, fy);
+  await page.keyboard.press('Enter');
+  const mask = (await state(page)).mappings.find(m => m.kind === 'mask' && !m.drafting).id;
+  await page.locator(`.mapping-list-item[data-id="${added}"] .name`).click();
+  assert.equal((await state(page)).activeId, added);
+  await snapshot(page, `${base.name}-mask-select-before`);
+  // マスクは両方のマッピングに重なる位置で押しても、前面のマスクが選ばれる
+  await at(.5, .45);
+  await snapshot(page, `${base.name}-mask-select-after`);
+  assert.equal((await state(page)).activeId, mask, 'clicking the committed mask on the preview selects it again');
+  // 既に active なマスクを押しても選択も履歴も変わらない
+  const selected = await state(page), selectedHistory = await history();
+  await at(.5, .56);
+  assert.deepEqual(await state(page), selected, 'clicking the active mask keeps the state');
+  assert.deepEqual(await history(), selectedHistory, 'clicking the active mask keeps the history');
+  // マスクが当たるのは多角形だけで、外側を押すと背面のマッピングが選ばれる
+  await at(.26, .6);
+  assert.equal((await state(page)).activeId, initial, 'clicking outside the mask polygon selects the mapping behind it');
+  // 多角形の外なら、前面にマスクがあっても active なマッピング本体をドラッグできる
+  const quadOf = async id => (await state(page)).mappings.find(m => m.id === id).quad;
+  const beforeDrag = await quadOf(initial);
+  await page.mouse.move(host.x + host.width * .27, host.y + host.height * .6); await page.mouse.down();
+  for (let i = 1; i <= 5; i++) await page.mouse.move(host.x + host.width * .27 - i * 4, host.y + host.height * .6 + i * 3);
+  await page.mouse.up();
+  assert.ok((await quadOf(initial)).topLeft.x < beforeDrag.topLeft.x, 'dragging outside the mask polygon moves the active mapping');
+  assert.equal((await state(page)).activeId, initial, 'dragging the active mapping keeps the selection');
+  // 右クリックでは選択を切り替えない (ソースカラムと同じく左ボタンだけ)
+  for (const [fx, fy, label] of [[.5, .45, 'mask'], [.77, .77, 'mapping']]) {
+    await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy, { button: 'right' });
+    assert.equal((await state(page)).activeId, initial, `right-clicking an inactive ${label} keeps the selection`);
+  }
+  // ペン描画中に既存マスクやマッピングを押しても切り替わらず、頂点が増える
+  await page.locator('#add-mask-btn').click();
+  const draft = (await state(page)).activeId;
+  await at(.5, .45);
+  await at(.26, .6);
+  const drafting = await state(page);
+  assert.equal(drafting.activeId, draft, 'clicks while drawing a mask keep the drafting mask active');
+  assert.equal(drafting.mappings.find(m => m.id === draft).points.length, 2, 'clicks while drawing add vertices instead');
+  await page.keyboard.press('Escape');
+  assert.equal((await state(page)).mappings.some(m => m.drafting), false);
+}
 async function confirmClose(page, base) {
   await start(page);
   await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click();
@@ -736,7 +831,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, sample })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, maskSelect, sample, slideshowDraft })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
