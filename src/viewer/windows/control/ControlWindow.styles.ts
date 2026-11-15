@@ -157,6 +157,27 @@ export const CONTROL_PANEL_CSS = `
         padding: 15px;
       }
 
+      /* ツールカラム下端の版表示。tool-content の外にあるので、スクロールしても下端に残る */
+      .dc-build-info {
+        flex-shrink: 0;
+        padding: 6px 15px;
+        border-top: 1px solid #333;
+        color: #777;
+        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .dc-build-info a {
+        color: inherit;
+        text-decoration: underline dotted;
+      }
+
+      .dc-build-info a:hover {
+        color: #bbb;
+      }
+
       .tool-section {
         margin-bottom: 25px;
         padding-bottom: 20px;

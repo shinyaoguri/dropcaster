@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import { existsSync, watch } from 'fs'
 import { resolve } from 'path'
+import { resolveBuildInfo } from './src/core/build-info.js'
 
 // Viteプラグイン: sketches.jsonの変更を監視して自動リロード
 const sketchesJsonWatcher = () => ({
@@ -40,6 +41,10 @@ const sketchesJsonWatcher = () => ({
 })
 
 export default defineConfig({
+  // ツールカラム下端に出す版 (#154)
+  define: {
+    'import.meta.env.DROPCASTER_BUILD': JSON.stringify(resolveBuildInfo(__dirname))
+  },
   resolve: {
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']
   },
