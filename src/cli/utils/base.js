@@ -7,14 +7,21 @@ import { t } from '../i18n/index.js';
 /**
  * 設置先 base を正規化する。未指定 (undefined / null / '') は '/'。
  * 先頭・末尾の '/' を補う。`./` のような相対 base や `https://…` のような URL は、viewer が
- * 実行時に '/' を前置して壊れるので受け付けずに止める。
+ * 実行時に '/' を前置して壊れるので受け付けずに止める。`?`・`#`・空白・バックスラッシュを含む値も、
+ * そのまま manifest と Vite の base に入ってパスとして成り立たないので止める。
  *
  * @param {unknown} raw
  * @returns {string}
  */
 export function normalizeBase(raw) {
   if (raw === undefined || raw === null || raw === '') return '/';
-  if (typeof raw !== 'string' || raw.startsWith('.') || raw.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(raw)) {
+  if (
+    typeof raw !== 'string' ||
+    raw.startsWith('.') ||
+    raw.startsWith('//') ||
+    /^[a-z][a-z\d+.-]*:/i.test(raw) ||
+    /[?#\s\\]/.test(raw)
+  ) {
     throw new Error(t('base.invalid', { base: String(raw) }));
   }
   const withLeading = raw.startsWith('/') ? raw : `/${raw}`;

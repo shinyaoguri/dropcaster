@@ -86,9 +86,9 @@ test('build falls back to / when neither config nor --base sets it', async () =>
   assertBase(await buildGallery(undefined), '/');
 });
 
-test('build stops with a clear error for a relative or URL base', async () => {
+test('build stops with a clear error for a relative, URL or query-like base', async () => {
   /** @type {Array<[string, string[]]>} */
-  const cases = [['./', []], ['/', ['--base', 'https://cdn.example/']]];
+  const cases = [['./', []], ['/', ['--base', 'https://cdn.example/']], ['/x?y=1', []]];
   for (const [configBase, args] of cases) {
     const built = await runBuild(configBase, args);
     assert.notEqual(built.status, 0, `build must fail for ${configBase} ${args}`);

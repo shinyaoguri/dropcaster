@@ -88,7 +88,11 @@ test('normalizeBase boundaries match the viewer and reject relative / URL bases'
   assert.equal(normalizeBase('/'), '/');
   assert.equal(normalizeBase('exhibit'), '/exhibit/');
   assert.equal(normalizeBase('/a/b'), '/a/b/');
-  for (const bad of ['./', '.', '../x/', '//cdn.example/', 'https://cdn.example/', 42]) {
-    assert.throws(() => normalizeBase(bad), /base/, String(bad));
+  const bad = [
+    './', '.', '../x/', '//cdn.example/', 'https://cdn.example/', 42,
+    '/x?y=1', '/x#top', '/my gallery/', '/x\t', '\\x', '/a\\b/',
+  ];
+  for (const value of bad) {
+    assert.throws(() => normalizeBase(value), /base/, JSON.stringify(value));
   }
 });
