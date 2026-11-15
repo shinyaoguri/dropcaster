@@ -4,6 +4,7 @@
 // 完了の順をテストが決める。遷移は同一ドキュメント内の SPA 遷移 (リンクのクリックと
 // history.back) で起こす。page.goto だとドキュメントごと作り直されて競合が消えるため。
 // 本番コードには手を入れず、リスナーの数え上げだけ addInitScript で包む。
+// 同じ Gist の差し替え経路で、作品の組み立てが script / CSS の意味を変えないことも確かめる (#110)。
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +25,31 @@ const markerHtml = (marker) => `<!doctype html><html><head><title>${marker}</tit
 const gistJson = (id, marker) => ({
   id, description: marker, owner: { login: 'tester' }, html_url: `https://gist.github.com/${id}`, updated_at: '2026-11-15T00:00:00Z',
   files: { 'index.html': { filename: 'index.html', content: markerHtml(marker), truncated: false } },
+});
+
+// #110: 埋め込みで実行・適用の意味が変わると、対応するマーカーが期待とずれる作品
+const embedFiles = {
+  'index.html': [
+    '<!doctype html><html><head>',
+    '<link rel="stylesheet" href="screen.css">',
+    '<link rel="stylesheet" href="print.css" media="print">',
+    '<script defer src="defer.js"></script>',
+    '<script type="module" src="./module.js"></script>',
+    '<script nomodule src="legacy.js"></script>',
+    '</head><body><div id="target"></div><script src="tricky.js"></script><p id="after">after</p></body></html>',
+  ].join('\n'),
+  // </style の後ろの規則も同じ <style> に残っていれば width が効く
+  'screen.css': '#target::after { content: "</style><p id=leak>"; }\n#target { width: 7px; color: rgb(0, 128, 0); }',
+  'print.css': '#target { color: rgb(255, 0, 0); }',
+  // body の解析後に走るなら #target がある
+  'defer.js': "document.getElementById('target').dataset.defer = 'ran';",
+  'module.js': "await Promise.resolve();\nexport const ok = true;\ndocument.getElementById('target').dataset.module = 'ran';",
+  'legacy.js': "document.documentElement.dataset.legacy = 'ran';",
+  'tricky.js': "window.tricky = \"<!--<script>\";\ndocument.getElementById('target').dataset.tricky = 'ran';",
+};
+const gistFilesJson = (id, files) => ({
+  id, description: 'embed', owner: { login: 'tester' }, html_url: `https://gist.github.com/${id}`, updated_at: '2026-11-16T00:00:00Z',
+  files: Object.fromEntries(Object.entries(files).map(([filename, content]) => [filename, { filename, content, truncated: false }])),
 });
 
 /** route を保留し、テストから応答 (fulfill の引数) を渡すまで返さない。 */
@@ -165,6 +191,31 @@ const cases = {
       '逆順完了: 先に開いた A が B を上書きした');
     assert.deepEqual(await pageListeners(env), listenersOfB,
       '逆順完了: 表示中の B 以外のリスナーが残った');
+  },
+
+  // #110: Gist の作品で module・defer・nomodule・<!--<script>・media 付き CSS・</style が元のファイル構成と同じに働く
+  async gistEmbedsKeepSemantics(env) {
+    const { page, gist } = env;
+    await clickLink(page, `/gist/${GIST_A}`);
+    await gist.release(`/gists/${GIST_A}`, { json: gistFilesJson(GIST_A, embedFiles) });
+    const target = page.frameLocator('#sketch-iframe').locator('#target');
+    await target.waitFor({ state: 'attached' });
+    await settle(page);
+    const observed = await target.evaluate((t) => ({
+      module: t.dataset.module ?? null,
+      defer: t.dataset.defer ?? null,
+      legacy: document.documentElement.dataset.legacy ?? null,
+      tricky: t.dataset.tricky ?? null,
+      after: !!document.getElementById('after'),
+      leak: !!document.getElementById('leak'),
+      width: getComputedStyle(t).width,
+      color: getComputedStyle(t).color,
+      afterContent: getComputedStyle(t, '::after').content,
+    }));
+    assert.deepEqual(observed, {
+      module: 'ran', defer: 'ran', legacy: null, tricky: 'ran', after: true, leak: false,
+      width: '7px', color: 'rgb(0, 128, 0)', afterContent: '"</style><p id=leak>"',
+    }, '埋め込み後の作品が元のファイル構成と違う動きをした');
   },
 
   // 再現 B: 作品 iframe の読み込み中に離脱しても、破棄済みコントローラーがリスナーを付け直さない
