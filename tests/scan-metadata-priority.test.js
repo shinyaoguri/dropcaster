@@ -16,10 +16,11 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const scanScript = join(repoRoot, 'src/core/scan-sketches.js');
 
 // --fetch-userdata の検証で OpenProcessing へ通信しないよう、子プロセスの fetch を差し替える。
-// /api/sketch/123 だけ API の値を返し、それ以外は 404。
+// /api/sketch/123 だけ API の値を返し、/api/sketch/500 は通信の失敗、それ以外は 404。
 const fetchStub = `
 globalThis.fetch = async (url) => {
   const path = new URL(String(url)).pathname;
+  if (path === '/api/sketch/500') throw new TypeError('fetch failed');
   if (path === '/api/sketch/123') {
     return new Response(JSON.stringify({ visualID: 123, title: 'API title', description: 'API description' }), { status: 200 });
   }
@@ -243,6 +244,40 @@ test('--sketch re-scan reflects the target HTML change and leaves other entries 
     const other = await entry(root, 'other');
     assert.equal(other.title, 'Other title');
     assert.equal(other.description, 'Other description');
+  });
+});
+
+test('--fetch-userdata failure keeps the previous catalog title and description', async () => {
+  await withTempProject(async (root) => {
+    // 404 と通信の失敗。HTML は汎用の <title> を持つ (fetch した html モードの作品のような状態)
+    for (const name of ['sketch404', 'sketch500']) {
+      await writeIndex(root, name, html({ title: 'p5.js Sketch', description: 'Generic description' }));
+    }
+    await writeCatalog(root, [
+      { id: 'sketch404', title: 'Previous API title', description: 'Previous API description', path: 'sketches/sketch404/' },
+      { id: 'sketch500', title: 'Previous API title 500', description: 'Previous API description 500', path: 'sketches/sketch500/' },
+    ]);
+    await scanOk(root, ['--fetch-userdata', '--api-request-interval-ms', '0'], { stubFetch: true });
+    const notFound = await entry(root, 'sketch404');
+    assert.equal(notFound.title, 'Previous API title');
+    assert.equal(notFound.description, 'Previous API description');
+    const offline = await entry(root, 'sketch500');
+    assert.equal(offline.title, 'Previous API title 500');
+    assert.equal(offline.description, 'Previous API description 500');
+  });
+});
+
+test('--fetch-userdata failure still lets manual metadata win', async () => {
+  await withTempProject(async (root) => {
+    await writeIndex(root, 'sketch404', html({ title: 'p5.js Sketch' }));
+    await writeJson(root, 'sketch404', 'dropcaster.meta.json', { title: 'Manual title' });
+    await writeCatalog(root, [
+      { id: 'sketch404', title: 'Previous API title', description: 'Previous API description', path: 'sketches/sketch404/' },
+    ]);
+    await scanOk(root, ['--fetch-userdata', '--api-request-interval-ms', '0'], { stubFetch: true });
+    const sketch = await entry(root, 'sketch404');
+    assert.equal(sketch.title, 'Manual title');
+    assert.equal(sketch.description, 'Previous API description');
   });
 });
 
