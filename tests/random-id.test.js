@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createProject } from '../src/viewer/practice/project.ts';
 import { venueObject } from '../src/viewer/practice/venueObjects.ts';
 import { randomId } from '../src/viewer/utils/randomId.ts';
 
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** LAN の http://<IP>:<port> と同じく、secure context 限定の crypto.randomUUID が無い状態で fn を走らせる。 */
@@ -30,13 +32,14 @@ test('randomId yields RFC 4122 v4 UUIDs without collisions', () => {
   assert.equal(ids.size, 10000);
 });
 
-test('viewer code does not call crypto.randomUUID directly', () => {
-  const offenders = [];
+test('viewer code does not use randomUUID outside randomId.ts', () => {
+  // `crypto.randomUUID()` だけでなく `crypto['randomUUID']` や分割代入も拾うため、識別子の出現で見る。
+  const allowed = 'src/viewer/utils/randomId.ts', offenders = [];
   const walk = dir => { for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
+    const path = join(dir, name), rel = relative(repoRoot, path);
     if (statSync(path).isDirectory()) walk(path);
-    else if (/\.[cm]?[jt]s$/.test(name) && readFileSync(path, 'utf8').includes('crypto.randomUUID')) offenders.push(path);
+    else if (/\.[cm]?[jt]s$/.test(name) && rel !== allowed && /randomUUID/.test(readFileSync(path, 'utf8'))) offenders.push(rel);
   } };
-  for (const root of ['src/viewer', 'apps/web/src']) walk(root);
+  for (const root of ['src/viewer', 'apps/web/src']) walk(join(repoRoot, root));
   assert.deepEqual(offenders, [], 'use randomId() from src/viewer/utils/randomId.ts: randomUUID is missing outside secure contexts');
 });

@@ -4,6 +4,7 @@
 // 完了の順をテストが決める。遷移は同一ドキュメント内の SPA 遷移 (リンクのクリックと
 // history.back) で起こす。page.goto だとドキュメントごと作り直されて競合が消えるため。
 // 本番コードには手を入れず、リスナーの数え上げだけ addInitScript で包む。
+// あわせて、secure context でない LAN の HTTP オリジンでも各ルートが初期化できることを確かめる (#170)。
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -180,12 +181,52 @@ const cases = {
   },
 };
 
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
+// `dropcaster dev` / `preview --host` が案内する LAN の http://<IP>:<port> は secure context ではない。
+// 127.0.0.1 は secure context 扱いなので、ループバックでない名前を 127.0.0.1 へ向けて同じ状況を作り、
+// secure context 限定 API (crypto.randomUUID 等) に依存せずマッピング・会場が初期化できることを確かめる (#170)。
+const INSECURE_HOST = 'insecure.test';
+const canvasHtml = `<!doctype html><body><script>addEventListener('load',()=>{const c=document.createElement('canvas');
+  c.width=640;c.height=360;document.body.append(c);const x=c.getContext('2d');
+  (function d(){x.fillStyle='#dc9030';x.fillRect(0,0,640,360);requestAnimationFrame(d)})()})</script>`;
+const videoFlows = () => document.querySelector('#source-video')?.videoWidth > 0;
+const insecureRoutes = [
+  ['/mapping', (p) => p.locator('#preview-tab').click(), videoFlows],
+  ['/slideshow', async (p) => {
+    await p.locator('#play-pause-btn').click();
+    await p.locator('#open-windows-btn, #mapping-btn').first().click();
+    await p.locator('#preview-tab').click();
+  }, videoFlows],
+  ['/venue', async () => {}, () => !!document.querySelector('#venue-canvas')],
+];
+
+async function insecureOrigin(browser, base) {
+  const url = base.url.replace('127.0.0.1', INSECURE_HOST);
+  for (const [path, open, ready] of insecureRoutes) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    context.setDefaultTimeout(15_000);
+    try {
+      const errors = [];
+      await context.route('**/sketches.json', (r) => r.fulfill({ json: catalog }));
+      await context.route('**/sketches/a/index.html', (r) => r.fulfill({ contentType: 'text/html', body: canvasHtml }));
+      const page = await context.newPage();
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto(url + path);
+      assert.equal(await page.evaluate(() => isSecureContext), false, 'the origin must not be a secure context');
+      await open(page);
+      await page.waitForFunction(ready);
+      assert.deepEqual(errors, [], `${base.name}/insecureOrigin ${path}: browser errors`);
+      console.log(`${base.name}/insecureOrigin ${path}: PASS`);
+    } finally { await context.close(); }
+  }
+}
+
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined,
+  args: [`--host-resolver-rules=MAP ${INSECURE_HOST} 127.0.0.1`] });
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
     const hosted = config.startsWith('apps/'), name = hosted ? 'hosted' : 'gallery';
     const server = await createServer({ configFile: resolve(root, config), root: hosted ? resolve(root, 'apps/web') : root,
-      server: { host: '127.0.0.1', port: 0, strictPort: false, open: false, watch: null, hmr: false }, logLevel: 'error' });
+      server: { host: '127.0.0.1', port: 0, strictPort: false, open: false, watch: null, hmr: false, allowedHosts: [INSECURE_HOST] }, logLevel: 'error' });
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}` };
@@ -198,6 +239,7 @@ try {
           console.log(`${name}/${caseName}: PASS`);
         } finally { await env.context.close(); }
       }
+      if (!process.env.ROUTES_CASE || process.env.ROUTES_CASE === 'insecureOrigin') await insecureOrigin(browser, base);
     } finally { await server.close(); }
   }
 } finally { await browser.close(); }
