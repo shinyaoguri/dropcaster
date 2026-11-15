@@ -208,13 +208,14 @@ export class InactivePreviewPool {
   }
 
   /**
-   * preview を押したら、その時点で非 active な項目を active にする。ペン描画中は他項目へ切り替えない
-   * （一覧・ソースカラムと同じ規則。CSS の .mask-drafting でも pointer-events を落としている）。
+   * preview を左ボタンで押したら、その時点で非 active な項目を active にする。右クリックなど他のボタンと
+   * ペン描画中は他項目へ切り替えない（ソースカラム・一覧と同じ規則。CSS の .mask-drafting でも
+   * pointer-events を落としている）。
    * 切り替えないときは伝播を止めず、canvas-host の頂点追加などへそのまま渡す。
    */
   private activateOnPress(e: MouseEvent, id: string): void {
     const opts = this.opts;
-    if (!opts) return;
+    if (!opts || e.button !== 0) return;
     const state = opts.getState();
     if (id === state.activeId || isPenDrafting(state)) return;
     e.stopPropagation();

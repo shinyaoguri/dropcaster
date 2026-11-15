@@ -711,6 +711,11 @@ async function maskSelect(page, base) {
   // マスクが当たるのは多角形だけで、外側を押すと背面のマッピングが選ばれる
   await at(.26, .6);
   assert.equal((await state(page)).activeId, initial, 'clicking outside the mask polygon selects the mapping behind it');
+  // 右クリックでは選択を切り替えない (ソースカラムと同じく左ボタンだけ)
+  for (const [fx, fy, label] of [[.5, .45, 'mask'], [.77, .77, 'mapping']]) {
+    await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy, { button: 'right' });
+    assert.equal((await state(page)).activeId, initial, `right-clicking an inactive ${label} keeps the selection`);
+  }
   // ペン描画中に既存マスクやマッピングを押しても切り替わらず、頂点が増える
   await page.locator('#add-mask-btn').click();
   const draft = (await state(page)).activeId;
