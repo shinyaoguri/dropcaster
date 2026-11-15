@@ -8,7 +8,8 @@
  * mask は active/inactive にかかわらず常に黒多角形をここで描画する（vertex 編集ハンドルだけ
  * canvas-handles レイヤに別途載る）。
  *
- * クリックでその item を active 化（onActivate コールバック）。
+ * クリックでその item を active 化（onActivate コールバック）。active かどうか・ペン描画中かどうかは
+ * 要素を作った時点の state ではなく、押した時点の state（getState）で判定する（#112）。
  *
  * 入力（index, quad/source/points, canvas 寸法）が前回と同じなら DOM を触らない
  * signature memoize 付き — active な quad のドラッグ中に毎フレーム全 preview を
@@ -23,6 +24,12 @@ import {
   type MappingsState,
 } from '../../../utils/mappingTransform';
 import { createQuadOutline, syncQuadOutline, syncQuadOutlineStyle } from '../../../utils/quadOutline';
+
+/** active な項目が drafting のマスク（ペン描画中）か。 */
+function isPenDrafting(state: MappingsState): boolean {
+  const active = state.mappings.find(m => m.id === state.activeId);
+  return !!active && isMaskEntry(active) && !!active.drafting;
+}
 
 interface PreviewEntry {
   div: HTMLDivElement;
@@ -48,6 +55,8 @@ export interface InactivePreviewPoolAttachOptions {
   getActiveOutline: () => SVGSVGElement | null;
   /** 共有 canvas-mappings レイヤ（全 inactive preview の mount 先）。 */
   getMappingsLayer: () => HTMLElement | null;
+  /** 押した時点の最新 state。preview 要素は state を跨いで再利用されるので、作成時の state を使わない。 */
+  getState: () => MappingsState;
   onActivate: (mappingId: string) => void;
 }
 
@@ -121,13 +130,9 @@ export class InactivePreviewPool {
           svg.appendChild(polyline);
           div.appendChild(svg);
           stage.appendChild(div);
-          // クリックで activate（drafting でない場合のみ；drafting 中の click は MaskEditPanel が canvas-host で受ける）
-          div.addEventListener('mousedown', (e) => {
-            if (m.id !== state.activeId) {
-              e.stopPropagation();
-              opts.onActivate(m.id);
-            }
-          });
+          // クリックで activate（drafting 中の click は MaskEditPanel が canvas-host で受ける）
+          const id = m.id;
+          div.addEventListener('mousedown', (e) => this.activateOnPress(e, id));
           entry = { div, polyline, sig: '' };
           this.previews.set(m.id, entry);
         }
@@ -151,8 +156,7 @@ export class InactivePreviewPool {
           }
           entry.polyline!.setAttribute('points', m.points.map(p => `${p.x},${p.y}`).join(' '));
         }
-        // drafting 中は pointer-events を切って canvas-host への click（頂点追加）を通す
-        entry.div.style.pointerEvents = drafting ? 'none' : '';
+        // 当たり判定は polyline だけ。drafting 中に canvas-host（頂点追加）へ通すのは CSS（.preview-mask.drafting）が担う
         continue;
       }
 
@@ -169,10 +173,8 @@ export class InactivePreviewPool {
         div.appendChild(video);
         const outline = createQuadOutline(doc, 'preview-mapping-outline');
         stage.append(div, outline);
-        div.addEventListener('mousedown', (e) => {
-          e.stopPropagation();
-          opts.onActivate(m.id);
-        });
+        const id = m.id;
+        div.addEventListener('mousedown', (e) => this.activateOnPress(e, id));
         this.bindStream(video);
         entry = { div, video, outline, sig: '' };
         this.previews.set(m.id, entry);
@@ -203,6 +205,21 @@ export class InactivePreviewPool {
     this.previews.clear();
     this.doc = null;
     this.opts = null;
+  }
+
+  /**
+   * preview を左ボタンで押したら、その時点で非 active な項目を active にする。右クリックなど他のボタンと
+   * ペン描画中は他項目へ切り替えない（ソースカラム・一覧と同じ規則。CSS の .mask-drafting でも
+   * pointer-events を落としている）。
+   * 切り替えないときは伝播を止めず、canvas-host の頂点追加などへそのまま渡す。
+   */
+  private activateOnPress(e: MouseEvent, id: string): void {
+    const opts = this.opts;
+    if (!opts || e.button !== 0) return;
+    const state = opts.getState();
+    if (id === state.activeId || isPenDrafting(state)) return;
+    e.stopPropagation();
+    opts.onActivate(id);
   }
 
   private bindStream(video: HTMLVideoElement): void {

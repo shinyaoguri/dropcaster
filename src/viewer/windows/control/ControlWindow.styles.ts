@@ -560,11 +560,12 @@ export const CONTROL_PANEL_CSS = `
         border-color: #fff;
       }
 
-      /* マッピング column 内の mask preview */
+      /* マッピング column 内の mask preview。div と svg はキャンバス全体を覆うので当たり判定を持たせず、
+         多角形（polyline）だけがクリックを受ける。外側のクリックは背面のマッピングへ通す (#112)。 */
       .preview-mask {
         position: absolute;
         top: 0; left: 0;
-        pointer-events: auto;
+        pointer-events: none;
         transform-origin: top left;
       }
       .preview-mask > svg {
@@ -572,6 +573,7 @@ export const CONTROL_PANEL_CSS = `
         top: 0; left: 0;
         width: 100%; height: 100%;
         overflow: visible;
+        pointer-events: none;
       }
       /* commit 後（drafting 無し）: 黒で塗りつぶし、白い枠線。polyline の fill は implicit closing
          edge を埋めるので polygon と同じ視覚になる。 */
@@ -581,6 +583,7 @@ export const CONTROL_PANEL_CSS = `
         stroke-width: 1;
         vector-effect: non-scaling-stroke;
         cursor: pointer;
+        pointer-events: visiblePainted;
       }
       .preview-mask.active > svg polyline {
         stroke: #fff;
@@ -596,6 +599,8 @@ export const CONTROL_PANEL_CSS = `
         stroke-linecap: round;
         vector-effect: non-scaling-stroke;
         cursor: default;
+        /* 描画中のマスク自身はクリックを canvas-host（頂点追加）へ通す */
+        pointer-events: none;
       }
 
       /* dev mode: mask の輪郭をリスト上の色で強調表示する（操作プレビュー側）。
@@ -617,11 +622,11 @@ export const CONTROL_PANEL_CSS = `
 
       /* ペン描画中（shell に .mask-drafting）はマスク以外の項目に触れないようにする。
          クリックが canvas-host へ通って頂点プロットになるよう pointer-events を落とす。
-         drafting マスク自身は別途 .preview-mask.drafting に pointer-events: none を当てている。 */
+         drafting マスク自身は別途 .preview-mask.drafting > svg polyline に pointer-events: none を当てている。 */
       :scope.mask-drafting .preview-mapping {
         pointer-events: none;
       }
-      :scope.mask-drafting .preview-mask:not(.drafting) {
+      :scope.mask-drafting .preview-mask:not(.drafting) > svg polyline {
         pointer-events: none;
       }
       :scope.mask-drafting #cropped-container {
