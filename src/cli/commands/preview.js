@@ -1,11 +1,22 @@
 import { preview as vitePreview } from 'vite';
 import chalk from 'chalk';
 import { t } from '../i18n/index.js';
+import { loadConfig } from '../utils/config.js';
+import { resolveBase } from '../utils/base.js';
 
+/**
+ * build と同じ設置先 base で dist を配信する。preview に `--base` オプションは無いので、
+ * dropcaster.config.js の `base` > `'/'` で決まる (プログラムから options.base を渡せばそれが優先)。
+ *
+ * @param {{ port: string, host: string, output: string, base?: string }} options
+ */
 export async function preview(options) {
   try {
+    const config = await loadConfig(process.cwd());
+    const base = resolveBase(options, undefined, config);
     const server = await vitePreview({
       root: process.cwd(),
+      base,
       build: {
         outDir: options.output
       },
@@ -15,7 +26,7 @@ export async function preview(options) {
       }
     });
 
-    const url = `http://${options.host}:${options.port}`;
+    const url = `http://${options.host}:${options.port}${base}`;
 
     console.log();
     console.log(chalk.green(t('preview.starting')));
