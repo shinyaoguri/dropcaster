@@ -20,137 +20,170 @@ export function controlPanelHtml(): string {
         <span class="dc-banner-icon">⚠</span>
         <span class="dc-banner-text" data-i18n-html="control.banner.webglLost">${t('control.banner.webglLost')}</span>
       </div>
-      <!-- 編集履歴のバー。3 カラム全体に効く操作なので、全幅で 3 カラムの上に置く -->
-      <div class="dc-edit-toolbar" role="toolbar" data-i18n-aria-label="control.history.label" aria-label="${t('control.history.label')}">
-        <button type="button" id="dc-undo-btn" class="dc-history-btn" disabled>
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        </button>
-        <button type="button" id="dc-redo-btn" class="dc-history-btn" disabled>
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-        </button>
-      </div>
       <div class="control-container">
+        <!-- アクティビティバー: ツールカラムの中身 (パネル) を切り替える。選択中を再度押すとツールカラムを畳む -->
+        <div class="dc-activity-bar">
+          <div class="dc-activity-tabs" role="tablist" aria-orientation="vertical" data-i18n-aria-label="control.activity.label" aria-label="${t('control.activity.label')}">
+          <button type="button" class="dc-activity-btn is-active" id="dc-activity-outputs" role="tab" aria-selected="true" aria-controls="dc-tool-panel-outputs" data-tool-panel="outputs" data-i18n-title="control.panel.outputs" title="${t('control.panel.outputs')}" data-i18n-aria-label="control.panel.outputs" aria-label="${t('control.panel.outputs')}">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
+          </button>
+          <button type="button" class="dc-activity-btn" id="dc-activity-check" role="tab" aria-selected="false" tabindex="-1" aria-controls="dc-tool-panel-check" data-tool-panel="check" data-i18n-title="control.panel.check" title="${t('control.panel.check')}" data-i18n-aria-label="control.panel.check" aria-label="${t('control.panel.check')}">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          </button>
+          <button type="button" class="dc-activity-btn" id="dc-activity-preview3d" role="tab" aria-selected="false" tabindex="-1" aria-controls="dc-tool-panel-preview3d" data-tool-panel="preview3d" data-i18n-title="control.panel.preview3d" title="${t('control.panel.preview3d')}" data-i18n-aria-label="control.panel.preview3d" aria-label="${t('control.panel.preview3d')}">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg>
+          </button>
+          <button type="button" class="dc-activity-btn" id="dc-activity-project" role="tab" aria-selected="false" tabindex="-1" aria-controls="dc-tool-panel-project" data-tool-panel="project" data-i18n-title="control.panel.project" title="${t('control.panel.project')}" data-i18n-aria-label="control.panel.project" aria-label="${t('control.panel.project')}">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V3Z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/></svg>
+          </button>
+          </div>
+          <!-- 下端の操作 (編集を閉じる など) の差し込み先。MappingWorkspace が使う -->
+          <div class="dc-activity-bar-footer"></div>
+        </div>
         <!-- ツールカラム -->
         <div class="column tool-column" data-resize-target="tool">
           <div class="column-header">
-            <h2 data-i18n="control.column.tool">${t('control.column.tool')}</h2>
+            <h2 id="dc-tool-panel-title" data-i18n="control.panel.outputs">${t('control.panel.outputs')}</h2>
+            <!-- 編集履歴 (Undo / Redo)。どのパネルでも効く操作なので見出し行に置く -->
+            <div class="dc-history" role="toolbar" data-i18n-aria-label="control.history.label" aria-label="${t('control.history.label')}">
+              <button type="button" id="dc-undo-btn" class="dc-history-btn" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+              </button>
+              <button type="button" id="dc-redo-btn" class="dc-history-btn" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+              </button>
+            </div>
           </div>
           <div class="tool-content">
-            <div class="tool-section">
-              <h3 data-i18n="control.outputs.title">${t('control.outputs.title')}</h3>
-              <div id="outputs-list" class="outputs-list"></div>
-              <button id="add-output-btn" class="tool-button" data-i18n="control.outputs.add">${t('control.outputs.add')}</button>
-            </div>
-
-            <div class="tool-section">
-              <h3 data-i18n="control.mappings.title">${t('control.mappings.title')}</h3>
-              <p class="section-hint" data-i18n="control.mappings.reorderHint">${t('control.mappings.reorderHint')}</p>
-              <div id="mappings-list" class="mappings-list"></div>
-              <div class="mappings-add-buttons">
-                <button id="add-mapping-btn" class="tool-button" data-i18n="control.mappings.add">${t('control.mappings.add')}</button>
-                <button id="add-mask-btn" class="tool-button" data-i18n="control.mappings.addMask">${t('control.mappings.addMask')}</button>
+            <!-- 出力とマッピング: 一覧と、選択中の出力・マッピングの詳細 -->
+            <div class="dc-tool-panel is-active" id="dc-tool-panel-outputs" role="tabpanel" aria-labelledby="dc-activity-outputs" data-tool-panel="outputs">
+              <div class="tool-section">
+                <h3 data-i18n="control.outputs.title">${t('control.outputs.title')}</h3>
+                <div id="outputs-list" class="outputs-list"></div>
+                <button id="add-output-btn" class="tool-button" data-i18n="control.outputs.add">${t('control.outputs.add')}</button>
               </div>
-            </div>
 
-            <div class="tool-section">
-              <h3 data-i18n="control.outputSettings.title">${t('control.outputSettings.title')}</h3>
-              <p class="section-hint" data-i18n="control.outputSettings.hint">${t('control.outputSettings.hint')}</p>
-              <div class="tool-item">
-                <label id="output-settings-label"><span data-i18n="control.outputSettings.target">${t('control.outputSettings.target')}</span> <span id="output-settings-target">—</span></label>
-                <div class="tool-values output-values">
-                  <div class="tool-value">
-                    <span class="label" data-i18n="control.label.x">${t('control.label.x')}</span>
-                    <input id="output-x-input" class="num-input" type="number" step="1" min="0" inputmode="numeric" disabled />
-                  </div>
-                  <div class="tool-value">
-                    <span class="label" data-i18n="control.label.y">${t('control.label.y')}</span>
-                    <input id="output-y-input" class="num-input" type="number" step="1" min="0" inputmode="numeric" disabled />
-                  </div>
-                  <div class="tool-value">
-                    <span class="label" data-i18n="control.label.w">${t('control.label.w')}</span>
-                    <input id="output-w-input" class="num-input" type="number" step="1" min="1" inputmode="numeric" disabled />
-                  </div>
-                  <div class="tool-value">
-                    <span class="label" data-i18n="control.label.h">${t('control.label.h')}</span>
-                    <input id="output-h-input" class="num-input" type="number" step="1" min="1" inputmode="numeric" disabled />
+              <div class="tool-section">
+                <h3 data-i18n="control.mappings.title">${t('control.mappings.title')}</h3>
+                <p class="section-hint" data-i18n="control.mappings.reorderHint">${t('control.mappings.reorderHint')}</p>
+                <div id="mappings-list" class="mappings-list"></div>
+                <div class="mappings-add-buttons">
+                  <button id="add-mapping-btn" class="tool-button" data-i18n="control.mappings.add">${t('control.mappings.add')}</button>
+                  <button id="add-mask-btn" class="tool-button" data-i18n="control.mappings.addMask">${t('control.mappings.addMask')}</button>
+                </div>
+              </div>
+
+              <div class="tool-section">
+                <h3 data-i18n="control.outputSettings.title">${t('control.outputSettings.title')}</h3>
+                <p class="section-hint" data-i18n="control.outputSettings.hint">${t('control.outputSettings.hint')}</p>
+                <div class="tool-item">
+                  <label id="output-settings-label"><span data-i18n="control.outputSettings.target">${t('control.outputSettings.target')}</span> <span id="output-settings-target">—</span></label>
+                  <div class="tool-values output-values">
+                    <div class="tool-value">
+                      <span class="label" data-i18n="control.label.x">${t('control.label.x')}</span>
+                      <input id="output-x-input" class="num-input" type="number" step="1" min="0" inputmode="numeric" disabled />
+                    </div>
+                    <div class="tool-value">
+                      <span class="label" data-i18n="control.label.y">${t('control.label.y')}</span>
+                      <input id="output-y-input" class="num-input" type="number" step="1" min="0" inputmode="numeric" disabled />
+                    </div>
+                    <div class="tool-value">
+                      <span class="label" data-i18n="control.label.w">${t('control.label.w')}</span>
+                      <input id="output-w-input" class="num-input" type="number" step="1" min="1" inputmode="numeric" disabled />
+                    </div>
+                    <div class="tool-value">
+                      <span class="label" data-i18n="control.label.h">${t('control.label.h')}</span>
+                      <input id="output-h-input" class="num-input" type="number" step="1" min="1" inputmode="numeric" disabled />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div class="tool-section">
-              <h3 data-i18n="control.sourceSettings.title">${t('control.sourceSettings.title')}</h3>
-              <p class="section-hint" data-i18n="control.sourceSettings.hint">${t('control.sourceSettings.hint')}</p>
-              <div class="tool-item">
-                <label data-i18n="control.sourceSettings.selection">${t('control.sourceSettings.selection')}</label>
-                <div class="tool-values">
-                  <div class="tool-value">
-                    <span class="label" data-i18n="control.label.x">${t('control.label.x')}</span>
-                    <span id="source-x-value">0</span>%
-                  </div>
-                  <div class="tool-value">
-                    <span class="label" data-i18n="control.label.y">${t('control.label.y')}</span>
-                    <span id="source-y-value">0</span>%
-                  </div>
-                  <div class="tool-value">
-                    <span class="label" data-i18n="control.label.w">${t('control.label.w')}</span>
-                    <span id="source-w-value">100</span>%
-                  </div>
-                  <div class="tool-value">
-                    <span class="label" data-i18n="control.label.h">${t('control.label.h')}</span>
-                    <span id="source-h-value">100</span>%
+              <div class="tool-section">
+                <h3 data-i18n="control.sourceSettings.title">${t('control.sourceSettings.title')}</h3>
+                <p class="section-hint" data-i18n="control.sourceSettings.hint">${t('control.sourceSettings.hint')}</p>
+                <div class="tool-item">
+                  <label data-i18n="control.sourceSettings.selection">${t('control.sourceSettings.selection')}</label>
+                  <div class="tool-values">
+                    <div class="tool-value">
+                      <span class="label" data-i18n="control.label.x">${t('control.label.x')}</span>
+                      <span id="source-x-value">0</span>%
+                    </div>
+                    <div class="tool-value">
+                      <span class="label" data-i18n="control.label.y">${t('control.label.y')}</span>
+                      <span id="source-y-value">0</span>%
+                    </div>
+                    <div class="tool-value">
+                      <span class="label" data-i18n="control.label.w">${t('control.label.w')}</span>
+                      <span id="source-w-value">100</span>%
+                    </div>
+                    <div class="tool-value">
+                      <span class="label" data-i18n="control.label.h">${t('control.label.h')}</span>
+                      <span id="source-h-value">100</span>%
+                    </div>
                   </div>
                 </div>
+                <button id="reset-source-btn" class="tool-button" data-i18n="control.reset">
+                  ${t('control.reset')}
+                </button>
               </div>
-              <button id="reset-source-btn" class="tool-button" data-i18n="control.reset">
-                ${t('control.reset')}
-              </button>
-            </div>
 
-            <div class="tool-section">
-              <h3 data-i18n="control.testPattern.title">${t('control.testPattern.title')}</h3>
-              <p class="section-hint" data-i18n="control.testPattern.hint">${t('control.testPattern.hint')}</p>
-              <div class="test-pattern-buttons">
-                <button class="tool-button test-pattern-btn active" data-pattern="off" data-i18n="control.testPattern.off">${t('control.testPattern.off')}</button>
-                <button class="tool-button test-pattern-btn" data-pattern="white" data-i18n="control.testPattern.white">${t('control.testPattern.white')}</button>
-                <button class="tool-button test-pattern-btn" data-pattern="grid" data-i18n="control.testPattern.grid">${t('control.testPattern.grid')}</button>
-                <button class="tool-button test-pattern-btn" data-pattern="smpte" data-i18n="control.testPattern.smpte">${t('control.testPattern.smpte')}</button>
+              <div class="tool-section">
+                <h3 data-i18n="control.mappingSettings.title">${t('control.mappingSettings.title')}</h3>
+                <p class="section-hint" data-i18n="control.mappingSettings.hint">${t('control.mappingSettings.hint')}</p>
+                <div class="tool-item">
+                  <label data-i18n="control.mappingSettings.corners">${t('control.mappingSettings.corners')}</label>
+                  <div class="tool-values quad-values">
+                    <div class="tool-value"><span class="label">TL:</span><span id="mapping-tl-value">25, 25</span></div>
+                    <div class="tool-value"><span class="label">TR:</span><span id="mapping-tr-value">75, 25</span></div>
+                    <div class="tool-value"><span class="label">BL:</span><span id="mapping-bl-value">25, 75</span></div>
+                    <div class="tool-value"><span class="label">BR:</span><span id="mapping-br-value">75, 75</span></div>
+                  </div>
+                </div>
+                <button id="reset-mapping-btn" class="tool-button" data-i18n="control.reset">
+                  ${t('control.reset')}
+                </button>
               </div>
             </div>
 
-            <div class="tool-section">
-              <h3 data-i18n="control.devMode.title">${t('control.devMode.title')}</h3>
-              <p class="section-hint" data-i18n="control.devMode.hint">${t('control.devMode.hint')}</p>
-              <button id="dev-mode-toggle" class="tool-button dev-mode-toggle" aria-pressed="false">
-                <span class="dev-mode-dot" aria-hidden="true"></span>
-                <span class="dev-mode-label" data-i18n="control.devMode.off">${t('control.devMode.off')}</span>
-              </button>
-            </div>
-
-            <div class="tool-section">
-              <h3 data-i18n="control.mappingSettings.title">${t('control.mappingSettings.title')}</h3>
-              <p class="section-hint" data-i18n="control.mappingSettings.hint">${t('control.mappingSettings.hint')}</p>
-              <div class="tool-item">
-                <label data-i18n="control.mappingSettings.corners">${t('control.mappingSettings.corners')}</label>
-                <div class="tool-values quad-values">
-                  <div class="tool-value"><span class="label">TL:</span><span id="mapping-tl-value">25, 25</span></div>
-                  <div class="tool-value"><span class="label">TR:</span><span id="mapping-tr-value">75, 25</span></div>
-                  <div class="tool-value"><span class="label">BL:</span><span id="mapping-bl-value">25, 75</span></div>
-                  <div class="tool-value"><span class="label">BR:</span><span id="mapping-br-value">75, 75</span></div>
+            <!-- 確認: テストパターンと開発モード -->
+            <div class="dc-tool-panel" id="dc-tool-panel-check" role="tabpanel" aria-labelledby="dc-activity-check" data-tool-panel="check">
+              <div class="tool-section">
+                <h3 data-i18n="control.testPattern.title">${t('control.testPattern.title')}</h3>
+                <p class="section-hint" data-i18n="control.testPattern.hint">${t('control.testPattern.hint')}</p>
+                <div class="test-pattern-buttons">
+                  <button class="tool-button test-pattern-btn active" data-pattern="off" data-i18n="control.testPattern.off">${t('control.testPattern.off')}</button>
+                  <button class="tool-button test-pattern-btn" data-pattern="white" data-i18n="control.testPattern.white">${t('control.testPattern.white')}</button>
+                  <button class="tool-button test-pattern-btn" data-pattern="grid" data-i18n="control.testPattern.grid">${t('control.testPattern.grid')}</button>
+                  <button class="tool-button test-pattern-btn" data-pattern="smpte" data-i18n="control.testPattern.smpte">${t('control.testPattern.smpte')}</button>
                 </div>
               </div>
-              <button id="reset-mapping-btn" class="tool-button" data-i18n="control.reset">
-                ${t('control.reset')}
-              </button>
+
+              <div class="tool-section">
+                <h3 data-i18n="control.devMode.title">${t('control.devMode.title')}</h3>
+                <p class="section-hint" data-i18n="control.devMode.hint">${t('control.devMode.hint')}</p>
+                <button id="dev-mode-toggle" class="tool-button dev-mode-toggle" aria-pressed="false">
+                  <span class="dev-mode-dot" aria-hidden="true"></span>
+                  <span class="dev-mode-label" data-i18n="control.devMode.off">${t('control.devMode.off')}</span>
+                </button>
+              </div>
             </div>
 
-            <div class="tool-section">
-              <h3 data-i18n="control.io.title">${t('control.io.title')}</h3>
-              <p class="section-hint" data-i18n="control.io.hint">${t('control.io.hint')}</p>
-              <div class="io-buttons">
-                <button id="export-settings-btn" class="tool-button" data-i18n="control.io.export">${t('control.io.export')}</button>
-                <button id="import-settings-btn" class="tool-button" data-i18n="control.io.import">${t('control.io.import')}</button>
+            <!-- 3D: 中身は PracticePanel が読み込み時に入れる -->
+            <div class="dc-tool-panel" id="dc-tool-panel-preview3d" role="tabpanel" aria-labelledby="dc-activity-preview3d" data-tool-panel="preview3d">
+            </div>
+
+            <!-- プロジェクト: 保存・読込 (PracticePanel が先頭に入れる) と設定の入出力 -->
+            <div class="dc-tool-panel" id="dc-tool-panel-project" role="tabpanel" aria-labelledby="dc-activity-project" data-tool-panel="project">
+              <div class="tool-section">
+                <h3 data-i18n="control.io.title">${t('control.io.title')}</h3>
+                <p class="section-hint" data-i18n="control.io.hint">${t('control.io.hint')}</p>
+                <div class="io-buttons">
+                  <button id="export-settings-btn" class="tool-button" data-i18n="control.io.export">${t('control.io.export')}</button>
+                  <button id="import-settings-btn" class="tool-button" data-i18n="control.io.import">${t('control.io.import')}</button>
+                </div>
               </div>
+
             </div>
 
           </div>

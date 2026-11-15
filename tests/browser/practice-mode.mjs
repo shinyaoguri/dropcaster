@@ -67,22 +67,33 @@ async function closeEditor(page) {
   await page.locator('#practice-stop-confirm-btn').click();
 }
 async function change(page, selector, value) { await page.locator(selector).fill(String(value)); await page.locator(selector).press('Tab'); }
-async function menuAction(page, id) {
-  if (!await page.locator('#practice-menu').evaluate(e => e.open)) await page.locator('#practice-menu > summary').click();
-  await page.locator(id).click();
+/** 左端のアクティビティバーでツールカラムに `name` のパネルを出す。選択中で開いていれば押さない (押すと畳むため)。 */
+async function showPanel(page, name) {
+  const button = page.locator(`#dc-activity-${name}`);
+  if (await button.getAttribute('aria-selected') !== 'true' || await button.getAttribute('aria-expanded') === 'false') await button.click();
+  await page.locator(`#dc-tool-panel-${name}`).waitFor();
 }
-async function projectControls(page) { await menuAction(page, '#practice-project'); }
-async function exportProject(page) {
+async function activePanel(page) { return page.locator('.dc-activity-btn[aria-selected="true"]').getAttribute('data-tool-panel'); }
+async function projectControls(page) { await showPanel(page, 'project'); await page.locator('#dc-practice-project').waitFor(); }
+/** プロジェクトパネルで操作し、終わったら元のパネルへ戻す。 */
+async function inProjectPanel(page, run) {
+  const previous = await activePanel(page);
   await projectControls(page);
-  const promise = page.waitForEvent('download'); await page.locator('#practice-export').click();
-  const stream = await (await promise).createReadStream(); const chunks = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  return JSON.parse(Buffer.concat(chunks).toString());
+  try { return await run(); } finally { await showPanel(page, previous); }
+}
+async function exportProject(page) {
+  return inProjectPanel(page, async () => {
+    const promise = page.waitForEvent('download'); await page.locator('#practice-export').click();
+    const stream = await (await promise).createReadStream(); const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return JSON.parse(Buffer.concat(chunks).toString());
+  });
 }
 async function importProject(page, value) {
-  await projectControls(page);
-  await page.locator('#practice-project-file').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)) });
-  await page.waitForFunction(() => !document.querySelector('#dc-practice-status').textContent.includes('Loading venue'));
+  await inProjectPanel(page, async () => {
+    await page.locator('#practice-project-file').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)) });
+    await page.waitForFunction(() => !document.querySelector('#dc-practice-status').textContent.includes('Loading venue'));
+  });
 }
 async function snapshot(page, name) { if (artifactDir) await page.screenshot({ path: resolve(artifactDir, name + '.png') }); }
 async function state(page) { return page.evaluate(() => structuredClone(window.practiceWC.events.state.get())); }
@@ -100,14 +111,9 @@ async function workspace(page, base) {
   });
   await page.locator(entryButton).click();
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
-  assert.equal(await page.locator('#practice-venue').isVisible(), false, 'infrequent venue tools start inside the menu');
-  await page.locator('#practice-menu > summary').focus(); await page.keyboard.press('Enter');
-  assert.equal(await page.locator('#practice-venue').isVisible(), true);
-  await page.keyboard.press('Tab'); await page.keyboard.press('Escape');
-  assert.equal(await page.locator('#practice-venue').isVisible(), false);
-  assert.equal(await page.locator('#practice-menu > summary').evaluate(e=>e===document.activeElement), true);
-  await page.locator('#practice-menu > summary').click(); await page.locator('.source-column .column-header').click();
-  assert.equal(await page.locator('#practice-venue').isVisible(), false, 'outside click dismisses settings');
+  // 出力とマッピング・確認のパネルを行き来するだけでは 3D を読み込まない (ADR 0012)。
+  assert.equal(await activePanel(page), 'outputs', 'the editor opens on outputs and mappings');
+  await showPanel(page, 'check'); await showPanel(page, 'outputs');
   assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true');
   await page.locator('#add-output-btn').click(); await page.locator('#add-mapping-btn').click();
   assert.equal(page.context().pages().length, 1, 'entering and adding outputs never opens a popup');
@@ -223,18 +229,13 @@ async function lifecycle(page, base) {
   assert.ok(afterMask < beforeMask, 'existing mask editing updates the real GPU composite');
   await page.evaluate(async base => (await import(`${base}/i18n/index.ts`)).setLang('ja'), base.modules);
   assert.equal(await page.locator('#practice-stop').getAttribute('aria-label'), '編集を閉じる');
-  // 「設定・共有」は見出しの左にアイコンだけで置き、名前は title / aria-label で示す (#150)。
-  const menuSummary = page.locator('#practice-menu > summary');
-  assert.deepEqual(await page.locator('.tool-column > .column-header').evaluate(h => [...h.children].map(e => e.id || e.className || e.tagName.toLowerCase())), ['practice-menu', 'h2', 'dc-workspace-actions'], 'menu, heading, then close actions');
-  assert.equal((await menuSummary.innerText()).trim(), '', 'menu button has no visible text');
-  assert.equal(await menuSummary.getAttribute('aria-label'), '設定・共有'); assert.equal(await menuSummary.getAttribute('title'), '設定・共有');
-  await page.evaluate(async base => (await import(`${base}/i18n/index.ts`)).setLang('en'), base.modules);
-  assert.equal(await menuSummary.getAttribute('aria-label'), 'Settings & sharing'); assert.equal(await menuSummary.getAttribute('title'), 'Settings & sharing');
-  await page.evaluate(async base => (await import(`${base}/i18n/index.ts`)).setLang('ja'), base.modules);
-  await menuAction(page, '#practice-settings'); await snapshot(page, base.name + '-desktop-ja');
+  // 見出し行はパネル名と編集履歴だけ。閉じるはアクティビティバーの下端にある (#215)。
+  assert.deepEqual(await page.locator('.tool-column > .column-header').evaluate(h => [...h.children].map(e => e.id || e.className)), ['dc-tool-panel-title', 'dc-history'], 'panel title, then history');
+  assert.equal(await page.locator('.dc-activity-bar-footer #practice-stop').count(), 1, 'close sits at the bottom of the activity bar');
+  await showPanel(page, 'preview3d'); await snapshot(page, base.name + '-desktop-ja');
   await page.setViewportSize({ width: 900, height: 800 }); await snapshot(page, base.name + '-narrow-ja');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1440, height: 900 }); await showPanel(page, 'outputs');
   const popupPromise = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click(); const popup = await popupPromise;
   await popup.waitForFunction(() => [...document.querySelectorAll('video')].some(v => v.videoWidth === 640));
   assert.equal(await popup.locator('.dc-practice-background, #dc-practice-canvas').count(), 0, 'editor background never appears in real output');
@@ -298,6 +299,7 @@ async function projects(page, base) {
   await page.waitForFunction(() => window.practiceWC !== window.previousWC);
   assert.equal(page.context().pages().length, 1, 'opening project does not open outputs');
   assert.equal((await exportProject(page)).assets[0].data, saved.assets[0].data);
+  await projectControls(page); // 開き直した編集は「出力とマッピング」から始まる
   await snapshot(page, base.name + '-glb');
   const missing = structuredClone(saved); missing.content[0].ref = 'missing-local-sketch';
   await importProject(page, missing);
@@ -340,7 +342,7 @@ async function slideshowDraft(page, base) {
   assert.equal(await page.inputValue('#practice-project-name'), 'Third', 'cancelling keeps the edit');
   await storageSaved(page); assert.equal((await draftProject(page, base)).name, 'Third', 'staying finishes the save');
   // ドラッグ中は書き込まず、操作の終わりで 1 回だけ保存する。
-  await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click(); await page.waitForTimeout(700); await storageSaved(page);
+  await page.locator('#mapping-tab').click(); await showPanel(page, 'outputs'); await page.locator('#add-mapping-btn').click(); await page.waitForTimeout(700); await storageSaved(page);
   await page.evaluate(() => { window.draftWrites = 0; const put = IDBObjectStore.prototype.put; IDBObjectStore.prototype.put = function (...args) { window.draftWrites++; return put.apply(this, args); }; });
   const box = await page.locator('#output-stage .quad-handle[data-corner="topLeft"]').boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
@@ -363,7 +365,7 @@ async function slideshowDraft(page, base) {
 async function slideshow(page, base) {
   await snapshot(page, base.name + '-slideshow-entry');
   await start(page); await page.locator('#play-pause-btn').click();
-  await page.locator('[data-pattern="grid"]').click(); await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 1920);
+  await showPanel(page, 'check'); await page.locator('[data-pattern="grid"]').click(); await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 1920);
   await page.evaluate(() => { window.patternTrack = document.querySelector('#source-video').srcObject.getVideoTracks()[0]; });
   await page.locator('#next-btn').click(); await page.waitForFunction(() => document.querySelector('#current-sketch-number').textContent === '2');
   assert.equal(await page.evaluate(() => window.patternTrack === document.querySelector('#source-video').srcObject.getVideoTracks()[0] && window.patternTrack.readyState === 'live'), true);
@@ -378,7 +380,7 @@ async function slideshow(page, base) {
   await page.locator('#next-btn').click(); await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 1280);
   const continued = await exportProject(page); assert.equal(continued.show.currentIndex, 1); assert.equal(continued.show.intervalSeconds, 45);
   await page.evaluate(() => { window.previousWC = window.practiceWC; });
-  await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
+  await projectControls(page); await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 1280);
   await page.waitForFunction(() => window.practiceWC !== window.previousWC);
   assert.equal(await page.locator('#interval-input').inputValue(), '45');
@@ -484,10 +486,10 @@ async function outputs(page) {
   assert.equal((await addLook()).background, 'rgb(68, 68, 68)', 'hovering a disabled tool button does not highlight it');
   assert.equal(page.context().pages().length, 1, 'adding a practice output does not open a popup');
   const last = (await state(page)).outputs[3].id;
-  await page.locator('#practice-output').selectOption(last);
+  await showPanel(page, 'preview3d'); await page.locator('#practice-output').selectOption(last);
   const calibration = await exportProject(page); calibration.venue.projectors.find(p=>p.outputId===last).position[0] = 7.5; await importProject(page,calibration);
   const optics = (await exportProject(page)).venue.projectors.find(p => p.outputId === last);
-  await page.locator(`#outputs-list [data-output-id="${first}"] .remove-output-btn`).click();
+  await showPanel(page, 'outputs'); await page.locator(`#outputs-list [data-output-id="${first}"] .remove-output-btn`).click();
   const exported = await exportProject(page);
   assert.equal(exported.venue.projectors.length, 3);
   assert.deepEqual(exported.venue.projectors.find(p => p.outputId === last), optics);
@@ -562,7 +564,7 @@ async function sample(page, base) {
   await page.waitForFunction(() => document.querySelector('#source-video').videoWidth === 1920);
   const project = await exportProject(page);
   assert.equal(project.content[0].kind, 'builtin'); assert.equal(project.content[0].ref, 'checkerboard');
-  await page.locator('#practice-open-content').click(); await page.waitForURL('**/project');
+  await projectControls(page); await page.locator('#practice-open-content').click(); await page.waitForURL('**/project');
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 1920);
   assert.equal(page.context().pages().length, 1);
   await snapshot(page, base.name + '-sample');
@@ -573,10 +575,10 @@ async function history(page, base) {
   await page.locator(entryButton).click();
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
   const undoBtn = page.locator('#dc-undo-btn'), redoBtn = page.locator('#dc-redo-btn');
-  const bar = await page.locator('.dc-edit-toolbar').boundingBox();
-  const columns = await page.locator('.control-container').boundingBox();
-  assert.ok(bar && columns && bar.height <= 32, 'the history bar is thin');
-  assert.ok(Math.abs(bar.y + bar.height - columns.y) <= 1 && Math.abs(bar.width - columns.width) <= 1, 'the bar spans the three columns right above them');
+  // 全幅の履歴バーは無く、3 カラムは画面上端から始まる。Undo / Redo はツールカラムの見出しにある (#215)。
+  assert.equal(await page.locator('.dc-edit-toolbar').count(), 0, 'no full-width history bar');
+  assert.equal((await page.locator('.control-container').boundingBox()).y, (await page.locator('#dc-inline-editor').boundingBox()).y, 'columns start at the top of the editor');
+  assert.equal(await page.locator('.tool-column > .column-header .dc-history #dc-undo-btn').count(), 1, 'history lives in the tool heading');
   assert.equal(await undoBtn.isDisabled(), true, 'nothing to undo on entry');
   assert.equal(await redoBtn.isDisabled(), true);
   // 押せないことはアイコンを淡くして示し、汎用の button:disabled の塗りを付けない (ホバー中も)
@@ -589,7 +591,7 @@ async function history(page, base) {
     await btn.hover();
     assert.equal((await btn.evaluate(look)).background, clear, 'hovering a disabled history button adds no fill');
   }
-  if (artifactDir) await page.locator('.dc-edit-toolbar').screenshot({ path: resolve(artifactDir, base.name + '-history-disabled.png') });
+  if (artifactDir) await page.locator('.tool-column > .column-header').screenshot({ path: resolve(artifactDir, base.name + '-history-disabled.png') });
   // 出力設定の数値欄: Escape は取消 (欄・state・書き出し JSON が編集前のまま、履歴も積まない) (#113)
   const outputLayout = async () => { const o = (await state(page)).outputs[0]; return { x: o.position.x, y: o.position.y, w: o.size.width, h: o.size.height }; };
   const layoutBefore = await outputLayout();
@@ -986,6 +988,111 @@ async function fullscreenMapping(page, base) {
   await other.close();
 }
 
+/** 左端のアクティビティバー (#215): パネル切替・選択中の再押下で折り畳み・畳んだままの Undo・キーボード・狭い画面。 */
+async function activityBar(page, base) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  const requests = observedRequests.get(page);
+  const loadedPanel = () => requests.some(url => /PracticePanel/.test(url));
+  const tabs = page.locator('.dc-activity-tabs');
+  assert.equal(await tabs.getAttribute('role'), 'tablist'); assert.equal(await tabs.getAttribute('aria-orientation'), 'vertical');
+  assert.deepEqual(await tabs.locator('.dc-activity-btn').evaluateAll(bs => bs.map(b => b.dataset.toolPanel)), ['outputs', 'check', 'preview3d', 'project']);
+  const bar = await page.locator('.dc-activity-bar').boundingBox(), tool = await page.locator('.tool-column').boundingBox();
+  assert.ok(bar.x <= 1 && bar.width <= 48 && Math.abs(bar.x + bar.width - tool.x) <= 1, 'the activity bar sits at the left edge, right before the tool column');
+  assert.ok((await page.locator('.dc-activity-bar-footer #practice-stop').boundingBox()).y > (await tabs.boundingBox()).y + (await tabs.boundingBox()).height, 'close is below the panel buttons');
+  const title = page.locator('#dc-tool-panel-title');
+  const visible = async selector => page.locator(selector).isVisible();
+  // 既定は「出力とマッピング」。一覧と選択中の詳細 (出力設定・ソース設定・マッピング設定) が同じパネルにある。
+  assert.equal(await activePanel(page), 'outputs');
+  assert.equal(await page.locator('#dc-activity-outputs').getAttribute('aria-expanded'), 'true');
+  assert.equal(await title.innerText(), 'Outputs and mappings');
+  for (const selector of ['#add-output-btn', '#add-mapping-btn', '#output-x-input', '#reset-source-btn', '#reset-mapping-btn']) assert.equal(await visible(selector), true, `${selector} is in outputs and mappings`);
+  for (const selector of ['[data-pattern="grid"]', '#dev-mode-toggle', '#export-settings-btn']) assert.equal(await visible(selector), false, `${selector} is in another panel`);
+  await page.locator('#add-mapping-btn').click(); const mappings = (await state(page)).mappings.length;
+  // 確認: テストパターンと開発モード。ここまでは 3D を読み込まない。
+  await page.locator('#dc-activity-check').click();
+  assert.equal(await title.innerText(), 'Check');
+  assert.equal(await visible('[data-pattern="grid"]'), true); assert.equal(await visible('#dev-mode-toggle'), true);
+  assert.equal(await visible('#add-output-btn'), false);
+  assert.equal(await page.locator('.dc-tool-panel.is-active').count(), 1);
+  assert.equal(loadedPanel(), false, 'outputs and check panels never load 3D');
+  // 会場の作成・調整は 3D を読み込まずに別タブで開ける入口として、閉じるの上にある (ADR 0013 / 0015)。
+  const venueLink = page.locator('.dc-activity-bar-footer #practice-venue');
+  assert.equal(await venueLink.getAttribute('target'), '_blank'); assert.match(await venueLink.getAttribute('href'), /\/venue$/);
+  assert.equal(await venueLink.getAttribute('aria-label'), 'Venue setup');
+  assert.deepEqual(await page.locator('.dc-activity-bar-footer a, .dc-activity-bar-footer button').evaluateAll(es => es.filter(e => e.checkVisibility()).map(e => e.id)), ['practice-venue', 'practice-stop']);
+  // プロジェクト: 開くと PracticePanel を読み込み、保存・読込が「設定の入出力」より先に並ぶ。
+  await page.locator('#dc-activity-project').click();
+  assert.equal(await title.innerText(), 'Project');
+  await page.locator('#practice-project-name').waitFor();
+  assert.equal(loadedPanel(), true, 'opening the project panel loads the practice panel');
+  assert.deepEqual(await page.locator('#dc-tool-panel-project > *').evaluateAll(es => es.map(e => e.querySelector('#dc-practice-project') ? 'project' : e.querySelector('#export-settings-btn') ? 'io' : '?')), ['project', 'io']);
+  // 3D: プレビューの設定と会場校正へのリンク。
+  await page.locator('#dc-activity-preview3d').click();
+  assert.equal(await title.innerText(), '3D');
+  await page.locator('#practice-output').waitFor();
+  assert.equal(await visible('#dc-tool-panel-preview3d a[href$="/venue"]'), true);
+  assert.equal(await visible('#practice-project-name'), false);
+  await snapshot(page, base.name + '-activity-3d');
+  // 列幅を変えてから畳み、開き直すと同じ幅に戻る。
+  await showPanel(page, 'outputs');
+  const resizer = await page.locator('.dc-column-resizer[data-resize-edge="tool"]').boundingBox();
+  await page.mouse.move(resizer.x + resizer.width / 2, resizer.y + 200); await page.mouse.down();
+  await page.mouse.move(resizer.x + resizer.width / 2 + 40, resizer.y + 200, { steps: 4 }); await page.mouse.up();
+  const width = (await page.locator('.tool-column').boundingBox()).width;
+  const stageWidth = (await page.locator('#output-stage').boundingBox()).width;
+  await page.locator('#dc-activity-outputs').click();
+  assert.equal(await page.locator('.tool-column').isVisible(), false, 'pressing the selected button collapses the tool column');
+  assert.equal(await page.locator('.dc-column-resizer[data-resize-edge="tool"]').isVisible(), false);
+  assert.equal(await page.locator('#dc-activity-outputs').getAttribute('aria-expanded'), 'false');
+  assert.equal(await activePanel(page), 'outputs', 'collapsing keeps the selection');
+  await page.waitForFunction(w => document.querySelector('#output-stage').getBoundingClientRect().width > w + 100, stageWidth);
+  const sourceX = (await page.locator('.source-column').boundingBox()).x;
+  assert.ok(Math.abs(sourceX - (bar.x + bar.width)) <= 8, 'the source column follows the activity bar');
+  await snapshot(page, base.name + '-activity-collapsed');
+  // 畳んだ間もキー操作で Undo / Redo できる。
+  await page.keyboard.press('ControlOrMeta+z');
+  assert.equal((await state(page)).mappings.length, mappings - 1, 'undo works while the tool column is collapsed');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  assert.equal((await state(page)).mappings.length, mappings, 'redo works while the tool column is collapsed');
+  // 別のパネルを押すと、そのパネルで開く。幅は畳む前のまま。
+  await page.locator('#dc-activity-check').click();
+  assert.equal(await page.locator('.tool-column').isVisible(), true);
+  assert.equal(await activePanel(page), 'check'); assert.equal(await title.innerText(), 'Check');
+  assert.equal((await page.locator('.tool-column').boundingBox()).width, width, 'reopening restores the resized width');
+  // キーボード: 上下・Home・End で移動して選ぶ。Enter で選択中を畳み、もう一度で開く。
+  await page.locator('#dc-activity-check').focus();
+  const focused = () => page.evaluate(() => document.activeElement?.dataset.toolPanel);
+  await page.keyboard.press('ArrowDown'); assert.equal(await activePanel(page), 'preview3d'); assert.equal(await focused(), 'preview3d');
+  await page.keyboard.press('End'); assert.equal(await activePanel(page), 'project');
+  await page.keyboard.press('ArrowDown'); assert.equal(await activePanel(page), 'outputs', 'ArrowDown wraps');
+  await page.keyboard.press('ArrowUp'); assert.equal(await activePanel(page), 'project', 'ArrowUp wraps');
+  await page.keyboard.press('Home'); assert.equal(await activePanel(page), 'outputs');
+  const before = await state(page);
+  await page.keyboard.press('Enter'); assert.equal(await page.locator('.tool-column').isVisible(), false, 'Enter collapses');
+  await page.keyboard.press('Space'); assert.equal(await page.locator('.tool-column').isVisible(), true, 'Space reopens');
+  assert.deepEqual(await state(page), before, 'activity bar keys never nudge mappings');
+  // 言語切替で見出しとボタン名が追従する。
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  assert.equal(await title.innerText(), '出力とマッピング');
+  assert.equal(await page.locator('#dc-activity-check').getAttribute('aria-label'), '確認');
+  assert.equal(await page.locator('#dc-activity-project').getAttribute('title'), 'プロジェクト');
+  await snapshot(page, base.name + '-activity-ja');
+  // 狭い画面でも、開いた状態・畳んだ状態ともに横にはみ出さない。
+  await page.setViewportSize({ width: 900, height: 800 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  assert.ok((await page.locator('.dc-activity-bar').boundingBox()).x <= 1);
+  assert.equal(await page.locator('.tool-column').isVisible(), true);
+  await snapshot(page, base.name + '-activity-narrow-ja');
+  await page.locator('#dc-activity-outputs').click();
+  assert.equal(await page.locator('.tool-column').isVisible(), false);
+  const narrowBar = await page.locator('.dc-activity-bar').boundingBox();
+  assert.ok(Math.abs((await page.locator('.source-column').boundingBox()).x - (narrowBar.x + narrowBar.width)) <= 2, 'collapsed narrow layout gives the space to the source');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await snapshot(page, base.name + '-activity-narrow-collapsed-ja');
+  await page.locator('#dc-activity-outputs').click();
+  await closeEditor(page);
+}
 
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
@@ -996,7 +1103,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, maskSelect, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, maskSelect, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));

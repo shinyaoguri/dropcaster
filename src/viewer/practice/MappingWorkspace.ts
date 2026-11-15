@@ -5,9 +5,9 @@ import type { PracticePanel } from './PracticePanel';
 import { ProjectSession, type ShowContext } from './ProjectSession';
 import { installPracticeStyles } from './style';
 import { t, onLangChange, type MessageKey } from '../i18n/index';
-import { routeHref } from '../utils/paths';
 import type { Project } from './project';
 import { applyControlTranslations } from '../windows/control/ControlWindow.template';
+import { routeHref } from '../utils/paths';
 
 export interface MappingWorkspaceOptions {
   wc: WindowController; getFrame: () => SketchFrame | null;
@@ -20,25 +20,20 @@ export class MappingWorkspace {
   private panel: PracticePanel | null = null;
   private pendingPanel: Promise<void> | null = null;
   private editor: ControlWindow | null = null;
-  /** ツールカラムの見出し行の左端 (見出しの前) に差し込む「設定・共有」メニュー。 */
-  private menu: HTMLDetailsElement | null = null;
-  /** ツールカラムの見出し行の右端に差し込む閉じるとその確認ダイアログ。 */
+  /** アクティビティバーの下端に差し込む閉じるとその確認ダイアログ。 */
   private toolbar: HTMLElement | null = null;
   /** ツール見出しの直下に差し込む状態文と再試行。 */
   private notice: HTMLElement | null = null;
   private scope: HTMLElement | null = null;
   private release: (() => void) | null = null;
   private offTab: (() => void) | null = null;
+  private offToolPanel: (() => void) | null = null;
   private generation = 0;
   private off: (() => void)[] = [];
   private active = false;
   private statusKey: MessageKey = 'practice.waiting';
   private error = false;
   private disposed = false;
-  private closeMenuOutside = (event: PointerEvent): void => {
-    const menu = this.menu;
-    if (menu && !menu.contains(event.target as Node)) menu.open = false;
-  };
 
   constructor(options: MappingWorkspaceOptions) {
     this.options = options; installPracticeStyles();
@@ -72,27 +67,19 @@ export class MappingWorkspace {
     if (!editor || !this.scope) { this.stop(); return; }
     this.editor = editor;
     this.scope.classList.add('dc-mapping-workspace');
-    // 専用の上部バーは作業領域を削るので持たない。操作はツールカラムの見出し行に、
-    // 状態文と再試行はその直下に置き、エラー時だけ見せる。
+    // 専用の上部バーは作業領域を削るので持たない。状態文と再試行はツールカラムの見出し直下に置き、
+    // エラー時だけ見せる。会場の作成・調整 (別タブ) と閉じる操作はアクティビティバーの下端に置く。
+    // 会場の入口は 3D を読み込まずに開ける (ADR 0013 / 0015)。3D パネルは開くと 3D を読み込むので、そこには置かない。
     const toolHeader = this.scope.querySelector<HTMLElement>('.tool-column > .column-header');
-    if (!toolHeader) { this.stop(); return; }
+    const activityFooter = this.scope.querySelector<HTMLElement>('.dc-activity-bar-footer');
+    if (!toolHeader || !activityFooter) { this.stop(); return; }
     this.notice = document.createElement('div'); this.notice.className = 'dc-workspace-notice';
     this.notice.innerHTML = `<span id="dc-practice-status" role="status" aria-live="polite"></span>
       <button type="button" id="practice-retry" class="tool-button" data-i18n="practice.retry" hidden></button>`;
     toolHeader.after(this.notice);
-    // 「設定・共有」は見出しの前にアイコンだけで置き、名前は title と aria-label で示す。
-    // DOM 順も表示順と同じにして、読み上げとフォーカスの順を見た目に揃える。
-    const menu = document.createElement('details'); menu.id = 'practice-menu'; menu.className = 'dc-workspace-menu';
-    menu.innerHTML = `<summary data-i18n-title="practice.menu" data-i18n-aria-label="practice.menu">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 3v6m8 0v6m-6 0v6"/></svg>
-      </summary><div class="dc-workspace-menu-items">
-        <button type="button" id="practice-settings" data-i18n="calibration.previewSettings"></button>
-        <a id="practice-venue" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer" data-i18n="calibration.open"></a>
-        <button type="button" id="practice-project" data-i18n="practice.storage"></button>
-      </div>`;
-    this.menu = menu; toolHeader.prepend(menu);
     this.toolbar = document.createElement('div'); this.toolbar.className = 'dc-workspace-actions';
-    this.toolbar.innerHTML = `<button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+    this.toolbar.innerHTML = `<a id="practice-venue" class="dc-workspace-close" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer" data-i18n-title="calibration.title" data-i18n-aria-label="calibration.title"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/></svg></a>
+      <button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       <dialog id="practice-stop-confirm" class="dc-workspace-confirm" aria-labelledby="practice-stop-confirm-title" aria-describedby="practice-stop-confirm-hint"><div class="dc-workspace-confirm-body">
         <p id="practice-stop-confirm-title" class="dc-workspace-confirm-title" data-i18n="practice.stopConfirm"></p>
         <p id="practice-stop-confirm-hint" class="dc-workspace-confirm-hint" data-i18n="practice.stopConfirmHint"></p>
@@ -101,17 +88,11 @@ export class MappingWorkspace {
           <button type="button" id="practice-stop-confirm-btn" class="is-danger" data-i18n="practice.stopConfirmAction"></button>
         </div>
       </div></dialog>`;
-    toolHeader.append(this.toolbar);
-    menu.addEventListener('keydown', event => {
-      if (event.key !== 'Escape' || !menu.open) return;
-      event.preventDefault(); event.stopPropagation(); menu.open = false; menu.querySelector('summary')!.focus();
-    });
-    document.addEventListener('pointerdown', this.closeMenuOutside);
+    activityFooter.append(this.toolbar);
     // × は 1 クリックで閉じず確認を挟む。window.confirm() はメインスレッドを止め、同一オリジン
     // iframe の作品描画と出力への captureStream まで止めるので、非ブロッキングの <dialog> を使う。
     const confirm = this.toolbar.querySelector<HTMLDialogElement>('#practice-stop-confirm')!;
     this.toolbar.querySelector('#practice-stop')!.addEventListener('click', () => {
-      menu.open = false;
       if (!confirm.open) confirm.showModal();
     });
     confirm.querySelector('#practice-stop-cancel')!.addEventListener('click', () => confirm.close());
@@ -124,18 +105,11 @@ export class MappingWorkspace {
     this.notice.querySelector('#practice-retry')!.addEventListener('click', () => {
       editor.selectTab('preview'); void this.ensurePanel();
     });
-    for (const [button, id] of [['practice-settings', 'dc-practice-settings'], ['practice-project', 'dc-practice-project']]) {
-      menu.querySelector(`#${button}`)!.addEventListener('click', async () => {
-        menu.open = false;
-        const generation = this.generation;
-        await this.ensurePanel();
-        if (!this.active || generation !== this.generation) return;
-        const element = this.scope?.querySelector<HTMLElement>(`#${id}`);
-        if (element instanceof HTMLDetailsElement) element.open = true;
-        element?.scrollIntoView({ block: 'start' });
-        if (element) { element.tabIndex = -1; element.focus({ preventScroll: true }); }
-      });
-    }
+    // 3D とプロジェクトのパネルを開くことは、3D 設定・プロジェクトの明示操作として PracticePanel を読み込む
+    // (ADR 0012)。出力とマッピング・確認のパネルだけを使う間は Three.js を読み込まない。
+    this.offToolPanel = editor.onToolPanelChange(panel => {
+      if (panel === 'preview3d' || panel === 'project') void this.ensurePanel();
+    });
     this.offTab = editor.onTabChange(tab => {
       this.panel?.setVisible(tab === 'preview');
       if (tab === 'preview') void this.ensurePanel();
@@ -206,7 +180,6 @@ export class MappingWorkspace {
     this.notice.classList.toggle('is-visible', this.error || (!!retry && !retry.hasAttribute('hidden')));
   }
   private translate(): void {
-    if (this.menu) applyControlTranslations(this.menu);
     if (this.toolbar) applyControlTranslations(this.toolbar);
     if (this.notice) applyControlTranslations(this.notice);
     this.status(this.statusKey, this.error);
@@ -214,10 +187,9 @@ export class MappingWorkspace {
   stop(): void {
     if (!this.active) return;
     this.active = false; this.generation++; this.pendingPanel = null;
-    document.removeEventListener('pointerdown', this.closeMenuOutside);
     this.offTab?.(); this.offTab = null;
+    this.offToolPanel?.(); this.offToolPanel = null;
     this.panel?.dispose(); this.panel = null; this.editor = null;
-    this.menu?.remove(); this.menu = null;
     this.toolbar?.remove(); this.toolbar = null;
     this.notice?.remove(); this.notice = null;
     this.scope?.classList.remove('dc-mapping-workspace'); this.scope = null;

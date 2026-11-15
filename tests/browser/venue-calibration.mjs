@@ -252,7 +252,7 @@ async function isolation(page,base){
   await page.evaluate(()=>{window.originalTrack=document.querySelector('#source-video').srcObject.getVideoTracks()[0]});
   const livePromise=page.waitForEvent('popup');await page.locator('#outputs-list .open-btn').first().click();const live=await livePromise;
   await live.waitForFunction(()=>document.querySelector('video')?.videoWidth===640);
-  await page.locator('#practice-menu > summary').click();const venuePromise=page.waitForEvent('popup');await page.locator('#practice-venue').click();const venue=await venuePromise;
+  const venuePromise=page.waitForEvent('popup');await page.locator('#practice-venue').click();const venue=await venuePromise;
   await venue.waitForSelector('#venue-canvas');await venue.waitForFunction(()=>!document.querySelector('#venue-model-pane').inert);
   assert.equal(await page.locator('#dc-practice-canvas').count(),0,'opening venue setup never initializes the mapping preview');
   assert.equal(await venue.locator('iframe,#source-video').count(),0);
@@ -280,7 +280,7 @@ async function isolation(page,base){
   await page.locator('#preview-tab').click();await page.waitForSelector('#dc-practice-canvas');
   await page.waitForFunction(()=>!document.querySelector('#dc-practice-status').textContent.includes('Preparing'));
   assert.equal(await page.locator('#dc-practice-venue,#practice-projector-form,#practice-load-glb').count(),0,'preview has no authoring controls');
-  await page.locator('#practice-menu > summary').click();await page.locator('#practice-settings').click();
+  await page.locator('#dc-activity-preview3d').click();
   const choose=page.waitForEvent('filechooser');await page.locator('#practice-load-venue').click();await choose;
   await page.locator('#practice-project-file').setInputFiles({name:'shared.venue.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(shared))});
   await page.waitForFunction(()=>document.querySelector('#dc-practice-status').textContent.includes('Venue loaded'));
