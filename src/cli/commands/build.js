@@ -69,12 +69,33 @@ async function assertSafeOutputDir(outputDir, cwd) {
   }
 }
 
-export async function build(options) {
+/**
+ * 配信先のベースパスを 1 か所で決める (#175)。
+ * CLI で明示した `--base` > dropcaster.config.js の `base` > `'/'` の順で採り、末尾を `/` にそろえる。
+ * `--base` には既定値 `'/'` があるので、値ではなく commander の値の出どころ (`'cli'` か否か) で
+ * 明示されたかを判断する — そうしないと既定値が常に config を上書きしてしまう。
+ *
+ * @param {string | undefined} cliBase commander が渡す `options.base` (未指定でも既定値が入る)
+ * @param {string | undefined} cliBaseSource `command.getOptionValueSource('base')`
+ * @param {string | undefined} configBase dropcaster.config.js の `base`
+ * @returns {string}
+ */
+function resolveBase(cliBase, cliBaseSource, configBase) {
+  const base = (cliBaseSource === 'cli' ? cliBase : configBase) || '/';
+  return base.endsWith('/') ? base : `${base}/`;
+}
+
+/**
+ * @param {{ output: string, base?: string }} options
+ * @param {import('commander').Command} [command] commander が action の末尾に渡すコマンド
+ */
+export async function build(options, command) {
   const spinner = ora('Building for production...').start();
-  
+
   try {
     // Load user config
     const config = await loadConfig(process.cwd());
+    const base = resolveBase(options.base, command?.getOptionValueSource('base'), config.base);
     const outputDir = resolve(process.cwd(), options.output);
 
     // 出力先が cwd 自身／その祖先／保護対象サブディレクトリ等になっていないか検証
@@ -95,12 +116,12 @@ export async function build(options) {
     
     // Generate PWA manifest
     spinner.text = 'Generating PWA manifest...';
-    const manifestStartUrl = config.start_url === '/' ? options.base : config.start_url;
+    const manifestStartUrl = config.start_url === '/' ? base : config.start_url;
     await generateManifest({
       ...config,
-      base: options.base,
-      start_url: manifestStartUrl || options.base,
-      scope: config.scope || options.base
+      base,
+      start_url: manifestStartUrl || base,
+      scope: config.scope || base
     }, outputDir);
     
     // Generate Service Worker (multi-bucket cache; template at src/cli/utils/sw-template.js)
@@ -111,7 +132,7 @@ export async function build(options) {
     spinner.text = 'Building application...';
     await viteBuild({
       root: rootDir,
-      base: options.base,
+      base,
       mode: 'production',
       publicDir: false,  // Don't copy public dir from package
       build: {
@@ -152,7 +173,7 @@ export async function build(options) {
       define: {
         'import.meta.env.DROPCASTER_CONFIG': JSON.stringify(config),
         'import.meta.env.DROPCASTER_BUILD': JSON.stringify(resolveBuildInfo(rootDir)),
-        'import.meta.env.BASE_URL': JSON.stringify(options.base)
+        'import.meta.env.BASE_URL': JSON.stringify(base)
       }
     });
     
@@ -179,10 +200,9 @@ export async function build(options) {
 
     // Ensure manifest link exists
     if (!indexHtml.includes('rel="manifest"')) {
-      const basePath = options.base.replace(/\/?$/, '/');
       indexHtml = indexHtml.replace(
         '</head>',
-        `  <link rel="manifest" href="${escapeHtml(basePath)}manifest.json">\n  </head>`
+        `  <link rel="manifest" href="${escapeHtml(base)}manifest.json">\n  </head>`
       );
     }
     
