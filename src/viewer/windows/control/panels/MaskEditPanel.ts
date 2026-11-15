@@ -232,7 +232,7 @@ export class MaskEditPanel {
         opts.onMaskChanged();
       },
       onEnd: () => { el.classList.remove('dragging'); },
-    });
+    }, this.ctrl ?? undefined);
 
     const onContext = (e: MouseEvent) => {
       e.preventDefault();
@@ -322,7 +322,7 @@ export class MaskEditPanel {
         opts.onMaskChanged();
       },
       onEnd: () => { el.classList.remove('dragging'); },
-    });
+    }, this.ctrl ?? undefined);
     this.translateDispose = dispose;
     return el;
   }

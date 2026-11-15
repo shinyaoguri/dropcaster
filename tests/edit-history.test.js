@@ -4,7 +4,15 @@ import {
   EditHistory, mappingsHistoryKey, hasNoDraftingMask, cloneMappingsState,
 } from '../src/viewer/utils/editHistory.ts';
 
-/** MappingsState と同じ形の小さな状態。x がジオメトリ、activeId が選択の代わり。 */
+/**
+ * @typedef {{ id: string, x?: number, points?: Array<{ x: number, y: number }>, drafting?: boolean }} Item
+ * @typedef {{ mappings: Item[], activeId: string, activeOutputId: string }} State
+ */
+
+/**
+ * MappingsState と同じ形の小さな状態。x がジオメトリ、activeId が選択の代わり。
+ * @returns {State}
+ */
 function makeState(x = 0, extra = {}) {
   return { mappings: [{ id: 'a', x }, { id: 'b', x: 0 }], activeId: 'a', activeOutputId: 'o1', ...extra };
 }

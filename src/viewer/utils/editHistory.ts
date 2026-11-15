@@ -33,6 +33,8 @@ export class EditHistory<T> {
   private readonly isSettled: (state: T) => boolean;
   private readonly limit: number;
   private baseline: T;
+  /** baseline の key。commit のたびに計算し直さないよう持っておく。 */
+  private baselineKey: string;
   private undoStack: T[] = [];
   private redoStack: T[] = [];
   private gestureDepth = 0;
@@ -43,6 +45,7 @@ export class EditHistory<T> {
     this.isSettled = options.isSettled ?? (() => true);
     this.limit = Math.max(1, options.limit ?? DEFAULT_HISTORY_LIMIT);
     this.baseline = this.clone(initial);
+    this.baselineKey = this.key(this.baseline);
   }
 
   get canUndo(): boolean { return this.undoStack.length > 0; }
@@ -54,7 +57,7 @@ export class EditHistory<T> {
 
   /** 外から別の状態が読み込まれたとき。baseline を差し替え、履歴を空にする。 */
   reset(state: T): void {
-    this.baseline = this.clone(state);
+    this.setBaseline(this.clone(state));
     this.undoStack = [];
     this.redoStack = [];
     this.gestureDepth = 0;
@@ -77,13 +80,15 @@ export class EditHistory<T> {
    */
   settle(state: T): boolean {
     if (this.gestureDepth > 0 || !this.isSettled(state)) return false;
-    const changed = this.key(state) !== this.key(this.baseline);
+    const key = this.key(state);
+    const changed = key !== this.baselineKey;
     if (changed) {
       this.undoStack.push(this.baseline);
       if (this.undoStack.length > this.limit) this.undoStack.splice(0, this.undoStack.length - this.limit);
       this.redoStack = [];
     }
     this.baseline = this.clone(state);
+    this.baselineKey = key;
     return changed;
   }
 
@@ -102,8 +107,13 @@ export class EditHistory<T> {
     const target = from.pop();
     if (target === undefined) return null;
     to.push(this.clone(current));
-    this.baseline = target;
+    this.setBaseline(target);
     return this.clone(target);
+  }
+
+  private setBaseline(state: T): void {
+    this.baseline = state;
+    this.baselineKey = this.key(state);
   }
 }
 
@@ -111,7 +121,8 @@ export class EditHistory<T> {
 // mappingTransform を import しないよう、必要な形だけを構造的に書く。
 
 interface HistoryMappingsShape {
-  mappings: ReadonlyArray<{ drafting?: boolean }>;
+  // 要素は mapping と mask の union。drafting を持たない型もあるので object で受ける。
+  mappings: ReadonlyArray<object>;
   activeId?: string;
   activeOutputId?: string;
 }
@@ -124,7 +135,7 @@ export function mappingsHistoryKey(state: HistoryMappingsShape): string {
 
 /** ペン描画中 (drafting なマスクがある) でなければ true。 */
 export function hasNoDraftingMask(state: HistoryMappingsShape): boolean {
-  return !state.mappings.some(m => m.drafting === true);
+  return !state.mappings.some(m => (m as { drafting?: unknown }).drafting === true);
 }
 
 export function cloneMappingsState<T>(state: T): T {

@@ -12,11 +12,21 @@
  *   - 親（WindowController）から push された state は applyExternal() で取り込む。
  *     onChange は発火するが commit はしない（自分が起点ではないので echo back させない）。
  *
+ *   - Undo / Redo の履歴 (EditHistory) もここで持つ。commit() のたびに確定済みの状態と比べて
+ *     積むので、panel は連続操作の前後を beginGesture() / endGesture() で囲むだけでよい
+ *     (draggable は第 4 引数にこの controller を渡すと自動で囲む)。
+ *
  * 旧 ControlWindow にあった state / sourceSelectionData / quadData フィールドと
  * rebindActiveAliases / setActive{Source,Quad} / replaceState / handleStateUpdate /
  * broadcastStateMutation の責務を Step 9 でここに集約した。
  */
 
+import {
+  EditHistory,
+  cloneMappingsState,
+  hasNoDraftingMask,
+  mappingsHistoryKey,
+} from '../../utils/editHistory';
 import {
   defaultMappingsState,
   getActiveMapping,
@@ -30,11 +40,20 @@ import {
 } from '../../utils/mappingTransform';
 
 export type StateChangeListener = (state: MappingsState) => void;
+export type HistoryChangeListener = (status: HistoryStatus) => void;
 export type Unsubscribe = () => void;
+export interface HistoryStatus { canUndo: boolean; canRedo: boolean }
 
 export class MappingsController {
   private state: MappingsState = defaultMappingsState();
   private listeners = new Set<StateChangeListener>();
+  private historyListeners = new Set<HistoryChangeListener>();
+  private history = new EditHistory<MappingsState>(this.state, {
+    clone: cloneMappingsState,
+    key: mappingsHistoryKey,
+    isSettled: hasNoDraftingMask,
+  });
+  private lastHistoryStatus: HistoryStatus | null = null;
   private commitFn: (state: MappingsState) => void;
 
   /** @param commit ローカル mutation 後に親へ broadcast するためのコールバック。 */
@@ -165,7 +184,10 @@ export class MappingsController {
   applyExternal(next: MappingsState): void {
     if (!isValidState(next)) return;
     this.state = next;
+    // 外から来た状態 (初期同期・プロジェクト読み込み) は別の編集の続きではないので履歴を空にする。
+    this.history.reset(next);
     this.fireChange();
+    this.fireHistoryChange();
   }
 
   // ── notification / commit ─────────────────────────────────────
@@ -173,6 +195,70 @@ export class MappingsController {
   /** ローカル alias mutation を親へ通知（drag/nudge は自前で呼ぶ）。 */
   commit(): void {
     this.commitFn(this.state);
+    this.history.settle(this.state);
+    // ペン描画の開始・終了でも Undo の可否が変わるので、積んだかどうかに関わらず確かめる。
+    this.fireHistoryChange();
+  }
+
+  // ── Undo / Redo ───────────────────────────────────────────────
+
+  /** 連続操作 (ドラッグ・矢印キー) の開始。endGesture までの commit は履歴 1 件にまとまる。 */
+  beginGesture(): void {
+    this.history.beginGesture();
+    this.fireHistoryChange();
+  }
+
+  /** 連続操作の終了。最も外側が閉じたら、開始前との差分を 1 件積む。 */
+  endGesture(): void {
+    this.history.endGesture(this.state);
+    this.fireHistoryChange();
+  }
+
+  /**
+   * ボタンの有効・無効。ペン描画中は無効にする。ジェスチャ中 (ドラッグ・矢印キー) は
+   * 無効にしない — 矢印キーの連続入力は呼び出し側が終わらせてから undo() を呼ぶ。
+   */
+  getHistoryStatus(): HistoryStatus {
+    const busy = !hasNoDraftingMask(this.state);
+    return { canUndo: !busy && this.history.canUndo, canRedo: !busy && this.history.canRedo };
+  }
+
+  /** 1 件戻す。戻せたら true。ジェスチャ中・ペン描画中は何もしない。 */
+  undo(): boolean {
+    return this.restore(this.history.undo(this.state));
+  }
+
+  /** 1 件やり直す。やり直せたら true。ジェスチャ中・ペン描画中は何もしない。 */
+  redo(): boolean {
+    return this.restore(this.history.redo(this.state));
+  }
+
+  /** Undo / Redo ボタンの有効・無効を追うための購読。 */
+  onHistoryChange(listener: HistoryChangeListener): Unsubscribe {
+    this.historyListeners.add(listener);
+    return () => { this.historyListeners.delete(listener); };
+  }
+
+  private restore(next: MappingsState | null): boolean {
+    if (!next) return false;
+    // 通常の確定と同じ経路 (panel 再描画・出力窓・保存) で反映する。
+    // 履歴側の基準は戻した状態になっているので、ここでの commit は新しい履歴を作らない。
+    this.replaceState(next);
+    this.fireHistoryChange();
+    return true;
+  }
+
+  /** 状態が前回の通知から変わったときだけ通知する (ドラッグ中の毎フレームの commit から呼ばれるため)。 */
+  private fireHistoryChange(): void {
+    const status = this.getHistoryStatus();
+    const last = this.lastHistoryStatus;
+    if (last && last.canUndo === status.canUndo && last.canRedo === status.canRedo) return;
+    this.lastHistoryStatus = status;
+    for (const l of this.historyListeners) {
+      try { l(status); } catch (error) {
+        console.error('MappingsController: history listener エラー', error);
+      }
+    }
   }
 
   /** state が「丸ごと差し替わった」時の通知を購読する（in-place mutation では発火しない）。 */
