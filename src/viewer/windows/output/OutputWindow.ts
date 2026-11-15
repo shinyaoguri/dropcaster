@@ -12,12 +12,15 @@ import {
   type Point,
 } from '../../utils/mappingTransform';
 import { RafThrottle } from '../../utils/rafThrottle';
+import { createQuadOutline, syncQuadOutline } from '../../utils/quadOutline';
 import { ScreenWakeLock } from '../../utils/wakeLock';
 import { t } from '../../i18n/index.js';
 
 interface OutputChild {
   div: HTMLElement;
   video: HTMLVideoElement;
+  /** 開発モードの枠線。warp する div の直後の兄弟に置く変形しない SVG（div には枠線を描かない — #156）。 */
+  outline: SVGSVGElement;
 }
 
 interface OutputMaskChild {
@@ -146,11 +149,12 @@ export class OutputWindow extends BaseWindow {
       /* --- 開発モード（dc-dev-mode クラスが stage に付いた時だけ表示） --- */
       /* 各 mapping の warp 後 quad 枠線。.dc-out-mapping は inset:0 で full-stage、それを matrix3d で
          quad に変形しているので、box-sizing: border-box の border はその warped 枠ぴったりに乗る。 */
-      #dc-output-stage.dc-dev-mode .dc-out-mapping {
-        box-sizing: border-box;
-        border: 2px solid #ff3b30;
-        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
-      }
+      /* warp する .dc-out-mapping 自体には描かない。遠近の matrix3d で歪めた仮想キャンバス寸法の
+         要素に描画面があると、Chrome が巨大なレイヤーを描いてタイルメモリを使い切る (#156)。
+         枠線は直後の兄弟の .dc-out-outline（変形しない SVG。utils/quadOutline）が描く。 */
+      .dc-out-outline { display: none; position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+      .dc-out-outline polygon { fill: none; stroke: #ff3b30; stroke-width: 2; }
+      #dc-output-stage.dc-dev-mode .dc-out-outline { display: block; }
       /* dev mode 時の mask 枠線。塗りつぶしは黒のまま残し、リスト上の色で輪郭を描き足す。
          vector-effect: non-scaling-stroke で出力解像度や transform の scale に依存しない一定幅。 */
       #dc-output-stage.dc-dev-mode .dc-out-mask polygon {
@@ -362,8 +366,9 @@ export class OutputWindow extends BaseWindow {
         video.muted = true;
         video.playsInline = true;
         div.appendChild(video);
-        canvasEl.appendChild(div);
-        child = { div, video };
+        const outline = createQuadOutline(doc, 'dc-out-outline');
+        canvasEl.append(div, outline);
+        child = { div, video, outline };
         this.children.set(m.id, child);
         createdNew = true;
       }
@@ -371,10 +376,12 @@ export class OutputWindow extends BaseWindow {
       child.div.style.height = `${this.canvasHeight}px`;
       applyVideoCrop(child.video, m.source);
       applyQuadCanvas(child.div, m.quad, this.canvasWidth, this.canvasHeight);
+      syncQuadOutline(child.outline, child.div, m.quad, this.canvasWidth, this.canvasHeight);
     }
     for (const [id, child] of this.children) {
       if (!seenMappings.has(id)) {
         child.div.remove();
+        child.outline.remove();
         this.children.delete(id);
       }
     }
@@ -420,10 +427,16 @@ export class OutputWindow extends BaseWindow {
     // 順序が既に正しければ触らない: appendChild は既存ノードを外して付け直すので、
     // state-update ごと（レイアウトのドラッグ中は毎フレーム）に <video> の描画レイヤーが
     // 作り直されてチラつく (#152)。
-    const desired: HTMLElement[] = [];
+    // mapping の枠線（outline）は div の直後に並べる（前後関係を div と揃える）。
+    const desired: Element[] = [];
     for (const id of this.renderOrder.slice().reverse()) {
-      const m = this.children.get(id)?.div ?? this.maskChildren.get(id)?.div;
-      if (m && m.parentElement === canvasEl) desired.push(m);
+      const mapping = this.children.get(id);
+      if (mapping) {
+        if (mapping.div.parentElement === canvasEl) desired.push(mapping.div, mapping.outline);
+        continue;
+      }
+      const mask = this.maskChildren.get(id)?.div;
+      if (mask && mask.parentElement === canvasEl) desired.push(mask);
     }
     const wanted = new Set<Element>(desired);
     const current = Array.from(canvasEl.children).filter(el => wanted.has(el));

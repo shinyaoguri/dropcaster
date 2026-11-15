@@ -536,10 +536,35 @@ async function quadTilesCase(page) {
   await click(page, '#layout-tab');
   const layoutTab = await measure(() => page.waitForSelector('.dc-layout-preview'));
   const layoutOutlines = await outlines('.dc-layout-preview');
+  // The reported operation: drag an output while the output window draws its
+  // dev-mode outlines (the output window warps the same canvas-sized elements).
+  // The popup opened by start() belonged to the previous state's output; open o1's.
+  const [popup] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.evaluate(() => window.runtimeRegression.wc.openOutputWindowFor('o1')),
+  ]);
+  await popup.waitForFunction(() => document.querySelectorAll('.dc-out-mapping').length > 0);
+  await page.evaluate(() => window.runtimeRegression.wc.setDevMode(true));
+  await popup.waitForFunction(() => document.getElementById('dc-output-stage')?.classList.contains('dc-dev-mode'));
+  const layoutDrag = await measure(async () => {
+    const box = await page.locator('.dc-layout-output[data-output-id="o3"]').boundingBox();
+    const x0 = box.x + box.width / 2, y0 = box.y + box.height / 2;
+    await page.mouse.move(x0, y0);
+    await page.mouse.down();
+    for (let i = 1; i <= 30; i++) {
+      await page.mouse.move(x0 + Math.sin(i / 5) * 60, y0 + i);
+      await page.evaluate(() => new Promise(r => requestAnimationFrame(r)));
+    }
+    await page.mouse.up();
+  });
+  const popupOutlines = await popup.evaluate(() => [...document.querySelectorAll('.dc-out-mapping')].map(el => ({
+    border: getComputedStyle(el).borderTopWidth,
+    outline: el.nextElementSibling?.classList.contains('dc-out-outline') && getComputedStyle(el.nextElementSibling).display !== 'none',
+  })));
   await cdp.detach();
 
-  console.log(`  quadTiles: mapping tab ${JSON.stringify(mappingTab)}, layout tab ${JSON.stringify(layoutTab)}`);
-  for (const [label, m] of Object.entries({ mappingTab, layoutTab })) {
+  console.log(`  quadTiles: mapping tab ${JSON.stringify(mappingTab)}, layout tab ${JSON.stringify(layoutTab)}, dev-mode drag ${JSON.stringify(layoutDrag)}`);
+  for (const [label, m] of Object.entries({ mappingTab, layoutTab, layoutDrag })) {
     assert.ok(m.samples > 0, `${label}: tile preparation observed`);
     // Rectangular quads measure ~100 tiles; perspective quads with painted warped
     // layers measured ~2,700 before the fix.
@@ -548,6 +573,8 @@ async function quadTilesCase(page) {
   }
   assert.equal(mappingOutlines.length, 3, 'mapping tab: active + 2 inactive previews');
   assert.equal(layoutOutlines.length, 9, 'layout tab: 3 mappings x 3 outputs');
+  assert.ok(popupOutlines.length > 0, 'output window draws mappings');
+  for (const o of popupOutlines) assert.deepEqual(o, { border: '0px', outline: true }, 'output window: dev-mode outline in untransformed SVG');
   for (const o of [...mappingOutlines, ...layoutOutlines]) {
     assert.deepEqual(o, { selector: o.selector, id: o.id, border: '0px', outline: true, points: true, zIndex: true }, `${o.selector} ${o.id}: outline in untransformed SVG`);
   }

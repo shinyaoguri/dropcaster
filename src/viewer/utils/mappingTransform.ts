@@ -1096,8 +1096,13 @@ function homographyMatrix3d(quad: Quad, width: number, height: number): string {
  *
  * 使われる場所:
  *  - OutputWindow: .dc-out-mapping
- *  - ControlWindow: #cropped-container / .preview-mapping.inactive
- *  （いずれも親が `.dc-canvas-window` or `#dc-output-canvas` で canvas px サイズ）
+ *  - ControlWindow: #cropped-container / .preview-mapping.inactive / .dc-layout-preview
+ *  （いずれも親が canvas px サイズの `.dc-canvas-mappings` / `.dc-canvas-window` / `#dc-output-canvas`）
+ *
+ * **container に描画面（border・背景・影など）を持たせない。** 中身は <video> だけにする。
+ * 遠近を含む matrix3d では Chrome が祖先の縮小倍率でラスタライズできず、仮想キャンバス全体を
+ * ほぼ等倍で描くレイヤーになり、タイルメモリを使い切って UI が欠ける (#156)。
+ * 枠線が要るときは utils/quadOutline の SVG を container の直後に置く。
  */
 export function applyQuadCanvas(
   container: HTMLElement,
