@@ -1,6 +1,7 @@
-// `dropcaster fetch` を子プロセスで実行するときに `--import` で読み込むスタブ。
+// CLI (fetch / scan) を子プロセスで実行するときに `--import` で読み込むスタブ。
 // OpenProcessing API と deckard のアセット取得を、DC_OP_FIXTURE (JSON ファイルのパス) の内容で
 // 返し、それ以外の URL への fetch は失敗させる (テストがネットワークに出ないことを保証する)。
+// DC_OP_FIXTURE が無ければ、すべての fetch を失敗させる。
 //
 // fixture の形:
 //   {
@@ -9,8 +10,10 @@
 //   }
 // meta / code が null、または status が 400 以上なら、その API はエラーを返す。
 //
-// DC_FAIL_WRITE_BASENAME を指定すると、そのファイル名への fs/promises.writeFile を ENOSPC で
-// 失敗させる (書き込み途中の失敗を、作品の内容に依らず起こすため)。
+// ファイルシステムの失敗を、作品の内容に依らず起こすための指定:
+//   DC_FAIL_WRITE_BASENAME  そのファイル名への fs/promises.writeFile を ENOSPC で失敗させる
+//   DC_FAIL_RENAME_FROM     移動元のディレクトリ名がこの正規表現に一致する fs/promises.rename を
+//                           EBUSY で失敗させる
 
 import { readFileSync } from 'node:fs';
 import fsPromises from 'node:fs/promises';
@@ -18,8 +21,7 @@ import { basename } from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 
 const fixturePath = process.env.DC_OP_FIXTURE;
-if (!fixturePath) throw new Error('op-fetch-stub: DC_OP_FIXTURE is not set');
-const fixture = JSON.parse(readFileSync(fixturePath, 'utf-8'));
+const fixture = fixturePath ? JSON.parse(readFileSync(fixturePath, 'utf-8')) : {};
 
 const API_PREFIX = 'https://openprocessing.org/api/sketch/';
 
@@ -45,16 +47,31 @@ globalThis.fetch = async (input) => {
   throw new TypeError(`op-fetch-stub: unexpected network request to ${url}`);
 };
 
+/** @param {string} code @param {string} message */
+function fsError(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
 const failBasename = process.env.DC_FAIL_WRITE_BASENAME;
 if (failBasename) {
   const originalWriteFile = fsPromises.writeFile;
   fsPromises.writeFile = async (path, ...rest) => {
     if (typeof path === 'string' && basename(path) === failBasename) {
-      const error = new Error(`ENOSPC: no space left on device (stub), write '${path}'`);
-      Object.assign(error, { code: 'ENOSPC' });
-      throw error;
+      throw fsError('ENOSPC', `ENOSPC: no space left on device (stub), write '${path}'`);
     }
     return originalWriteFile(path, ...rest);
   };
-  syncBuiltinESMExports();
 }
+
+const failRenameFrom = process.env.DC_FAIL_RENAME_FROM ? new RegExp(process.env.DC_FAIL_RENAME_FROM) : null;
+if (failRenameFrom) {
+  const originalRename = fsPromises.rename;
+  fsPromises.rename = async (from, to) => {
+    if (typeof from === 'string' && failRenameFrom.test(basename(from))) {
+      throw fsError('EBUSY', `EBUSY: resource busy or locked (stub), rename '${from}' -> '${to}'`);
+    }
+    return originalRename(from, to);
+  };
+}
+
+if (failBasename || failRenameFrom) syncBuiltinESMExports();

@@ -21,6 +21,27 @@ export function isReplacementResidue(name) {
 }
 
 /**
+ * staging を所定の名前へ移せず、退避した旧版を元の場所へ戻すのにも失敗したときに投げる。
+ * 旧版は previousPath に残っている (destinationPath には何も無い)。cause は最初の失敗。
+ */
+export class PreviousNotRestoredError extends Error {
+  /**
+   * @param {string} destinationPath
+   * @param {string} previousPath
+   * @param {Error} cause staging を所定の名前へ移せなかった原因
+   * @param {Error} restoreError 旧版を戻せなかった原因
+   */
+  constructor(destinationPath, previousPath, cause, restoreError) {
+    super(`${cause?.message ?? cause}; the previous version could not be moved back to ${destinationPath} `
+      + `and remains at ${previousPath} (${restoreError?.message ?? restoreError})`, { cause });
+    this.name = 'PreviousNotRestoredError';
+    this.destinationPath = destinationPath;
+    this.previousPath = previousPath;
+    this.restoreError = restoreError;
+  }
+}
+
+/**
  * @template T
  * @typedef {object} ReplaceResult
  * @property {T} value build の戻り値
@@ -34,7 +55,8 @@ export function isReplacementResidue(name) {
  * - staging は destinationPath と同じ親に置く (rename は同じファイルシステム内でしか
  *   成り立たないため)。親ディレクトリは呼び出し側が用意する。
  * - 差し替えは「旧版を退避 → staging を所定の名前へ → 退避した旧版を消す」の順。
- *   staging を所定の名前へ移せなかったときは旧版を戻して例外を投げる。
+ *   staging を所定の名前へ移せなかったときは旧版を戻して例外を投げる。旧版を戻すのにも
+ *   失敗したときは、旧版の場所を持つ PreviousNotRestoredError を投げる。
  * - 最後の旧版の削除だけが失敗したときは、差し替えは成功として扱い、残骸を leftover で返す。
  *
  * @template T
@@ -70,8 +92,10 @@ export async function replaceDirectory(destinationPath, build) {
   try {
     await rename(stagingPath, destinationPath);
   } catch (error) {
-    if (movedPrevious) await rename(previousPath, destinationPath).catch(() => {});
+    let restoreError = null;
+    if (movedPrevious) await rename(previousPath, destinationPath).catch((e) => { restoreError = e; });
     await discard(stagingPath);
+    if (restoreError) throw new PreviousNotRestoredError(destinationPath, previousPath, error, restoreError);
     throw error;
   }
 

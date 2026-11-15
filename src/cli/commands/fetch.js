@@ -4,7 +4,7 @@
 // `npm run scan` がそのまま処理できる形を吐く。
 
 import { resolve, join } from 'path';
-import { mkdir, writeFile, access } from 'fs/promises';
+import { mkdir, writeFile, access, readdir, readFile, rm, stat } from 'fs/promises';
 import chalk from 'chalk';
 import ora from 'ora';
 import { OpenProcessingApiClient } from '../../core/modules/op-api-client.js';
@@ -14,10 +14,24 @@ import {
   downloadAssets,
   rewriteCodeWithAssetMap,
 } from '../../core/modules/asset-downloader.js';
-import { replaceDirectory } from '../../core/modules/directory-replacement.js';
+import {
+  isReplacementResidue,
+  PreviousNotRestoredError,
+  replaceDirectory,
+} from '../../core/modules/directory-replacement.js';
 import { t } from '../i18n/index.js';
 
 const SUPPORTED_MODES = ['p5js', 'html'];
+
+/** --overwrite で、同梱できなかったアセットがあるときに投げる (既存の作品を差し替えない) */
+class AssetDownloadError extends Error {
+  /** @param {{ url: string, error: string }[]} failures */
+  constructor(failures) {
+    super(`${failures.length} asset(s) could not be downloaded`);
+    this.name = 'AssetDownloadError';
+    this.failures = failures;
+  }
+}
 
 export async function fetchCommand(idArg, options = {}) {
   const projectRoot = process.cwd();
@@ -28,6 +42,9 @@ export async function fetchCommand(idArg, options = {}) {
     console.error(chalk.red(`❌ ${t('fetch.invalidId', { id: `"${idArg}"` })}`));
     process.exit(1);
   }
+
+  // 前回の fetch が異常終了・失敗して残した作業用ディレクトリを片付ける
+  await removeLeftoverWorkDirectories(sketchesDir);
 
   const client = new OpenProcessingApiClient();
 
@@ -46,6 +63,10 @@ export async function fetchCommand(idArg, options = {}) {
 
   if (!SUPPORTED_MODES.includes(meta.mode)) {
     console.error(chalk.yellow(`⚠ ${t('fetch.modeNotSupported', { mode: meta.mode })}`));
+    process.exit(1);
+  }
+  if (codeTabs.length === 0) {
+    console.error(chalk.red(`❌ ${t('fetch.noCodeTabs')}`));
     process.exit(1);
   }
 
@@ -77,15 +98,27 @@ export async function fetchCommand(idArg, options = {}) {
 
   // 新しい中身は兄弟の staging ディレクトリに組み立て、完成してから既存の作品と差し替える。
   // 途中で失敗しても既存の作品はそのまま残り、staging は消える (#167)。
+  // --overwrite では、アセットを 1 件でも同梱できなければ差し替えない (旧版が同梱していたアセットを
+  // CDN の参照に戻さないため)。新規の fetch は従来どおり、警告して CDN の URL のまま残す。
   let result;
   try {
     await mkdir(sketchesDir, { recursive: true });
     result = await replaceDirectory(outDir, (stagingDir) => writeSketch(stagingDir, {
-      visualID, meta, sortedTabs: sorted, htmlPlan, options,
+      finalDir: outDir, visualID, meta, sortedTabs: sorted, htmlPlan, options,
+      requireAllAssets: Boolean(options.overwrite),
     }));
   } catch (error) {
-    console.error(chalk.red(`❌ ${t('fetch.writeFailed', { dir: outDir, error: error?.message ?? String(error) })}`));
-    console.error(chalk.yellow(`   ${t(existed ? 'fetch.existingKept' : 'fetch.nothingCreated')}`));
+    if (error instanceof AssetDownloadError) {
+      console.error(chalk.red(`❌ ${t('fetch.assetsFailed', { count: error.failures.length, dir: outDir })}`));
+      for (const { url, error: cause } of error.failures) console.error(chalk.red(`   - ${url}: ${cause}`));
+    } else {
+      console.error(chalk.red(`❌ ${t('fetch.writeFailed', { dir: outDir, error: error?.message ?? String(error) })}`));
+    }
+    if (error instanceof PreviousNotRestoredError) {
+      console.error(chalk.yellow(`   ${t('fetch.previousAt', { path: error.previousPath, dir: outDir })}`));
+    } else {
+      console.error(chalk.yellow(`   ${t(existed ? 'fetch.existingKept' : 'fetch.nothingCreated')}`));
+    }
     process.exit(1);
   }
   const { writtenFiles, assetCount } = result.value;
@@ -106,25 +139,51 @@ export async function fetchCommand(idArg, options = {}) {
 }
 
 /**
- * 取得済み・検証済みの作品を、空のディレクトリ outDir に書き出す。
+ * 取得済み・検証済みの作品を、空のディレクトリ outDir (staging) に書き出す。
  * 失敗は例外で返す (呼び出し側の replaceDirectory が outDir を片付けるので、ここで process.exit しない)。
+ * 表示するパスは staging ではなく、差し替え後の finalDir に読み替える。
  * @param {string} outDir
- * @param {{ visualID: string, meta: any, sortedTabs: any[], htmlPlan: { files: { name: string, content: string }[] } | null, options: any }} input
+ * @param {{ finalDir: string, visualID: string, meta: any, sortedTabs: any[], htmlPlan: { files: { name: string, content: string }[] } | null, options: any, requireAllAssets: boolean }} input
  * @returns {Promise<{ writtenFiles: string[], assetCount: number }>}
  */
-async function writeSketch(outDir, { visualID, meta, sortedTabs, htmlPlan, options }) {
+async function writeSketch(outDir, { finalDir, ...input }) {
+  /** @param {string} text */
+  const toFinalPath = (text) => String(text).split(outDir).join(finalDir);
+  try {
+    return await writeSketchFiles(outDir, { ...input, toFinalPath });
+  } catch (error) {
+    if (error instanceof Error) error.message = toFinalPath(error.message);
+    throw error;
+  }
+}
+
+/**
+ * @param {string} outDir
+ * @param {{ visualID: string, meta: any, sortedTabs: any[], htmlPlan: { files: { name: string, content: string }[] } | null, options: any, requireAllAssets: boolean, toFinalPath: (text: string) => string }} input
+ * @returns {Promise<{ writtenFiles: string[], assetCount: number }>}
+ */
+async function writeSketchFiles(outDir, { visualID, meta, sortedTabs, htmlPlan, options, requireAllAssets, toFinalPath }) {
   // アセット同梱 (既定 ON、--no-assets で OFF)
   let assetMap = new Map();
   const assetUrls = extractDeckardUrls(sortedTabs);
   if (assetUrls.length > 0 && options.assets !== false) {
     const spin = ora(`Downloading ${assetUrls.length} external asset(s)...`).start();
     let okCount = 0;
+    /** @type {{ url: string, error: string }[]} */
+    const failures = [];
     assetMap = await downloadAssets(assetUrls, outDir, {
       onProgress: ({ url, size, error }) => {
-        if (error) spin.warn(`  ✗ ${url}: ${error}`);
-        else { okCount++; spin.text = `Downloading external assets... (${okCount}/${assetUrls.length}, latest: ${humanSize(size)})`; }
+        if (error) {
+          const cause = toFinalPath(error);
+          failures.push({ url, error: cause });
+          spin.warn(`  ✗ ${url}: ${cause}`);
+        } else { okCount++; spin.text = `Downloading external assets... (${okCount}/${assetUrls.length}, latest: ${humanSize(size)})`; }
       },
     });
+    if (failures.length > 0 && requireAllAssets) {
+      spin.fail(`Downloaded ${okCount}/${assetUrls.length} asset(s)`);
+      throw new AssetDownloadError(failures);
+    }
     spin.succeed(`Downloaded ${okCount}/${assetUrls.length} asset(s)`);
   } else if (assetUrls.length > 0 && options.assets === false) {
     console.log(chalk.yellow(`⚠ Skipping ${assetUrls.length} external asset(s) (--no-assets). The sketch will require network access to OpenProcessing CDN.`));
@@ -194,6 +253,52 @@ async function writeSketch(outDir, { visualID, meta, sortedTabs, htmlPlan, optio
   await writeFile(join(outDir, '_op-meta.json'), JSON.stringify(opMeta, null, 2), 'utf-8');
 
   return { writtenFiles, assetCount: assetMap.size };
+}
+
+/**
+ * sketches/ 直下の差し替えの作業用ディレクトリ (replaceDirectory の残骸) を消す。
+ * staging は未完成の書き出しなので消してよい。退避した旧版 (.dc-previous-*) は、差し替え先の作品が
+ * 今ある (= 置き換え済み) と _op-meta.json から確かめられるときだけ消す。差し替えの途中で止まった・
+ * 旧版を戻せなかったときは、それが作品の唯一の版なので残して場所を伝える。
+ * 消せなければ警告して続ける (次の fetch がまた試す)。
+ * @param {string} sketchesDir
+ */
+async function removeLeftoverWorkDirectories(sketchesDir) {
+  let entries;
+  try {
+    entries = await readdir(sketchesDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!isReplacementResidue(entry.name)) continue;
+    const path = join(sketchesDir, entry.name);
+    if (entry.name.startsWith('.dc-previous-') && !(await isSupersededPrevious(sketchesDir, path))) {
+      console.warn(chalk.yellow(`⚠ ${t('fetch.previousKeptForRecovery', { path })}`));
+      continue;
+    }
+    try {
+      await rm(path, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(chalk.yellow(`⚠ ${t('fetch.leftoverNotRemoved', { path, error: error?.message ?? String(error) })}`));
+    }
+  }
+}
+
+/**
+ * 退避した旧版の作品が、すでに新しい版に置き換わっているか。
+ * @param {string} sketchesDir
+ * @param {string} previousPath
+ */
+async function isSupersededPrevious(sketchesDir, previousPath) {
+  try {
+    const { visualID } = JSON.parse(await readFile(join(previousPath, '_op-meta.json'), 'utf-8'));
+    const id = String(visualID ?? '');
+    if (!/^\d+$/.test(id)) return false;
+    return (await stat(join(sketchesDir, `sketch${id}`))).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function normalizeId(value) {

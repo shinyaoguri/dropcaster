@@ -13,6 +13,8 @@ import { copyPublicFiles } from '../src/cli/utils/files.js';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const scanScript = join(repoRoot, 'src/core/scan-sketches.js');
 const cliEntry = join(repoRoot, 'src/cli/index.js');
+// ファイルシステムの失敗を起こすスタブ (DC_FAIL_RENAME_FROM など)。fetch のテストと共用
+const stubModule = join(repoRoot, 'tests/fixtures/op-fetch-stub.mjs');
 
 // 読めないファイルでコピーを途中で失敗させる。root は権限を無視するので確かめられない。
 const cannotUsePermissions = process.platform === 'win32' || process.getuid?.() === 0;
@@ -21,12 +23,13 @@ const permissionSkip = cannotUsePermissions ? 'file permissions are not enforced
 /**
  * @param {string} projectRoot
  * @param {string[]} args
- * @param {{ cli?: boolean }} [options]
+ * @param {{ cli?: boolean, failRename?: string }} [options]
  * @returns {Promise<{ code: number | null, stdout: string, stderr: string }>}
  */
-function run(projectRoot, args, { cli = false } = {}) {
+function run(projectRoot, args, { cli = false, failRename } = {}) {
   return new Promise((resolve, reject) => {
-    const command = cli ? [cliEntry, 'scan', ...args] : [scanScript, '--write-file', ...args];
+    const script = cli ? [cliEntry, 'scan', ...args] : [scanScript, '--write-file', ...args];
+    const command = failRename ? ['--import', stubModule, ...script] : script;
     const child = spawn(process.execPath, command, {
       cwd: projectRoot,
       env: {
@@ -35,6 +38,7 @@ function run(projectRoot, args, { cli = false } = {}) {
         DROPCASTER_LANG: 'en',
         // プレビュー生成 (--reset が有効にする) を環境に依らず省く: Chromium が見つからない状態にする
         PLAYWRIGHT_BROWSERS_PATH: join(projectRoot, 'no-browsers'),
+        DC_FAIL_RENAME_FROM: failRename ?? '',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -343,6 +347,34 @@ test('when only removing the previous copy fails, the update is published with a
     const fourth = await run(root, []);
     assert.equal(fourth.code, 0, describe(fourth.stderr));
     assert.deepEqual(await readdir(join(root, 'public', 'sketches')), ['ready']);
+  });
+});
+
+test('when the previous copy cannot be put back after a failed swap, scan names where it is and does not claim to keep it', async () => {
+  await withTempProject(async (root) => {
+    const ready = await writeSketch(root, 'ready', 'ready-v1');
+    const first = await run(root, []);
+    assert.equal(first.code, 0, `initial scan failed${describe(first.stderr)}`);
+
+    await writeFile(join(ready, 'index.html'), '<!doctype html><title>ready-v2</title><canvas></canvas>', 'utf-8');
+    const future = new Date(Date.now() + 60_000);
+    await utimes(join(ready, 'index.html'), future, future);
+
+    // staging を所定の名前へ移すのも、退避した旧版を戻すのも失敗させる
+    const second = await run(root, [], { failRename: '^\\.dc-(staging|previous)-' });
+    assert.notEqual(second.code, 0, `scan must fail${describe(second.stderr)}`);
+    // 旧版の場所を伝える。public 側は sketches/ から作り直せるので、同じ全件 scan の掃除で消えてよい
+    assert.match(second.stderr, /Failed to copy ready[^\n]*\.dc-previous-[0-9a-f]{16}/,
+      `the message must name where the previous copy is${describe(second.stderr)}`);
+    assert.doesNotMatch(second.stderr, /Keeping the previously published copy/);
+    assert.match(second.stderr, /ready is not added to public\/sketches\.json/);
+    assert.deepEqual(await readCatalog(root), []);
+
+    // 原因が無くなれば、次の全件 scan でコピーし直し、public 側の残骸 (再生成できる) も片付ける
+    const third = await run(root, []);
+    assert.equal(third.code, 0, describe(third.stderr));
+    assert.deepEqual(await readdir(join(root, 'public', 'sketches')), ['ready']);
+    assert.deepEqual((await readCatalog(root)).map((s) => s.id), ['ready']);
   });
 });
 
