@@ -1,6 +1,7 @@
 import { readdir, stat, cp, mkdir, rm } from 'fs/promises';
 import { basename, join } from 'path';
 import { MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './constants.js';
+import { replaceDirectory } from './directory-replacement.js';
 
 const SKETCH_COPY_EXCLUDES = new Set([MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE]);
 
@@ -37,36 +38,46 @@ export async function cleanupRemovedSketches(currentSketchNames, publicSketchesD
 }
 
 /**
- * スケッチをpublicディレクトリにコピー
+ * スケッチを public ディレクトリにコピーする。
+ * 失敗は例外で返す (呼び出し側が作品ごとの失敗として集計する)。コピーは staging に組み立ててから
+ * 差し替えるので、失敗しても前回のコピーはそのまま残り、中途半端なコピーは残らない
+ * (残骸のほうが新しく見えて「最新」と誤判定されることもない)。
+ * @param {string} sketchName
+ * @param {string} sourcePath
+ * @param {string} destinationDir
+ * @param {boolean} [forceRegenerate]
+ * @returns {Promise<'copied' | 'up-to-date'>}
  */
 export async function copySketchToPublic(sketchName, sourcePath, destinationDir, forceRegenerate = false) {
+  const destinationPath = join(destinationDir, sketchName);
+
+  if (!forceRegenerate && await isCopyUpToDate(sourcePath, destinationPath)) {
+    console.error(`✓ ${sketchName} is up to date`);
+    return 'up-to-date';
+  }
+
+  await replaceDirectory(destinationPath, (stagingPath) => cp(sourcePath, stagingPath, {
+    recursive: true,
+    filter: shouldCopySketchFile
+  }));
+  console.error(`📁 Copied ${sketchName} to public directory`);
+  return 'copied';
+}
+
+/**
+ * public 側のコピーが元より新しければ最新とみなす。判定できない (コピーが無い・読めない) ときは
+ * コピーし直す。
+ * @param {string} sourcePath
+ * @param {string} destinationPath
+ */
+async function isCopyUpToDate(sourcePath, destinationPath) {
   try {
-    const destinationPath = join(destinationDir, sketchName);
-    
-    // ディレクトリが存在するか確認
-    try {
-      await stat(destinationPath);
-      // 既に存在する場合は、更新日時を比較
-      const sourceMtime = await getLatestMtime(sourcePath);
-      const destMtime = await getLatestMtime(destinationPath);
-      
-      if (!forceRegenerate && sourceMtime <= destMtime) {
-        console.error(`✓ ${sketchName} is up to date`);
-        return;
-      }
-    } catch (error) {
-      // ディレクトリが存在しない場合は新規作成
-    }
-    
-    // コピーを実行
-    await rm(destinationPath, { recursive: true, force: true });
-    await cp(sourcePath, destinationPath, {
-      recursive: true,
-      filter: shouldCopySketchFile
-    });
-    console.error(`📁 Copied ${sketchName} to public directory`);
-  } catch (error) {
-    console.warn(`Warning: Failed to copy ${sketchName}:`, error.message);
+    await stat(destinationPath);
+    const sourceMtime = await getLatestMtime(sourcePath);
+    const destMtime = await getLatestMtime(destinationPath);
+    return sourceMtime <= destMtime;
+  } catch {
+    return false;
   }
 }
 
