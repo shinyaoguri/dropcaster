@@ -19,6 +19,27 @@ async function readDropcasterVersion() {
   return pkg.version;
 }
 
+/**
+ * root 配下に既に存在する相対パスを返す。リンク先の無いシンボリックリンクも存在として数える
+ * (辿って書くとプロジェクト外にファイルを作ってしまうため lstat で調べる)。
+ * 途中が通常ファイルで ENOTDIR になる場合などは、そのまま例外として返す。
+ * @param {string} root
+ * @param {string[]} relPaths
+ * @returns {Promise<string[]>}
+ */
+async function findExistingPaths(root, relPaths) {
+  const existing = [];
+  for (const rel of relPaths) {
+    try {
+      await fs.lstat(join(root, rel));
+      existing.push(rel);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+  return existing;
+}
+
 export async function init(options) {
   console.log(chalk.blue(t('init.starting')));
 
@@ -70,20 +91,8 @@ export async function init(options) {
   const spinner = ora(t('init.creatingStructure')).start();
   
   try {
-    // Create project directory
-    await fs.mkdir(projectPath, { recursive: true });
-    
-    // Create source sketches directory（作品ソース。git にコミットする）
-    await fs.mkdir(join(projectPath, 'sketches'), { recursive: true });
-
-    // Create public directory（dropcaster scan が sketches.json / sketches/ / previews/ を生成。
-    // これらも git にコミットして GitHub Pages のデプロイに含める）
-    await fs.mkdir(join(projectPath, 'public'), { recursive: true });
-    await fs.mkdir(join(projectPath, 'public/sketches'), { recursive: true });
-    await fs.mkdir(join(projectPath, 'public/previews'), { recursive: true });
-    
-    // Create default icon (simple SVG)
-    await fs.writeFile(join(projectPath, 'public/icon.svg'), DEFAULT_ICON_SVG, 'utf-8');
+    // 書き出す内容をすべて組み立ててから、衝突の検査 → ディレクトリ作成 → 書き込みの順に進める。
+    // 検査と書き込みを同じ一覧から行い、テンプレートを足したときに検査から漏れないようにする。
 
     // Create config file: DEFAULT_CONFIG をベースに、ユーザが prompt で答えたフィールドだけ上書き。
     // 上書きしないフィールド（background_color / display / start_url）は loadConfig() の
@@ -94,12 +103,6 @@ export async function init(options) {
       description: response.description || DEFAULT_CONFIG.description,
       theme_color: response.theme_color || DEFAULT_CONFIG.theme_color,
     };
-    
-    await fs.writeFile(
-      join(projectPath, 'dropcaster.config.js'),
-      `export default ${JSON.stringify(config, null, 2)};`,
-      'utf-8'
-    );
     
     // Create package.json
     // dropcaster の version を caret range で記述する。生成された package.json は
@@ -124,13 +127,7 @@ export async function init(options) {
         dropcaster: `^${dropcasterVersion}`
       }
     };
-    
-    await fs.writeFile(
-      join(projectPath, 'package.json'),
-      JSON.stringify(packageJson, null, 2),
-      'utf-8'
-    );
-    
+
     // Create .gitignore
     // ※ sketches/ と public/ は意図的に無視しない — GitHub Pages のデプロイにはこれらが必要。
     //   無視するのは依存・ビルド成果物・OS/エディタの一時ファイルのみ。
@@ -156,8 +153,6 @@ public/manifest.json
 # どちらも git にコミットしてください。GitHub Pages へのデプロイに含まれます。
 `;
 
-    await fs.writeFile(join(projectPath, '.gitignore'), gitignore, 'utf-8');
-    
     // Create README
     const readme = `# ${response.title || 'My Sketch Gallery'}
 
@@ -210,13 +205,8 @@ Edit \`dropcaster.config.js\` to customize your gallery.
 ---
 Powered by [dropcaster](https://github.com/shinyaoguri/dropcaster)
 `;
-    
-    await fs.writeFile(join(projectPath, 'README.md'), readme, 'utf-8');
-    
+
     // Create sample sketch in source directory
-    const sampleSketchPath = join(projectPath, 'sketches/sample-sketch');
-    await fs.mkdir(sampleSketchPath, { recursive: true });
-    
     const sampleHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -253,10 +243,39 @@ function draw() {
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }`;
-    
-    await fs.writeFile(join(sampleSketchPath, 'index.html'), sampleHtml, 'utf-8');
-    await fs.writeFile(join(sampleSketchPath, 'mySketch.js'), sampleJs, 'utf-8');
-    
+
+    /** @type {Array<[string, string]>} projectPath からの相対パスと内容 */
+    const files = [
+      ['public/icon.svg', DEFAULT_ICON_SVG],
+      ['dropcaster.config.js', `export default ${JSON.stringify(config, null, 2)};`],
+      ['package.json', JSON.stringify(packageJson, null, 2)],
+      ['.gitignore', gitignore],
+      ['README.md', readme],
+      ['sketches/sample-sketch/index.html', sampleHtml],
+      ['sketches/sample-sketch/mySketch.js', sampleJs],
+    ];
+
+    // 既存プロジェクトの README・package.json・作品ソースを黙って置き換えない (#166)。
+    // 1 件でも既にあれば、ディレクトリも含めて何も作らずに止める。
+    const existing = await findExistingPaths(projectPath, files.map(([rel]) => rel));
+    if (existing.length > 0) {
+      spinner.fail(t('init.conflict', { dir: projectPath }));
+      for (const rel of existing) console.error(chalk.red(`  ${rel}`));
+      console.error(t('init.conflictHint'));
+      process.exit(1);
+    }
+
+    // sketches/ は作品ソース、public/ は dropcaster scan が sketches.json / sketches/ / previews/ を
+    // 生成する先。どちらも git にコミットして GitHub Pages のデプロイに含める
+    for (const dir of ['', 'sketches', 'sketches/sample-sketch', 'public', 'public/sketches', 'public/previews']) {
+      await fs.mkdir(join(projectPath, dir), { recursive: true });
+    }
+
+    // 検査から書き込みまでの間に作られたファイルも上書きしない (wx は既存なら EEXIST で失敗する)
+    for (const [rel, content] of files) {
+      await fs.writeFile(join(projectPath, rel), content, { encoding: 'utf-8', flag: 'wx' });
+    }
+
     spinner.succeed(t('init.created'));
 
     console.log();

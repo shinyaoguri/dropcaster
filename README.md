@@ -260,7 +260,12 @@ npm run build
 ## CLIコマンド
 
 ### `dropcaster init <project-name>`
-新しいギャラリープロジェクトを作成。
+新しいギャラリープロジェクトを作成。`.` を渡すとカレントディレクトリに作る。
+
+生成するファイル（`public/icon.svg`・`dropcaster.config.js`・`package.json`・`.gitignore`・`README.md`・
+`sketches/sample-sketch/index.html`・`sketches/sample-sketch/mySketch.js`）が 1 つでも既にあると、
+それらを一覧して何も書かずに終了する（終了コード 1）。`.git` など、これら以外のファイルしか無い
+ディレクトリには作成できる。作り直すときは新しいディレクトリ名を渡すか、一覧のファイルを退避する。
 
 ### `dropcaster fetch <id> [options]`
 OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（対応モード: p5js / html）。既存のローカル sketch と同じ形式（`index.html` + 各タブのファイル + `assets/`）で書き出すので、`npm run scan` がそのまま処理できる。
