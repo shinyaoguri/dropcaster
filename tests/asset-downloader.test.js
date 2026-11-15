@@ -1,6 +1,13 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { localPathForUrl } from '../src/core/modules/asset-downloader.js';
+import { mkdtempSync, readdirSync, readFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative, sep } from 'node:path';
+import {
+  localPathForUrl,
+  downloadAssets,
+  rewriteCodeWithAssetMap,
+} from '../src/core/modules/asset-downloader.js';
 
 test('localPathForUrl maps a normal deckard URL to assets/...', () => {
   assert.equal(
@@ -38,4 +45,96 @@ test('localPathForUrl neutralizes path traversal attempts', () => {
     const r = localPathForUrl(url);
     assert.ok(r === null || (r.startsWith('assets/') && !r.split('/').includes('..')), `unsafe: ${url} -> ${r}`);
   }
+});
+
+// --- #114: 保存名と参照 URL が同じファイルを指す ---------------------------------
+//
+// 配信サーバは参照 URL をデコードしてファイルを探す。Vite (sirv) は decodeURI、
+// nginx・Python の http.server などは decodeURIComponent 相当でデコードするので、
+// 書き換えた参照をどちらでデコードしても保存したファイル名に戻ることを確かめる。
+
+const DIR = 'https://deckard.openprocessing.org/user1/visual2/h3/';
+const realFetch = globalThis.fetch;
+afterEach(() => { globalThis.fetch = realFetch; });
+
+/** URL を本文に入れて返す fetch に差し替えて downloadAssets を走らせる */
+async function download(urls) {
+  const outDir = mkdtempSync(join(tmpdir(), 'dropcaster-assets-'));
+  globalThis.fetch = async (url) => new Response(`body:${url}`);
+  const map = await downloadAssets(urls, outDir);
+  return { outDir, map };
+}
+
+/** dir 配下のファイルを '/' 区切りの相対パスで列挙する */
+function listFiles(dir) {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile())
+    .map((e) => relative(dir, join(e.parentPath, e.name)).split(sep).join('/'))
+    .sort();
+}
+
+for (const [label, name, fileName] of [
+  ['an encoded space (%20)', 'a%20b.png', 'a b.png'],
+  ['a raw space', 'a b.png', 'a b.png'],
+  ['encoded Japanese', '%E6%97%A5%E6%9C%AC.png', '日本.png'],
+  ['raw Japanese', '日本.png', '日本.png'],
+  ['an encoded percent sign (%25)', '100%25.png', '100%.png'],
+  ['an encoded reserved char allowed in paths (%40)', 'foo%402x.png', 'foo@2x.png'],
+]) {
+  test(`downloadAssets saves ${label} under the decoded name and rewrites to a URL that resolves to it`, async () => {
+    const url = DIR + name;
+    const { outDir, map } = await download([url]);
+    const expectedFile = `assets/user1/visual2/h3/${fileName}`;
+    assert.deepEqual(listFiles(outDir), [expectedFile]);
+    assert.equal(readFileSync(join(outDir, expectedFile), 'utf-8'), `body:${url}`);
+    const ref = map.get(url);
+    assert.equal(typeof ref, 'string', `no reference for ${url}`);
+    assert.equal(decodeURI(ref), expectedFile, `Vite (decodeURI) would look for another file: ${ref}`);
+    assert.equal(decodeURIComponent(ref), expectedFile, `decodeURIComponent servers would look for another file: ${ref}`);
+  });
+}
+
+test('downloadAssets keeps ASCII-only names and references as before', async () => {
+  const urls = [
+    DIR + 'foo.png',
+    DIR + 'bar.png?v=3',
+    DIR + 'a(1)_x-y.png',
+    DIR + 'foo@2x.png',
+    DIR + 'a+b,c;d=e.png',
+  ];
+  const { outDir, map } = await download(urls);
+  const expected = [
+    'assets/user1/visual2/h3/foo.png',
+    'assets/user1/visual2/h3/bar.png',
+    'assets/user1/visual2/h3/a(1)_x-y.png',
+    'assets/user1/visual2/h3/foo@2x.png',
+    'assets/user1/visual2/h3/a+b,c;d=e.png',
+  ];
+  assert.deepEqual(urls.map((u) => map.get(u)), expected);
+  assert.deepEqual(listFiles(outDir), [...expected].sort());
+});
+
+test('downloadAssets writes nothing for names that cannot be saved and served as the same file', async () => {
+  const urls = [
+    DIR + 'a%2Fb.png', // デコードするとパス区切り
+    DIR + 'a%5Cb.png', // Windows のパス区切り
+    DIR + '..%2F..%2F..%2Fevil.js',
+    DIR + 'a%00b.png', // NUL
+    DIR + '100%.png', // 不正なエンコード (% 単独)
+    DIR + '%zz.png', // 不正なエンコード
+    DIR + 'a%23b.png', // # は decodeURI がデコードせず、サーバ間で参照先が割れる
+    DIR + 'a%3Fb.png', // ? も同じ
+  ];
+  const { outDir, map } = await download(urls);
+  assert.deepEqual([...map.entries()], []);
+  assert.deepEqual(readdirSync(outDir), [], 'nothing should be written for rejected URLs');
+});
+
+test('rewriteCodeWithAssetMap points code at the saved file for an encoded name', async () => {
+  const url = DIR + 'my%20image.png';
+  const { outDir, map } = await download([url]);
+  const rewritten = rewriteCodeWithAssetMap(`img = loadImage('${url}');`, map);
+  const ref = /loadImage\('([^']+)'\)/.exec(rewritten)?.[1];
+  assert.ok(ref && !ref.startsWith('https:'), rewritten);
+  assert.ok(existsSync(join(outDir, decodeURI(ref))), `${ref} does not resolve to a saved file`);
 });
