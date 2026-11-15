@@ -86,7 +86,15 @@ export class MappingWorkspace {
         <a id="practice-venue" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer" data-i18n="calibration.open"></a>
         <button type="button" id="practice-project" data-i18n="practice.storage"></button>
       </div></details>
-      <button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>`;
+      <button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      <dialog id="practice-stop-confirm" class="dc-workspace-confirm" aria-labelledby="practice-stop-confirm-title" aria-describedby="practice-stop-confirm-hint"><div class="dc-workspace-confirm-body">
+        <p id="practice-stop-confirm-title" class="dc-workspace-confirm-title" data-i18n="practice.stopConfirm"></p>
+        <p id="practice-stop-confirm-hint" class="dc-workspace-confirm-hint" data-i18n="practice.stopConfirmHint"></p>
+        <div class="dc-workspace-confirm-actions">
+          <button type="button" id="practice-stop-cancel" data-i18n="practice.stopCancel" autofocus></button>
+          <button type="button" id="practice-stop-confirm-btn" class="is-danger" data-i18n="practice.stopConfirmAction"></button>
+        </div>
+      </div></dialog>`;
     toolHeader.append(this.toolbar);
     const menu = this.toolbar.querySelector<HTMLDetailsElement>('#practice-menu')!;
     menu.addEventListener('keydown', event => {
@@ -94,7 +102,20 @@ export class MappingWorkspace {
       event.preventDefault(); event.stopPropagation(); menu.open = false; menu.querySelector('summary')!.focus();
     });
     document.addEventListener('pointerdown', this.closeMenuOutside);
-    this.toolbar.querySelector('#practice-stop')!.addEventListener('click', () => this.stop());
+    // × は 1 クリックで閉じず確認を挟む。window.confirm() はメインスレッドを止め、同一オリジン
+    // iframe の作品描画と出力への captureStream まで止めるので、非ブロッキングの <dialog> を使う。
+    const confirm = this.toolbar.querySelector<HTMLDialogElement>('#practice-stop-confirm')!;
+    this.toolbar.querySelector('#practice-stop')!.addEventListener('click', () => {
+      menu.open = false;
+      if (!confirm.open) confirm.showModal();
+    });
+    confirm.querySelector('#practice-stop-cancel')!.addEventListener('click', () => confirm.close());
+    confirm.querySelector('#practice-stop-confirm-btn')!.addEventListener('click', () => { confirm.close(); this.stop(); });
+    // 背景 (dialog 要素自身) のクリックは取り消しとして扱う。
+    confirm.addEventListener('click', event => { if (event.target === confirm) confirm.close(); });
+    // document に張られた編集のキー操作 (矢印での微調整・マスクの Enter/Esc など) へ届けない。
+    // Esc でダイアログを閉じるのはブラウザの既定動作なので、伝播を止めても効く。
+    confirm.addEventListener('keydown', event => event.stopPropagation());
     this.notice.querySelector('#practice-retry')!.addEventListener('click', () => {
       editor.selectTab('preview'); void this.ensurePanel();
     });
