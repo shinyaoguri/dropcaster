@@ -365,6 +365,7 @@ ${CONTROL_PANEL_CSS}
       this.inactivePreviews.attach(this.hostDoc, {
         getSourceVideo: () => this.sourceVideo,
         getActiveContainer: () => this.mappingArea.getCroppedContainer(),
+        getActiveOutline: () => this.mappingArea.getCroppedOutline(),
         getMappingsLayer: () => this.outputViz.getCanvasMappings(),
         onActivate: (id) => this.ctrl.replaceState(withActiveSet(this.ctrl.getState(), id)),
       });

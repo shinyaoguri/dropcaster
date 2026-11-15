@@ -38,6 +38,7 @@ import { CleanupStack } from '../../../utils/cleanupStack';
 import { RafThrottle } from '../../../utils/rafThrottle';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
+import { createQuadOutline, syncQuadOutline, syncQuadOutlineStyle } from '../../../utils/quadOutline';
 import { t } from '../../../i18n/index.js';
 
 export interface MappingAreaPanelAttachOptions {
@@ -68,6 +69,8 @@ export class MappingAreaPanel {
   private opts: MappingAreaPanelAttachOptions | null = null;
   private croppedContainer: HTMLDivElement | null = null;
   private croppedVideo: HTMLVideoElement | null = null;
+  /** cropped-container の直後に置く輪郭。warp する container には枠線を描かない (#156)。 */
+  private croppedOutline: SVGSVGElement | null = null;
   private mappingVideo: HTMLVideoElement | null = null;
   /** 4 隅の quad-handle 要素群。cropped-container と一緒に親に動く。 */
   private handles: HTMLDivElement[] = [];
@@ -124,6 +127,7 @@ export class MappingAreaPanel {
     // mask の編集は MaskEditPanel が canvas-handles 上に vertex ハンドルだけ出す。
     const isMaskActive = !!activeItem && isMaskEntry(activeItem);
     this.croppedContainer.style.display = isMaskActive ? 'none' : '';
+    if (this.croppedOutline) syncQuadOutlineStyle(this.croppedOutline, this.croppedContainer);
     for (const h of this.handles) h.style.display = isMaskActive ? 'none' : '';
     if (this.scaleHandle) this.scaleHandle.style.display = isMaskActive ? 'none' : '';
     if (this.rotateHandle) this.rotateHandle.style.display = isMaskActive ? 'none' : '';
@@ -144,6 +148,7 @@ export class MappingAreaPanel {
     const activeIdx = state.mappings.findIndex(m => m.id === state.activeId);
     const activeColor = mappingColor(activeIdx >= 0 ? activeIdx : 0);
     this.croppedContainer.style.setProperty('--mapping-color', activeColor);
+    if (this.croppedOutline) syncQuadOutline(this.croppedOutline, this.croppedContainer, quad, state.canvas.width, state.canvas.height);
     for (const h of this.handles) h.style.setProperty('--mapping-color', activeColor);
     this.scaleHandle?.style.setProperty('--mapping-color', activeColor);
     this.rotateHandle?.style.setProperty('--mapping-color', activeColor);
@@ -162,6 +167,7 @@ export class MappingAreaPanel {
   }
 
   getCroppedContainer(): HTMLDivElement | null { return this.croppedContainer; }
+  getCroppedOutline(): SVGSVGElement | null { return this.croppedOutline; }
 
   destroy(): void {
     this.cleanups.runAll();
@@ -175,6 +181,7 @@ export class MappingAreaPanel {
       this.streamSetupTimeout = null;
     }
     this.croppedContainer?.remove();
+    this.croppedOutline?.remove();
     for (const h of this.handles) h.remove();
     this.handles = [];
     this.scaleHandle?.remove();
@@ -187,6 +194,7 @@ export class MappingAreaPanel {
     this.ctrl = null;
     this.opts = null;
     this.croppedContainer = null;
+    this.croppedOutline = null;
     this.croppedVideo = null;
     this.mappingVideo = null;
   }
@@ -207,6 +215,7 @@ export class MappingAreaPanel {
     container.appendChild(video);
     this.croppedContainer = container;
     this.croppedVideo = video;
+    this.croppedOutline = createQuadOutline(doc, 'cropped-outline');
 
     this.handles = [];
     for (const corner of CORNER_KEYS) {
@@ -242,6 +251,10 @@ export class MappingAreaPanel {
 
     if (container.parentElement !== canvasMappings) {
       canvasMappings.appendChild(container);
+    }
+    // 輪郭は container の直後の兄弟（前後関係を container と揃える）
+    if (this.croppedOutline && container.nextElementSibling !== this.croppedOutline) {
+      container.after(this.croppedOutline);
     }
     for (const h of this.handles) {
       if (h.parentElement !== canvasHandles) canvasHandles.appendChild(h);
