@@ -484,6 +484,23 @@ async function history(page, base) {
     assert.equal((await btn.evaluate(look)).background, clear, 'hovering a disabled history button adds no fill');
   }
   if (artifactDir) await page.locator('.dc-edit-toolbar').screenshot({ path: resolve(artifactDir, base.name + '-history-disabled.png') });
+  // 出力設定の数値欄: Escape は取消 (欄・state・書き出し JSON が編集前のまま、履歴も積まない) (#113)
+  const outputLayout = async () => { const o = (await state(page)).outputs[0]; return { x: o.position.x, y: o.position.y, w: o.size.width, h: o.size.height }; };
+  const layoutBefore = await outputLayout();
+  for (const [field, typed] of [['x', 174], ['y', 33], ['w', 777], ['h', 555], ['w', '']]) {
+    const input = page.locator(`#output-${field}-input`);
+    await input.fill(String(typed)); await input.press('Escape');
+    assert.equal(await input.inputValue(), String(layoutBefore[field]), `Escape restores the ${field} field (typed "${typed}")`);
+    assert.deepEqual(await outputLayout(), layoutBefore, `Escape on ${field} keeps the output layout`);
+    assert.equal(await undoBtn.isDisabled(), true, `Escape on ${field} adds no history`);
+  }
+  const exportedLayout = (await exportProject(page)).venue.layout.outputs[0];
+  assert.deepEqual({ x: exportedLayout.position.x, y: exportedLayout.position.y, w: exportedLayout.size.width, h: exportedLayout.size.height }, layoutBefore, 'the exported project keeps the pre-edit layout');
+  await page.locator('#output-y-input').fill('12'); await page.locator('#output-y-input').press('Enter');
+  assert.equal((await outputLayout()).y, 12, 'Enter commits the typed value');
+  await undoBtn.click();
+  assert.deepEqual(await outputLayout(), layoutBefore);
+  assert.equal(await undoBtn.isDisabled(), true);
   const ids = async () => (await state(page)).mappings.map(m => m.id);
   const initialIds = await ids();
 

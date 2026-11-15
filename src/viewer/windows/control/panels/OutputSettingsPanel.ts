@@ -9,7 +9,7 @@
  * 入力欄の change / Enter / Escape:
  *   - change（blur 含む）: withOutputLayoutSet で state を更新（fireChange → 全体追従）
  *   - Enter: blur を発火させて change を経由
- *   - Escape: 現在値に戻して blur
+ *   - Escape: 確定済みの値に戻して blur（その blur の change は commit しない = 取消）
  *
  * 値の表示更新は refresh() で行う。ControlWindow から、
  *  - refreshAllFromState (= replaceState) のフローで呼ばれる
@@ -27,6 +27,8 @@ type Field = 'x' | 'y' | 'w' | 'h';
 export class OutputSettingsPanel {
   private scope: HTMLElement | null = null;
   private ctrl: MappingsController | null = null;
+  /** Escape の取消で blur している間。その blur で飛ぶ change を commit させない。 */
+  private cancelling = false;
 
   attach(scope: HTMLElement, ctrl: MappingsController): void {
     this.scope = scope;
@@ -89,11 +91,35 @@ export class OutputSettingsPanel {
     input.addEventListener('change', () => this.commit(input, field));
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-      else if (e.key === 'Escape') { e.preventDefault(); this.refresh(); input.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); this.cancel(input, field); }
     });
   }
 
+  /**
+   * 編集を取り消す。refresh() は focus 中の欄を書き換えないので、確定済みの値をこの欄へ
+   * 明示的に書き戻してから blur する。Chromium はスクリプトで書き戻した欄の blur で change を
+   * 出さないが、出す実装でも commit させない (ドラッグ由来の小数値を丸めた表示値で上書きしたり、
+   * 取消で履歴を積んだりしないため)。
+   */
+  private cancel(input: HTMLInputElement, field: Field): void {
+    const value = this.committedValue(field);
+    if (value !== undefined) input.value = value;
+    this.cancelling = true;
+    try { input.blur(); } finally { this.cancelling = false; }
+  }
+
+  /** 対象出力の確定済みの値 (入力欄の表示形式)。対象が無ければ undefined。 */
+  private committedValue(field: Field): string | undefined {
+    const ctrl = this.ctrl;
+    const target = this.activeOutputId();
+    const out = target ? ctrl?.getState().outputs.find(o => o.id === target) : undefined;
+    if (!out) return undefined;
+    const raw = field === 'x' ? out.position.x : field === 'y' ? out.position.y : field === 'w' ? out.size.width : out.size.height;
+    return String(Math.round(raw));
+  }
+
   private commit(input: HTMLInputElement, field: Field): void {
+    if (this.cancelling) return;
     const ctrl = this.ctrl;
     if (!ctrl) return;
     const target = this.activeOutputId();
