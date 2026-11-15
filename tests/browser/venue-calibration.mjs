@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import { venueFixture } from '../fixtures/venue-glb.mjs';
+import { checkMainHiddenNotice, setMainVisibility } from './lib/main-hidden-notice.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const artifactDir=process.env.VENUE_ARTIFACT_DIR;if(artifactDir)await mkdir(artifactDir,{recursive:true});
@@ -47,6 +48,13 @@ async function workflow(page,base){
   assert.notEqual((await pixels(page)).hash,before.hash,'projector pose changes actual alignment image');
   const popupWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const output=await popupWait;
   await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
+  // #185: 会場の画面が隠れて校正画像が止まったことを、校正ウィンドウで操作している間だけ知らせる。
+  await checkMainHiddenNotice(page,output,{lang:'en',kind:'calibration',label:`${base.name} calibration`});
+  if(artifactDir){
+    await setMainVisibility(page,'hidden');await output.mouse.move(300,300);
+    await output.waitForFunction(()=>getComputedStyle(document.getElementById('dc-output-main-hidden')).opacity==='1');
+    await output.screenshot({path:resolve(artifactDir,base.name+'-calibration-main-hidden-en.png')});await setMainVisibility(page,'visible');
+  }
   await page.evaluate(()=>{window.outputTrack=window.calibrationPage.projection.stream.getVideoTracks()[0]});
   await page.locator('#venue-pattern').selectOption('white');let image=await pixels(page);assert.equal(image.white,image.width*image.height);
   await output.waitForFunction(()=>{const v=document.querySelector('video');const c=document.createElement('canvas');c.width=4;c.height=4;const x=c.getContext('2d');x.drawImage(v,0,0,4,4);return x.getImageData(0,0,1,1).data[0]>240});
@@ -68,6 +76,13 @@ async function workflow(page,base){
   assert.equal(await page.evaluate(()=>window.practicePreview.diagnostics().disposed),true);
   await page.locator('a[href="/venue"]').click();await ready(page);assert.deepEqual((await current(page)).venue,saved.venue);assert.equal((await current(page)).name,'Measured stage');
   await page.locator('#venue-menu > summary').click();await page.locator('[data-lang-set=ja]').click();assert.equal(await page.locator('[data-lang-set=ja]').getAttribute('aria-pressed'),'true');
+  {
+    // #185: 日本語で開いた校正ウィンドウは、会場の窓向けの日本語の案内を出す。
+    const popupWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const ja=await popupWait;
+    await ja.waitForFunction(()=>document.querySelector('video')?.videoWidth>0);
+    await checkMainHiddenNotice(page,ja,{lang:'ja',kind:'calibration',label:`${base.name} calibration ja`});
+    await ja.close({runBeforeUnload:true});await page.waitForFunction(()=>!window.calibrationPage.output?.isOpen);
+  }
   await snapshot(page,base.name+'-venue-desktop-ja');await page.setViewportSize({width:900,height:800});await snapshot(page,base.name+'-venue-narrow-ja');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.ok((await page.locator('#venue-canvas').boundingBox()).height>=200);
@@ -177,6 +192,10 @@ async function adjust(page,base){
   await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
   const beforeKey=await projector(page);await output.keyboard.press('ArrowUp');
   await page.waitForFunction(q=>JSON.stringify(window.calibrationPage.session.changes.get().venue.projectors[0].quaternion)!==JSON.stringify(q),beforeKey.quaternion);
+  // Ctrl/Cmd+F (ブラウザの検索) は全画面を切り替えない
+  await output.evaluate(()=>{window.fullscreenCalls=0;const request=Element.prototype.requestFullscreen;Element.prototype.requestFullscreen=function(){window.fullscreenCalls++;return request.call(this)}});
+  for(const key of ['Control+f','Meta+f'])await output.keyboard.press(key);
+  assert.equal(await output.evaluate(()=>window.fullscreenCalls),0,'Ctrl/Cmd+F does not toggle output fullscreen');
   // 全画面: その画面の実ピクセル数が出力解像度とアスペクト比になる
   await output.keyboard.press('f');
   const screen=await output.waitForFunction(()=>document.fullscreenElement&&{w:Math.round(innerWidth*devicePixelRatio),h:Math.round(innerHeight*devicePixelRatio)}).then(h=>h.jsonValue());
@@ -247,6 +266,13 @@ async function isolation(page,base){
   assert.deepEqual(check.layout,baseline.layout);assert.deepEqual(check.draft,baseline.draft);assert.deepEqual(check.storage,baseline.storage);assert.equal(check.track,'live');
   const calibrationPromise=venue.waitForEvent('popup');await venue.locator('#venue-open-output').click();const calibration=await calibrationPromise;
   await calibration.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);assert.equal(live.isClosed(),false);
+  // #185: 案内は各出力を開いた画面 (opener) が隠れたときだけ。校正ウィンドウは会場の窓、実出力は作品の画面を見る。
+  await checkMainHiddenNotice(venue,calibration,{lang:'en',kind:'calibration',label:`${base.name} calibration from venue popup`});
+  await setMainVisibility(page,'hidden');
+  await live.mouse.move(120,120);await calibration.mouse.move(120,120);
+  await live.waitForFunction(()=>getComputedStyle(document.getElementById('dc-output-main-hidden')).opacity==='1');
+  assert.equal(await calibration.evaluate(()=>getComputedStyle(document.getElementById('dc-output-main-hidden')).display),'none','hiding the artwork page does not affect the calibration window');
+  await setMainVisibility(page,'visible');
   const closed=calibration.waitForEvent('close');await venue.locator('#venue-close').click();
   assert.equal(await venue.locator('#venue-close-confirm').evaluate(d=>d.open),true,'leaving with the projector output open asks first');
   assert.equal(calibration.isClosed(),false);await venue.locator('#venue-close-confirm-btn').click();await closed;
@@ -266,13 +292,45 @@ async function isolation(page,base){
   await live.close();
 }
 
+// #168: 確定した変更は保存待ちのまま再読み込みで失われない。
+async function draft(page,base){return page.evaluate(async modules=>(await import(`${modules}/practice/projectStore.ts`)).readProject('venue-draft'),base.modules)}
+async function reloaded(page){await page.waitForSelector('#venue-canvas');await page.waitForFunction(()=>!document.querySelector('#venue-model-pane').inert)}
+async function leaving(page){try{await page.evaluate(()=>location.reload())}catch{/* the page navigated away */}}
+async function reload(page,base){
+  let answer='accept';const dialogs=[];
+  page.on('dialog',dialog=>{dialogs.push(dialog.type());void(answer==='accept'?dialog.accept():dialog.dismiss())});
+  await change(page,'#venue-name','First');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
+  await change(page,'#venue-name','Second');await page.waitForTimeout(100);
+  await page.reload();await reloaded(page);
+  assert.equal(await page.inputValue('#venue-name'),'Second','a committed name survives a reload 100 ms later');
+  assert.deepEqual(dialogs,[],'a finished save does not ask before leaving');
+  // 確定と同じタスクで離脱すると保存中なので確認を出す。キャンセルすれば変更は残り、待てば保存済みになる。
+  answer='dismiss';await page.locator('#venue-name').click();
+  try{await page.evaluate(()=>{const name=document.querySelector('#venue-name');name.value='Third';name.dispatchEvent(new Event('change',{bubbles:true}));location.reload()})}catch{/* the page navigated away */}
+  assert.deepEqual(dialogs,['beforeunload'],'leaving in the same task as the commit asks first');
+  assert.equal(await page.inputValue('#venue-name'),'Third','cancelling keeps the edit');
+  await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
+  assert.equal((await draft(page,base)).name,'Third','staying finishes the save');
+  // 微調整の確定待ち (SETTLE_MS) のまま離脱しても、確定して保存してから知らせる。
+  const before=(await draft(page,base)).venue.projectors[0];
+  await page.locator('#venue-output-stage').focus();await page.keyboard.press('ArrowRight');await leaving(page);
+  assert.deepEqual(dialogs,['beforeunload','beforeunload'],'a pending nudge asks before leaving');
+  await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
+  assert.notDeepEqual((await draft(page,base)).venue.projectors[0].quaternion,before.quaternion,'the pending nudge is committed and saved');
+  // 保存済みなら新たな確認を出さない。
+  answer='accept';await page.locator('#venue-name').click();
+  await page.reload();await reloaded(page);
+  assert.deepEqual(dialogs,['beforeunload','beforeunload'],'a saved draft reloads without asking');
+  assert.equal(await page.inputValue('#venue-name'),'Third');
+}
+
 try{
   for(const config of ['vite.config.ts','apps/web/vite.config.ts']){
     const hosted=config.startsWith('apps/'),name=hosted?'hosted':'gallery';if(process.env.VENUE_ENTRY&&process.env.VENUE_ENTRY!==name)continue;
     const server=await createServer({configFile:resolve(root,config),root:hosted?resolve(root,'apps/web'):root,server:{host:'127.0.0.1',port:0,open:false,watch:null,hmr:false},logLevel:'error'});
     try{
       await server.listen();const base={name,url:`http://127.0.0.1:${server.httpServer.address().port}`,modules:hosted?`/@fs${root.slice(0,-1)}/src/viewer`:'/src/viewer'};
-      for(const [testName,run] of Object.entries({workflow,interaction,adjust,recovery,isolation})){
+      for(const [testName,run] of Object.entries({workflow,interaction,adjust,recovery,isolation,reload})){
         if(process.env.VENUE_CASE&&process.env.VENUE_CASE!==testName)continue;
         const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'}),errors=[];
         context.on('page',page=>page.on('pageerror',error=>errors.push(error.message)));

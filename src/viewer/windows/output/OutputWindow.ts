@@ -15,7 +15,7 @@ import { RafThrottle } from '../../utils/rafThrottle';
 import { createQuadOutline, syncQuadOutline } from '../../utils/quadOutline';
 import { ScreenWakeLock } from '../../utils/wakeLock';
 import { HeldKeys, toSketchKey, type SketchKey } from '../../utils/sketchKeys';
-import { t } from '../../i18n/index.js';
+import { getLang, t, type MessageKey } from '../../i18n/index.js';
 
 export interface OutputWindowOptions {
   /**
@@ -24,6 +24,11 @@ export interface OutputWindowOptions {
    * 会場の校正ウィンドウのように作品が無い出力では渡さない。
    */
   onSketchKey?: (key: SketchKey) => boolean;
+  /**
+   * この出力を開いた画面が隠れたときに、操作中だけ出す案内の文言 (#185)。
+   * 既定は作品のメイン画面向け。会場の校正ウィンドウは会場の窓向けの文言を渡す。
+   */
+  mainHiddenMessage?: MessageKey;
 }
 
 /** 出力ウィンドウ内の操作 UI。ここにフォーカスがあるキーは作品へ渡さない（Enter / Space が二重に効くため）。 */
@@ -75,9 +80,16 @@ export class OutputWindow extends BaseWindow {
   /** 作品へ送った keydown のうち、まだ keyup を送っていないキー。 */
   private heldKeys = new HeldKeys();
   private readonly onSketchKey: ((key: SketchKey) => boolean) | null;
+  private readonly mainHiddenMessage: MessageKey;
   private boundMouseMove = (e: MouseEvent) => this.onMouseMove(e);
   private boundMouseOut = (e: Event) => this.onMouseOut(e);
   private idleTimer: number | null = null;
+  /**
+   * メイン画面 (この出力を開き、作品と captureStream を動かしている opener) の document。
+   * これが隠れると rAF が止まり、出力の映像も止まる (#185)。visibilitychange を聞いて案内を出し分ける。
+   */
+  private mainDocument: Document | null = null;
+  private boundMainVisibility = () => this.syncMainHidden();
   /** 開発モード（mapping 枠線・マウス追従クロスヘア表示）。親から dev-mode-update で push される。 */
   private devMode = false;
   /** resize 由来の transform 再適用を 1 フレーム 1 回へ間引く throttle。initialize で作成。 */
@@ -91,6 +103,7 @@ export class OutputWindow extends BaseWindow {
     super(`output_window_${outputId}`, t('window.projectionOutput'));
     this.outputId = outputId;
     this.onSketchKey = options.onSketchKey ?? null;
+    this.mainHiddenMessage = options.mainHiddenMessage ?? 'output.mainHidden';
   }
 
   getOutputId(): string { return this.outputId; }
@@ -99,6 +112,8 @@ export class OutputWindow extends BaseWindow {
     this.render();
     if (!this.window) return;
     try { this.window.document.body.style.background = '#000'; } catch { /* ignore */ }
+    // about:blank の出力文書には lang が無い。開いたときの言語を付け、案内の改行 (word-break: auto-phrase) を効かせる。
+    try { this.window.document.documentElement.lang = getLang(); } catch { /* ignore */ }
     this.reapplyThrottle = new RafThrottle(this.window, () => this.reapplyTransforms());
     this.window.addEventListener('message', this.boundMessage);
     this.window.addEventListener('resize', this.boundResize);
@@ -112,6 +127,7 @@ export class OutputWindow extends BaseWindow {
     // 不可視時は自動 release され、再可視で自動再取得される（ScreenWakeLock が面倒を見る）。
     this.wakeLock = new ScreenWakeLock(this.window);
     void this.wakeLock.acquire();
+    this.watchMainVisibility();
     this.requestStream();
     this.scheduleIdle();
   }
@@ -135,6 +151,9 @@ export class OutputWindow extends BaseWindow {
         </div>
         <button id="dc-output-fs" class="dc-output-ui" title="${t(this.onSketchKey ? 'output.fullscreenSketchKeys' : 'output.fullscreen')}">⛶ ${t(this.onSketchKey ? 'output.fullscreenSketchKeys' : 'output.fullscreen')}</button>
         <div id="dc-output-hint" class="dc-output-ui">${t(this.onSketchKey ? 'output.hintSketchKeys' : 'output.hint')}</div>
+        <!-- メイン画面が隠れて映像が止まっている間の案内 (#185)。他の操作 UI と同じく、
+             マウスを動かしている間だけ見え、dc-idle で消える。 -->
+        <div id="dc-output-main-hidden" class="dc-output-ui" role="status">${t(this.mainHiddenMessage)}</div>
       </div>
     `;
   }
@@ -166,6 +185,15 @@ export class OutputWindow extends BaseWindow {
         position: fixed; bottom: 16px; left: 16px; z-index: 10;
         color: rgba(255,255,255,0.5); font-size: 12px;
       }
+      #dc-output-main-hidden {
+        display: none;
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 11;
+        box-sizing: border-box; width: max-content; max-width: min(520px, calc(100vw - 32px));
+        background: rgba(0,0,0,0.8); color: #fff; border: 1px solid rgba(255,196,0,0.75); border-radius: 8px;
+        padding: 14px 18px; font: 14px/1.6 system-ui, -apple-system, 'Segoe UI', sans-serif; text-align: center; word-break: auto-phrase;
+        pointer-events: none;
+      }
+      #dc-output-stage.dc-main-hidden #dc-output-main-hidden { display: block; }
       #dc-output-stage.dc-idle { cursor: none; }
       #dc-output-stage.dc-idle .dc-output-ui { opacity: 0; pointer-events: none; }
 
@@ -256,6 +284,8 @@ export class OutputWindow extends BaseWindow {
   private onKeydown(e: KeyboardEvent): void {
     // 作品へキーを渡す出力では F も作品のもの。全画面はダブルクリックかボタンで切り替える。
     if (this.onSketchKey) return;
+    // Ctrl/Cmd+F (ブラウザの検索) など修飾キー付きと、他が処理済みのキーでは切り替えない。
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'f' || e.key === 'F') this.toggleFullscreen();
   }
 
@@ -656,6 +686,35 @@ export class OutputWindow extends BaseWindow {
     pct.textContent = `${xp.toFixed(1)}, ${yp.toFixed(1)} %`;
   }
 
+  // --- メイン画面が隠れたときの案内 (#185) ---
+
+  /**
+   * メイン画面の表示状態を追う。隠れた理由 (出力がタブで開いた・全画面の出力に覆われた・
+   * 最小化など) は問わない。表示はマウス操作中だけに限るので、本番中に観客へ文字は見えない。
+   */
+  private watchMainVisibility(): void {
+    try {
+      this.mainDocument = this.getParentWindow()?.document ?? null;
+      this.mainDocument?.addEventListener('visibilitychange', this.boundMainVisibility);
+    } catch {
+      this.mainDocument = null; // opener が別オリジンへ移った等。案内は出さない
+    }
+    this.syncMainHidden();
+  }
+
+  private syncMainHidden(): void {
+    let hidden = false;
+    try { hidden = this.mainDocument?.visibilityState === 'hidden'; } catch { /* ignore */ }
+    try {
+      this.window?.document.getElementById('dc-output-stage')?.classList.toggle('dc-main-hidden', hidden);
+    } catch { /* closed window */ }
+  }
+
+  private unwatchMainVisibility(): void {
+    try { this.mainDocument?.removeEventListener('visibilitychange', this.boundMainVisibility); } catch { /* ignore */ }
+    this.mainDocument = null;
+  }
+
   // --- マウス無操作で UI・カーソルを隠す ---
 
   private scheduleIdle(): void {
@@ -673,6 +732,7 @@ export class OutputWindow extends BaseWindow {
 
   private teardown(): void {
     this.releaseSketchKeys();
+    this.unwatchMainVisibility();
     if (this.idleTimer !== null && this.window) this.window.clearTimeout(this.idleTimer);
     this.idleTimer = null;
     this.reapplyThrottle?.cancel();

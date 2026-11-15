@@ -28,11 +28,33 @@ export function extractDeckardUrls(codeTabs) {
 }
 
 /**
- * URL を outDir 内のローカル相対パスに変換する。
- * 例: https://deckard.openprocessing.org/user110137/visual2862331/h.../foo.png
- *   → assets/user110137/visual2862331/h.../foo.png
+ * URL を、outDir 内の保存先 (filePath) と、コードに書く参照 URL (urlPath) の組に変換する。
+ * どちらも outDir からの相対で `/` 区切り。
+ * 例: https://deckard.openprocessing.org/u1/v2/h3/a%20b.png
+ *   → { filePath: 'assets/u1/v2/h3/a b.png', urlPath: 'assets/u1/v2/h3/a%20b.png' }
+ *
+ * 配信サーバは参照 URL をデコードしてからファイルを探すので、保存名はデコード後の名前にし、
+ * 参照はその名前をエンコードし直したものにする (#114)。参照に残る `%XX` は、Vite (sirv) の
+ * decodeURI でも decodeURIComponent でも同じ文字に戻るものだけになる。`%XX` を含まず、
+ * URL の解析でエスケープされる文字 (`^` `{` `}` など) も含まない ASCII の名前は、保存名・参照とも
+ * 従来と同じ。それ以外の名前は保存名が変わる (従来の参照は 404 になっていた)。
+ *
+ * デコード後の名前は Unicode の NFC に揃える。macOS は NFC と NFD の名前を同じファイルとして
+ * 扱う一方、Vite (dev の public 配信・preview) はディレクトリに実在する名前と文字列で照合する。
+ * 同じ名前が NFC と NFD の両方で参照されると、後から保存した側の参照が 404 になる (#114 で実測)。
+ *
+ * デコードに失敗する名前、デコード後にパス区切り (`/` `\`)・NUL・`.` `..` になる名前は
+ * 拒否する (パストラバーサルと意図しないサブディレクトリを防ぐ)。`#` `?` を含む名前も、
+ * decodeURI はデコードせず decodeURIComponent はデコードするので、サーバによって参照先が
+ * 割れる。どの名前で保存しても全サーバで解決できないので拒否する。制御文字 (C0・DEL) と
+ * 先頭・末尾の空白も、URL の解析で削られて参照が保存名とずれるので拒否する。最後に、作った
+ * 参照がどちらのデコードでも保存名に戻ることを確かめ、戻らなければ拒否する。拒否した URL は
+ * 書き換えずに絶対 URL のまま残る。
+ *
+ * @param {string} absUrl
+ * @returns {{ filePath: string, urlPath: string } | null}
  */
-export function localPathForUrl(absUrl) {
+export function assetPathsForUrl(absUrl) {
   if (!absUrl.startsWith(DECKARD_HOST)) return null;
   // URL として解釈してパスを正規化する（`../` や `%2e%2e` はここでドット
   // セグメントとして解決される）。生文字列をそのまま join に渡すと
@@ -45,8 +67,58 @@ export function localPathForUrl(absUrl) {
   }
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length === 0) return null;
-  if (segments.some((s) => s === '.' || s === '..' || s.includes('\0'))) return null;
-  return `assets/${segments.join('/')}`;
+  const names = [];
+  for (const segment of segments) {
+    let name;
+    try {
+      name = decodeURIComponent(segment).normalize('NFC');
+    } catch {
+      return null;
+    }
+    if (name === '.' || name === '..' || /[/\\#?\x00-\x1f\x7f]|^\s|\s$/.test(name)) return null;
+    const ref = encodePathSegment(name);
+    // 不変条件をその場で確かめる: 参照をどちらの方式でデコードしても保存名に戻ること
+    if (!decodesTo(ref, name)) return null;
+    names.push({ name, ref });
+  }
+  return {
+    filePath: `assets/${names.map((n) => n.name).join('/')}`,
+    urlPath: `assets/${names.map((n) => n.ref).join('/')}`,
+  };
+}
+
+/**
+ * 参照 ref を Vite (sirv) の decodeURI でも decodeURIComponent でもデコードすると name に戻るか。
+ * @param {string} ref
+ * @param {string} name
+ */
+function decodesTo(ref, name) {
+  try {
+    return decodeURI(ref) === name && decodeURIComponent(ref) === name;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * デコード済みのファイル名を、URL のパス 1 セグメントとしてエンコードする。
+ * URL の解析と同じ規則 (空白・非 ASCII などを `%XX` に、`@` `+` などはそのまま) に、
+ * `%` 自体のエスケープを加える。`/` `\` `#` `?`・制御文字・先頭末尾の空白は呼び出し側で拒否済み。
+ * @param {string} name
+ */
+function encodePathSegment(name) {
+  return new URL(`https://h/${name.replace(/%/g, '%25')}`).pathname.slice(1);
+}
+
+/**
+ * URL を、コード中で参照するローカル相対 URL に変換する (assetPathsForUrl の urlPath)。
+ * 例: https://deckard.openprocessing.org/user110137/visual2862331/h.../foo.png
+ *   → assets/user110137/visual2862331/h.../foo.png
+ * @param {string} absUrl
+ * @returns {string | null}
+ */
+export function localPathForUrl(absUrl) {
+  return assetPathsForUrl(absUrl)?.urlPath ?? null;
 }
 
 /**
@@ -55,14 +127,16 @@ export function localPathForUrl(absUrl) {
  * @param {string} outDir
  * @param {object} [opts]
  * @param {(info: { url: string, size: number, localPath: string, error?: string }) => void} [opts.onProgress]
- * @returns {Promise<Map<string,string>>}  abs URL -> ローカル相対パスの Map
+ *   localPath は保存先 (outDir からの相対パス)
+ * @returns {Promise<Map<string,string>>}  abs URL -> コードに書くローカル相対 URL の Map
  */
 export async function downloadAssets(urls, outDir, opts = {}) {
   const map = new Map();
   for (const url of urls) {
-    const rel = localPathForUrl(url);
-    if (!rel) continue; // deckard 以外・不正パスは無視
-    const absPath = resolve(outDir, rel);
+    const paths = assetPathsForUrl(url);
+    if (!paths) continue; // deckard 以外・不正パス・どのサーバでも同じファイルを指せない名前は無視
+    const { filePath, urlPath: rel } = paths;
+    const absPath = resolve(outDir, filePath);
     // 念のための最終防衛: 解決後パスが outDir/assets 配下に収まることを確認
     if (!absPath.startsWith(resolve(outDir, 'assets') + sep)) continue;
     try {
@@ -75,12 +149,12 @@ export async function downloadAssets(urls, outDir, opts = {}) {
       await writeFile(absPath, buf);
       map.set(url, rel);
       if (opts.onProgress) {
-        try { opts.onProgress({ url, size: buf.length, localPath: rel }); } catch { /* ignore */ }
+        try { opts.onProgress({ url, size: buf.length, localPath: filePath }); } catch { /* ignore */ }
       }
     } catch (err) {
       // 1 個失敗しても処理は続ける (URL → rel が map に入らないので、書き換え時にスキップされる)
       if (opts.onProgress) {
-        try { opts.onProgress({ url, size: 0, localPath: rel, error: err.message }); } catch { /* ignore */ }
+        try { opts.onProgress({ url, size: 0, localPath: filePath, error: err.message }); } catch { /* ignore */ }
       }
     }
   }
@@ -90,11 +164,14 @@ export async function downloadAssets(urls, outDir, opts = {}) {
 /**
  * code 文字列内の deckard 絶対 URL を、map にある場合は相対パスに書き換える。
  * map に無い URL はそのまま残す (絶対 URL のままなのでオフライン再生はできない)。
+ * 長い URL から置換する。短い URL が長い URL の前方に一致するとき、短い方を先に置換すると
+ * 長い方の残りがエンコードのまま参照に混ざり、別のファイルを指してしまう。
  */
 export function rewriteCodeWithAssetMap(code, map) {
   if (!map || map.size === 0 || typeof code !== 'string') return code;
   let out = code;
-  for (const [abs, rel] of map.entries()) {
+  const entries = [...map.entries()].sort(([a], [b]) => b.length - a.length);
+  for (const [abs, rel] of entries) {
     out = out.split(abs).join(rel);
   }
   return out;

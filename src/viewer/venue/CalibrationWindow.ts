@@ -31,7 +31,7 @@ export class CalibrationWindow {
     if (!child) return false;
     try {
       child.document.title = t('calibration.outputTitle');
-      this.output = new OutputWindow(this.id); this.output.setParentWindow(window); this.output.setWindow(child);
+      this.output = new OutputWindow(this.id, { mainHiddenMessage: 'calibration.venueHidden' }); this.output.setParentWindow(window); this.output.setWindow(child);
       child.addEventListener('beforeunload', () => {
         if (this.output?.getWindow() !== child) return;
         this.close();

@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import { join, relative } from 'path';
+import { isReplacementResidue } from '../../core/modules/directory-replacement.js';
 
 export async function copyPublicFiles(sourceDir, targetDir) {
   try {
@@ -26,6 +27,10 @@ async function copyRecursive(source, target) {
     for (const entry of entries) {
       // Skip sw.js as it will be generated
       if (entry.name === 'sw.js') {
+        continue;
+      }
+      // scan の差し替えで消せなかった作業用ディレクトリ (旧版の残骸など) は配信しない
+      if (isReplacementResidue(entry.name)) {
         continue;
       }
       

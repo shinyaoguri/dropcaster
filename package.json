@@ -57,8 +57,9 @@
     "test:projection-runtime": "node tests/browser/projection-runtime.mjs",
     "test:practice": "node tests/browser/practice-mode.mjs",
     "test:venue": "node tests/browser/venue-calibration.mjs",
-    "test:sw": "node tests/browser/service-worker-offline.mjs",
-    "test:routes": "node tests/browser/route-lifecycle.mjs"
+    "test:sw": "node tests/browser/service-worker-offline.mjs && node tests/browser/service-worker-update.mjs",
+    "test:routes": "node tests/browser/route-lifecycle.mjs",
+    "test:slideshow": "node tests/browser/slideshow-prefetch.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261102.1",

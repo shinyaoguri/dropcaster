@@ -27,6 +27,8 @@ const labels = {
   previewSettings: ['Preview settings', 'プレビュー設定'], loadPreview: ['Load venue file', '会場ファイルを読み込む'],
   graphicsError: ['3D graphics stopped. Your saved venue is kept; reload this screen to resume. Output has been closed.', '3D描画が停止しました。保存済みの会場は保持しています。この画面を再読み込みして再開してください。出力は閉じました。'],
   reload: ['Reload', '再読み込み'],
+  // 校正ウィンドウは常にポップアップで、開いたのは会場の窓 (#185)。キー操作では同期で描き直すので「可能性」に留める。
+  venueHidden: ['The calibration image may have stopped updating because the venue setup window is hidden. Bring the venue setup window to the front.', '会場の画面が隠れているため、校正画像の更新が止まっている可能性があります。会場の画面を前に出してください。'],
 } as const;
 type Dictionary = { [K in keyof typeof labels as `calibration.${K}`]: string };
 export const calibrationEn = Object.fromEntries(Object.entries(labels).map(([key, values]) => [`calibration.${key}`, values[0]])) as Dictionary;

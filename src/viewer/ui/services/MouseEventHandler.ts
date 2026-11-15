@@ -47,13 +47,11 @@ export class MouseEventHandler {
       }
     };
 
-    if (iframe.contentDocument?.readyState === 'complete') {
-      setupIframeEvents();
-    } else {
-      this.iframeLoadTarget = iframe;
-      this.onIframeLoad = setupIframeEvents;
-      iframe.addEventListener('load', setupIframeEvents);
-    }
+    if (iframe.contentDocument?.readyState === 'complete') setupIframeEvents();
+    // 作品の読み込み前（about:blank）に始めた場合も、読み込み後の document へ張り直す
+    this.iframeLoadTarget = iframe;
+    this.onIframeLoad = setupIframeEvents;
+    iframe.addEventListener('load', setupIframeEvents);
   }
 
   private removeIframeEventListeners(): void {

@@ -60,6 +60,9 @@ https://dropcaster.soui.dev/gist/<gist id>     ← 公開 Gist（?gist=<gist id>
 またはスライドショー上部の **「マッピング」** を押す。編集・練習・本番は同じ入口を使う。
 この時点では別窓は開かない。実機に投影するときだけ、左の出力一覧で **「開く」** を押す。
 出力を追加しただけでも別窓は開かない。従来の `/practice` URL も利用できる。
+個別作品画面の全画面（右上の全画面ボタン）は、マッピングをせずに作品をそのまま映すための表示で、マッピングとは併用しない。
+全画面の間はマッピングのボタンを出さず、マッピングの編集中は全画面のボタンを出さない。マッピングするときは、
+全画面を `Esc` か全画面ボタンで抜けてから押す。
 
 会場の作成・現場での位置合わせは、独立した **[「会場の作成・調整」](https://dropcaster.soui.dev/venue)** を使う。
 ホーム、またはマッピングの「設定・共有」から開ける。作品の読み込みは不要で、p5.jsの映像も表示しない。
@@ -101,7 +104,8 @@ https://dropcaster.soui.dev/gist/<gist id>     ← 公開 Gist（?gist=<gist id>
 不具合報告ではこの版を添える。コミットの部分は GitHub の該当コミットへのリンク。
 ギャラリーでは `npm install` した時点の dropcaster の版を示し、コミットが分からない入れ方では版番号だけを出す。
 
-作業中の変更はこのブラウザに自動保存する。保存表示を確認し、共有やバックアップには
+作業中の変更はこのブラウザに自動保存する。名前などを確定するとすぐ保存を始め、保存が済む前に
+再読み込みやタブを閉じようとするとブラウザの離脱確認が出る（キャンセルすれば保存が続く）。保存表示を確認し、共有やバックアップには
 パッケージを書き出す。保存容量が足りない場合も編集と書出は可能。旧 v2 の2D設定 JSON も
 読み込める。不正なパッケージは現在の作業を置き換えない。読込前に戻す操作は同じ編集セッション中に使える。
 保存形式はProject v3 / Venue v2。以前のProject v1/v2・Venue v1も読み込める。新しく作った会場の配布先には最新版を使用する。
@@ -181,6 +185,12 @@ dropcaster fetch 2257553 --no-assets     # アセット同梱をスキップ（O
 ローカルファイルで解決されます（index タブは `index.html` として書き出し）。
 既知の制限: 同梱されるのはコード中に **deckard の絶対 URL** で書かれたアセットのみです。
 `loadImage('photo.jpg')` のような fileBase 相対参照のアセットは取得できません（p5js モードも同様）。
+アセットはファイル名をデコードした名前（`a%20b.png` → `a b.png`、日本語名も同様）で保存されます。
+デコードできない名前や、デコードすると `/` `\` `#` `?`・制御文字・先頭や末尾の空白を含む名前は、安全に
+保存できないか配信サーバによって参照先が変わるため同梱せず、絶対 URL のまま残します。
+以前の版で fetch した作品は、空白や日本語を含む名前のアセットが読めないことがあるので、
+`dropcaster fetch <id> --overwrite` で取り直してください。`--overwrite` は外部アセットを 1 件でも取得できないと
+置き換えずに終了するので（既存の作品は残る）、表示されたアセットの URL と原因を確かめてから再実行してください。
 
 #### 方法 2: 手動で配置
 
@@ -231,6 +241,22 @@ npm run scan:watch
 OPENPROCESSING_API_TOKEN=your_token npm run scan
 ```
 
+#### タイトルと説明の決まり方
+
+scan のたびに、`sketches.json` の `title` / `description` を次の順で決めます（上ほど優先、値の無い情報源は飛ばす）。
+
+1. 手動メタデータ（作品ディレクトリの `dropcaster.meta.json`、下の例）
+2. その scan の `--fetch-userdata` で OpenProcessing Public API から取った値（取得に失敗した作品は前回の `sketches.json` の値を保つ）
+3. `_op-meta.json` の `title` / `description`（`dropcaster fetch` が取り込み時に API から保存したもの。空文字は値なし）
+4. `index.html` の `<title>` / `<meta name="description">`
+5. 前回の `sketches.json` の値（上のどれにも値が無いときだけ残す）
+6. 既定値（ディレクトリ名 / `<ディレクトリ名> スケッチ`）
+
+`index.html` を書き換えると次の scan で反映されます。`_op-meta.json` の無い OpenProcessing 作品
+（手動で置いたもの）で `index.html` が `p5.js Sketch` のような汎用の `<title>` を持つと、
+`--fetch-userdata` なしの scan ではその `<title>` になります。表示を固定したいときは
+`dropcaster.meta.json` に書いてください。
+
 ```json
 {
   "title": "Sketch title",
@@ -276,12 +302,17 @@ OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（�
 
 オプション:
 - `--no-assets` - 外部アセットをダウンロードしない（OP CDN 直参照のまま、オフライン不可）
-- `--overwrite` - 既存ディレクトリを置き換える
+- `--overwrite` - 既存ディレクトリを置き換える。取得・検証・書き出しが最後まで成功し、外部アセットの取得にも 1 件も失敗しなかったときだけ差し替え（安全に保存できない名前のアセットは従来どおり絶対 URL のまま残し、失敗に数えない）、途中で失敗したら既存のディレクトリをそのまま残して終了コード 1 で終わる（作品ディレクトリに手で置いたファイルも含めて丸ごと置き換わる）。`--overwrite` なしの新規取り込みでは、取得できなかったアセットは警告して OP CDN の絶対 URL のまま残す
 - `--output <dir>` - sketches ベースディレクトリ (デフォルト: "sketches")
 - `-v, --verbose` - 個別ファイルの進捗を表示
 
 ### `dropcaster scan [options]`
 スケッチをスキャンして `public/sketches/` にコピーし、`public/sketches.json` を生成（デフォルトでプレビュー GIF も生成）。
+コピーできなかったスケッチがあると、スケッチ名と原因を表示して終了コード 1 で終わる。コピーできたスケッチは
+`sketches.json` に載り、失敗したスケッチは今回の内容では載らない（`index.html` のある前回のコピーが
+`public/sketches/` に残っていれば、それと前回の項目をそのまま残す）。`public/sketches/` 側のコピーを
+最新とみなして省くのは、それが `index.html` のあるディレクトリで、コピーするはずのファイルが過不足なく
+揃い、元より新しいときだけ。
 
 オプション:
 - `--sketch <name>` - 特定のスケッチのみスキャン（`sketches.json` は既存にマージ）
@@ -296,10 +327,21 @@ OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（�
 
 オプション:
 - `-o, --output <dir>` - 出力ディレクトリ (デフォルト: "dist")
-- `-b, --base <path>` - ベースURLパス (デフォルト: "/")
+- `--base <path>` - 配信先のベースURLパス。未指定なら `dropcaster.config.js` の `base`、それも無ければ "/"。
+  先頭と末尾の "/" は補われる（`exhibit` → `/exhibit/`）。`./` のような相対パス・URL、`?`・`#`・空白・
+  バックスラッシュを含む値は指定できない。決まった base は出力先の `dropcaster-build.json` に記録される
+
+### `dropcaster preview [options]`
+ビルド済みの出力を配信して確認。build 時に決まった base（`--base` を含む。出力先の `dropcaster-build.json`）の
+配下（例: `/exhibit/`）で配信する。記録の無い古い出力では `dropcaster.config.js` の `base`、それも無ければ "/"。
+
+オプション:
+- `-p, --port <port>` - ポート (デフォルト: 4173)
+- `-h, --host <host>` - ホスト (デフォルト: "localhost")
+- `-o, --output <dir>` - 配信するディレクトリ (デフォルト: "dist")
 
 ### `dropcaster dev`
-開発サーバーを起動。
+開発サーバーを起動。`base` の設定にかかわらずルート（`/`）で配信する。
 
 ### `dropcaster doctor`
 プレビュー GIF 生成に必要なツール (FFmpeg / Chromium) が揃っているか確認。
@@ -317,7 +359,7 @@ export default {
   background_color: '#ffffff',
   display: 'standalone',               // 'standalone' | 'fullscreen' | 'minimal-ui' | 'browser'
   start_url: '/',
-  // base: '/my-gallery/',             // GitHub Pages のサブパスなど（dropcaster build --base でも可）
+  // base: '/my-gallery/',             // GitHub Pages のサブパスなど。build と preview に効く（build は --base が優先）
   // assetProxyBaseUrl: '/op-cdn',     // OP CDN の CORS proxy（下記参照）
   // gistApiBaseUrl: '/gist-api',      // GitHub Gist API の中継（下記参照）
 }
@@ -408,6 +450,7 @@ dropcaster/
 ### ブラウザ側で dropcaster が面倒を見るもの
 - **Screen Wake Lock** — プロジェクション中はメイン／出力ウィンドウの両方で `navigator.wakeLock.request('screen')` を取り、ディスプレイのスリープ／スクリーンセーバ／システムアイドルを抑止します（不可視に戻ったときの自動再取得もする）。
 - **canvas キャプチャの自動復活** — スケッチが内部で `<canvas>` を作り直したり、GPU プロセスがクラッシュして WebGL コンテキストが復帰しなかったりした場合、ソース iframe を自動でリロードして映像を復活させます。
+- **上演中は新しい版に切り替えない** — 開いている間にギャラリーやホスト版の新しい版が配信されても、自動で再読み込みしません（出力ウィンドウを閉じないため）。新しい版は、そのサイトのタブ・ウィンドウをすべて閉じて開き直したときに使われます。メインウィンドウの左下に「新しい版があります」と出たら、上演の合間に「再読み込みして更新」を押しても適用できます（出力ウィンドウは閉じます）。出力ウィンドウには出しません。
 - **2 ウィンドウ構成** — マッピング編集 UI はメインウィンドウ右側のペインとして表示されるので、ラップトップ側に重なるウィンドウは存在しません（Chrome on Windows の occlusion による hidden 判定でメインのスケッチ rAF が止まる事故が、構造的に起きないように設計してあります）。
 
 ### 運用者が OS 側でやっておくこと

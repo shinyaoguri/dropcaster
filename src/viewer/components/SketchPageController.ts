@@ -45,20 +45,24 @@ export class SketchPageController {
       this.sketchFrame = new SketchFrame(stage);
       // CursorManager / MouseEventHandler が #sketch-iframe で参照するので id を付ける（このページは frame 1 枚）
       this.sketchFrame.iframe.id = 'sketch-iframe';
+    } else {
+      console.warn('SketchPageController: #sketch-stage が見つかりません');
+    }
+
+    // 全画面の購読は作品の読み込みを待たない。⛶ は描画直後から押せるので、読み込み中の全画面も
+    // 表示（.fullscreen・マッピングの入口・UI とカーソルの自動非表示）へ反映する (#103)
+    this.fullscreenManager.initialize();
+    this.cursorManager.initialize();
+
+    if (this.sketchFrame) {
       if (sketch.srcdoc) {
         // OP 由来など、組み立て済み HTML を直接 srcdoc にロードする経路
         await this.sketchFrame.loadSrcdoc(sketch.srcdoc, { tag: sketch.id });
       } else {
         await this.sketchFrame.load(publicAssetPath(sketch.path));
       }
-    } else {
-      console.warn('SketchPageController: #sketch-stage が見つかりません');
     }
-
-    // 各マネージャーの初期化
     if (this.isDestroyed) return;
-    this.fullscreenManager.initialize();
-    this.cursorManager.initialize();
 
     // ページ離脱時の警告を設定
     this.setupBeforeUnloadWarning();

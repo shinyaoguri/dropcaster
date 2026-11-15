@@ -96,7 +96,13 @@ export class SketchPool {
     } else {
       await target.ready; // 先読み中ならその完了を待つ
     }
-    if (this.destroyed || generation !== this.showGeneration) return target;
+    if (this.destroyed) return target;
+    if (generation !== this.showGeneration) {
+      // 待つ間に後続の show が来て、この表示は取り消された。表示されないまま読み込みを終えた frame は
+      // 先読みと同じく止めて待つ（#172）。同じ作品を待つ後続の show があれば、そちらが resume する。
+      if (target !== this.visibleFrame && matches(target, url)) target.pause();
+      return target;
+    }
     this.markBusy(target);
 
     const previous = this.visibleFrame;
@@ -120,7 +126,10 @@ export class SketchPool {
     return target;
   }
 
-  /** 指定 URL を非表示の frame に先読みしておく（次の show が即座になる）。すでにどこかに読み込み済みなら何もしない。 */
+  /**
+   * 指定 URL を非表示の frame に先読みしておく（次の show が即座になる）。読み込み後は一時停止して待つ。
+   * すでにどこかに読み込み済みなら何もしない。
+   */
   preload(url: PoolSource): void {
     if (this.destroyed) return;
     if (this.frames.some(f => matches(f, url))) return;
@@ -131,7 +140,13 @@ export class SketchPool {
       return;
     }
     this.pendingPreloadUrl = null;
-    void load(idle, url).catch(() => { /* 先読みの失敗は握りつぶす（show 時に再試行される） */ });
+    void load(idle, url).then(() => {
+      // 先読みは読み込みまでで止め、表示する時に show() の resume() で再開する（#172）。
+      // 新しい document では以前の pause が消えているので、読み込みのたびに止め直す。
+      // 待つ間に表示された・別の作品に差し替えられた frame は止めない。
+      if (this.destroyed || idle === this.visibleFrame || !matches(idle, url)) return;
+      idle.pause();
+    }).catch(() => { /* 先読みの失敗は握りつぶす（show 時に再試行される） */ });
   }
 
   private flushPendingPreload(): void {

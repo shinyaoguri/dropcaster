@@ -17,6 +17,8 @@ export const PREVIEW_PATH_PREFIX = 'previews/';
 // 各スケッチディレクトリに置ける手動メタデータ（一カ所で定義）
 export const MANUAL_METADATA_FILE = 'dropcaster.meta.json';
 export const MANUAL_METADATA_TEMPLATE_FILE = 'dropcaster.meta.example.json';
+// dropcaster fetch が取り込み時に書き出す OpenProcessing のメタデータ（scan はタイトル・説明を読む）
+export const OP_METADATA_FILE = '_op-meta.json';
 
 // OpenProcessing Public API クライアントの設定
 export const API_CONFIG = {

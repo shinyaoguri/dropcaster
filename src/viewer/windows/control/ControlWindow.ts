@@ -430,6 +430,7 @@ ${CONTROL_PANEL_CSS}
         getActiveContainer: () => this.mappingArea.getCroppedContainer(),
         getActiveOutline: () => this.mappingArea.getCroppedOutline(),
         getMappingsLayer: () => this.outputViz.getCanvasMappings(),
+        getState: () => this.ctrl.getState(),
         onActivate: (id) => this.ctrl.replaceState(withActiveSet(this.ctrl.getState(), id)),
       });
       // 初期同期（state 復元直後の inactive preview を即配置）

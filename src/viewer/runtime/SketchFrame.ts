@@ -28,13 +28,27 @@ const VIEWER_FRAME_STYLE = `
 // load イベントが（CSP やリダイレクトなどで）発火しなかった場合に備えたフォールバック時間
 const LOAD_TIMEOUT_MS = 15000;
 
-/** スケッチ iframe の window（p5 のグローバルや、pause/resume 用に差し替える rAF 退避フィールドを含む）。 */
+/**
+ * pause 中の rAF の退避状態。pause で作り、退避したコールバックを resume 後に流し終えたら消す。
+ * 退避中の id は負の連番（ブラウザの rAF id は正なので衝突しない）で、cancelAnimationFrame で取り消せる。
+ */
+interface DcRafState {
+  origRaf: (cb: FrameRequestCallback) => number;
+  origCaf: (id: number) => void;
+  /** 退避中のコールバック（id → callback）。挿入順に流す。 */
+  queue: Map<number, FrameRequestCallback>;
+  seq: number;
+  paused: boolean;
+  /** resume 後、退避分を流すために予約した本物の rAF の id（流し終えたら null）。 */
+  flushId: number | null;
+}
+
+/** スケッチ iframe の window（p5 のグローバルや、pause/resume 用に差し替える rAF の退避状態を含む）。 */
 type DcSketchWindow = Window & {
   noLoop?: () => void;
   loop?: () => void;
   redraw?: () => void;
-  __dcOrigRaf?: ((cb: FrameRequestCallback) => number) | undefined;
-  __dcRafQueue?: FrameRequestCallback[] | undefined;
+  __dcRaf?: DcRafState | undefined;
 };
 
 export class SketchFrame {
@@ -191,38 +205,77 @@ export class SketchFrame {
    * 一時停止: iframe の requestAnimationFrame を「呼ばれたら退避キューに積むだけ」に差し替えて、
    * 表示されていない間スケッチの描画ループ（p5 instance / three.js / 生 rAF いずれも）を凍結する。
    * p5 グローバルモードでは noLoop() も呼んでクリーンに止める。差し替えは Window プロパティ
-   * （__dc*）に保持するので、navigation で新しい Document になれば自然に消える。冪等。
+   * （__dcRaf）に保持するので、navigation で新しい Document になれば自然に消える。冪等。
+   *
+   * 待機中に作品が cancelAnimationFrame(id) → requestAnimationFrame で掛け直しても（リサイズ・全画面化）
+   * ループが多重化しないよう、退避中の rAF は一意な id を返し、cancelAnimationFrame もその id を
+   * 退避キューから外すよう差し替える（#172）。
    */
   pause(): void {
     try {
       const w = this.window as DcSketchWindow | null;
       if (!w) return;
       w.noLoop?.(); // p5 グローバルモード（reads window.rAF each frame なので下の差し替えでも止まるが、これが正攻法）
-      if (!w.__dcOrigRaf) {
-        w.__dcOrigRaf = w.requestAnimationFrame.bind(w);
-        w.__dcRafQueue = [];
-        w.requestAnimationFrame = (cb: FrameRequestCallback): number => {
-          w.__dcRafQueue!.push(cb);
-          return -1;
-        };
+      if (w.__dcRaf?.paused) return;
+      const state: DcRafState = w.__dcRaf ?? {
+        origRaf: w.requestAnimationFrame.bind(w),
+        origCaf: w.cancelAnimationFrame.bind(w),
+        queue: new Map(),
+        seq: 0,
+        paused: false,
+        flushId: null,
+      };
+      w.__dcRaf = state;
+      // resume 後に退避分を流す前に止め直したら、流すのをやめて退避キューに残したまま待つ
+      if (state.flushId !== null) {
+        state.origCaf(state.flushId);
+        state.flushId = null;
       }
+      state.paused = true;
+      w.requestAnimationFrame = (cb: FrameRequestCallback): number => {
+        const id = --state.seq;
+        state.queue.set(id, cb);
+        return id;
+      };
+      w.cancelAnimationFrame = (id: number): void => {
+        if (!state.queue.delete(id)) state.origCaf(id);
+      };
     } catch {
       /* ignore */
     }
   }
 
-  /** 再開: requestAnimationFrame を元に戻し、停止中に積まれた rAF コールバックを再投入する。p5 は loop()+redraw()。冪等。 */
+  /**
+   * 再開: requestAnimationFrame を元に戻し、停止中に積まれた rAF コールバックを次のフレームでまとめて流す。
+   * 流し終えるまでは退避中の id を cancelAnimationFrame で取り消せるよう差し替えを残し、流し終えたら戻す。
+   * p5 は loop()+redraw()。冪等。
+   */
   resume(): void {
     try {
       const w = this.window as DcSketchWindow | null;
       if (!w) return;
-      if (w.__dcOrigRaf) {
-        const orig = w.__dcOrigRaf;
-        const queue = w.__dcRafQueue ?? [];
-        w.requestAnimationFrame = orig;
-        w.__dcOrigRaf = undefined;
-        w.__dcRafQueue = undefined;
-        for (const cb of queue) orig(cb);
+      const state = w.__dcRaf;
+      if (state?.paused) {
+        state.paused = false;
+        w.requestAnimationFrame = state.origRaf;
+        const restore = () => {
+          w.cancelAnimationFrame = state.origCaf;
+          w.__dcRaf = undefined;
+        };
+        if (state.queue.size === 0) {
+          restore();
+        } else {
+          state.flushId = state.origRaf((time) => {
+            state.flushId = null;
+            // 流している間に取り消されたものは Map から消えるので呼ばれない
+            for (const [id, cb] of state.queue) {
+              state.queue.delete(id);
+              // 本物の rAF と同じく、1 つの例外で残りのコールバックを止めない
+              try { cb(time); } catch (error) { w.reportError(error); }
+            }
+            restore();
+          });
+        }
       }
       w.loop?.();
       w.redraw?.();

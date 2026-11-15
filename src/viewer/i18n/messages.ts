@@ -3,8 +3,9 @@
 
 import { calibrationEn, calibrationJa } from '../venue/messages';
 import { practiceEn, practiceJa } from '../practice/messages';
+import { pwaEn, pwaJa } from '../pwa/messages';
 const en = {
-  ...practiceEn, ...calibrationEn,
+  ...practiceEn, ...calibrationEn, ...pwaEn,
   // 言語切替
   'lang.label': 'Language',
   'lang.en': 'English',
@@ -112,6 +113,8 @@ const en = {
   // 作品へキーを渡す出力ウィンドウ (#163)。F は作品のものなので案内しない。
   'output.fullscreenSketchKeys': 'Fullscreen (F11)',
   'output.hintSketchKeys': 'Double-click for fullscreen / Esc to exit / Keys go to the sketch',
+  // メイン画面が隠れると作品の描画と映像が止まる (#185)。出力で操作している間だけ表示する。
+  'output.mainHidden': 'The video has stopped because the main window is hidden. Detach this output tab into its own window, or bring the main window to the front.',
 
   // コントロールパネル: 共通バナー
   'control.banner.webglLost':
@@ -241,7 +244,7 @@ const en = {
 } as const;
 
 const ja: Record<keyof typeof en, string> = {
-  ...practiceJa, ...calibrationJa,
+  ...practiceJa, ...calibrationJa, ...pwaJa,
   'lang.label': '言語',
   'lang.en': 'English',
   'lang.ja': '日本語',
@@ -333,6 +336,7 @@ const ja: Record<keyof typeof en, string> = {
   'output.hint': 'ダブルクリックまたは F で全画面 / Esc で解除',
   'output.fullscreenSketchKeys': '全画面 (F11 でも可)',
   'output.hintSketchKeys': 'ダブルクリックで全画面 / Esc で解除 / キー入力は作品へ届きます',
+  'output.mainHidden': 'メイン画面が隠れているため映像が止まっています。出力のタブをウィンドウとして切り離すか、メイン画面を前に出してください。',
 
   'control.banner.webglLost':
     'WebGL コンテキストが失われました（GPU プロセスのクラッシュ等）。<br>2 秒以内に復帰しなければソースを自動リロードします。',

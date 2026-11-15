@@ -30,3 +30,4 @@
 | [0017](0017-hosted-gist-api-proxy.md) | ホスト版は Gist API を Worker がトークン付きで中継し、利用者の IP の枠に依存しない | 採用（取得順は0018で更新） |
 | [0018](0018-gist-direct-first.md) | Gist は直接取得を基本とし、ホスト版の Worker 中継は直接取得が使えないときの予備にする | 採用 |
 | [0019](0019-venue-split-view-direct-projector-adjustment.md) | 会場画面は投影像と3Dを並べ、仮想プロジェクタを輪郭の直接操作で合わせる | 採用 |
+| [0020](0020-sw-update-waits-for-all-windows.md) | 新しい版の Service Worker は全ウィンドウを閉じたときに有効にし、操作画面で通知する | 採用 |

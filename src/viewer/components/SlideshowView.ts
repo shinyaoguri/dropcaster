@@ -374,8 +374,14 @@ export class SlideshowView {
   }
 
   private handleKeydown(e: KeyboardEvent): void {
-    // Arrow keys in the editor belong to quad/crop controls, not slide navigation.
-    if (this.inlinePanel || (e.target as HTMLElement)?.closest('input, textarea, select, [contenteditable]')) return;
+    // 編集を開いている間は、フォーカスの位置に関係なく ← → Space F をすべて編集側に譲る
+    // (矢印は隅・切り出しの微調整、Space と F は名前の入力にも使う)。
+    if (this.inlinePanel) return;
+    // 文字入力中のキー、他が処理済みのキー、ブラウザや OS の修飾キー付きショートカット
+    // (Ctrl/Cmd+F の検索、Alt+← → の戻る・進むなど) は奪わない。Shift は除外しない。
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as Partial<Element> | null;
+    if (target?.closest?.('input, textarea, select, [contenteditable]')) return;
     switch(e.key) {
       case 'ArrowLeft':
         this.previousSketch();
