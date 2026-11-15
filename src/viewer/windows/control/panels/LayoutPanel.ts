@@ -23,6 +23,7 @@ import {
   type MappingsState,
 } from '../../../utils/mappingTransform';
 import { CleanupStack } from '../../../utils/cleanupStack';
+import { createQuadOutline, syncQuadOutline } from '../../../utils/quadOutline';
 import { RafThrottle } from '../../../utils/rafThrottle';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
@@ -32,6 +33,8 @@ interface MappingPreviewEntry {
   div: HTMLDivElement;
   /** mapping preview にのみ存在。 */
   video?: HTMLVideoElement;
+  /** mapping preview にのみ存在。div の直後に置く輪郭（warp する div には枠線を描かない — #156）。 */
+  outline?: SVGSVGElement;
   /** mask preview にのみ存在。polyline で drafting / committed の両方を扱う。 */
   polyline?: SVGPolylineElement;
   sig: string;
@@ -269,6 +272,7 @@ export class LayoutPanel {
     for (const [id, p] of entry.previews) {
       if (!enabledIds.has(id)) {
         p.div.remove();
+        p.outline?.remove();
         entry.previews.delete(id);
       }
     }
@@ -283,11 +287,11 @@ export class LayoutPanel {
       if (isMaskEntry(m)) {
         // drafting 中の mask は layout タブには出さない（commit 後だけ反映）
         if (m.drafting) {
-          if (p) { p.div.remove(); entry.previews.delete(m.id); }
+          if (p) { p.div.remove(); p.outline?.remove(); entry.previews.delete(m.id); }
           continue;
         }
         if (!p || !p.polyline) {
-          if (p) p.div.remove();
+          if (p) { p.div.remove(); p.outline?.remove(); }
           const pDiv = doc.createElement('div');
           pDiv.className = 'dc-layout-mask';
           const svg = doc.createElementNS(svgNs, 'svg') as SVGSVGElement;
@@ -322,14 +326,16 @@ export class LayoutPanel {
         if (p) p.div.remove();
         const pDiv = doc.createElement('div');
         pDiv.className = 'dc-layout-preview';
+        pDiv.dataset.mappingId = m.id;
         const video = doc.createElement('video');
         video.autoplay = true;
         video.muted = true;
         video.playsInline = true;
         pDiv.appendChild(video);
-        entry.canvasWindow.appendChild(pDiv);
+        const outline = createQuadOutline(doc, 'dc-layout-preview-outline');
+        entry.canvasWindow.append(pDiv, outline);
         this.bindStream(video);
-        p = { div: pDiv, video, sig: '' };
+        p = { div: pDiv, video, outline, sig: '' };
         entry.previews.set(m.id, p);
       }
       const sig = `${state.canvas.width}x${state.canvas.height}|${i}|${m.quad.topLeft.x},${m.quad.topLeft.y},${m.quad.topRight.x},${m.quad.topRight.y},${m.quad.bottomRight.x},${m.quad.bottomRight.y},${m.quad.bottomLeft.x},${m.quad.bottomLeft.y}|${m.source.x},${m.source.y},${m.source.width},${m.source.height}`;
@@ -341,6 +347,7 @@ export class LayoutPanel {
         p.div.style.height = `${state.canvas.height}px`;
         applyQuadCanvas(p.div, m.quad, state.canvas.width, state.canvas.height);
         applyVideoCrop(p.video!, m.source);
+        if (p.outline) syncQuadOutline(p.outline, p.div, m.quad, state.canvas.width, state.canvas.height);
       }
     }
   }

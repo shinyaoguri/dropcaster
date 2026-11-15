@@ -466,6 +466,93 @@ async function layoutDragCase(page) {
   await cdp.detach();
 }
 
+// #156: a canvas-sized element warped by a perspective matrix3d cannot be rastered
+// at the ancestor's down-scale, so any paint on it (the mapping outline) costs
+// thousands of tiles and starves the compositor (checkerboarded holes across the
+// editor). Warped elements carry only the <video>; outlines live in untransformed SVG.
+async function quadTilesCase(page) {
+  await addSource(page, fixture());
+  await start(page);
+  const W = 1920, H = 1080;
+  const quads = [
+    [[260, 140], [980, 300], [900, 900], [120, 980]],
+    [[700, 200], [1500, 80], [1400, 760], [760, 820]],
+    [[1300, 120], [1850, 260], [1700, 900], [1250, 980]],
+  ].map(([tl, tr, br, bl]) => ({
+    topLeft: { x: tl[0], y: tl[1] }, topRight: { x: tr[0], y: tr[1] },
+    bottomRight: { x: br[0], y: br[1] }, bottomLeft: { x: bl[0], y: bl[1] },
+  }));
+  const state = {
+    version: 2,
+    canvas: { width: 2 * W, height: 2 * H },
+    outputs: [
+      { id: 'o1', name: 'Output 1', position: { x: 0, y: 0 }, size: { width: W, height: H } },
+      { id: 'o2', name: 'Output 2', position: { x: W, y: 0 }, size: { width: W, height: H } },
+      { id: 'o3', name: 'Output 3', position: { x: W / 2, y: H }, size: { width: W, height: H } },
+    ],
+    mappings: quads.map((quad, i) => ({ id: `q${i + 1}`, source: { x: 0, y: 0, width: 1, height: 1 }, quad })),
+    activeId: 'q2',
+    activeOutputId: 'o1',
+  };
+
+  const cdp = await page.context().newCDPSession(page);
+  // Peak tile demand and OOM flags of every compositor while `action` settles.
+  const measure = async action => {
+    const events = [];
+    const onData = ({ value }) => events.push(...value);
+    cdp.on('Tracing.dataCollected', onData);
+    const complete = new Promise(resolve => cdp.once('Tracing.tracingComplete', resolve));
+    await cdp.send('Tracing.start', { transferMode: 'ReportEvents', traceConfig: { includedCategories: ['disabled-by-default-cc.debug'] } });
+    await action();
+    await page.waitForTimeout(1500);
+    await cdp.send('Tracing.end');
+    await complete;
+    cdp.off('Tracing.dataCollected', onData);
+    const prepared = events.filter(e => e.name === 'DidPrepareTiles').map(e => e.args.state);
+    return { samples: prepared.length, maxTiles: Math.max(0, ...prepared.map(s => s.tile_count)), oom: prepared.filter(s => s.did_oom_on_last_assign).length };
+  };
+  // Outlines must stay with their mapping: same corners, same stacking slot, and
+  // the warped element itself must not paint a border.
+  const outlines = selector => page.evaluate(({ selector, quads }) => {
+    const ids = ['q1', 'q2', 'q3'];
+    return [...document.querySelectorAll(selector)].map(el => {
+      const outline = el.nextElementSibling;
+      const id = el.dataset.mappingId ?? ids.find(i => el.id === 'cropped-container' && i === window.runtimeRegression.wc.events.state.get().activeId);
+      const q = quads[ids.indexOf(id)];
+      const expected = q && [q.topLeft, q.topRight, q.bottomRight, q.bottomLeft].map(p => `${p.x},${p.y}`).join(' ');
+      const style = getComputedStyle(el);
+      return {
+        selector, id,
+        border: style.borderTopWidth,
+        outline: !!outline?.classList.contains('dc-quad-outline'),
+        points: outline?.querySelector('polygon')?.getAttribute('points') === expected,
+        zIndex: outline ? getComputedStyle(outline).zIndex === style.zIndex : false,
+      };
+    });
+  }, { selector, quads });
+
+  const mappingTab = await measure(() => page.evaluate(s => window.runtimeRegression.wc.applyStateFromInline(s), state));
+  const mappingOutlines = [...await outlines('#cropped-container'), ...await outlines('.preview-mapping.inactive')];
+  await click(page, '#layout-tab');
+  const layoutTab = await measure(() => page.waitForSelector('.dc-layout-preview'));
+  const layoutOutlines = await outlines('.dc-layout-preview');
+  await cdp.detach();
+
+  console.log(`  quadTiles: mapping tab ${JSON.stringify(mappingTab)}, layout tab ${JSON.stringify(layoutTab)}`);
+  for (const [label, m] of Object.entries({ mappingTab, layoutTab })) {
+    assert.ok(m.samples > 0, `${label}: tile preparation observed`);
+    // Rectangular quads measure ~100 tiles; perspective quads with painted warped
+    // layers measured ~2,700 before the fix.
+    assert.ok(m.maxTiles < 500, `${label}: peak tile demand ${m.maxTiles} stays below 500`);
+    assert.equal(m.oom, 0, `${label}: compositor never runs out of tile memory`);
+  }
+  assert.equal(mappingOutlines.length, 3, 'mapping tab: active + 2 inactive previews');
+  assert.equal(layoutOutlines.length, 9, 'layout tab: 3 mappings x 3 outputs');
+  for (const o of [...mappingOutlines, ...layoutOutlines]) {
+    assert.deepEqual(o, { selector: o.selector, id: o.id, border: '0px', outline: true, points: true, zIndex: true }, `${o.selector} ${o.id}: outline in untransformed SVG`);
+  }
+}
+
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
     const hosted = config.startsWith('apps/');
@@ -480,7 +567,7 @@ try {
       await server.listen();
       const base = { url: `http://127.0.0.1:${server.httpServer.address().port}`,
         modules: hosted ? `/@fs${root}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, layoutDrag: layoutDragCase })) {
+      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase })) {
         if (process.env.RUNTIME_CASE && process.env.RUNTIME_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
         const errors = [];

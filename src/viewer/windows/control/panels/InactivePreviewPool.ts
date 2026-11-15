@@ -22,11 +22,14 @@ import {
   mappingColor,
   type MappingsState,
 } from '../../../utils/mappingTransform';
+import { createQuadOutline, syncQuadOutline, syncQuadOutlineStyle } from '../../../utils/quadOutline';
 
 interface PreviewEntry {
   div: HTMLDivElement;
   /** mapping preview のみ存在（mask preview では undefined）。 */
   video?: HTMLVideoElement;
+  /** mapping preview のみ存在。div の直後に置く輪郭（warp する div には枠線を描かない — #156）。 */
+  outline?: SVGSVGElement;
   /**
    * mask preview のみ存在。SVG polyline を使うことで:
    *   - drafting 中（stroke のみ）→ 最終頂点 → 最初の頂点を結ばない開いた折れ線として表示。
@@ -41,6 +44,8 @@ export interface InactivePreviewPoolAttachOptions {
   getSourceVideo: () => HTMLVideoElement | null;
   /** active mapping を覆っているコンテナ。同じ親に居れば直前に挿入してレイヤ順を保つ。 */
   getActiveContainer: () => HTMLDivElement | null;
+  /** active mapping の輪郭（コンテナの直後の兄弟）。コンテナと同じ z-index を当てる。 */
+  getActiveOutline: () => SVGSVGElement | null;
   /** 共有 canvas-mappings レイヤ（全 inactive preview の mount 先）。 */
   getMappingsLayer: () => HTMLElement | null;
   onActivate: (mappingId: string) => void;
@@ -76,9 +81,10 @@ export class InactivePreviewPool {
     }
 
     // 不要になった preview を削除
-    for (const [id, { div }] of this.previews) {
+    for (const [id, { div, outline }] of this.previews) {
       if (!renderIds.has(id)) {
         div.remove();
+        outline?.remove();
         this.previews.delete(id);
       }
     }
@@ -94,6 +100,8 @@ export class InactivePreviewPool {
         // active mapping の cropped-container にも同じ順位の z-index を当てる
         if (activeContainer && activeContainer.parentElement === stage) {
           activeContainer.style.zIndex = String(z);
+          const activeOutline = opts.getActiveOutline();
+          if (activeOutline) syncQuadOutlineStyle(activeOutline, activeContainer);
         }
         continue;
       }
@@ -103,7 +111,7 @@ export class InactivePreviewPool {
       if (isMaskEntry(m)) {
         const drafting = !!m.drafting;
         if (!entry || entry.div.parentElement !== stage || !entry.polyline) {
-          if (entry) entry.div.remove();
+          if (entry) { entry.div.remove(); entry.outline?.remove(); }
           const div = doc.createElement('div');
           div.className = 'preview-mask';
           div.dataset.mappingId = m.id;
@@ -150,7 +158,7 @@ export class InactivePreviewPool {
 
       // 非 active mapping の preview
       if (!entry || entry.div.parentElement !== stage || !entry.video) {
-        if (entry) entry.div.remove();
+        if (entry) { entry.div.remove(); entry.outline?.remove(); }
         const div = doc.createElement('div');
         div.className = 'preview-mapping inactive';
         div.dataset.mappingId = m.id;
@@ -159,13 +167,14 @@ export class InactivePreviewPool {
         video.muted = true;
         video.playsInline = true;
         div.appendChild(video);
-        stage.appendChild(div);
+        const outline = createQuadOutline(doc, 'preview-mapping-outline');
+        stage.append(div, outline);
         div.addEventListener('mousedown', (e) => {
           e.stopPropagation();
           opts.onActivate(m.id);
         });
         this.bindStream(video);
-        entry = { div, video, sig: '' };
+        entry = { div, video, outline, sig: '' };
         this.previews.set(m.id, entry);
       }
       const sig = `${state.canvas.width}x${state.canvas.height}|${i}|${m.quad.topLeft.x},${m.quad.topLeft.y},${m.quad.topRight.x},${m.quad.topRight.y},${m.quad.bottomRight.x},${m.quad.bottomRight.y},${m.quad.bottomLeft.x},${m.quad.bottomLeft.y}|${m.source.x},${m.source.y},${m.source.width},${m.source.height}`;
@@ -177,6 +186,7 @@ export class InactivePreviewPool {
         entry.div.style.height = `${state.canvas.height}px`;
         applyQuadCanvas(entry.div, m.quad, state.canvas.width, state.canvas.height);
         applyVideoCrop(entry.video!, m.source);
+        if (entry.outline) syncQuadOutline(entry.outline, entry.div, m.quad, state.canvas.width, state.canvas.height);
       }
     }
   }
@@ -189,7 +199,7 @@ export class InactivePreviewPool {
   }
 
   destroy(): void {
-    this.previews.forEach(({ div }) => div.remove());
+    this.previews.forEach(({ div, outline }) => { div.remove(); outline?.remove(); });
     this.previews.clear();
     this.doc = null;
     this.opts = null;

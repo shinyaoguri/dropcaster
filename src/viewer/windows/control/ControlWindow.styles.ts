@@ -904,9 +904,13 @@ export const CONTROL_PANEL_CSS = `
         overflow: hidden;
         transform-origin: top left;
         backface-visibility: hidden;
-        border: 1px solid var(--mapping-color, rgba(255, 0, 255, 0.5));
+        /* 枠線は描かない。輪郭は直後の .dc-layout-preview-outline（変形しない SVG）が描く (#156) */
         background: transparent;
         pointer-events: none;
+      }
+      .dc-layout-canvas .dc-layout-preview-outline polygon {
+        stroke: var(--mapping-color, rgba(255, 0, 255, 0.5));
+        stroke-width: 1;
       }
       .dc-layout-canvas .dc-layout-preview > video {
         position: absolute;
@@ -1330,7 +1334,7 @@ export const CONTROL_PANEL_CSS = `
 
       #cropped-container {
         position: absolute;
-        border: 2px solid var(--mapping-color, #ff00ff);
+        /* 枠線は描かない。輪郭は直後の .cropped-outline（変形しない SVG）が描く (#156) */
         background: transparent;
         cursor: move;
         overflow: hidden;
@@ -1425,14 +1429,35 @@ export const CONTROL_PANEL_CSS = `
         overflow: hidden;
         transform-origin: top left;
         backface-visibility: hidden;
-        border: 1px dashed var(--mapping-color, rgba(255, 0, 255, 0.5));
+        /* 枠線は描かない。輪郭は直後の .preview-mapping-outline（変形しない SVG）が描く (#156) */
         background: transparent;
         cursor: pointer;
         pointer-events: auto;
       }
 
-      .preview-mapping.inactive:hover {
-        border-style: solid;
+      /* マッピングの輪郭（utils/quadOutline）。warp する要素の直後の兄弟に置く、変形しない
+         仮想キャンバス寸法の SVG。線幅は仮想キャンバス px（親の縮小に従う）で、旧 border と揃える。 */
+      .dc-quad-outline {
+        position: absolute;
+        top: 0;
+        left: 0;
+        overflow: visible;
+        pointer-events: none;
+      }
+      .dc-quad-outline polygon {
+        fill: none;
+      }
+      .cropped-outline polygon {
+        stroke: var(--mapping-color, #ff00ff);
+        stroke-width: 2;
+      }
+      .preview-mapping-outline polygon {
+        stroke: var(--mapping-color, rgba(255, 0, 255, 0.5));
+        stroke-width: 1;
+        stroke-dasharray: 3 3;
+      }
+      .preview-mapping.inactive:hover + .preview-mapping-outline polygon {
+        stroke-dasharray: none;
       }
 
       .preview-mapping.inactive > video {
