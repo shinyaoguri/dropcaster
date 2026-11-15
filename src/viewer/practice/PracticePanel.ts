@@ -1,3 +1,4 @@
+import { randomId } from '../utils/randomId';
 import { ProjectionPreview } from './ProjectionPreview';
 import { prepareVenue } from './loadVenue';
 import { parseProject, portableProject, portableVenue, importVenue, ProjectFormatError,
@@ -235,7 +236,7 @@ export class PracticePanel {
   }
   private async saveNamed(copy: boolean): Promise<void> {
     try {
-      if (copy) this.session.update({ ...this.session.changes.get(), id: crypto.randomUUID(), createdAt: new Date().toISOString() });
+      if (copy) this.session.update({ ...this.session.changes.get(), id: randomId(), createdAt: new Date().toISOString() });
       await this.session.save(true); await this.refreshSaved();
     } catch { this.status('practice.storageError', true); }
   }

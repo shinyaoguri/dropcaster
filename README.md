@@ -263,7 +263,13 @@ npm run build
 ## CLIコマンド
 
 ### `dropcaster init <project-name>`
-新しいギャラリープロジェクトを作成。
+新しいギャラリープロジェクトを作成。`.` を渡すとカレントディレクトリに作る。
+
+生成するファイル（`public/icon.svg`・`dropcaster.config.js`・`package.json`・`.gitignore`・`README.md`・
+`sketches/sample-sketch/index.html`・`sketches/sample-sketch/mySketch.js`）が 1 つでも既にあると、
+それらを一覧して何も書かずに終了する（終了コード 1）。途中のディレクトリ（`public` など）が
+通常ファイルになっている場合も、そのファイルを一覧に示して同じく終了する。`.git` など、これら以外のファイルしか無い
+ディレクトリには作成できる。作り直すときは新しいディレクトリ名を渡すか、一覧のファイルを退避する。
 
 ### `dropcaster fetch <id> [options]`
 OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（対応モード: p5js / html）。既存のローカル sketch と同じ形式（`index.html` + 各タブのファイル + `assets/`）で書き出すので、`npm run scan` がそのまま処理できる。
@@ -409,6 +415,7 @@ dropcaster/
 - スクリーンセーバ／ディスプレイスリープを OS のエネルギー設定で無効にしておくとより確実です。
 - **メインウィンドウを最小化しない**。完全に不可視になった場合 `requestAnimationFrame` はブラウザレベルで停止するので、これだけは仕様上どうしようもありません（最小化ボタンを押さない／他アプリで最大化したまま放置しないだけで OK）。
 - **PWA としてインストールして起動**するとタブの discard 対象から外れやすく、安定します。
+- **上演する端末では `localhost` か HTTPS で開く**。`dropcaster dev` / `preview` を `--host` 付きで起動し、別の端末から `http://<IP>:<port>` で開いても再生・マッピング・会場の校正はできます。ただしブラウザがその URL を secure context とみなさないため、上の Screen Wake Lock が効かず（画面が消灯しうる）、Service Worker も登録されません（オフライン再生不可）。Webカメラ・マイクを使う作品も、ブラウザがカメラ・マイクを渡さないため動きません。
 
 ## プレビュー生成
 
