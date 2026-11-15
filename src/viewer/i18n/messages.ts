@@ -109,6 +109,9 @@ const en = {
   // 出力ウィンドウ
   'output.fullscreen': 'Fullscreen (F / F11)',
   'output.hint': 'Double-click or F for fullscreen / Esc to exit',
+  // 作品へキーを渡す出力ウィンドウ (#163)。F は作品のものなので案内しない。
+  'output.fullscreenSketchKeys': 'Fullscreen (F11)',
+  'output.hintSketchKeys': 'Double-click for fullscreen / Esc to exit / Keys go to the sketch',
 
   // コントロールパネル: 共通バナー
   'control.banner.webglLost':
@@ -328,6 +331,8 @@ const ja: Record<keyof typeof en, string> = {
 
   'output.fullscreen': '全画面 (F / F11 でも可)',
   'output.hint': 'ダブルクリックまたは F で全画面 / Esc で解除',
+  'output.fullscreenSketchKeys': '全画面 (F11 でも可)',
+  'output.hintSketchKeys': 'ダブルクリックで全画面 / Esc で解除 / キー入力は作品へ届きます',
 
   'control.banner.webglLost':
     'WebGL コンテキストが失われました（GPU プロセスのクラッシュ等）。<br>2 秒以内に復帰しなければソースを自動リロードします。',

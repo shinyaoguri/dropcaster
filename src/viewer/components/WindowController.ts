@@ -8,6 +8,7 @@ import {
   type OutputDef,
 } from '../utils/mappingTransform';
 import { ScreenWakeLock } from '../utils/wakeLock';
+import { dispatchSketchKey } from '../utils/sketchKeys';
 import { Emitter } from '../utils/emitter';
 import { t } from '../i18n/index.js';
 import type {
@@ -217,7 +218,8 @@ export class WindowController {
     });
     if (!outputWin) return null;
 
-    const ow = new OutputWindow(outputId);
+    // 出力ウィンドウで押したキーは、いまマッピングのソースにしている作品へ届ける (#163)。
+    const ow = new OutputWindow(outputId, { onSketchKey: key => dispatchSketchKey(this.currentSourceIframe, key) });
     ow.setParentWindow(window);
     ow.setWindow(outputWin);
     this.outputWindows.set(outputId, ow);

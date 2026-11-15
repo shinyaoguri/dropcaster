@@ -14,7 +14,20 @@ import {
 import { RafThrottle } from '../../utils/rafThrottle';
 import { createQuadOutline, syncQuadOutline } from '../../utils/quadOutline';
 import { ScreenWakeLock } from '../../utils/wakeLock';
+import { HeldKeys, toSketchKey, type SketchKey } from '../../utils/sketchKeys';
 import { t } from '../../i18n/index.js';
+
+export interface OutputWindowOptions {
+  /**
+   * 出力ウィンドウで押したキーを作品へ届ける送り先 (#163)。作品が preventDefault したら true を返す。
+   * 渡すと、出力ウィンドウの F による全画面切り替えをやめ、F も作品へ渡す。
+   * 会場の校正ウィンドウのように作品が無い出力では渡さない。
+   */
+  onSketchKey?: (key: SketchKey) => boolean;
+}
+
+/** 出力ウィンドウ内の操作 UI。ここにフォーカスがあるキーは作品へ渡さない（Enter / Space が二重に効くため）。 */
+const OWN_KEY_TARGETS = 'button, input, select, textarea, [contenteditable]';
 
 interface OutputChild {
   div: HTMLElement;
@@ -57,6 +70,11 @@ export class OutputWindow extends BaseWindow {
   private boundMessage = (e: MessageEvent) => this.onMessage(e);
   private boundResize = () => this.reapplyThrottle?.schedule();
   private boundKeydown = (e: KeyboardEvent) => this.onKeydown(e);
+  private boundSketchKey = (e: KeyboardEvent) => this.forwardSketchKey(e);
+  private boundReleaseKeys = () => this.releaseSketchKeys();
+  /** 作品へ送った keydown のうち、まだ keyup を送っていないキー。 */
+  private heldKeys = new HeldKeys();
+  private readonly onSketchKey: ((key: SketchKey) => boolean) | null;
   private boundMouseMove = (e: MouseEvent) => this.onMouseMove(e);
   private boundMouseOut = (e: Event) => this.onMouseOut(e);
   private idleTimer: number | null = null;
@@ -69,9 +87,10 @@ export class OutputWindow extends BaseWindow {
   /** 自身が担当する出力 id（OutputDef.id）。state.outputs から自分の bounds を引くのに使う。 */
   private readonly outputId: string;
 
-  constructor(outputId: string) {
+  constructor(outputId: string, options: OutputWindowOptions = {}) {
     super(`output_window_${outputId}`, t('window.projectionOutput'));
     this.outputId = outputId;
+    this.onSketchKey = options.onSketchKey ?? null;
   }
 
   getOutputId(): string { return this.outputId; }
@@ -84,6 +103,10 @@ export class OutputWindow extends BaseWindow {
     this.window.addEventListener('message', this.boundMessage);
     this.window.addEventListener('resize', this.boundResize);
     this.window.addEventListener('keydown', this.boundKeydown);
+    if (this.onSketchKey) {
+      for (const type of ['keydown', 'keyup', 'keypress'] as const) this.window.addEventListener(type, this.boundSketchKey);
+      this.window.addEventListener('blur', this.boundReleaseKeys);
+    }
     this.window.addEventListener('beforeunload', () => this.teardown());
     // この出力ウィンドウが載っているディスプレイ（通常はプロジェクタ）をスリープさせない。
     // 不可視時は自動 release され、再可視で自動再取得される（ScreenWakeLock が面倒を見る）。
@@ -110,8 +133,8 @@ export class OutputWindow extends BaseWindow {
           <span class="dc-dev-readout-sep">·</span>
           <span id="dc-dev-readout-pct">—</span>
         </div>
-        <button id="dc-output-fs" class="dc-output-ui" title="${t('output.fullscreen')}">⛶ ${t('output.fullscreen')}</button>
-        <div id="dc-output-hint" class="dc-output-ui">${t('output.hint')}</div>
+        <button id="dc-output-fs" class="dc-output-ui" title="${t(this.onSketchKey ? 'output.fullscreenSketchKeys' : 'output.fullscreen')}">⛶ ${t(this.onSketchKey ? 'output.fullscreenSketchKeys' : 'output.fullscreen')}</button>
+        <div id="dc-output-hint" class="dc-output-ui">${t(this.onSketchKey ? 'output.hintSketchKeys' : 'output.hint')}</div>
       </div>
     `;
   }
@@ -193,7 +216,11 @@ export class OutputWindow extends BaseWindow {
   protected setupEventListeners(): void {
     if (!this.window) return;
     const doc = this.window.document;
-    doc.getElementById('dc-output-fs')?.addEventListener('click', () => this.toggleFullscreen());
+    doc.getElementById('dc-output-fs')?.addEventListener('click', e => {
+      this.toggleFullscreen();
+      // ボタンにフォーカスが残ると、その後のキーが作品へ届かない（forwardSketchKey が UI のキーとして扱う）。
+      (e.currentTarget as HTMLElement).blur();
+    });
     const stage = doc.getElementById('dc-output-stage');
     stage?.addEventListener('dblclick', () => this.toggleFullscreen());
     stage?.addEventListener('mousemove', this.boundMouseMove);
@@ -227,7 +254,25 @@ export class OutputWindow extends BaseWindow {
   }
 
   private onKeydown(e: KeyboardEvent): void {
+    // 作品へキーを渡す出力では F も作品のもの。全画面はダブルクリックかボタンで切り替える。
+    if (this.onSketchKey) return;
     if (e.key === 'f' || e.key === 'F') this.toggleFullscreen();
+  }
+
+  private forwardSketchKey(e: KeyboardEvent): void {
+    if (!this.onSketchKey) return;
+    // e.target は popup の realm の要素なので、このウィンドウの Element で instanceof しない。
+    const target = e.target as Partial<Element> | null;
+    if (typeof target?.closest === 'function' && target.closest(OWN_KEY_TARGETS)) return;
+    const key = toSketchKey(e);
+    if (!this.heldKeys.accept(key)) return;
+    if (this.onSketchKey(key)) e.preventDefault();
+  }
+
+  /** フォーカスが外れると keyup が来ないので、押しているキーを作品側で離しておく。 */
+  private releaseSketchKeys(): void {
+    if (!this.onSketchKey) return;
+    for (const key of this.heldKeys.releaseAll()) this.onSketchKey(key);
   }
 
   /**
@@ -627,6 +672,7 @@ export class OutputWindow extends BaseWindow {
   }
 
   private teardown(): void {
+    this.releaseSketchKeys();
     if (this.idleTimer !== null && this.window) this.window.clearTimeout(this.idleTimer);
     this.idleTimer = null;
     this.reapplyThrottle?.cancel();
