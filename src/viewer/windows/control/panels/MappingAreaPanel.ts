@@ -329,7 +329,7 @@ export class MappingAreaPanel {
         this.refreshTransform();
         ctrl.commit();
       },
-    });
+    }, ctrl);
     this.cleanups.push(dispose);
   }
 
@@ -383,7 +383,7 @@ export class MappingAreaPanel {
         onEnd: () => {
           handle.classList.remove('dragging');
         },
-      });
+      }, ctrl);
       this.cleanups.push(dispose);
     }
   }
@@ -482,7 +482,7 @@ export class MappingAreaPanel {
       onEnd: () => {
         handle.classList.remove('dragging');
       },
-    });
+    }, ctrl);
     this.cleanups.push(dispose);
   }
 
@@ -528,7 +528,7 @@ export class MappingAreaPanel {
       onEnd: () => {
         handle.classList.remove('dragging');
       },
-    });
+    }, ctrl);
     this.cleanups.push(dispose);
   }
 

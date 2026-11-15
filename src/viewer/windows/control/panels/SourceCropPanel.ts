@@ -131,7 +131,7 @@ export class SourceCropPanel {
         opts.onSourceChanged();
         ctrl.commit();
       },
-    });
+    }, ctrl);
     this.cleanups.push(dispose);
   }
 
@@ -211,7 +211,7 @@ export class SourceCropPanel {
           opts.onSourceChanged();
           ctrl.commit();
         },
-      });
+      }, ctrl);
       this.cleanups.push(dispose);
     });
   }

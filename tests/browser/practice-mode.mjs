@@ -455,6 +455,130 @@ async function sample(page, base) {
   await snapshot(page, base.name + '-sample');
 }
 
+/** 編集の Undo / Redo (#161): 1 操作 = 1 件、選択だけでは積まない、入力欄の Cmd+Z は奪わない、保存と一致する。 */
+async function history(page) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  const undoBtn = page.locator('#dc-undo-btn'), redoBtn = page.locator('#dc-redo-btn');
+  const bar = await page.locator('.dc-edit-toolbar').boundingBox();
+  const columns = await page.locator('.control-container').boundingBox();
+  assert.ok(bar && columns && bar.height <= 32, 'the history bar is thin');
+  assert.ok(Math.abs(bar.y + bar.height - columns.y) <= 1 && Math.abs(bar.width - columns.width) <= 1, 'the bar spans the three columns right above them');
+  assert.equal(await undoBtn.isDisabled(), true, 'nothing to undo on entry');
+  assert.equal(await redoBtn.isDisabled(), true);
+  const ids = async () => (await state(page)).mappings.map(m => m.id);
+  const initialIds = await ids();
+
+  // 追加 → Undo → Redo
+  await page.locator('#add-mapping-btn').click();
+  const addedIds = await ids();
+  assert.equal(addedIds.length, initialIds.length + 1);
+  await undoBtn.click();
+  assert.deepEqual(await ids(), initialIds, 'undo removes the added mapping');
+  assert.equal(await redoBtn.isDisabled(), false);
+  await redoBtn.click();
+  assert.deepEqual(await ids(), addedIds, 'redo restores it with the same id');
+  assert.equal(await redoBtn.isDisabled(), true);
+
+  // 選択の切替だけでは履歴が増えない (次の Undo は追加を取り消す)
+  const activeAfterRedo = (await state(page)).activeId;
+  const other = addedIds.find(id => id !== activeAfterRedo);
+  await page.locator(`.mapping-list-item[data-id="${other}"] .name`).click();
+  assert.equal((await state(page)).activeId, other);
+  assert.equal(await redoBtn.isDisabled(), true, 'selection does not create history');
+
+  // 四隅のドラッグ 1 回 = 1 件 (途中の毎フレームの確定は積まない)
+  await page.locator('#mapping-tab').click();
+  const corner = page.locator('#output-stage .quad-handle[data-corner="topLeft"]');
+  const box = await corner.boundingBox();
+  const beforeDrag = (await state(page)).mappings.find(m => m.id === other).quad;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+  for (let i = 1; i <= 12; i++) await page.mouse.move(box.x + box.width / 2 + i * 3, box.y + box.height / 2 + i * 2);
+  await page.mouse.up();
+  const afterDrag = (await state(page)).mappings.find(m => m.id === other).quad;
+  assert.notDeepEqual(afterDrag, beforeDrag, 'the drag moved the corner');
+  await page.keyboard.press('ControlOrMeta+z');
+  assert.deepEqual((await state(page)).mappings.find(m => m.id === other).quad, beforeDrag, 'one undo reverts the whole drag');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  assert.deepEqual((await state(page)).mappings.find(m => m.id === other).quad, afterDrag, 'redo replays the whole drag');
+
+  // 矢印キーの連続入力 = 1 件
+  await corner.click();
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+  const nudged = (await state(page)).mappings.find(m => m.id === other).quad;
+  assert.ok(nudged.topLeft.x > afterDrag.topLeft.x, 'arrow keys nudged the corner');
+  await page.keyboard.press('ControlOrMeta+z');
+  assert.deepEqual((await state(page)).mappings.find(m => m.id === other).quad, afterDrag, 'one undo reverts the whole nudge run');
+
+  // 削除 → Undo で同じ ID・同じ位置に戻る
+  const beforeRemove = await ids();
+  await page.locator(`.mapping-list-item[data-id="${other}"] .remove-btn`).click();
+  assert.ok(!(await ids()).includes(other));
+  await undoBtn.click();
+  assert.deepEqual(await ids(), beforeRemove, 'undo restores the removed mapping in place');
+
+  // 1 回で確定する操作 (表示切替・名前変更・出力の数値入力) はそれぞれ 1 件
+  const undoRestores = async (label, act) => {
+    const before = await state(page);
+    await act();
+    const changed = await state(page);
+    assert.notDeepEqual({ m: changed.mappings, o: changed.outputs }, { m: before.mappings, o: before.outputs }, `${label} changed the state`);
+    // 数値入力の後はフォーカスが次の入力欄にあり、Cmd/Ctrl+Z は文字入力の Undo になるのでボタンで戻す
+    await undoBtn.click();
+    const after = await state(page);
+    assert.deepEqual({ m: after.mappings, o: after.outputs }, { m: before.mappings, o: before.outputs }, `one undo reverts ${label}`);
+  };
+  await undoRestores('toggle', () => page.locator(`.mapping-list-item[data-id="${other}"] .toggle-btn`).click());
+  await undoRestores('rename', async () => {
+    await page.locator(`.mapping-list-item[data-id="${other}"] .name`).dblclick();
+    await page.locator('.mapping-list-item .name-input').fill('renamed'); await page.locator('.mapping-list-item .name-input').press('Enter');
+  });
+  await undoRestores('output x', () => change(page, '#output-x-input', 40));
+
+  // ソースの crop ドラッグ 1 回 = 1 件
+  await undoRestores('crop drag', async () => {
+    const handle = await page.locator('#selection-box .handle-se').boundingBox();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2); await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(handle.x + handle.width / 2 - i * 6, handle.y + handle.height / 2 - i * 4);
+    await page.mouse.up();
+  });
+
+  // マスクのペン描画: 描画中は Undo できず、描き終えた 1 件を Undo するとマスクごと消える
+  const beforeMask = await ids();
+  await page.locator('#add-mask-btn').click();
+  assert.equal(await undoBtn.isDisabled(), true, 'undo is disabled while drawing a mask');
+  const host = await page.locator('#output-stage .dc-canvas-host').boundingBox();
+  for (const [fx, fy] of [[.2, .2], [.45, .25], [.3, .5]]) await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
+  await page.keyboard.press('ControlOrMeta+z');
+  assert.equal((await state(page)).mappings.find(m => m.drafting)?.points.length, 3, 'Cmd/Ctrl+Z does not touch a mask being drawn');
+  await page.keyboard.press('Enter');
+  assert.equal((await state(page)).mappings.some(m => m.drafting), false, 'the mask is closed');
+  assert.equal(await undoBtn.isDisabled(), false);
+  await undoBtn.click();
+  assert.deepEqual(await ids(), beforeMask, 'one undo removes the whole drawn mask');
+  await redoBtn.click();
+  assert.equal((await ids()).length, beforeMask.length + 1, 'redo brings the closed mask back');
+  await undoBtn.click();
+
+  // 名前の入力欄では Cmd/Ctrl+Z は文字入力の Undo で、編集の履歴は動かない
+  const beforeRename = await state(page);
+  await page.locator(`.mapping-list-item[data-id="${other}"] .name`).dblclick();
+  const input = page.locator('.mapping-list-item .name-input');
+  await input.press('End'); await input.pressSequentially('xyz');
+  await input.press('ControlOrMeta+z');
+  assert.deepEqual(await state(page), beforeRename, 'undo inside the name field leaves the mapping history alone');
+  await input.press('Escape');
+
+  // Undo 後の状態がそのまま保存される
+  await undoBtn.click();
+  await page.waitForFunction(expected => {
+    const raw = localStorage.getItem('dropcaster.mappings.v2');
+    return !!raw && JSON.stringify(JSON.parse(raw).mappings) === expected;
+  },
+    JSON.stringify((await state(page)).mappings));
+  await snapshot(page, 'history');
+  await closeEditor(page);
+}
 async function confirmClose(page, base) {
   await start(page);
   await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click();
@@ -511,7 +635,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, confirmClose, sample })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, sample })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));

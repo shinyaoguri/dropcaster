@@ -408,7 +408,7 @@ export class LayoutPanel {
         ctrl.commitOutputLayoutBounds();
         ctrl.replaceState(ctrl.getState());
       },
-    });
+    }, ctrl);
   }
 
   private attachResizeDrag(div: HTMLDivElement, handle: HTMLDivElement, outputId: string): () => void {
@@ -451,7 +451,7 @@ export class LayoutPanel {
         ctrl.commitOutputLayoutBounds();
         ctrl.replaceState(ctrl.getState());
       },
-    });
+    }, ctrl);
   }
 
   /**
