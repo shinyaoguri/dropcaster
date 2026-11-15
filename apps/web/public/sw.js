@@ -9,9 +9,9 @@
 //   runtime  上記いずれにも該当しない GET (大網)
 //
 // キャッシュ戦略は概ね:
-//   navigate (top)    NetworkFirst → 失敗時は cached '/' (HTML のシェルだけを '/' に保存)
+//   navigate (top)    NetworkFirst → 失敗時は cached '/' (scope ルートの応答だけを '/' に保存)
 //   navigate (作品)   scope 内 sketches/ の iframe 等: 自分の URL で LOCAL に SWR
-//   navigate (他)     上記以外の iframe 等: NetworkFirst、'/' には触れない
+//   navigate (他)     上記以外の iframe 等: ネットのみ → 失敗時は自分の URL のキャッシュか 503
 //   shell (assets)    CacheFirst (URL に hash が乗っているので immutable 扱い)
 //   local catalog     StaleWhileRevalidate
 //   op-meta           CacheFirst (24h 後にネット往復、それまでは即返し)
@@ -172,15 +172,16 @@ self.addEventListener('fetch', (event) => {
 
 // --- ストラテジ実装 ----------------------------------------------------------
 
-// トップレベルのアプリ navigate。成功した HTML の応答で shell を更新する。
+// トップレベルの navigate。オフラインでは SPA のどのルートにもシェルを返す。
 async function navigationStrategy(req) {
   try {
     const networkRes = await fetch(req);
-    // navigate が成功したら shell キャッシュも更新しておく (オフライン時の fallback 用)。
+    // scope ルートの navigate が成功したら shell キャッシュも更新しておく (オフライン時の fallback 用)。
+    // ルートだけ: ユーザーの public/ にある別の HTML や画像を開いた応答もトップレベルの
+    // navigate なので、URL を問わず保存するとオフラインのホームにそれが出る。
     // 2xx のみ: サーバの 404/500 ページで '/' の fallback を上書きすると、
     // 以後オフライン時にエラーページが出続けてしまう。
-    // HTML のみ: アドレス欄で JSON や画像を直接開いた応答をシェルとして返さない。
-    if (networkRes.ok && isHtml(networkRes)) {
+    if (networkRes.ok && isScopeRoot(new URL(req.url))) {
       const clone = networkRes.clone();
       caches.open(SHELL_CACHE).then(c => c.put(OFFLINE_NAVIGATION_FALLBACK, clone)).catch(() => {});
     }
@@ -289,8 +290,9 @@ function isCacheable(res) {
   return true;
 }
 
-function isHtml(res) {
-  return (res.headers.get('Content-Type') || '').toLowerCase().includes('text/html');
+function isScopeRoot(url) {
+  return url.origin === self.location.origin &&
+    (url.pathname === SCOPE_PATH || url.pathname === `${SCOPE_PATH}index.html`);
 }
 
 function isLocalSketchPath(url) {

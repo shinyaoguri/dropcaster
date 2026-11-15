@@ -4,6 +4,7 @@
 // viewer はビルドしない。SW の振り分けは request.destination の実値に依存するので、
 // mock ではなくブラウザに navigate させる。ホームは #app を持つ最小のシェルで代用し、
 // 未知のパスはシェルを返す (SPA fallback と同じ)。ルート配信とサブパス配信の両方を見る。
+// 作品の URL は実カタログと同じ sketches/<id>/ (src/core/modules/sketch-analyzer.js) の形にする。
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -20,13 +21,18 @@ const shellHtml = (base) => `<!doctype html><html><head><title>dc-shell</title><
 <body><div id="app">gallery</div><script>
   const BASE = ${JSON.stringify(base)};
   navigator.serviceWorker.register(BASE + 'sw.js', { scope: BASE });
-  const open = new URLSearchParams(location.search).get('open');
-  if (open) {
+  const params = new URLSearchParams(location.search);
+  const open = params.get('open');
+  const src = open ? 'sketches/' + open + '/' : params.get('frame');
+  if (src) {
     const frame = document.createElement('iframe');
-    frame.src = BASE + 'sketches/' + open + '/index.html';
+    frame.src = BASE + src;
     document.body.appendChild(frame);
   }
 </script></body></html>`;
+
+// ユーザーの public/ に置かれうる、シェルでも作品でもない HTML
+const extraHtml = '<!doctype html><html><head><title>extra-page</title></head><body>extra</body></html>';
 
 const sketchHtml = (id) => `<!doctype html><html><head><title>sketch-${id}</title></head>
 <body><p id="marker">sketch-${id}</p></body></html>`;
@@ -35,6 +41,7 @@ async function prepareRoot(base) {
   const root = await mkdtemp(join(tmpdir(), 'dc-sw-offline-'));
   await generateServiceWorker(root, { cacheVersion: 'test' });
   await writeFile(join(root, 'index.html'), shellHtml(base));
+  await writeFile(join(root, 'extra.html'), extraHtml);
   for (const id of SKETCHES) {
     await mkdir(join(root, 'sketches', id), { recursive: true });
     await writeFile(join(root, 'sketches', id, 'index.html'), sketchHtml(id));
@@ -47,7 +54,7 @@ function startServer(root, base) {
     const pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (!pathname.startsWith(base)) { res.writeHead(404).end(); return; }
     const rel = pathname.slice(base.length);
-    const file = rel === '' ? 'index.html' : rel;
+    const file = rel === '' || rel.endsWith('/') ? `${rel}index.html` : rel;
     try {
       const body = await readFile(join(root, file));
       res.writeHead(200, { 'Content-Type': CONTENT_TYPES[extname(file)] || 'application/octet-stream' }).end(body);
@@ -83,9 +90,13 @@ async function runCase(browser, base) {
   try {
     const page = await context.newPage();
 
-    // オンライン: ホームで SW の制御を得てから、作品 A・B を iframe で開く
+    // オンライン: ホームで SW の制御を得てから、シェル以外の HTML を iframe で、作品 A・B を
+    // iframe で開き、最後にシェル以外の HTML をトップレベルで開く。SPA のルートを開くとシェルの
+    // 応答で上書きし直されて汚染が隠れるので、トップレベルの別 HTML は最後に置く。
     await page.goto(origin + base);
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+    await page.goto(`${origin}${base}x?frame=extra.html`);
+    await (await page.waitForSelector('iframe').then((el) => el.contentFrame())).waitForSelector('text=extra');
     await openSketchInFrame(page, `${origin}${base}a?open=a`, 'a');
     await openSketchInFrame(page, `${origin}${base}b?open=b`, 'b');
 
@@ -95,7 +106,13 @@ async function runCase(browser, base) {
       if (await caches.match(sketchUrl)) return true;
       const shell = await caches.match(shellUrl);
       return shell ? (await shell.text()).includes('sketch-b') : false;
-    }, { shellUrl: origin + base, sketchUrl: `${origin}${base}sketches/b/index.html` });
+    }, { shellUrl: origin + base, sketchUrl: `${origin}${base}sketches/b/` });
+
+    await page.goto(`${origin}${base}extra.html`);
+    assert.equal(await page.title(), 'extra-page');
+    // 誤ってシェルへ保存される場合も put は非同期なので、汚染が現れうる間だけ待つ (正しければ待ち切る)
+    await page.waitForFunction(async (url) => !(await (await caches.match(url))?.text())?.includes('id="app"'),
+      origin + base, { timeout: 2_000 }).catch(() => {});
 
     const shellText = await page.evaluate(async (url) => (await caches.match(url))?.text(), origin + base);
     assert.ok(shellText?.includes('id="app"'), `[${base}] シェルのキャッシュがシェルでない: ${shellText?.slice(0, 120)}`);
@@ -112,12 +129,20 @@ async function runCase(browser, base) {
     assert.equal(await page.locator('#app').count(), 1, `[${base}] オフラインの作品ルートにシェルが返らない`);
 
     for (const id of SKETCHES) {
-      await page.goto(`${origin}${base}sketches/${id}/index.html`);
+      await page.goto(`${origin}${base}sketches/${id}/`);
       assert.equal(await page.title(), `sketch-${id}`, `[${base}] オフラインの作品 ${id} に別の HTML が返った`);
     }
 
     // 実際の使い方: オフラインのシェルの中で作品を iframe で開き直す
     await openSketchInFrame(page, `${origin}${base}b?open=a`, 'a');
+
+    // 作品以外の iframe は、オフラインで未キャッシュならシェルではなく 503 になる
+    // (iframe の中にギャラリー全体を出さない)
+    await page.goto(`${origin}${base}x?frame=missing.html`);
+    const missing = await page.waitForSelector('iframe').then((el) => el.contentFrame());
+    await missing.waitForLoadState();
+    assert.equal(await missing.locator('#app').count(), 0, `[${base}] 作品以外の iframe にシェルが返った`);
+    assert.match(await missing.textContent('body'), /オフラインです/);
     console.log(`ok: service worker offline navigation (base ${base})`);
   } finally {
     await context.close();
