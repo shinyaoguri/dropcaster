@@ -8,7 +8,7 @@ import ora from 'ora';
 import { loadConfig } from '../utils/config.js';
 import { resolveBuildInfo } from '../../core/build-info.js';
 import { generateManifest } from '../utils/manifest.js';
-import { resolveBase, manifestConfigFor } from '../utils/base.js';
+import { resolveBase, manifestConfigFor, writeBuildRecord } from '../utils/base.js';
 import { generateServiceWorker } from '../utils/service-worker.js';
 import { copyPublicFiles } from '../utils/files.js';
 
@@ -191,6 +191,9 @@ export async function build(options, command) {
     
     await fs.writeFile(indexPath, indexHtml, 'utf-8');
     
+    // 解決した base を出力先に残し、preview が同じ base で配信できるようにする
+    await writeBuildRecord(outputDir, base);
+
     // Create sketches.json if it doesn't exist
     const sketchesJsonPath = join(outputDir, 'sketches.json');
     if (!await fs.access(sketchesJsonPath).then(() => true).catch(() => false)) {

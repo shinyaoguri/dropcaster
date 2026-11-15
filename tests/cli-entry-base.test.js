@@ -11,7 +11,8 @@ import { normalizeBase } from '../src/cli/utils/base.js';
 
 // build 以外の入口も同じ設置先 base の規則に従う (#175)。
 // - build() を command 無しで呼んでも、options.base を明示すればそれが効く
-// - preview は dropcaster.config.js の base で配信する (--base オプションは無い)
+// - preview は build が dist に記録した base > dropcaster.config.js の base で配信する
+//   (preview 自身に --base オプションは無い)
 // - dev はルート配信なので、config に base・start_url・scope があっても manifest は '/' で作る
 
 const cli = resolve(fileURLToPath(new URL('../src/cli/index.js', import.meta.url)));
@@ -42,22 +43,41 @@ test('build() called without a commander command honors an explicit options.base
   assert.equal(manifest.scope, '/other/');
 });
 
-test('preview serves the build under the base from dropcaster.config.js', async () => {
-  await build({ output: 'dist' });
+/**
+ * dist/index.html が指すスクリプトを preview から取り、SPA フォールバックの HTML ではなく
+ * JS が返ることを確かめる。
+ * @param {string} base
+ */
+async function assertPreviewServesAssets(base) {
+  const html = await readFile(join(gallery, 'dist', 'index.html'), 'utf-8');
+  const script = html.match(/<script[^>]+src="([^"]+)"/)?.[1];
+  assert.ok(script?.startsWith(`${base}assets/`), `script under ${base}: ${script}`);
   const server = await preview({ port: '0', host: 'localhost', output: 'dist' });
   try {
     const address = server.httpServer.address();
     assert.ok(address && typeof address === 'object');
-    const origin = `http://localhost:${address.port}`;
-    const html = await (await fetch(`${origin}/exhibit/`)).text();
-    const script = html.match(/<script[^>]+src="([^"]+)"/)?.[1];
-    assert.ok(script?.startsWith('/exhibit/assets/'), `script under /exhibit/: ${script}`);
-    const res = await fetch(`${origin}${script}`);
+    const res = await fetch(`http://localhost:${address.port}${script}`);
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type') ?? '', /javascript/, 'asset must not fall back to the SPA HTML');
   } finally {
     await server.close();
   }
+}
+
+test('preview serves the build under the base from dropcaster.config.js', async () => {
+  await build({ output: 'dist' });
+  await assertPreviewServesAssets('/exhibit/');
+});
+
+test('preview serves the build under the base the build resolved (--base wins over config)', async () => {
+  await build({ output: 'dist', base: '/other/' });
+  await assertPreviewServesAssets('/other/');
+});
+
+test('preview of a dist without the build record falls back to the config base', async () => {
+  await build({ output: 'dist' });
+  await rm(join(gallery, 'dist', 'dropcaster-build.json'), { force: true });
+  await assertPreviewServesAssets('/exhibit/');
 });
 
 /**

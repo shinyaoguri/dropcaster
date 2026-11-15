@@ -1,3 +1,5 @@
+import { promises as fs } from 'fs';
+import { join } from 'path';
 import { t } from '../i18n/index.js';
 
 // 配信先のベースパス (Vite の base / import.meta.env.BASE_URL / manifest の start_url・scope) を
@@ -57,4 +59,35 @@ export function resolveBase(options, command, config) {
 export function manifestConfigFor(config, base) {
   const startUrl = !config.start_url || config.start_url === '/' ? base : config.start_url;
   return { ...config, base, start_url: startUrl, scope: config.scope || base };
+}
+
+// build が解決した base を出力先に残すファイル。preview はこれを最優先で使い、
+// `dropcaster build --base /other/` → `dropcaster preview` でも同じ base で配信する。
+// SW のプリキャッシュは固定の一覧 (sw-template.js の SHELL_PRECACHE) なので、これは含まれない。
+export const BUILD_RECORD_FILE = 'dropcaster-build.json';
+
+/**
+ * @param {string} outputDir
+ * @param {string} base 正規化済みの base
+ */
+export async function writeBuildRecord(outputDir, base) {
+  await fs.writeFile(join(outputDir, BUILD_RECORD_FILE), `${JSON.stringify({ base }, null, 2)}\n`, 'utf-8');
+}
+
+/**
+ * build が記録した base を読む。記録の無い (この仕組みより前の) 出力なら undefined。
+ *
+ * @param {string} outputDir
+ * @returns {Promise<string | undefined>}
+ */
+export async function readBuildRecordBase(outputDir) {
+  let text;
+  try {
+    text = await fs.readFile(join(outputDir, BUILD_RECORD_FILE), 'utf-8');
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const record = JSON.parse(text);
+  return record && typeof record === 'object' ? record.base : undefined;
 }
