@@ -4,7 +4,7 @@
 // `npm run scan` がそのまま処理できる形を吐く。
 
 import { resolve, join } from 'path';
-import { mkdir, writeFile, access, rm } from 'fs/promises';
+import { mkdir, writeFile, access } from 'fs/promises';
 import chalk from 'chalk';
 import ora from 'ora';
 import { OpenProcessingApiClient } from '../../core/modules/op-api-client.js';
@@ -14,6 +14,7 @@ import {
   downloadAssets,
   rewriteCodeWithAssetMap,
 } from '../../core/modules/asset-downloader.js';
+import { replaceDirectory } from '../../core/modules/directory-replacement.js';
 import { t } from '../i18n/index.js';
 
 const SUPPORTED_MODES = ['p5js', 'html'];
@@ -49,19 +50,72 @@ export async function fetchCommand(idArg, options = {}) {
   }
 
   const outDir = resolve(sketchesDir, `sketch${visualID}`);
-  if (await pathExists(outDir)) {
-    if (!options.overwrite) {
-      console.error(chalk.red(`❌ ${t('fetch.directoryExists', { dir: outDir })}`));
-      console.error(chalk.yellow(`   ${t('fetch.useOverwrite')}`));
+  const existed = await pathExists(outDir);
+  if (existed && !options.overwrite) {
+    console.error(chalk.red(`❌ ${t('fetch.directoryExists', { dir: outDir })}`));
+    console.error(chalk.yellow(`   ${t('fetch.useOverwrite')}`));
+    process.exit(1);
+  }
+
+  // 取得内容の検証はファイルシステムに触れる前に済ませる (#167)。
+  //   p5js: 各タブを .js に揃え、テンプレートの index.html から <script src> で参照する
+  //   html: タブ構成がそのままファイル構成なので原形で書き出す (index タブ → index.html)。
+  //         タブが実ファイルになるため、viewer 版のようなインライン展開や fetch shim は不要
+  const sorted = [...codeTabs].sort((a, b) => (a.orderID ?? 0) - (b.orderID ?? 0));
+  let htmlPlan = null;
+  if (meta.mode === 'html') {
+    try {
+      htmlPlan = planHtmlModeLocalFiles({ codeTabs: sorted });
+    } catch {
+      console.error(chalk.red(`❌ ${t('fetch.noIndexTab')}`));
       process.exit(1);
     }
-    await rm(outDir, { recursive: true, force: true });
+    for (const { from, to } of htmlPlan.renames) {
+      console.log(chalk.yellow(`⚠ ${t('fetch.tabRenamed', { from, to })}`));
+    }
   }
-  await mkdir(outDir, { recursive: true });
 
+  // 新しい中身は兄弟の staging ディレクトリに組み立て、完成してから既存の作品と差し替える。
+  // 途中で失敗しても既存の作品はそのまま残り、staging は消える (#167)。
+  let result;
+  try {
+    await mkdir(sketchesDir, { recursive: true });
+    result = await replaceDirectory(outDir, (stagingDir) => writeSketch(stagingDir, {
+      visualID, meta, sortedTabs: sorted, htmlPlan, options,
+    }));
+  } catch (error) {
+    console.error(chalk.red(`❌ ${t('fetch.writeFailed', { dir: outDir, error: error?.message ?? String(error) })}`));
+    console.error(chalk.yellow(`   ${t(existed ? 'fetch.existingKept' : 'fetch.nothingCreated')}`));
+    process.exit(1);
+  }
+  const { writtenFiles, assetCount } = result.value;
+  if (result.leftover) {
+    console.warn(chalk.yellow(`⚠ ${t('fetch.previousNotRemoved', {
+      path: result.leftover.path,
+      error: result.leftover.error?.message ?? String(result.leftover.error),
+    })}`));
+  }
+
+  console.log();
+  console.log(chalk.green(t('fetch.completed', { dir: `sketches/sketch${visualID}/` })));
+  console.log(chalk.dim(`   ${writtenFiles.length} file(s) (incl. index.html), ${assetCount} asset(s), _op-meta.json`));
+  console.log();
+  console.log(chalk.cyan(t('fetch.nextSteps')));
+  console.log(chalk.cyan(t('fetch.scanHint')));
+  console.log(chalk.cyan(t('fetch.devHint')));
+}
+
+/**
+ * 取得済み・検証済みの作品を、空のディレクトリ outDir に書き出す。
+ * 失敗は例外で返す (呼び出し側の replaceDirectory が outDir を片付けるので、ここで process.exit しない)。
+ * @param {string} outDir
+ * @param {{ visualID: string, meta: any, sortedTabs: any[], htmlPlan: { files: { name: string, content: string }[] } | null, options: any }} input
+ * @returns {Promise<{ writtenFiles: string[], assetCount: number }>}
+ */
+async function writeSketch(outDir, { visualID, meta, sortedTabs, htmlPlan, options }) {
   // アセット同梱 (既定 ON、--no-assets で OFF)
   let assetMap = new Map();
-  const assetUrls = extractDeckardUrls(codeTabs);
+  const assetUrls = extractDeckardUrls(sortedTabs);
   if (assetUrls.length > 0 && options.assets !== false) {
     const spin = ora(`Downloading ${assetUrls.length} external asset(s)...`).start();
     let okCount = 0;
@@ -77,32 +131,18 @@ export async function fetchCommand(idArg, options = {}) {
   }
 
   // code タブをファイルに書き出す。orderID 昇順。
-  //   p5js: 各タブを .js に揃え、テンプレートの index.html から <script src> で参照する
-  //   html: タブ構成がそのままファイル構成なので原形で書き出す (index タブ → index.html)。
-  //         タブが実ファイルになるため、viewer 版のようなインライン展開や fetch shim は不要
-  const sorted = [...codeTabs].sort((a, b) => (a.orderID ?? 0) - (b.orderID ?? 0));
   let writtenFiles;
-  if (meta.mode === 'html') {
-    let plan;
-    try {
-      plan = planHtmlModeLocalFiles({ codeTabs: sorted });
-    } catch {
-      console.error(chalk.red(`❌ ${t('fetch.noIndexTab')}`));
-      process.exit(1);
-    }
-    for (const { from, to } of plan.renames) {
-      console.log(chalk.yellow(`⚠ ${t('fetch.tabRenamed', { from, to })}`));
-    }
-    for (const file of plan.files) {
+  if (htmlPlan) {
+    for (const file of htmlPlan.files) {
       const rewritten = rewriteCodeWithAssetMap(file.content, assetMap);
       await writeFile(join(outDir, file.name), rewritten, 'utf-8');
       if (options.verbose) console.log(chalk.green(`  ✓ ${file.name}`));
     }
-    writtenFiles = plan.files.map(f => f.name);
+    writtenFiles = htmlPlan.files.map(f => f.name);
   } else {
     const scriptFiles = [];
     const usedNames = new Set();
-    for (const tab of sorted) {
+    for (const tab of sortedTabs) {
       // OP のタブ名は "mySketch.js" のように拡張子付きのことがあるので、
       // .js を二重に付けない（mySketch.js.js になっていた）
       const base = sanitizeFilename(tab.title || `tab${tab.orderID ?? scriptFiles.length}`)
@@ -153,13 +193,7 @@ export async function fetchCommand(idArg, options = {}) {
   };
   await writeFile(join(outDir, '_op-meta.json'), JSON.stringify(opMeta, null, 2), 'utf-8');
 
-  console.log();
-  console.log(chalk.green(t('fetch.completed', { dir: `sketches/sketch${visualID}/` })));
-  console.log(chalk.dim(`   ${writtenFiles.length} file(s) (incl. index.html), ${assetMap.size} asset(s), _op-meta.json`));
-  console.log();
-  console.log(chalk.cyan(t('fetch.nextSteps')));
-  console.log(chalk.cyan(t('fetch.scanHint')));
-  console.log(chalk.cyan(t('fetch.devHint')));
+  return { writtenFiles, assetCount: assetMap.size };
 }
 
 function normalizeId(value) {

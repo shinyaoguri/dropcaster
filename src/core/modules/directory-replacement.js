@@ -1,7 +1,7 @@
 // ディレクトリを「消してから作る」と、作る途中で失敗したときに旧版が失われ、中途半端な新版が残る。
 // 新しい中身を兄弟の staging ディレクトリに組み立て、完成してから rename で差し替えることで、
-// 失敗しても旧版を残し、残骸を置かない。現在の利用者は scan の public へのコピー (#174)。
-// fetch --overwrite (#167) も同じ形なので、そちらでも使う予定。
+// 失敗しても旧版を残し、残骸を置かない。利用者は scan の public へのコピー (#174) と
+// fetch による sketches/ への書き出し (#167)。
 
 import { randomBytes } from 'crypto';
 import { mkdir, rename, rm } from 'fs/promises';
