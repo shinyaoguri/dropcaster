@@ -114,8 +114,13 @@ test('dropcaster scan (CLI) exits non-zero when a sketch copy fails', async () =
     await writeFile(join(root, 'public', 'sketches'), 'not a directory', 'utf-8');
 
     const result = await run(root, ['--no-previews'], { cli: true });
-    assert.notEqual(result.code, 0, `CLI must fail${describe(result.stdout + result.stderr)}`);
-    assert.match(result.stdout + result.stderr, /ready/);
+    const output = result.stdout + result.stderr;
+    assert.equal(result.code, 1, `CLI must fail with exit code 1${describe(output)}`);
+    assert.match(output, /ready/);
+    assert.match(output, /ENOTDIR/);
+    // 失敗は日常的な経路なので、Node の未処理 rejection のスタックを出さない
+    assert.doesNotMatch(output, /Error: Scan failed|at ChildProcess|node:internal/);
+    assert.equal(output.match(/📋 Scanned/g)?.length, 1, `the summary line must appear once${describe(output)}`);
   });
 });
 

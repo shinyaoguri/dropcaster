@@ -175,9 +175,10 @@ export async function scan(options = {}) {
         console.error(chalk.red(t('scan.failed', { code })));
         if (stderr) {
           console.error(chalk.red('Error details:'));
-          console.error(stderr);
+          // 📋 の行は進捗の表示で出し済みなので繰り返さない
+          console.error(stderr.split('\n').filter(line => !line.includes('📋')).join('\n'));
         }
-        reject(new Error(`Scan failed with exit code ${code}`));
+        reject(new ScanFailedError(code));
       }
     });
 
@@ -189,6 +190,19 @@ export async function scan(options = {}) {
       reject(err);
     });
   });
+}
+
+/**
+ * 子プロセスの scan が非 0 で終了した。原因はここまでに表示済みなので、CLI はスタックを出さずに
+ * 終了コードだけ返す (src/cli/index.js)。
+ */
+export class ScanFailedError extends Error {
+  /** @param {number | null} code 子プロセスの終了コード (シグナル終了なら null) */
+  constructor(code) {
+    super(`Scan failed with exit code ${code}`);
+    this.name = 'ScanFailedError';
+    this.exitCode = typeof code === 'number' && code > 0 ? code : 1;
+  }
 }
 
 // scan:resetコマンド用のヘルパー関数
