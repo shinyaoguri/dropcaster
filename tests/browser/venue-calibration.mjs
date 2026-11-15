@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import { venueFixture } from '../fixtures/venue-glb.mjs';
+import { checkMainHiddenNotice, setMainVisibility } from './lib/main-hidden-notice.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const artifactDir=process.env.VENUE_ARTIFACT_DIR;if(artifactDir)await mkdir(artifactDir,{recursive:true});
@@ -47,6 +48,13 @@ async function workflow(page,base){
   assert.notEqual((await pixels(page)).hash,before.hash,'projector pose changes actual alignment image');
   const popupWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const output=await popupWait;
   await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
+  // #185: 会場の画面が隠れて校正画像が止まったことを、校正ウィンドウで操作している間だけ知らせる。
+  await checkMainHiddenNotice(page,output,{lang:'en',label:`${base.name} calibration`});
+  if(artifactDir){
+    await setMainVisibility(page,'hidden');await output.mouse.move(300,300);
+    await output.waitForFunction(()=>getComputedStyle(document.getElementById('dc-output-main-hidden')).opacity==='1');
+    await output.screenshot({path:resolve(artifactDir,base.name+'-calibration-main-hidden-en.png')});await setMainVisibility(page,'visible');
+  }
   await page.evaluate(()=>{window.outputTrack=window.calibrationPage.projection.stream.getVideoTracks()[0]});
   await page.locator('#venue-pattern').selectOption('white');let image=await pixels(page);assert.equal(image.white,image.width*image.height);
   await output.waitForFunction(()=>{const v=document.querySelector('video');const c=document.createElement('canvas');c.width=4;c.height=4;const x=c.getContext('2d');x.drawImage(v,0,0,4,4);return x.getImageData(0,0,1,1).data[0]>240});
@@ -251,6 +259,13 @@ async function isolation(page,base){
   assert.deepEqual(check.layout,baseline.layout);assert.deepEqual(check.draft,baseline.draft);assert.deepEqual(check.storage,baseline.storage);assert.equal(check.track,'live');
   const calibrationPromise=venue.waitForEvent('popup');await venue.locator('#venue-open-output').click();const calibration=await calibrationPromise;
   await calibration.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);assert.equal(live.isClosed(),false);
+  // #185: 案内は各出力を開いた画面 (opener) が隠れたときだけ。校正ウィンドウは会場の窓、実出力は作品の画面を見る。
+  await checkMainHiddenNotice(venue,calibration,{lang:'en',label:`${base.name} calibration from venue popup`});
+  await setMainVisibility(page,'hidden');
+  await live.mouse.move(120,120);await calibration.mouse.move(120,120);
+  await live.waitForFunction(()=>getComputedStyle(document.getElementById('dc-output-main-hidden')).opacity==='1');
+  assert.equal(await calibration.evaluate(()=>getComputedStyle(document.getElementById('dc-output-main-hidden')).display),'none','hiding the artwork page does not affect the calibration window');
+  await setMainVisibility(page,'visible');
   const closed=calibration.waitForEvent('close');await venue.locator('#venue-close').click();
   assert.equal(await venue.locator('#venue-close-confirm').evaluate(d=>d.open),true,'leaving with the projector output open asks first');
   assert.equal(calibration.isClosed(),false);await venue.locator('#venue-close-confirm-btn').click();await closed;

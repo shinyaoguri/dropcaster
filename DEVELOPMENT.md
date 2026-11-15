@@ -172,8 +172,12 @@ pause・resume・先読み、`SlideshowView` の切替を変えたら実行す�
 スクリーンショットを保存できる。
 
 `npm run test:projection-runtime` は両 viewer エントリで編集状態の停止・再開、テストパターン中の
-作品切替、WebGL ロストからの復旧とキャンセルを検証する。実際の UI / popup / captureStream と
+作品切替、WebGL ロストからの復旧とキャンセル、メイン画面が隠れたときの出力ウィンドウの案内 (#185) を
+検証する。実際の UI / popup / captureStream と
 決定的な作品 fixture を使い、CI でも実行する。既存 Chromium は同じく `CHROMIUM_PATH` で指定する。
+`RUNTIME_CASE=<ケース名>` で 1 件だけ流せ、`RUNTIME_ARTIFACT_DIR=/tmp/runtime-images` で案内の出た出力を保存できる。
+Playwright の Chromium は自動化中のページを常に visible に保つため、メイン画面の hidden は
+`tests/browser/lib/main-hidden-notice.mjs` が `visibilityState` と `visibilitychange` を差し替えて再現する。
 対象と検出確認は [状態・復旧の検証記録](docs/verification/124-runtime-recovery.md) を参照。
 
 `npm run test:practice` は製品の個別作品／スライドショー UI からマッピングを起動し、実出力との併用、
@@ -208,3 +212,4 @@ pause・resume・先読み、`SlideshowView` の切替を変えたら実行す�
 `interaction` は実ポインタで移動・回転・サイズ・取消・undoを検証し、`workflow` は輪郭／グリッド／白黒の実ピクセル・popup・解像度・保存再開を確認する。
 `recovery` は不正・遅延読込、GLB、容量不足、WebGL停止時の出力終了と書出を確認する。
 `isolation` は作品の再生・マッピングの下書き・出力を保ったまま会場を作り、ファイルで明示反映する経路を確認する。
+`workflow` と `isolation` は、会場の画面が隠れたときに校正ウィンドウで操作している間だけ案内が出ること (#185) も確かめる。
