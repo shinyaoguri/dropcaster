@@ -25,22 +25,50 @@ async function readDropcasterVersion() {
  * 無くても既存として数える (リンクを辿って書くと、利用者の知らない場所にファイルができるため)。
  * 途中のディレクトリがシンボリックリンクの場合は辿る。sketches/ を共有ディレクトリへリンクする
  * などは利用者の意図とみなし、リンク先の中で同じ検査をする。
- * 途中が通常ファイルで ENOTDIR になる場合などは、そのまま例外として返す。
+ * 途中のディレクトリが通常ファイルで ENOTDIR になる場合は、その通常ファイル (例: public) を
+ * 既存として数える。複数の書き込み先をふさぐ親も一覧には 1 度だけ載せる。
+ * root 自身がディレクトリでない場合など、それ以外の失敗は例外として返す。
  * @param {string} root
  * @param {string[]} relPaths
  * @returns {Promise<string[]>}
  */
 async function findExistingPaths(root, relPaths) {
-  const existing = [];
+  /** @type {Set<string>} */
+  const existing = new Set();
   for (const rel of relPaths) {
     try {
       await fs.lstat(join(root, rel));
-      existing.push(rel);
+      existing.add(rel);
     } catch (error) {
+      if (error?.code === 'ENOTDIR') {
+        const blocker = await findNonDirectoryAncestor(root, rel);
+        if (blocker) {
+          existing.add(blocker);
+          continue;
+        }
+      }
       if (error?.code !== 'ENOENT') throw error;
     }
   }
-  return existing;
+  return [...existing];
+}
+
+/**
+ * rel の途中のディレクトリ (root 自身は含まない) のうち、ディレクトリでない最初のものを返す。
+ * 途中のシンボリックリンクは辿って判定する。見つからなければ null。
+ * @param {string} root
+ * @param {string} rel
+ * @returns {Promise<string | null>}
+ */
+async function findNonDirectoryAncestor(root, rel) {
+  const segments = rel.split('/');
+  for (let i = 1; i < segments.length; i++) {
+    const prefix = segments.slice(0, i).join('/');
+    const stats = await fs.stat(join(root, prefix)).catch(() => null);
+    if (!stats) return null;
+    if (!stats.isDirectory()) return prefix;
+  }
+  return null;
 }
 
 export async function init(options) {

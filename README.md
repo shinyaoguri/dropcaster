@@ -264,7 +264,8 @@ npm run build
 
 生成するファイル（`public/icon.svg`・`dropcaster.config.js`・`package.json`・`.gitignore`・`README.md`・
 `sketches/sample-sketch/index.html`・`sketches/sample-sketch/mySketch.js`）が 1 つでも既にあると、
-それらを一覧して何も書かずに終了する（終了コード 1）。`.git` など、これら以外のファイルしか無い
+それらを一覧して何も書かずに終了する（終了コード 1）。途中のディレクトリ（`public` など）が
+通常ファイルになっている場合も、そのファイルを一覧に示して同じく終了する。`.git` など、これら以外のファイルしか無い
 ディレクトリには作成できる。作り直すときは新しいディレクトリ名を渡すか、一覧のファイルを退避する。
 
 ### `dropcaster fetch <id> [options]`

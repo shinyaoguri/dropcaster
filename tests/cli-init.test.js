@@ -148,6 +148,25 @@ test('書き込み先の親 (public) が通常ファイルなら、それを残�
   assertNothingWritten(project, TEMPLATE_FILES.filter((p) => p.startsWith('public/')));
   // 衝突の検査で止まり、sketches/ などのディレクトリも作らない
   assert.equal(existsSync(join(project, 'sketches')), false);
+  // 汎用の失敗ではなく、ほかの衝突と同じ一覧で通常ファイルになっている親を示す
+  assert.match(output, /these files already exist/);
+  assert.match(output, /^ {2}public$/m);
+  assert.doesNotMatch(output, /Failed to create project/);
+});
+
+test('複数の書き込み先をふさぐ親 (sketches) が通常ファイルなら、一覧に 1 度だけ示す', (t) => {
+  const ws = makeWorkspace(t);
+  const project = join(ws, 'exhibit');
+  put(project, 'sketches', 'これはディレクトリではない\n');
+  put(project, 'README.md', '# 自作の README\n');
+
+  const { status, output } = runInit(ws, 'exhibit');
+
+  assert.notEqual(status, 0, output);
+  assert.equal(readFileSync(join(project, 'sketches'), 'utf-8'), 'これはディレクトリではない\n');
+  assert.equal(output.match(/^ {2}sketches$/gm)?.length, 1, output);
+  assert.match(output, /^ {2}README\.md$/m);
+  assertNothingWritten(project, ['README.md']);
 });
 
 test('存在しないディレクトリへの初期化は 7 件を生成して成功する', (t) => {
