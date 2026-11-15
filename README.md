@@ -234,6 +234,22 @@ npm run scan:watch
 OPENPROCESSING_API_TOKEN=your_token npm run scan
 ```
 
+#### タイトルと説明の決まり方
+
+scan のたびに、`sketches.json` の `title` / `description` を次の順で決めます（上ほど優先、値の無い情報源は飛ばす）。
+
+1. 手動メタデータ（作品ディレクトリの `dropcaster.meta.json`、下の例）
+2. その scan の `--fetch-userdata` で OpenProcessing Public API から取った値
+3. `_op-meta.json` の `title` / `description`（`dropcaster fetch` が取り込み時に API から保存したもの。空文字は値なし）
+4. `index.html` の `<title>` / `<meta name="description">`
+5. 前回の `sketches.json` の値（上のどれにも値が無いときだけ残す）
+6. 既定値（ディレクトリ名 / `<ディレクトリ名> スケッチ`）
+
+`index.html` を書き換えると次の scan で反映されます。`_op-meta.json` の無い OpenProcessing 作品
+（手動で置いたもの）で `index.html` が `p5.js Sketch` のような汎用の `<title>` を持つと、
+`--fetch-userdata` なしの scan ではその `<title>` になります。表示を固定したいときは
+`dropcaster.meta.json` に書いてください。
+
 ```json
 {
   "title": "Sketch title",
