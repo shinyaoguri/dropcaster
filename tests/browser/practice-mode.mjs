@@ -720,6 +720,61 @@ async function history(page, base) {
   await snapshot(page, 'history');
   await closeEditor(page);
 }
+// プレビュー上のクリックは、押した時点で前面にある項目を選ぶ。ペン描画中は切り替えない (#112)
+async function maskSelect(page, base) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await page.locator('#add-mapping-btn').click();
+  const host = await page.locator('#output-stage .dc-canvas-host').boundingBox();
+  const at = (fx, fy) => page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
+  const history = () => Promise.all(['#dc-undo-btn', '#dc-redo-btn'].map(s => page.locator(s).isDisabled()));
+  const [added, initial] = (await state(page)).mappings.map(m => m.id);
+  // 非 active なマッピングのプレビューを押すとそのマッピングが選ばれる
+  await at(.26, .6);
+  assert.equal((await state(page)).activeId, initial, 'clicking an inactive mapping on the preview selects it');
+  await page.locator('#add-mask-btn').click();
+  for (const [fx, fy] of [[.35, .35], [.65, .35], [.5, .65]]) await at(fx, fy);
+  await page.keyboard.press('Enter');
+  const mask = (await state(page)).mappings.find(m => m.kind === 'mask' && !m.drafting).id;
+  await page.locator(`.mapping-list-item[data-id="${added}"] .name`).click();
+  assert.equal((await state(page)).activeId, added);
+  await snapshot(page, `${base.name}-mask-select-before`);
+  // マスクは両方のマッピングに重なる位置で押しても、前面のマスクが選ばれる
+  await at(.5, .45);
+  await snapshot(page, `${base.name}-mask-select-after`);
+  assert.equal((await state(page)).activeId, mask, 'clicking the committed mask on the preview selects it again');
+  // 既に active なマスクを押しても選択も履歴も変わらない
+  const selected = await state(page), selectedHistory = await history();
+  await at(.5, .56);
+  assert.deepEqual(await state(page), selected, 'clicking the active mask keeps the state');
+  assert.deepEqual(await history(), selectedHistory, 'clicking the active mask keeps the history');
+  // マスクが当たるのは多角形だけで、外側を押すと背面のマッピングが選ばれる
+  await at(.26, .6);
+  assert.equal((await state(page)).activeId, initial, 'clicking outside the mask polygon selects the mapping behind it');
+  // 多角形の外なら、前面にマスクがあっても active なマッピング本体をドラッグできる
+  const quadOf = async id => (await state(page)).mappings.find(m => m.id === id).quad;
+  const beforeDrag = await quadOf(initial);
+  await page.mouse.move(host.x + host.width * .27, host.y + host.height * .6); await page.mouse.down();
+  for (let i = 1; i <= 5; i++) await page.mouse.move(host.x + host.width * .27 - i * 4, host.y + host.height * .6 + i * 3);
+  await page.mouse.up();
+  assert.ok((await quadOf(initial)).topLeft.x < beforeDrag.topLeft.x, 'dragging outside the mask polygon moves the active mapping');
+  assert.equal((await state(page)).activeId, initial, 'dragging the active mapping keeps the selection');
+  // 右クリックでは選択を切り替えない (ソースカラムと同じく左ボタンだけ)
+  for (const [fx, fy, label] of [[.5, .45, 'mask'], [.77, .77, 'mapping']]) {
+    await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy, { button: 'right' });
+    assert.equal((await state(page)).activeId, initial, `right-clicking an inactive ${label} keeps the selection`);
+  }
+  // ペン描画中に既存マスクやマッピングを押しても切り替わらず、頂点が増える
+  await page.locator('#add-mask-btn').click();
+  const draft = (await state(page)).activeId;
+  await at(.5, .45);
+  await at(.26, .6);
+  const drafting = await state(page);
+  assert.equal(drafting.activeId, draft, 'clicks while drawing a mask keep the drafting mask active');
+  assert.equal(drafting.mappings.find(m => m.id === draft).points.length, 2, 'clicks while drawing add vertices instead');
+  await page.keyboard.press('Escape');
+  assert.equal((await state(page)).mappings.some(m => m.drafting), false);
+}
 async function confirmClose(page, base) {
   await start(page);
   await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click();
@@ -870,7 +925,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, maskSelect, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
