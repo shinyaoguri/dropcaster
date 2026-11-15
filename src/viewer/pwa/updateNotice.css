@@ -1,0 +1,60 @@
+/* 新しい版の通知 (#164)。操作の邪魔をしないよう、画面の隅に小さく出す。 */
+#dc-update-notice {
+  position: fixed;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: min(32rem, calc(100vw - 2rem));
+  padding: 0.5rem 0.5rem 0.5rem 0.9rem;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+#dc-update-notice .dc-update-notice-text {
+  flex: 1 1 auto;
+}
+
+#dc-update-notice button {
+  flex: none;
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  border-radius: 6px;
+}
+
+#dc-update-notice button[data-action='reload'] {
+  padding: 0.3rem 0.7rem;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+#dc-update-notice button[data-action='dismiss'] {
+  width: 1.8rem;
+  height: 1.8rem;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+#dc-update-notice button:hover {
+  filter: brightness(0.9);
+}
+
+#dc-update-notice button:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+/* 操作画面そのものを全画面で投影しているあいだは出さない */
+:root:fullscreen #dc-update-notice {
+  display: none;
+}

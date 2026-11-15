@@ -58,3 +58,16 @@ test('generateServiceWorker falls back to package.json version when no option gi
     assert.match(sw, new RegExp(`const CACHE_VERSION = "${pkg.version}";`));
   });
 });
+
+test('generateServiceWorker waits for all windows to close before activating a new version (#164)', async () => {
+  await withTempDir(async (dir) => {
+    await generateServiceWorker(dir);
+    const sw = await readFile(join(dir, 'sw.js'), 'utf-8');
+    // install で skipWaiting すると、上演中の操作画面が新しい版に切り替わり出力ウィンドウが閉じる
+    const install = sw.match(/self\.addEventListener\('install', \(event\) => \{([\s\S]*?)\n\}\);/);
+    assert.ok(install, 'install ハンドラが無い');
+    assert.doesNotMatch(install[1], /skipWaiting/);
+    // 利用者が通知で適用を選んだときだけ、ページからの SKIP_WAITING で切り替える
+    assert.match(sw, /event\.data\.type === 'SKIP_WAITING'\) \{\s*self\.skipWaiting\(\);/);
+  });
+});

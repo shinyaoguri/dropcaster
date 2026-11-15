@@ -3,8 +3,9 @@
 
 import { calibrationEn, calibrationJa } from '../venue/messages';
 import { practiceEn, practiceJa } from '../practice/messages';
+import { pwaEn, pwaJa } from '../pwa/messages';
 const en = {
-  ...practiceEn, ...calibrationEn,
+  ...practiceEn, ...calibrationEn, ...pwaEn,
   // 言語切替
   'lang.label': 'Language',
   'lang.en': 'English',
@@ -241,7 +242,7 @@ const en = {
 } as const;
 
 const ja: Record<keyof typeof en, string> = {
-  ...practiceJa, ...calibrationJa,
+  ...practiceJa, ...calibrationJa, ...pwaJa,
   'lang.label': '言語',
   'lang.en': 'English',
   'lang.ja': '日本語',

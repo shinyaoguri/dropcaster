@@ -43,6 +43,11 @@ const RUNTIME_CACHE = `dropcaster-runtime-${CACHE_VERSION}`;
 
 const ALL_CACHES = [SHELL_CACHE, LOCAL_CACHE, OP_META_CACHE, GIST_CACHE, OP_CDN_CACHE, RUNTIME_CACHE];
 
+// 更新の適用時期: install では skipWaiting しない。新しい版はブラウザ標準のライフサイクルどおり、
+// そのオリジンのタブ・ウィンドウがすべて閉じたときに有効になる (#164)。上演中に切り替えると
+// 操作画面の再読み込みで出力ウィンドウが閉じ、activate で旧版のキャッシュも消えるため。
+// 利用者が操作画面の通知で適用を選んだときだけ、ページから SKIP_WAITING が届く。
+
 // install 時に最低限のシェル (ルート HTML) を取りにいく。/assets/* はハッシュ付きなので
 // 実際のリクエストが来てから cache-first で取り込む。
 const SHELL_PRECACHE = [
@@ -66,7 +71,6 @@ self.addEventListener('install', (event) => {
     await Promise.all(SHELL_PRECACHE.map(url =>
       cache.add(new Request(url, { cache: 'reload' })).catch(() => undefined)
     ));
-    await self.skipWaiting();
   })());
 });
 
