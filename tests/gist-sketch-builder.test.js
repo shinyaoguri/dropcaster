@@ -42,7 +42,9 @@ function canvastageGistFixture() {
 test('gist: relative file refs are inlined and CDN scripts are kept', () => {
   const html = assembleGistSketchHtml({ gist: canvastageGistFixture() });
 
-  assert.ok(html.includes('createCanvas(windowWidth, windowHeight)'), 'sketch.js inlined');
+  const sketch = /<script src="data:text\/javascript;charset=utf-8;base64,([^"]*)" data-dc-file="sketch\.js"><\/script>/.exec(html);
+  assert.ok(sketch, 'sketch.js embedded as a data: URL');
+  assert.ok(Buffer.from(sketch[1], 'base64').toString('utf8').includes('createCanvas(windowWidth, windowHeight)'), 'sketch.js content');
   assert.ok(!/src\s*=\s*"sketch\.js"/.test(html), 'sketch.js src removed');
   assert.ok(html.includes('<style>') && html.includes('background: #000'), 'style.css inlined');
   assert.ok(!/href\s*=\s*"style\.css"/.test(html), 'style.css href removed');

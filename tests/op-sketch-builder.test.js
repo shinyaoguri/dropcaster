@@ -35,8 +35,10 @@ function htmlModeFixture() {
 test('html mode: index.html tab becomes the document, tab refs are inlined', () => {
   const html = assembleHtmlModeOpSketchHtml({ ...htmlModeFixture(), options: { assetProxyBaseUrl: PROXY } });
 
-  // タブ参照の <script src> はインライン化され、src 参照は消える
-  assert.ok(html.includes("loadShader('vert.glsl','frag.glsl')"), 'JS tab inlined');
+  // タブ参照の <script src> は内容の data: URL に差し替わり、src 参照は消える
+  const tab = /<script src="data:text\/javascript;charset=utf-8;base64,([^"]*)" data-dc-file="mySketch\.js"><\/script>/.exec(html);
+  assert.ok(tab, 'JS tab embedded');
+  assert.ok(Buffer.from(tab[1], 'base64').toString('utf8').includes("loadShader('vert.glsl','frag.glsl')"), 'JS tab content');
   assert.ok(!/src\s*=\s*"mySketch\.js"/.test(html), 'tab script src removed');
   // 外部 CDN の <script src> はそのまま
   assert.ok(html.includes('cdnjs.cloudflare.com/ajax/libs/p5.js/1.8.0/p5.js'), 'external script kept');
@@ -151,8 +153,28 @@ test('p5js mode: assembleOpSketchHtml is unchanged by the html-mode addition', (
     options: { assetProxyBaseUrl: PROXY, injectCorsShim: false, injectErrorShim: false },
   });
   // 従来どおり: エンジン script + コードを 1 本の <script> に連結 + viewer 側 <style>
+  // (連結したコードは #110 から src の data: URL に入る)
   assert.ok(html.includes('p5@1.9.3/lib/p5.js'));
-  assert.ok(html.includes('function setup(){ createCanvas(100,100) }'));
+  const src = /<script src="data:text\/javascript;charset=utf-8;base64,([^"]*)" data-dc-file="op-sketch\.js"><\/script>/.exec(html);
+  assert.ok(src, 'joined code is one script');
+  assert.ok(Buffer.from(src[1], 'base64').toString('utf8').startsWith('function setup(){ createCanvas(100,100) }'));
   assert.ok(html.includes(`<base href="${PROXY}/user1/visual2/habc/">`));
   assert.ok(html.includes('canvas { display: block;'), 'viewer style still injected in p5js mode');
+});
+
+test('p5js mode: joined code is embedded as a data: URL so </script> in it cannot end the tag', () => {
+  const code = 'window.p5Text = "</script>"; // </SCRIPT> <!--<script>\nwindow.p5Ran = "日本語";';
+  const html = assembleOpSketchHtml({
+    meta: { mode: 'p5js', engineURL: 'https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.js', fileBase: FILE_BASE, libraries: [] },
+    codeTabs: [{ title: 'mySketch', orderID: 0, code }],
+    options: { injectCorsShim: false, injectErrorShim: false },
+  });
+  const tag = /<script\b[^>]*\bdata-dc-file="([^"]*)"[^>]*>/.exec(html);
+  assert.ok(tag, 'sketch script carries data-dc-file');
+  const src = /\bsrc="data:text\/javascript;charset=utf-8;base64,([^"]*)"/.exec(tag[0]);
+  assert.ok(src, 'sketch code is a base64 data: URL');
+  assert.ok(Buffer.from(src[1], 'base64').toString('utf8').startsWith(code), 'decoded code is identical');
+  assert.ok(!html.includes('</SCRIPT>') && !html.includes('<!--<script>'), 'no raw code reaches the HTML parser');
+  // body 内・エンジンの後という位置は従来どおり
+  assert.ok(html.indexOf('p5@1.9.3/lib/p5.js') < tag.index && tag.index > html.indexOf('<body>'));
 });

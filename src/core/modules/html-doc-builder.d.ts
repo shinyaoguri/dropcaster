@@ -3,4 +3,5 @@ export function assembleDocumentFromFiles(params: {
   baseHref?: string;
 }): string;
 export function findIndexFileName(files: Map<string, unknown>): string | null;
+export function embeddedScriptAttrs(code: string, fileName: string): string;
 export function escapeAttr(s: unknown): string;

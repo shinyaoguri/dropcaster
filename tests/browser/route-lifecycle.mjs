@@ -5,6 +5,7 @@
 // history.back) で起こす。page.goto だとドキュメントごと作り直されて競合が消えるため。
 // 本番コードには手を入れず、リスナーの数え上げだけ addInitScript で包む。
 // あわせて、secure context でない LAN の HTTP オリジンでも各ルートが初期化できることを確かめる (#170)。
+// 同じ Gist の差し替え経路で、作品の組み立てが script / CSS の意味を変えないことも確かめる (#110)。
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,47 @@ const markerHtml = (marker) => `<!doctype html><html><head><title>${marker}</tit
 const gistJson = (id, marker) => ({
   id, description: marker, owner: { login: 'tester' }, html_url: `https://gist.github.com/${id}`, updated_at: '2026-11-15T00:00:00Z',
   files: { 'index.html': { filename: 'index.html', content: markerHtml(marker), truncated: false } },
+});
+
+// #110: 埋め込みで実行・適用の意味が変わると、対応するマーカーが期待とずれる作品
+const embedFiles = {
+  'index.html': [
+    '<!doctype html><html><head>',
+    '<link rel="stylesheet" href="screen.css">',
+    '<link rel="stylesheet" href="print.css" media="print">',
+    '<script defer src="defer.js"></script>',
+    '<script type="module" src="./module.js"></script>',
+    '<script nomodule src="legacy.js"></script>',
+    '</head><body><div id="target"></div><script src="tricky.js"></script><p id="after">after</p></body></html>',
+  ].join('\n'),
+  // </style の後ろの規則も同じ <style> に残っていれば width が効く
+  'screen.css': '#target::after { content: "</style><p id=leak>"; }\n#target { width: 7px; color: rgb(0, 128, 0); }',
+  'print.css': '#target { color: rgb(255, 0, 0); }',
+  // body の解析後に走るなら #target がある
+  'defer.js': "document.getElementById('target').dataset.defer = 'ran';",
+  'module.js': "await Promise.resolve();\nexport const ok = true;\ndocument.getElementById('target').dataset.module = 'ran';",
+  'legacy.js': "document.documentElement.dataset.legacy = 'ran';",
+  'tricky.js': "window.tricky = \"<!--<script>\";\ndocument.getElementById('target').dataset.tricky = 'ran';",
+};
+// #110: 埋め込んだ script の相対パスの import は未対応 (README に明記)。絶対 URL なら通る
+const ABS_MODULE_URL = 'https://cdn.example.test/dc-abs.js';
+const importFiles = {
+  'index.html': [
+    '<!doctype html><html><head>',
+    '<script type="module" src="rel-static.js"></script>',
+    '<script type="module" src="abs-static.js"></script>',
+    '<script src="rel-dynamic.js"></script>',
+    '</head><body><div id="target"></div></body></html>',
+  ].join('\n'),
+  'util.js': 'export const v = 1;',
+  'rel-static.js': "import { v } from './util.js';\ndocument.getElementById('target').dataset.relStatic = 'ran' + v;",
+  'abs-static.js': `import { abs } from '${ABS_MODULE_URL}';\ndocument.getElementById('target').dataset.absStatic = abs;`,
+  'rel-dynamic.js': "import('./util.js').then(\n  () => { document.documentElement.dataset.relDynamic = 'resolved'; },\n  (e) => { document.documentElement.dataset.relDynamic = 'rejected:' + e.name; },\n);",
+};
+
+const gistFilesJson = (id, files) => ({
+  id, description: 'embed', owner: { login: 'tester' }, html_url: `https://gist.github.com/${id}`, updated_at: '2026-11-16T00:00:00Z',
+  files: Object.fromEntries(Object.entries(files).map(([filename, content]) => [filename, { filename, content, truncated: false }])),
 });
 
 /** route を保留し、テストから応答 (fulfill の引数) を渡すまで返さない。 */
@@ -166,6 +208,55 @@ const cases = {
       '逆順完了: 先に開いた A が B を上書きした');
     assert.deepEqual(await pageListeners(env), listenersOfB,
       '逆順完了: 表示中の B 以外のリスナーが残った');
+  },
+
+  // #110: Gist の作品で module・defer・nomodule・<!--<script>・media 付き CSS・</style が元のファイル構成と同じに働く
+  async gistEmbedsKeepSemantics(env) {
+    const { page, gist } = env;
+    await clickLink(page, `/gist/${GIST_A}`);
+    await gist.release(`/gists/${GIST_A}`, { json: gistFilesJson(GIST_A, embedFiles) });
+    const target = page.frameLocator('#sketch-iframe').locator('#target');
+    await target.waitFor({ state: 'attached' });
+    await settle(page);
+    const observed = await target.evaluate((t) => ({
+      module: t.dataset.module ?? null,
+      defer: t.dataset.defer ?? null,
+      legacy: document.documentElement.dataset.legacy ?? null,
+      tricky: t.dataset.tricky ?? null,
+      after: !!document.getElementById('after'),
+      leak: !!document.getElementById('leak'),
+      width: getComputedStyle(t).width,
+      color: getComputedStyle(t).color,
+      afterContent: getComputedStyle(t, '::after').content,
+    }));
+    assert.deepEqual(observed, {
+      module: 'ran', defer: 'ran', legacy: null, tricky: 'ran', after: true, leak: false,
+      width: '7px', color: 'rgb(0, 128, 0)', afterContent: '"</style><p id=leak>"',
+    }, '埋め込み後の作品が元のファイル構成と違う動きをした');
+  },
+
+  // #110: 相対パスの static import / import() は解決できない (未対応として固定)。絶対 URL の import は通る
+  async gistEmbedsRelativeImportUnsupported(env) {
+    const { page, gist, context } = env;
+    await context.route(ABS_MODULE_URL, (r) => r.fulfill({
+      contentType: 'text/javascript', headers: { 'access-control-allow-origin': '*' }, body: "export const abs = 'ran';",
+    }));
+    await clickLink(page, `/gist/${GIST_A}`);
+    await gist.release(`/gists/${GIST_A}`, { json: gistFilesJson(GIST_A, importFiles) });
+    const target = page.frameLocator('#sketch-iframe').locator('#target');
+    await target.waitFor({ state: 'attached' });
+    await settle(page);
+    const observed = await target.evaluate((t) => ({
+      relStatic: t.dataset.relStatic ?? null,
+      absStatic: t.dataset.absStatic ?? null,
+      relDynamic: document.documentElement.dataset.relDynamic ?? null,
+    }));
+    assert.deepEqual(observed, { relStatic: null, absStatic: 'ran', relDynamic: 'rejected:TypeError' },
+      '相対 import の扱いが README の記述 (未対応・絶対 URL は可) と違う');
+    // static import の解決失敗は module の読み込みエラーとして出る。想定したこの 1 件だけを除き、残りは共通の検査に回す
+    const expected = env.errors.filter((m) => /Failed to resolve module specifier "\.\/util\.js"/.test(m));
+    assert.equal(expected.length, 1, `相対 static import の解決失敗が出ていない: ${JSON.stringify(env.errors)}`);
+    env.errors.splice(0, env.errors.length, ...env.errors.filter((m) => !expected.includes(m)));
   },
 
   // 再現 B: 作品 iframe の読み込み中に離脱しても、破棄済みコントローラーがリスナーを付け直さない
