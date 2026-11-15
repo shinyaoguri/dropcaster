@@ -711,6 +711,14 @@ async function maskSelect(page, base) {
   // マスクが当たるのは多角形だけで、外側を押すと背面のマッピングが選ばれる
   await at(.26, .6);
   assert.equal((await state(page)).activeId, initial, 'clicking outside the mask polygon selects the mapping behind it');
+  // 多角形の外なら、前面にマスクがあっても active なマッピング本体をドラッグできる
+  const quadOf = async id => (await state(page)).mappings.find(m => m.id === id).quad;
+  const beforeDrag = await quadOf(initial);
+  await page.mouse.move(host.x + host.width * .27, host.y + host.height * .6); await page.mouse.down();
+  for (let i = 1; i <= 5; i++) await page.mouse.move(host.x + host.width * .27 - i * 4, host.y + host.height * .6 + i * 3);
+  await page.mouse.up();
+  assert.ok((await quadOf(initial)).topLeft.x < beforeDrag.topLeft.x, 'dragging outside the mask polygon moves the active mapping');
+  assert.equal((await state(page)).activeId, initial, 'dragging the active mapping keeps the selection');
   // 右クリックでは選択を切り替えない (ソースカラムと同じく左ボタンだけ)
   for (const [fx, fy, label] of [[.5, .45, 'mask'], [.77, .77, 'mapping']]) {
     await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy, { button: 'right' });
