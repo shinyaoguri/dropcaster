@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -17,6 +17,112 @@ async function readDropcasterVersion() {
   const pkgPath = join(__dirname, '../../..', 'package.json');
   const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
   return pkg.version;
+}
+
+/**
+ * root 配下に既に存在する相対パスを返す。
+ * 書き込み先そのもの (パスの最後の要素) は lstat で調べ、シンボリックリンクならリンク先が
+ * 無くても既存として数える (リンクを辿って書くと、利用者の知らない場所にファイルができるため)。
+ * 途中のディレクトリがシンボリックリンクの場合は辿る。sketches/ を共有ディレクトリへリンクする
+ * などは利用者の意図とみなし、リンク先の中で同じ検査をする。
+ * 途中のディレクトリが通常ファイルで ENOTDIR になる場合は、その通常ファイル (例: public) を
+ * 既存として数える。複数の書き込み先をふさぐ親も一覧には 1 度だけ載せる。
+ * root 自身がディレクトリでない場合など、それ以外の失敗は例外として返す。
+ * @param {string} root
+ * @param {string[]} relPaths
+ * @returns {Promise<string[]>}
+ */
+async function findExistingPaths(root, relPaths) {
+  /** @type {Set<string>} */
+  const existing = new Set();
+  for (const rel of relPaths) {
+    try {
+      await fs.lstat(join(root, rel));
+      existing.add(rel);
+    } catch (error) {
+      if (error?.code === 'ENOTDIR') {
+        const blocker = await findNonDirectoryAncestor(root, rel);
+        if (blocker) {
+          existing.add(blocker);
+          continue;
+        }
+      }
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+  return [...existing];
+}
+
+/**
+ * rel の途中のディレクトリ (root 自身は含まない) のうち、ディレクトリでない最初のものを返す。
+ * 途中のシンボリックリンクは辿って判定する。見つからなければ null。
+ * @param {string} root
+ * @param {string} rel
+ * @returns {Promise<string | null>}
+ */
+async function findNonDirectoryAncestor(root, rel) {
+  const segments = rel.split('/');
+  for (let i = 1; i < segments.length; i++) {
+    const prefix = segments.slice(0, i).join('/');
+    const stats = await fs.stat(join(root, prefix)).catch(() => null);
+    if (!stats) return null;
+    if (!stats.isDirectory()) return prefix;
+  }
+  return null;
+}
+
+/**
+ * projectPath 配下に dirs を作り、files を書き出す。既存のファイルは上書きしない
+ * (wx。検査から書き込みまでの間に作られたファイルも EEXIST で失敗する)。
+ * 途中で失敗したら、この呼び出しで作ったファイルと (空の) ディレクトリだけを消してから
+ * 例外を投げ直す。書きかけを残すと、再実行時に自分が書いたものを衝突として報告してしまうため。
+ * @param {string} projectPath
+ * @param {string[]} dirs projectPath からの相対パス。親を先に並べる
+ * @param {Array<[string, string]>} files projectPath からの相対パスと内容
+ */
+export async function writeProjectFiles(projectPath, dirs, files) {
+  /** @type {string[]} この呼び出しで作ったディレクトリ (作った順) */
+  const createdDirs = [];
+  /** @type {string[]} この呼び出しで作ったファイル */
+  const createdFiles = [];
+  try {
+    for (const dir of dirs) {
+      const target = join(projectPath, dir);
+      // recursive の mkdir は、最初に作ったディレクトリを返す (何も作らなければ undefined)
+      const first = await fs.mkdir(target, { recursive: true });
+      if (first) {
+        const below = relative(first, target);
+        createdDirs.push(first);
+        if (below) {
+          let current = first;
+          for (const segment of below.split(sep)) {
+            current = join(current, segment);
+            createdDirs.push(current);
+          }
+        }
+      }
+    }
+    for (const [rel, content] of files) {
+      const target = join(projectPath, rel);
+      // 作成と書き込みを分け、作成に成功した時点で自分のファイルとして記録する
+      const handle = await fs.open(target, 'wx');
+      createdFiles.push(target);
+      try {
+        await handle.writeFile(content, 'utf-8');
+      } finally {
+        await handle.close();
+      }
+    }
+  } catch (error) {
+    for (const file of createdFiles.reverse()) {
+      await fs.rm(file, { force: true }).catch(() => {});
+    }
+    // 空でなければ rmdir は失敗するので、ほかの誰かが置いたものは消さない
+    for (const dir of createdDirs.reverse()) {
+      await fs.rmdir(dir).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 export async function init(options) {
@@ -70,20 +176,8 @@ export async function init(options) {
   const spinner = ora(t('init.creatingStructure')).start();
   
   try {
-    // Create project directory
-    await fs.mkdir(projectPath, { recursive: true });
-    
-    // Create source sketches directory（作品ソース。git にコミットする）
-    await fs.mkdir(join(projectPath, 'sketches'), { recursive: true });
-
-    // Create public directory（dropcaster scan が sketches.json / sketches/ / previews/ を生成。
-    // これらも git にコミットして GitHub Pages のデプロイに含める）
-    await fs.mkdir(join(projectPath, 'public'), { recursive: true });
-    await fs.mkdir(join(projectPath, 'public/sketches'), { recursive: true });
-    await fs.mkdir(join(projectPath, 'public/previews'), { recursive: true });
-    
-    // Create default icon (simple SVG)
-    await fs.writeFile(join(projectPath, 'public/icon.svg'), DEFAULT_ICON_SVG, 'utf-8');
+    // 書き出す内容をすべて組み立ててから、衝突の検査 → ディレクトリ作成 → 書き込みの順に進める。
+    // 検査と書き込みを同じ一覧から行い、テンプレートを足したときに検査から漏れないようにする。
 
     // Create config file: DEFAULT_CONFIG をベースに、ユーザが prompt で答えたフィールドだけ上書き。
     // 上書きしないフィールド（background_color / display / start_url）は loadConfig() の
@@ -94,12 +188,6 @@ export async function init(options) {
       description: response.description || DEFAULT_CONFIG.description,
       theme_color: response.theme_color || DEFAULT_CONFIG.theme_color,
     };
-    
-    await fs.writeFile(
-      join(projectPath, 'dropcaster.config.js'),
-      `export default ${JSON.stringify(config, null, 2)};`,
-      'utf-8'
-    );
     
     // Create package.json
     // dropcaster の version を caret range で記述する。生成された package.json は
@@ -124,13 +212,7 @@ export async function init(options) {
         dropcaster: `^${dropcasterVersion}`
       }
     };
-    
-    await fs.writeFile(
-      join(projectPath, 'package.json'),
-      JSON.stringify(packageJson, null, 2),
-      'utf-8'
-    );
-    
+
     // Create .gitignore
     // ※ sketches/ と public/ は意図的に無視しない — GitHub Pages のデプロイにはこれらが必要。
     //   無視するのは依存・ビルド成果物・OS/エディタの一時ファイルのみ。
@@ -156,8 +238,6 @@ public/manifest.json
 # どちらも git にコミットしてください。GitHub Pages へのデプロイに含まれます。
 `;
 
-    await fs.writeFile(join(projectPath, '.gitignore'), gitignore, 'utf-8');
-    
     // Create README
     const readme = `# ${response.title || 'My Sketch Gallery'}
 
@@ -210,13 +290,8 @@ Edit \`dropcaster.config.js\` to customize your gallery.
 ---
 Powered by [dropcaster](https://github.com/shinyaoguri/dropcaster)
 `;
-    
-    await fs.writeFile(join(projectPath, 'README.md'), readme, 'utf-8');
-    
+
     // Create sample sketch in source directory
-    const sampleSketchPath = join(projectPath, 'sketches/sample-sketch');
-    await fs.mkdir(sampleSketchPath, { recursive: true });
-    
     const sampleHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -253,10 +328,33 @@ function draw() {
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }`;
-    
-    await fs.writeFile(join(sampleSketchPath, 'index.html'), sampleHtml, 'utf-8');
-    await fs.writeFile(join(sampleSketchPath, 'mySketch.js'), sampleJs, 'utf-8');
-    
+
+    /** @type {Array<[string, string]>} projectPath からの相対パスと内容 */
+    const files = [
+      ['public/icon.svg', DEFAULT_ICON_SVG],
+      ['dropcaster.config.js', `export default ${JSON.stringify(config, null, 2)};`],
+      ['package.json', JSON.stringify(packageJson, null, 2)],
+      ['.gitignore', gitignore],
+      ['README.md', readme],
+      ['sketches/sample-sketch/index.html', sampleHtml],
+      ['sketches/sample-sketch/mySketch.js', sampleJs],
+    ];
+
+    // 既存プロジェクトの README・package.json・作品ソースを黙って置き換えない (#166)。
+    // 1 件でも既にあれば、ディレクトリも含めて何も作らずに止める。
+    const existing = await findExistingPaths(projectPath, files.map(([rel]) => rel));
+    if (existing.length > 0) {
+      spinner.fail(t('init.conflict', { dir: projectPath }));
+      for (const rel of existing) console.error(chalk.red(`  ${rel}`));
+      console.error(t('init.conflictHint'));
+      process.exit(1);
+    }
+
+    // sketches/ は作品ソース、public/ は dropcaster scan が sketches.json / sketches/ / previews/ を
+    // 生成する先。どちらも git にコミットして GitHub Pages のデプロイに含める
+    const dirs = ['', 'sketches', 'sketches/sample-sketch', 'public', 'public/sketches', 'public/previews'];
+    await writeProjectFiles(projectPath, dirs, files);
+
     spinner.succeed(t('init.created'));
 
     console.log();
