@@ -2,8 +2,10 @@
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { mkdir } from 'node:fs/promises';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
+import { checkMainHiddenNotice, setMainVisibility } from './lib/main-hidden-notice.mjs';
 
 const root = resolve(process.env.RUNTIME_TEST_ROOT || fileURLToPath(new URL('../../', import.meta.url)));
 const browser = await chromium.launch({
@@ -674,6 +676,86 @@ async function quadTilesCase(page) {
   }
 }
 
+/** RUNTIME_ARTIFACT_DIR があれば、メイン画面を隠して操作中の出力 (案内が出た状態) を保存する。 */
+async function snapshotNotice(page, popup, file) {
+  const dir = process.env.RUNTIME_ARTIFACT_DIR;
+  if (!dir) return;
+  await mkdir(dir, { recursive: true });
+  await setMainVisibility(page, 'hidden');
+  await popup.mouse.move(300, 300);
+  await popup.waitForFunction(() => getComputedStyle(document.getElementById('dc-output-main-hidden')).opacity === '1');
+  await popup.screenshot({ path: resolve(dir, file) });
+  await setMainVisibility(page, 'visible');
+}
+
+// #185: メイン画面が隠れると作品の rAF と captureStream が止まる。出力ウィンドウで操作している
+// 間だけ原因と対処を示す (全画面でも同じ)。出力を開いていなければ何も出さない。
+async function mainHiddenCase(page, base) {
+  await addSource(page, fixture());
+  // 出力を開く前にメイン画面が隠れても、どこにも案内は出ない (メイン画面にも出さない)。
+  await setMainVisibility(page, 'hidden');
+  assert.equal(page.context().pages().length, 1, 'no output window: nothing opens');
+  assert.equal(await page.locator('#dc-output-main-hidden').count(), 0, 'no output window: main page shows nothing');
+  await setMainVisibility(page, 'visible');
+
+  // 後始末の検査用: OutputWindow がメイン画面の visibilitychange で動いた回数と、残っているリスナーを数える。
+  await page.evaluate(async moduleBase => {
+    const { OutputWindow } = await import(`${moduleBase}/windows/output/OutputWindow.ts`);
+    const h = window.runtimeRegression;
+    const sync = OutputWindow.prototype.syncMainHidden;
+    h.mainHiddenSyncs = 0;
+    OutputWindow.prototype.syncMainHidden = function (...args) { h.mainHiddenSyncs++; return sync.apply(this, args); };
+    h.mainVisibilityListeners = new Set();
+    const add = document.addEventListener, remove = document.removeEventListener;
+    document.addEventListener = function (type, listener, ...rest) {
+      if (type === 'visibilitychange' && String(listener).includes('syncMainHidden')) h.mainVisibilityListeners.add(listener);
+      return add.call(this, type, listener, ...rest);
+    };
+    document.removeEventListener = function (type, listener, ...rest) {
+      if (type === 'visibilitychange') h.mainVisibilityListeners.delete(listener);
+      return remove.call(this, type, listener, ...rest);
+    };
+  }, base.modules);
+  /** 出力を閉じた後、メイン画面の表示が変わっても OutputWindow の処理が走らないこと。 */
+  const assertReleased = async label => {
+    await page.waitForFunction(() => window.runtimeRegression.popup.closed);
+    await page.evaluate(() => { window.runtimeRegression.mainHiddenSyncs = 0; });
+    await setMainVisibility(page, 'hidden');
+    await setMainVisibility(page, 'visible');
+    assert.deepEqual(await page.evaluate(() => {
+      const h = window.runtimeRegression;
+      return { listeners: h.mainVisibilityListeners.size, syncs: h.mainHiddenSyncs };
+    }), { listeners: 0, syncs: 0 }, `${label}: closed output stops watching the main page`);
+  };
+
+  let popup = await start(page);
+  assert.equal(await page.evaluate(() => window.runtimeRegression.mainVisibilityListeners.size), 1, 'open output watches the main page');
+  await popup.setViewportSize({ width: 960, height: 600 });
+  await checkMainHiddenNotice(page, popup, { lang: 'en', label: 'window' });
+  // 全画面の出力でも同じ規則 (表示を全画面の有無で変えない)。
+  await popup.locator('#dc-output-fs').click();
+  await popup.waitForFunction(() => !!document.fullscreenElement);
+  await checkMainHiddenNotice(page, popup, { lang: 'en', label: 'fullscreen' });
+  await snapshotNotice(page, popup, `${base.name}-main-hidden-fullscreen-en.png`);
+  await popup.evaluate(() => document.exitFullscreen());
+
+  // 利用者がウィンドウを閉じる経路 (beforeunload が走る)。
+  await popup.close({ runBeforeUnload: true });
+  await assertReleased('window closed by the user');
+
+  await page.evaluate(async moduleBase => (await import(`${moduleBase}/i18n/index.ts`)).setLang('ja'), base.modules);
+  popup = await start(page);
+  await popup.setViewportSize({ width: 960, height: 600 });
+  await checkMainHiddenNotice(page, popup, { lang: 'ja', label: 'ja' });
+  await snapshotNotice(page, popup, `${base.name}-main-hidden-window-ja.png`);
+  // アプリの操作で閉じる経路 (操作パネルの出力の「閉じる」と同じ closeOutputWindowFor)。
+  await page.evaluate(() => {
+    const h = window.runtimeRegression;
+    h.wc.closeOutputWindowFor(h.wc.events.state.get().outputs[0].id);
+  });
+  await assertReleased('window closed by the app');
+}
+
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
     const hosted = config.startsWith('apps/');
@@ -686,9 +768,9 @@ try {
     });
     try {
       await server.listen();
-      const base = { url: `http://127.0.0.1:${server.httpServer.address().port}`,
+      const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`,
         modules: hosted ? `/@fs${root}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, keys: keysCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase })) {
+      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, keys: keysCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase, mainHidden: mainHiddenCase })) {
         if (process.env.RUNTIME_CASE && process.env.RUNTIME_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
         const errors = [];
