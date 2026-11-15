@@ -19,6 +19,8 @@ export class SketchPageView {
   private lastMappings: MappingItem[] = [];
   private lastActiveId: string | null = null;
   private isProjecting = false;
+  /** 作品の全画面 (⛶) 中か。マッピング編集とは両立させない (#103)。 */
+  private isFullscreen = false;
   private cropRefreshInterval: ReturnType<typeof setInterval> | null = null;
   /** 直近に描画したクロップ枠の入力シグネチャ（canvas 矩形＋有効マッピング）。変化が無ければ再描画をスキップ。 */
   private lastCropSignature: string | null = null;
@@ -130,7 +132,7 @@ export class SketchPageView {
       const container = document.querySelector('.fullscreen-sketch-container') as HTMLDivElement;
       if (document.fullscreenElement) {
         document.exitFullscreen();
-      } else {
+      } else if (!this.isProjecting) { // 編集中は全画面に入らない（ボタンも出さない）
         container.requestFullscreen().catch(err => {
           console.error(t('sketchPage.fullscreenFailed') + ':', err);
         });
@@ -139,6 +141,8 @@ export class SketchPageView {
 
     // ウィンドウ開くボタンのイベント
     openWindowsBtn.addEventListener('click', () => {
+      // 全画面中はマッピングに入らない（ボタンも出さない）。編集中に押されたときは閉じる側なので通す
+      if (document.fullscreenElement && !this.isProjecting) return;
       this.openWindowsToggleCallback?.();
     });
   }
@@ -159,7 +163,25 @@ export class SketchPageView {
     }
 
     // UI要素の更新も統一的に処理
+    this.isFullscreen = isFullscreen;
     this.updateFullscreenUI(isFullscreen);
+    this.updateModeEntries();
+  }
+
+  /**
+   * 作品の全画面とマッピング編集は両立させない (#103)。全画面はマッピングをせずにそのまま映すための表示で、
+   * 両方が重なると編集も作品も見えない画面になりうる。全画面中はマッピングの入口を、
+   * 編集中は全画面の入口を、表示もフォーカスもできないようにする（hidden と disabled）。
+   */
+  private updateModeEntries(): void {
+    const set = (id: string, unavailable: boolean) => {
+      const button = document.getElementById(id) as HTMLButtonElement | null;
+      if (!button) return;
+      button.hidden = unavailable;
+      button.disabled = unavailable;
+    };
+    set('open-windows-btn', this.isFullscreen && !this.isProjecting);
+    set('fullscreen-btn', this.isProjecting);
   }
 
   private setupMappingOverlayListener(): void {
@@ -182,6 +204,7 @@ export class SketchPageView {
   setMappingActive(active: boolean): void {
     this.isProjecting = active;
     document.querySelector('.fullscreen-sketch-container')?.classList.toggle('projecting', active);
+    this.updateModeEntries();
 
     if (active) {
       this.renderSourceCropBoxes();
