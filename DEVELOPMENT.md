@@ -180,8 +180,12 @@ pause・resume・先読み、`SlideshowView` の切替を変えたら実行す�
 スクリーンショットを保存できる。
 
 `npm run test:projection-runtime` は両 viewer エントリで編集状態の停止・再開、テストパターン中の
-作品切替、WebGL ロストからの復旧とキャンセルを検証する。実際の UI / popup / captureStream と
+作品切替、WebGL ロストからの復旧とキャンセル、メイン画面が隠れたときの出力ウィンドウの案内 (#185) を
+検証する。実際の UI / popup / captureStream と
 決定的な作品 fixture を使い、CI でも実行する。既存 Chromium は同じく `CHROMIUM_PATH` で指定する。
+`RUNTIME_CASE=<ケース名>` で 1 件だけ流せ、`RUNTIME_ARTIFACT_DIR=/tmp/runtime-images` で案内の出た出力を保存できる。
+Playwright の Chromium は自動化中のページを常に visible に保つため、メイン画面の hidden は
+`tests/browser/lib/main-hidden-notice.mjs` が `visibilityState` と `visibilitychange` を差し替えて再現する。
 対象と検出確認は [状態・復旧の検証記録](docs/verification/124-runtime-recovery.md) を参照。
 
 `npm run test:practice` は製品の個別作品／スライドショー UI からマッピングを起動し、実出力との併用、
@@ -198,7 +202,7 @@ pause・resume・先読み、`SlideshowView` の切替を変えたら実行す�
   `src/core/modules/` の手書き
   `.d.ts` がそのまま型情報になるので、モジュールの公開面を変えたら `.d.ts` も更新すること。
   `sw-template.js` は SW コンテキストのコードなので検査対象外（tsconfig.node.json の exclude 参照）。
-- 自動テスト: `npm test` で `node --test` ベースの最小回帰テストが走る（`tests/`）。現状カバーしているのは Service Worker 生成（`generateServiceWorker`）、scan の description 保持、srcdoc の組み立て（OP の p5js / html モードと Gist）、作品参照のパーサ、マッピング quad の凸判定と隅の移動制限（`src/viewer/utils/mappingTransform.ts`）。viewer の純関数は、他を import しない `.ts` なら `tests/` から拡張子付きで直接 import してテストできる（Node 24 の型除去で動く）。新機能を入れたら、回帰しやすい純粋関数・生成物は同様に追加してほしい。
+- 自動テスト: `npm test` で `node --test` ベースの最小回帰テストが走る（`tests/`）。現状カバーしているのは Service Worker 生成（`generateServiceWorker`）、scan のタイトル・説明の優先順位と保持、srcdoc の組み立て（OP の p5js / html モードと Gist）、作品参照のパーサ、マッピング quad の凸判定と隅の移動制限（`src/viewer/utils/mappingTransform.ts`）。viewer の純関数は、他を import しない `.ts` なら `tests/` から拡張子付きで直接 import してテストできる（Node 24 の型除去で動く）。新機能を入れたら、回帰しやすい純粋関数・生成物は同様に追加してほしい。
 - 取り込み元（OpenProcessing / 公開 Gist）を増やすときは、srcdoc の組み立てを
   `src/core/modules/html-doc-builder.js` に載せ、参照の判定を `sketch-ref.js` に足す。
   判断の背景は [ADR 0006](docs/decisions/0006-gist-as-second-sketch-source.md) を参照。
@@ -216,3 +220,4 @@ pause・resume・先読み、`SlideshowView` の切替を変えたら実行す�
 `interaction` は実ポインタで移動・回転・サイズ・取消・undoを検証し、`workflow` は輪郭／グリッド／白黒の実ピクセル・popup・解像度・保存再開を確認する。
 `recovery` は不正・遅延読込、GLB、容量不足、WebGL停止時の出力終了と書出を確認する。
 `isolation` は作品の再生・マッピングの下書き・出力を保ったまま会場を作り、ファイルで明示反映する経路を確認する。
+`workflow` と `isolation` は、会場の画面が隠れたときに校正ウィンドウで操作している間だけ案内が出ること (#185) も確かめる。

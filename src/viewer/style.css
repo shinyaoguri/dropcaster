@@ -321,16 +321,16 @@ body {
   z-index: 1000;
 }
 
-/* フルスクリーン時のカーソル制御 */
-.fullscreen-sketch-container.fullscreen {
+/* フルスクリーン時のカーソル制御（編集中は全画面にしないが、念のため編集の上ではカーソルを消さない） */
+.fullscreen-sketch-container.fullscreen:not(.projecting) {
   cursor: none !important;
 }
 
-.fullscreen-sketch-container.fullscreen * {
+.fullscreen-sketch-container.fullscreen:not(.projecting) * {
   cursor: none !important;
 }
 
-.fullscreen-sketch-container.fullscreen iframe {
+.fullscreen-sketch-container.fullscreen:not(.projecting) iframe {
   cursor: none !important;
 }
 
@@ -351,8 +351,6 @@ body {
   display: flex;
 }
 .dc-inline-editor[hidden] { display: none; }
-/* メインウィンドウ自体をフルスクリーン化したときはエディタは出さない（投影確認モード） */
-.fullscreen-sketch-container.fullscreen .dc-inline-editor { display: none; }
 /* シェル内の dc-control-shell はマウント先要素のサイズに追従させる */
 .dc-inline-editor .dc-control-shell { width: 100%; height: 100%; }
 .dc-inline-editor .dc-control-shell .control-container { height: 100%; }
@@ -429,6 +427,12 @@ body {
 .top-right-button.fullscreen-active .button-icon {
   color: #ffffff;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* 作品の全画面とマッピング編集は両立させないので、片方の間はもう片方の入口を消す（SketchPageView）。
+   display:flex が UA の [hidden] より強いので明示する */
+.top-right-button[hidden] {
+  display: none;
 }
 
 /* 個別ボタンの位置指定 */

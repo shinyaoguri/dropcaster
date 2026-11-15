@@ -57,6 +57,9 @@ https://dropcaster.soui.dev/gist/<gist id>     ← 公開 Gist（?gist=<gist id>
 またはスライドショー上部の **「マッピング」** を押す。編集・練習・本番は同じ入口を使う。
 この時点では別窓は開かない。実機に投影するときだけ、左の出力一覧で **「開く」** を押す。
 出力を追加しただけでも別窓は開かない。従来の `/practice` URL も利用できる。
+個別作品画面の全画面（右上の全画面ボタン）は、マッピングをせずに作品をそのまま映すための表示で、マッピングとは併用しない。
+全画面の間はマッピングのボタンを出さず、マッピングの編集中は全画面のボタンを出さない。マッピングするときは、
+全画面を `Esc` か全画面ボタンで抜けてから押す。
 
 会場の作成・現場での位置合わせは、独立した **[「会場の作成・調整」](https://dropcaster.soui.dev/venue)** を使う。
 ホーム、またはマッピングの「設定・共有」から開ける。作品の読み込みは不要で、p5.jsの映像も表示しない。
@@ -233,6 +236,22 @@ npm run scan:watch
 ```bash
 OPENPROCESSING_API_TOKEN=your_token npm run scan
 ```
+
+#### タイトルと説明の決まり方
+
+scan のたびに、`sketches.json` の `title` / `description` を次の順で決めます（上ほど優先、値の無い情報源は飛ばす）。
+
+1. 手動メタデータ（作品ディレクトリの `dropcaster.meta.json`、下の例）
+2. その scan の `--fetch-userdata` で OpenProcessing Public API から取った値（取得に失敗した作品は前回の `sketches.json` の値を保つ）
+3. `_op-meta.json` の `title` / `description`（`dropcaster fetch` が取り込み時に API から保存したもの。空文字は値なし）
+4. `index.html` の `<title>` / `<meta name="description">`
+5. 前回の `sketches.json` の値（上のどれにも値が無いときだけ残す）
+6. 既定値（ディレクトリ名 / `<ディレクトリ名> スケッチ`）
+
+`index.html` を書き換えると次の scan で反映されます。`_op-meta.json` の無い OpenProcessing 作品
+（手動で置いたもの）で `index.html` が `p5.js Sketch` のような汎用の `<title>` を持つと、
+`--fetch-userdata` なしの scan ではその `<title>` になります。表示を固定したいときは
+`dropcaster.meta.json` に書いてください。
 
 ```json
 {
