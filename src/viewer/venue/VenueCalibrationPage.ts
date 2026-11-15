@@ -1,3 +1,4 @@
+import { randomId } from '../utils/randomId';
 import * as THREE from 'three';
 import { ProjectionPreview } from '../practice/ProjectionPreview';
 import { VenueBuilder } from '../practice/VenueBuilder';
@@ -379,7 +380,7 @@ export class VenueCalibrationPage {
       if(file.size>(model?MAX_GLB_BYTES:MAX_PACKAGE_BYTES)) throw new ProjectFormatError('size');
       if(model) {
         const bytes=await file.arrayBuffer(); if(this.disposed || action!==this.action)return;
-        const current=this.session.changes.get(), id=crypto.randomUUID();
+        const current=this.session.changes.get(), id=randomId();
         await this.apply({...current,assets:[{id,name:file.name,mimeType:'model/gltf-binary',data:encodeAsset(new Uint8Array(bytes))}],venue:{...current.venue,scene:{...defaultScene(),kind:'glb',assetId:id}}});
       } else {
         const text=await file.text(); if(this.disposed || action!==this.action)return;

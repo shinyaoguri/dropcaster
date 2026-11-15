@@ -1,9 +1,10 @@
+import { randomId } from '../utils/randomId.ts';
 import { defaultScene, type VenueObject, type VenueScene, type Vec3 } from './project.ts';
 
 export function venueObject(kind: VenueObject['kind'], name: string): VenueObject {
   const size: Vec3 = kind === 'wall' ? [6, 3, 0.15] : kind === 'floor' ? [6, 0.1, 6] : [1, 1, 1];
   const position: Vec3 = kind === 'wall' ? [0, 1.5, -3] : kind === 'floor' ? [0, -0.05, 0] : [0, 0.5, 0];
-  return { id: crypto.randomUUID(), name, kind, size, position, quaternion: [0, 0, 0, 1], color: kind === 'floor' ? '#8b93a0' : '#dddddd' };
+  return { id: randomId(), name, kind, size, position, quaternion: [0, 0, 0, 1], color: kind === 'floor' ? '#8b93a0' : '#dddddd' };
 }
 
 /** Clear inner dimensions; floor top at Y=0, open front at +Z. Wall thickness extends outwards. */

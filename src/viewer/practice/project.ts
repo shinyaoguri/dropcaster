@@ -1,3 +1,4 @@
+import { randomId } from '../utils/randomId.ts';
 import { defaultMappingsState, parseMappingsState, CORNER_KEYS, type MappingsState } from '../utils/mappingTransform.ts';
 
 export type Vec3 = [number, number, number];
@@ -92,8 +93,8 @@ export function defaultScene(): VenueScene {
 }
 export function createProject(layout = defaultMappingsState()): Project {
   const now = new Date().toISOString();
-  return { format: 'dropcaster-project', schemaVersion: 3, id: crypto.randomUUID(), name: 'Untitled', createdAt: now, updatedAt: now,
-    venue: { id: crypto.randomUUID(), revision: 1, layout, scene: defaultScene(), projectors: layout.outputs.map(o => defaultProjector(o.id)) },
+  return { format: 'dropcaster-project', schemaVersion: 3, id: randomId(), name: 'Untitled', createdAt: now, updatedAt: now,
+    venue: { id: randomId(), revision: 1, layout, scene: defaultScene(), projectors: layout.outputs.map(o => defaultProjector(o.id)) },
     content: [], show: { contentIds: [], intervalSeconds: 30, currentIndex: 0 }, assets: [] };
 }
 
