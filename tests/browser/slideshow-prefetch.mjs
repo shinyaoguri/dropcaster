@@ -21,11 +21,15 @@ const MIN_RUNNING = 20;
 // SketchPool のクロスフェード (400ms) と、その後の idle 化 (+50ms) が終わるまで待つ
 const FADE_SETTLE_MS = 700;
 
-// マッピングの captureStream が拾えるよう、毎フレーム canvas も塗り替える
+// マッピングの captureStream が拾えるよう、毎フレーム canvas も塗り替える。
+// リサイズでは、よくある作品と同じく予約済みのフレームを取り消して掛け直す
 const sketchHtml = (marker) => `<!doctype html><html><body><p id="marker">${marker}</p><canvas width="320" height="180"></canvas><script>
   window.__frames = 0;
   const x = document.querySelector('canvas').getContext('2d');
-  (function tick() { window.__frames++; x.fillStyle = 'hsl(' + (window.__frames * 7 % 360) + ' 80% 50%)'; x.fillRect(0, 0, 320, 180); requestAnimationFrame(tick); })();
+  let id;
+  function tick() { window.__frames++; x.fillStyle = 'hsl(' + (window.__frames * 7 % 360) + ' 80% 50%)'; x.fillRect(0, 0, 320, 180); id = requestAnimationFrame(tick); }
+  tick();
+  addEventListener('resize', () => { cancelAnimationFrame(id); id = requestAnimationFrame(tick); });
 </script></body></html>`;
 const catalog = [
   { id: 'a', title: 'A', path: 'sketches/a/index.html' },
@@ -178,6 +182,25 @@ const cases = {
     const m = await measure(page);
     assertRunning(m, 'b', 'マッピング中の Next');
     assertIdle(m, 'c', 'マッピング中の Next');
+  },
+
+  // 待機中に作品がフレームを取り消して掛け直しても (リサイズ・全画面化)、表示後の描画ループは 1 本のまま
+  async resizeWhilePaused({ page }) {
+    await waitForPair(page, 'a', 'b');
+    await page.waitForTimeout(200);
+    const baseline = (await measure(page)).a.delta; // この環境の 1 本ぶんの描画回数
+    for (const width of [1000, 1100, 1200]) {
+      await page.setViewportSize({ width, height: 700 });
+      await page.waitForTimeout(150);
+    }
+    await page.locator('#next-btn').click();
+    await waitForPair(page, 'b', 'c');
+    await page.waitForTimeout(FADE_SETTLE_MS);
+    const m = await measure(page);
+    assertRunning(m, 'b', '待機中のリサイズ');
+    assert.ok(m.b.delta <= baseline * 1.5,
+      `待機中のリサイズ: 表示後の b の描画ループが多重化した (1 本ぶん ${baseline}, ${JSON.stringify(m)})`);
+    assertIdle(m, 'c', '待機中のリサイズ');
   },
 
   // 切替を連続で押しても、最後に表示した作品だけが進み、残りは止まる
