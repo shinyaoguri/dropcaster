@@ -15,7 +15,7 @@ import { RafThrottle } from '../../utils/rafThrottle';
 import { createQuadOutline, syncQuadOutline } from '../../utils/quadOutline';
 import { ScreenWakeLock } from '../../utils/wakeLock';
 import { HeldKeys, toSketchKey, type SketchKey } from '../../utils/sketchKeys';
-import { t } from '../../i18n/index.js';
+import { getLang, t, type MessageKey } from '../../i18n/index.js';
 
 export interface OutputWindowOptions {
   /**
@@ -24,6 +24,11 @@ export interface OutputWindowOptions {
    * 会場の校正ウィンドウのように作品が無い出力では渡さない。
    */
   onSketchKey?: (key: SketchKey) => boolean;
+  /**
+   * この出力を開いた画面が隠れたときに、操作中だけ出す案内の文言 (#185)。
+   * 既定は作品のメイン画面向け。会場の校正ウィンドウは会場の窓向けの文言を渡す。
+   */
+  mainHiddenMessage?: MessageKey;
 }
 
 /** 出力ウィンドウ内の操作 UI。ここにフォーカスがあるキーは作品へ渡さない（Enter / Space が二重に効くため）。 */
@@ -75,6 +80,7 @@ export class OutputWindow extends BaseWindow {
   /** 作品へ送った keydown のうち、まだ keyup を送っていないキー。 */
   private heldKeys = new HeldKeys();
   private readonly onSketchKey: ((key: SketchKey) => boolean) | null;
+  private readonly mainHiddenMessage: MessageKey;
   private boundMouseMove = (e: MouseEvent) => this.onMouseMove(e);
   private boundMouseOut = (e: Event) => this.onMouseOut(e);
   private idleTimer: number | null = null;
@@ -97,6 +103,7 @@ export class OutputWindow extends BaseWindow {
     super(`output_window_${outputId}`, t('window.projectionOutput'));
     this.outputId = outputId;
     this.onSketchKey = options.onSketchKey ?? null;
+    this.mainHiddenMessage = options.mainHiddenMessage ?? 'output.mainHidden';
   }
 
   getOutputId(): string { return this.outputId; }
@@ -105,6 +112,8 @@ export class OutputWindow extends BaseWindow {
     this.render();
     if (!this.window) return;
     try { this.window.document.body.style.background = '#000'; } catch { /* ignore */ }
+    // about:blank の出力文書には lang が無い。開いたときの言語を付け、案内の改行 (word-break: auto-phrase) を効かせる。
+    try { this.window.document.documentElement.lang = getLang(); } catch { /* ignore */ }
     this.reapplyThrottle = new RafThrottle(this.window, () => this.reapplyTransforms());
     this.window.addEventListener('message', this.boundMessage);
     this.window.addEventListener('resize', this.boundResize);
@@ -144,7 +153,7 @@ export class OutputWindow extends BaseWindow {
         <div id="dc-output-hint" class="dc-output-ui">${t(this.onSketchKey ? 'output.hintSketchKeys' : 'output.hint')}</div>
         <!-- メイン画面が隠れて映像が止まっている間の案内 (#185)。他の操作 UI と同じく、
              マウスを動かしている間だけ見え、dc-idle で消える。 -->
-        <div id="dc-output-main-hidden" class="dc-output-ui" role="status">${t('output.mainHidden')}</div>
+        <div id="dc-output-main-hidden" class="dc-output-ui" role="status">${t(this.mainHiddenMessage)}</div>
       </div>
     `;
   }

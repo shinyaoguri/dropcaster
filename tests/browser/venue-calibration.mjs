@@ -49,7 +49,7 @@ async function workflow(page,base){
   const popupWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const output=await popupWait;
   await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
   // #185: 会場の画面が隠れて校正画像が止まったことを、校正ウィンドウで操作している間だけ知らせる。
-  await checkMainHiddenNotice(page,output,{lang:'en',label:`${base.name} calibration`});
+  await checkMainHiddenNotice(page,output,{lang:'en',kind:'calibration',label:`${base.name} calibration`});
   if(artifactDir){
     await setMainVisibility(page,'hidden');await output.mouse.move(300,300);
     await output.waitForFunction(()=>getComputedStyle(document.getElementById('dc-output-main-hidden')).opacity==='1');
@@ -76,6 +76,13 @@ async function workflow(page,base){
   assert.equal(await page.evaluate(()=>window.practicePreview.diagnostics().disposed),true);
   await page.locator('a[href="/venue"]').click();await ready(page);assert.deepEqual((await current(page)).venue,saved.venue);assert.equal((await current(page)).name,'Measured stage');
   await page.locator('#venue-menu > summary').click();await page.locator('[data-lang-set=ja]').click();assert.equal(await page.locator('[data-lang-set=ja]').getAttribute('aria-pressed'),'true');
+  {
+    // #185: 日本語で開いた校正ウィンドウは、会場の窓向けの日本語の案内を出す。
+    const popupWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const ja=await popupWait;
+    await ja.waitForFunction(()=>document.querySelector('video')?.videoWidth>0);
+    await checkMainHiddenNotice(page,ja,{lang:'ja',kind:'calibration',label:`${base.name} calibration ja`});
+    await ja.close({runBeforeUnload:true});await page.waitForFunction(()=>!window.calibrationPage.output?.isOpen);
+  }
   await snapshot(page,base.name+'-venue-desktop-ja');await page.setViewportSize({width:900,height:800});await snapshot(page,base.name+'-venue-narrow-ja');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.ok((await page.locator('#venue-canvas').boundingBox()).height>=200);
@@ -260,7 +267,7 @@ async function isolation(page,base){
   const calibrationPromise=venue.waitForEvent('popup');await venue.locator('#venue-open-output').click();const calibration=await calibrationPromise;
   await calibration.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);assert.equal(live.isClosed(),false);
   // #185: 案内は各出力を開いた画面 (opener) が隠れたときだけ。校正ウィンドウは会場の窓、実出力は作品の画面を見る。
-  await checkMainHiddenNotice(venue,calibration,{lang:'en',label:`${base.name} calibration from venue popup`});
+  await checkMainHiddenNotice(venue,calibration,{lang:'en',kind:'calibration',label:`${base.name} calibration from venue popup`});
   await setMainVisibility(page,'hidden');
   await live.mouse.move(120,120);await calibration.mouse.move(120,120);
   await live.waitForFunction(()=>getComputedStyle(document.getElementById('dc-output-main-hidden')).opacity==='1');
