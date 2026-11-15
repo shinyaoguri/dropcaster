@@ -155,6 +155,10 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 なければ Playwright の Chromium を入れて実行する。
 操作と測定方法は [PoC README](poc/projection-3d/README.md) を参照。
 
+`npm run test:sw` は生成した Service Worker を実 Chromium で動かし、作品 iframe を開いた後も
+オフラインのホームにシェルが、各作品に自分の HTML が返ることをルート配信とサブパス配信で確かめる
+（viewer のビルドは不要。`CHROMIUM_PATH` も同じく使える）。SW テンプレートを変えたら実行する。
+
 `npm run test:projection-runtime` は両 viewer エントリで編集状態の停止・再開、テストパターン中の
 作品切替、WebGL ロストからの復旧とキャンセルを検証する。実際の UI / popup / captureStream と
 決定的な作品 fixture を使い、CI でも実行する。既存 Chromium は同じく `CHROMIUM_PATH` で指定する。

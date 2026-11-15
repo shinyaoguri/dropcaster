@@ -53,6 +53,10 @@ jobs:
             npx playwright install --with-deps chromium
           fi
 
+      - name: Verify Service Worker offline navigation (root and subpath)
+        timeout-minutes: 5
+        run: npm run test:sw
+
       - name: Verify CSS/GPU projection and preview lifecycle
         timeout-minutes: 5
         run: npm run test:poc

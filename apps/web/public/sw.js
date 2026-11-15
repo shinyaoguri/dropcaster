@@ -9,7 +9,9 @@
 //   runtime  上記いずれにも該当しない GET (大網)
 //
 // キャッシュ戦略は概ね:
-//   navigate          NetworkFirst → 失敗時は cached '/'
+//   navigate (top)    NetworkFirst → 失敗時は cached '/' (scope ルートの応答だけを '/' に保存)
+//   navigate (作品)   scope 内 sketches/ の iframe 等: 自分の URL で LOCAL に SWR
+//   navigate (他)     上記以外の iframe 等: ネットのみ → 失敗時は自分の URL のキャッシュか 503
 //   shell (assets)    CacheFirst (URL に hash が乗っているので immutable 扱い)
 //   local catalog     StaleWhileRevalidate
 //   op-meta           CacheFirst (24h 後にネット往復、それまでは即返し)
@@ -50,6 +52,10 @@ const SHELL_PRECACHE = [
 
 // オフラインで navigate された時のフォールバック先 (キャッシュ済みの shell '/')
 const OFFLINE_NAVIGATION_FALLBACK = new URL('./', self.registration.scope).toString();
+
+// scope のパス (例: '/' や '/gallery/')。ローカル作品の判定をサブパス配信でも効かせるため、
+// ルート前提の matchSegment ではなくこれを基準にする。
+const SCOPE_PATH = new URL(self.registration.scope).pathname;
 
 // op-meta の鮮度。これより新しい cached レスポンスはネット往復をスキップ。
 const OP_META_FRESH_MS = 24 * 60 * 60 * 1000;
@@ -92,9 +98,17 @@ self.addEventListener('fetch', (event) => {
   const sameOrigin = url.origin === self.location.origin;
   const isNavigate = req.mode === 'navigate';
 
-  // ナビゲーション: NetworkFirst → 失敗時 cached '/' fallback
+  // ナビゲーション。'/' (OFFLINE_NAVIGATION_FALLBACK) にはアプリのシェルだけを入れる。
+  // 作品 iframe も navigate なので、ここで振り分けないと作品の HTML がシェルを上書きし、
+  // オフラインのホームに作品が出る (#105)。
   if (isNavigate) {
-    event.respondWith(navigationStrategy(req));
+    if (sameOrigin && isLocalSketchPath(url)) {
+      event.respondWith(sketchNavigationStrategy(req));
+    } else if (req.destination === 'document') {
+      event.respondWith(navigationStrategy(req));
+    } else {
+      event.respondWith(nestedNavigationStrategy(req));
+    }
     return;
   }
 
@@ -158,13 +172,16 @@ self.addEventListener('fetch', (event) => {
 
 // --- ストラテジ実装 ----------------------------------------------------------
 
+// トップレベルの navigate。オフラインでは SPA のどのルートにもシェルを返す。
 async function navigationStrategy(req) {
   try {
     const networkRes = await fetch(req);
-    // navigate が成功したら shell キャッシュも更新しておく (オフライン時の fallback 用)。
+    // scope ルートの navigate が成功したら shell キャッシュも更新しておく (オフライン時の fallback 用)。
+    // ルートだけ: ユーザーの public/ にある別の HTML や画像を開いた応答もトップレベルの
+    // navigate なので、URL を問わず保存するとオフラインのホームにそれが出る。
     // 2xx のみ: サーバの 404/500 ページで '/' の fallback を上書きすると、
     // 以後オフライン時にエラーページが出続けてしまう。
-    if (networkRes.ok) {
+    if (networkRes.ok && isScopeRoot(new URL(req.url))) {
       const clone = networkRes.clone();
       caches.open(SHELL_CACHE).then(c => c.put(OFFLINE_NAVIGATION_FALLBACK, clone)).catch(() => {});
     }
@@ -172,7 +189,23 @@ async function navigationStrategy(req) {
   } catch {
     const fallback = await caches.match(OFFLINE_NAVIGATION_FALLBACK);
     if (fallback) return fallback;
-    return new Response('オフラインです', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    return offlineResponse();
+  }
+}
+
+// ローカル作品の navigate (主に iframe)。サブリソースと同じく LOCAL に SWR で置き、
+// オフラインで未キャッシュならシェルではなく 503 を返す。
+async function sketchNavigationStrategy(req) {
+  const res = await staleWhileRevalidate(req, LOCAL_CACHE);
+  return res.status === 504 ? offlineResponse() : res;
+}
+
+// 作品以外の入れ子の navigate (iframe 等)。シェルの保存にも fallback にも使わない。
+async function nestedNavigationStrategy(req) {
+  try {
+    return await fetch(req);
+  } catch {
+    return (await caches.match(req)) || offlineResponse();
   }
 }
 
@@ -255,6 +288,19 @@ function isCacheable(res) {
   if (res.status !== 200) return false;
   if (res.type === 'opaque' || res.type === 'opaqueredirect') return false;
   return true;
+}
+
+function isScopeRoot(url) {
+  return url.origin === self.location.origin &&
+    (url.pathname === SCOPE_PATH || url.pathname === `${SCOPE_PATH}index.html`);
+}
+
+function isLocalSketchPath(url) {
+  return url.pathname.startsWith(`${SCOPE_PATH}sketches/`);
+}
+
+function offlineResponse() {
+  return new Response('オフラインです', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
 function matchSegment(pathname, segment) {
