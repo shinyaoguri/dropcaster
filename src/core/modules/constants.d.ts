@@ -14,6 +14,7 @@ export const PREVIEW_PATH_PREFIX: string;
 
 export const MANUAL_METADATA_FILE: string;
 export const MANUAL_METADATA_TEMPLATE_FILE: string;
+export const OP_METADATA_FILE: string;
 
 export const API_CONFIG: {
   baseUrl: string;

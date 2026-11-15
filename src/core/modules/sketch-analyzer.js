@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from 'fs/promises';
 import { join, resolve, sep } from 'path';
-import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE } from './constants.js';
+import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE, OP_METADATA_FILE } from './constants.js';
 import { t } from '../../cli/i18n/index.js';
 
 /**
@@ -22,6 +22,9 @@ import { t } from '../../cli/i18n/index.js';
  * @property {Set<string>} [__manualMetadataFields]  手動メタデータで明示指定された
  *   フィールド名 (defineProperty で付与される non-enumerable な内部フィールド。
  *   sketches.json には出力されない)
+ * @property {Set<string>} [__explicitMetadataFields]  title / description のうち、作品の
+ *   ディレクトリにある情報源 (手動メタデータ・_op-meta.json・HTML) が値を持っていたもの。
+ *   scan はこれらに既存カタログの値を戻さない (同じく non-enumerable な内部フィールド)
  */
 
 /**
@@ -43,15 +46,18 @@ export async function analyzeSketch(dirName, sketchPath) {
     const htmlContent = await readFile(indexPath, 'utf-8');
     const metadata = extractMetadata(htmlContent, dirName);
     const manualMetadata = await loadManualMetadata(sketchPath, dirName);
+    const opMetadata = await loadOpMetadata(sketchPath, dirName);
 
     // インタラクティブ要素を検出
     const detectedInteractiveElements = await detectInteractiveElements(sketchPath, htmlContent);
     const interactiveElements = manualMetadata.interactiveElements || detectedInteractiveElements;
 
+    // タイトル・説明の優先順位: 手動メタデータ > _op-meta.json > HTML の明示値 > 既定値。
+    // 既存カタログの値はこれらのどれにも値が無いときだけ scan-sketches.js が戻す (#115)
     const sketchInfo = {
       id: dirName,
-      title: manualMetadata.title || metadata.title || dirName,
-      description: manualMetadata.description || metadata.description || `${dirName}${DEFAULT_DESCRIPTION_SUFFIX}`,
+      title: manualMetadata.title || opMetadata.title || metadata.title || dirName,
+      description: manualMetadata.description || opMetadata.description || metadata.description || `${dirName}${DEFAULT_DESCRIPTION_SUFFIX}`,
       path: `${DEFAULT_PATH_PREFIX}${dirName}/`,
       type: manualMetadata.type || metadata.type || detectSketchType(htmlContent, sketchPath),
       tags: manualMetadata.tags || metadata.tags || [],
@@ -63,6 +69,13 @@ export async function analyzeSketch(dirName, sketchPath) {
     };
     Object.defineProperty(sketchInfo, '__manualMetadataFields', {
       value: new Set(Object.keys(manualMetadata)),
+      enumerable: false
+    });
+    Object.defineProperty(sketchInfo, '__explicitMetadataFields', {
+      value: new Set(
+        /** @type {const} */ (['title', 'description'])
+          .filter(field => manualMetadata[field] || opMetadata[field] || metadata[field])
+      ),
       enumerable: false
     });
     return sketchInfo;
@@ -84,6 +97,32 @@ async function loadManualMetadata(sketchPath, dirName) {
   } catch (error) {
     if (error.code !== 'ENOENT') {
       console.warn(`Warning: Could not load ${dirName}/${MANUAL_METADATA_FILE}:`, error.message);
+    }
+    return {};
+  }
+}
+
+/**
+ * dropcaster fetch が書いた _op-meta.json からタイトル・説明を読む。空の値は「値なし」として返さない。
+ * ファイルが無い・読めない・壊れているときは空 (読めない・壊れているときは警告する)。
+ * @param {string} sketchPath
+ * @param {string} dirName
+ * @returns {Promise<{ title?: string, description?: string }>}
+ */
+async function loadOpMetadata(sketchPath, dirName) {
+  try {
+    const parsed = JSON.parse(await readFile(join(sketchPath, OP_METADATA_FILE), 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    /** @type {{ title?: string, description?: string }} */
+    const result = {};
+    for (const field of /** @type {const} */ (['title', 'description'])) {
+      const value = normalizeString(parsed[field]);
+      if (value) result[field] = value;
+    }
+    return result;
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.warn(`Warning: Could not load ${dirName}/${OP_METADATA_FILE}:`, error.message);
     }
     return {};
   }
@@ -159,31 +198,89 @@ function normalizeStringArray(value) {
 function extractMetadata(htmlContent, dirName) {
   const metadata = {};
 
-  // タイトルを抽出
-  const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i);
+  // タイトルを抽出 (属性付きの <title lang="..."> も読む。document.title と同じく空白を詰める)
+  const titleMatch = htmlContent.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
   if (titleMatch) {
-    metadata.title = titleMatch[1].trim();
+    metadata.title = decodeHtmlEntities(titleMatch[1]).replace(/[\t\n\f\r ]+/g, ' ').trim();
   }
 
+  const metaContents = extractMetaContents(htmlContent);
+
   // メタタグからdescriptionを抽出
-  const descMatch = htmlContent.match(/<meta\s+name=["\']description["\']\s+content=["\']([^"']*)["\'][^>]*>/i);
-  if (descMatch) {
-    metadata.description = descMatch[1].trim();
+  const description = metaContents.get('description');
+  if (description !== undefined) {
+    metadata.description = description.trim();
   }
 
   // メタタグからkeywordsを抽出
-  const keywordsMatch = htmlContent.match(/<meta\s+name=["\']keywords["\']\s+content=["\']([^"']*)["\'][^>]*>/i);
-  if (keywordsMatch) {
-    metadata.tags = keywordsMatch[1].split(',').map(tag => tag.trim()).filter(Boolean);
+  const keywords = metaContents.get('keywords');
+  if (keywords !== undefined) {
+    metadata.tags = keywords.split(',').map(tag => tag.trim()).filter(Boolean);
   }
 
   // カスタムメタタグを抽出
-  const sketchTypeMatch = htmlContent.match(/<meta\s+name=["\']sketch-type["\']\s+content=["\']([^"']*)["\'][^>]*>/i);
-  if (sketchTypeMatch) {
-    metadata.type = sketchTypeMatch[1].trim();
+  const sketchType = metaContents.get('sketch-type');
+  if (sketchType !== undefined) {
+    metadata.type = sketchType.trim();
   }
 
   return metadata;
+}
+
+/**
+ * <meta name="..." content="..."> を name (小文字) → content (エンティティをデコード済み) で集める。
+ * 属性の順序・他の属性・改行・引用符の種類 (" / ' / なし) を問わない。同じ name は最初のものを使う。
+ * @param {string} htmlContent
+ * @returns {Map<string, string>}
+ */
+function extractMetaContents(htmlContent) {
+  /** @type {Map<string, string>} */
+  const contents = new Map();
+  // 引用符で囲んだ値の中の > でタグを閉じない
+  const metaTagPattern = /<meta\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
+  for (const [, attributeText] of htmlContent.matchAll(metaTagPattern)) {
+    const attributes = parseAttributes(attributeText);
+    const name = attributes.get('name');
+    const content = attributes.get('content');
+    if (name === undefined || content === undefined) continue;
+    const key = name.trim().toLowerCase();
+    if (!contents.has(key)) contents.set(key, content);
+  }
+  return contents;
+}
+
+/**
+ * タグの属性部分を名前 (小文字) → 値 (エンティティをデコード済み) にする。同じ名前は最初のものを使う。
+ * @param {string} attributeText
+ * @returns {Map<string, string>}
+ */
+function parseAttributes(attributeText) {
+  /** @type {Map<string, string>} */
+  const attributes = new Map();
+  const attributePattern = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  for (const [, rawName, doubleQuoted, singleQuoted, unquoted] of attributeText.matchAll(attributePattern)) {
+    const name = rawName.toLowerCase();
+    if (attributes.has(name)) continue;
+    attributes.set(name, decodeHtmlEntities(doubleQuoted ?? singleQuoted ?? unquoted ?? ''));
+  }
+  return attributes;
+}
+
+/** @type {Record<string, string>} */
+const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+/**
+ * ブラウザがタイトルや属性値として表示する文字に揃えるため、HTML エンティティをデコードする。
+ * 数値参照と主要な名前付き参照だけを扱い、知らない名前はそのまま残す。
+ * @param {string} text
+ * @returns {string}
+ */
+function decodeHtmlEntities(text) {
+  return text.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (match, decimal, hex, name) => {
+    if (name !== undefined) return Object.hasOwn(NAMED_ENTITIES, name) ? NAMED_ENTITIES[name] : match;
+    const codePoint = decimal !== undefined ? Number(decimal) : parseInt(hex, 16);
+    return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+  });
 }
 
 /**
