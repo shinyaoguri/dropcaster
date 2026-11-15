@@ -1,8 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'fs/promises';
+import { spawn } from 'child_process';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { build } from '../src/cli/commands/build.js';
 import { preview } from '../src/cli/commands/preview.js';
 import { normalizeBase } from '../src/cli/utils/base.js';
@@ -10,7 +12,9 @@ import { normalizeBase } from '../src/cli/utils/base.js';
 // build 以外の入口も同じ設置先 base の規則に従う (#175)。
 // - build() を command 無しで呼んでも、options.base を明示すればそれが効く
 // - preview は dropcaster.config.js の base で配信する (--base オプションは無い)
+// - dev はルート配信なので、config に base があっても manifest は '/' で作る
 
+const cli = resolve(fileURLToPath(new URL('../src/cli/index.js', import.meta.url)));
 const originalCwd = process.cwd();
 /** @type {string} */
 let gallery;
@@ -53,6 +57,28 @@ test('preview serves the build under the base from dropcaster.config.js', async 
     assert.match(res.headers.get('content-type') ?? '', /javascript/, 'asset must not fall back to the SPA HTML');
   } finally {
     await server.close();
+  }
+});
+
+test('dev writes a root-scoped manifest even when the config has a base', async () => {
+  const child = spawn(process.execPath, [cli, 'dev', '--port', '0'], { cwd: gallery, stdio: 'ignore' });
+  try {
+    const manifestPath = join(gallery, 'public', 'manifest.json');
+    const deadline = Date.now() + 15_000;
+    /** @type {{ start_url: string, scope: string } | undefined} */
+    let manifest;
+    while (!manifest && Date.now() < deadline) {
+      try {
+        manifest = JSON.parse(await readFile(manifestPath, 'utf-8'));
+      } catch {
+        await new Promise(r => setTimeout(r, 50));
+      }
+    }
+    assert.ok(manifest, 'dev did not write public/manifest.json in time');
+    assert.equal(manifest.start_url, '/');
+    assert.equal(manifest.scope, '/');
+  } finally {
+    child.kill();
   }
 });
 
