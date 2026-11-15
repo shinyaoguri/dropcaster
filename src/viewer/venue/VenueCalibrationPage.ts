@@ -34,7 +34,8 @@ const icon = (path: string, size = 16) => `<svg width="${size}" height="${size}"
  */
 export class VenueCalibrationPage {
   private root = document.createElement('section');
-  private session = new VenueSession();
+  // 離脱の直前に、確定待ちの微調整を確定してから保存待ちを確かめる。
+  private session = new VenueSession(() => this.adjuster?.flush());
   private preview?: ProjectionPreview;
   private projection?: CalibrationProjection;
   private output?: CalibrationWindow;
