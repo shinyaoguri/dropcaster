@@ -164,11 +164,14 @@ export async function downloadAssets(urls, outDir, opts = {}) {
 /**
  * code 文字列内の deckard 絶対 URL を、map にある場合は相対パスに書き換える。
  * map に無い URL はそのまま残す (絶対 URL のままなのでオフライン再生はできない)。
+ * 長い URL から置換する。短い URL が長い URL の前方に一致するとき、短い方を先に置換すると
+ * 長い方の残りがエンコードのまま参照に混ざり、別のファイルを指してしまう。
  */
 export function rewriteCodeWithAssetMap(code, map) {
   if (!map || map.size === 0 || typeof code !== 'string') return code;
   let out = code;
-  for (const [abs, rel] of map.entries()) {
+  const entries = [...map.entries()].sort(([a], [b]) => b.length - a.length);
+  for (const [abs, rel] of entries) {
     out = out.split(abs).join(rel);
   }
   return out;

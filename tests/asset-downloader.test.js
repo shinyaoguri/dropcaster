@@ -180,3 +180,18 @@ test('rewriteCodeWithAssetMap points code at the saved file for an encoded name'
   assert.ok(ref && !ref.startsWith('https:'), rewritten);
   assert.ok(existsSync(join(outDir, decodeURI(ref))), `${ref} does not resolve to a saved file`);
 });
+
+test('rewriteCodeWithAssetMap rewrites a URL that another rewritten URL is a prefix of', async () => {
+  // 短い方を先に取得したので、Map も短い方から並ぶ。短い方で先に置換すると、長い方の残り
+  // `%402x.png` がエンコードのまま残り、decodeURI では `@` に戻らないので別のファイルを指す
+  const short = DIR + 'a';
+  const long = DIR + 'a%402x.png';
+  const { outDir, map } = await download([short, long]);
+  const rewritten = rewriteCodeWithAssetMap(`load('${short}'); load('${long}');`, map);
+  const refs = [...rewritten.matchAll(/load\('([^']+)'\)/g)].map((m) => m[1]);
+  assert.equal(refs.length, 2, rewritten);
+  assert.deepEqual(
+    refs.map((ref) => (existsSync(join(outDir, decodeURI(ref))) ? readFileSync(join(outDir, decodeURI(ref)), 'utf-8') : `(missing: ${ref})`)),
+    [`body:${short}`, `body:${long}`],
+  );
+});
