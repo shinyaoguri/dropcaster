@@ -78,10 +78,30 @@ function inlineFileScripts(doc, files) {
     (whole, pre, _q, src, post) => {
       const name = normalizeFileRef(src);
       if (!files.has(name)) return whole; // 外部 URL や CDN 参照はそのまま
-      return `<script${pre}${embeddedScriptAttrs(files.get(name) ?? '', name)}${post}></script>`;
+      // integrity は落とす: 埋め込む本体は sourceURL の追記や OP の proxy 書き換えで元のハッシュと
+      // 一致せず、残すと error イベントも出さずに実行が止まる (埋め込み前の inline script でも無視されていた)
+      const attrs = (/** @type {string} */ text) => dropAttributes(text, SCRIPT_DROPPED_ATTRS);
+      return `<script${attrs(pre)}${embeddedScriptAttrs(files.get(name) ?? '', name)}${attrs(post)}></script>`;
     },
   );
 }
+
+/** 埋め込んだ script から落とす属性。 */
+const SCRIPT_DROPPED_ATTRS = new Set(['integrity']);
+
+/**
+ * 開始タグの属性列から、指定した名前の属性を値ごと取り除く。それ以外は書かれたまま残す。
+ * 属性を 1 つずつ読み進めるので、別の属性の値に名前が現れても取り除かない。
+ * @param {string} attrText 開始タグ内の属性部分 (前後の空白を含んでよい)
+ * @param {Set<string>} names 取り除く属性名 (小文字)
+ * @returns {string}
+ */
+function dropAttributes(attrText, names) {
+  return attrText.replace(ATTRIBUTE_PATTERN, (attr, name) => (names.has(name.toLowerCase()) ? '' : attr));
+}
+
+/** 開始タグ内の属性 1 つ (名前と、あれば `=` と値)。 */
+const ATTRIBUTE_PATTERN = /([^\s"'>\/=]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
 
 /**
  * スクリプトの内容を `<script>` に埋め込むための属性列を返す。

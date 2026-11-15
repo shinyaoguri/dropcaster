@@ -138,3 +138,27 @@ test('inline script: a file larger than one encoding chunk round-trips intact', 
   assert.ok(new TextEncoder().encode(code).length > 0x8000 * 2, 'fixture spans several chunks');
   assert.ok(script.code.startsWith(code));
 });
+
+test('inline script: integrity is dropped because the embedded body never matches the original hash', () => {
+  // 本体には sourceURL を足し、OP では proxy 書き換え後の内容になるので、ハッシュは必ず一致しない。
+  // 残すとブラウザは error イベントも出さずに実行を止める (埋め込み前の inline script では無視されていた)
+  const html = assemble(
+    [
+      '<script integrity="sha384-abc" type="module" src="m.js"></script>',
+      "<script src='c.js' INTEGRITY='sha256-xyz' defer></script>",
+      '<script data-note="integrity=keep" src="n.js" integrity></script>',
+    ].join('\n'),
+    { 'm.js': '1;', 'c.js': '2;', 'n.js': '3;' },
+  );
+  const scripts = embeddedScripts(html);
+  assert.deepEqual(scripts.map(s => s.file), ['m.js', 'c.js', 'n.js']);
+  assert.ok(scripts.every(s => !s.attrs.has('integrity')), 'no integrity attribute survives');
+  assert.equal(scripts[0].attrs.get('type'), 'module', 'other attributes before it are kept');
+  assert.ok(scripts[1].attrs.has('defer'), 'other attributes after it are kept');
+  assert.equal(scripts[2].attrs.get('data-note'), 'integrity=keep', 'attribute values that mention integrity are untouched');
+});
+
+test('inline script: integrity on external scripts is left alone', () => {
+  const tag = '<script src="https://cdn.example.com/p5.js" integrity="sha384-abc" crossorigin="anonymous"></script>';
+  assert.ok(assemble(tag, {}).includes(tag));
+});
