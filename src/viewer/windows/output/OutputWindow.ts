@@ -256,6 +256,8 @@ export class OutputWindow extends BaseWindow {
   private onKeydown(e: KeyboardEvent): void {
     // 作品へキーを渡す出力では F も作品のもの。全画面はダブルクリックかボタンで切り替える。
     if (this.onSketchKey) return;
+    // Ctrl/Cmd+F (ブラウザの検索) など修飾キー付きと、他が処理済みのキーでは切り替えない。
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'f' || e.key === 'F') this.toggleFullscreen();
   }
 

@@ -346,6 +346,72 @@ async function slideshow(page, base) {
   assert.equal(page.context().pages().length, 1);
   await snapshot(page, base.name + '-slideshow');
 }
+/** スライドショーの ← → Space F は、マッピング編集中と文字入力中には奪わない (#109)。 */
+async function slideshowShortcuts(page) {
+  await page.evaluate(() => {
+    window.fullscreenRequests = 0;
+    Element.prototype.requestFullscreen = function () { window.fullscreenRequests++; return Promise.resolve(); };
+  });
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('index') === '0');
+  const show = () => page.evaluate(() => ({
+    index: new URL(location.href).searchParams.get('index'), number: document.querySelector('#current-sketch-number').textContent,
+    playing: document.querySelector('#play-pause-btn').dataset.i18nTitle === 'slideshow.pause', fullscreen: window.fullscreenRequests,
+  }));
+  const onPage = async key => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(key); };
+  const shortcutsWork = async (fullscreen, when) => {
+    await onPage('ArrowRight'); assert.deepEqual(await show(), { index: '1', number: '2', playing: false, fullscreen }, `${when}: → moves to the next sketch`);
+    await onPage('ArrowLeft'); assert.deepEqual(await show(), { index: '0', number: '1', playing: false, fullscreen }, `${when}: ← moves back`);
+    await onPage('Space'); assert.equal((await show()).playing, true, `${when}: Space resumes`);
+    await onPage('Space'); assert.equal((await show()).playing, false, `${when}: Space pauses`);
+    await onPage('f'); assert.equal((await show()).fullscreen, fullscreen + 1, `${when}: F toggles fullscreen`);
+  };
+  await onPage('Space'); assert.equal((await show()).playing, false, 'Space pauses the slideshow');
+  await shortcutsWork(0, 'before editing');
+  const idle = await show();
+  // 修飾キー付き (Ctrl/Cmd+F の検索、Alt+→ の進むなど) と、他が処理済みのキーは奪わない
+  for (const key of ['Control+f', 'Meta+f', 'Control+ArrowRight', 'Alt+ArrowRight', 'Meta+ArrowRight']) {
+    await onPage(key); assert.deepEqual(await show(), idle, `${key} triggers no slideshow shortcut`);
+  }
+  await page.evaluate(() => { window.claim109 = e => e.preventDefault(); addEventListener('keydown', window.claim109, true); });
+  for (const key of ['ArrowRight', 'Space', 'f']) await onPage(key);
+  assert.deepEqual(await show(), idle, 'keys already handled (defaultPrevented) trigger no slideshow shortcut');
+  await page.evaluate(() => removeEventListener('keydown', window.claim109, true));
+  // target が Element でない keydown (document へ直接 dispatch) でも例外を出さない
+  const thrown = await page.evaluate(() => {
+    const errors = [], onError = e => errors.push(e.message); addEventListener('error', onError);
+    for (const key of ['ArrowRight', 'ArrowLeft']) document.dispatchEvent(new KeyboardEvent('keydown', { key }));
+    removeEventListener('error', onError); return errors;
+  });
+  assert.deepEqual(thrown, [], 'a keydown dispatched on document does not throw');
+  assert.deepEqual(await show(), idle, '→ then ← dispatched on document returns to the first sketch');
+  // 入力欄 (number input・textarea・contenteditable) への文字入力はショートカットにならない
+  await page.evaluate(() => document.body.insertAdjacentHTML('beforeend', '<textarea id="t109"></textarea><div id="c109" contenteditable></div>'));
+  for (const selector of ['#interval-input', '#t109', '#c109']) {
+    await page.locator(selector).focus();
+    for (const key of ['ArrowRight', 'ArrowLeft', 'Space', 'f', 'F']) await page.keyboard.press(key);
+    assert.deepEqual(await show(), idle, `typing in ${selector} triggers no slideshow shortcut`);
+  }
+  assert.equal(await page.locator('#t109').inputValue(), ' fF', 'the textarea receives the typed text');
+  await page.evaluate(() => document.querySelectorAll('#t109, #c109').forEach(e => e.remove()));
+  // 編集を開いている間は、隅の微調整・名前の入力・どこへのキーでも作品は切り替わらない
+  await page.locator('#mapping-btn').click(); await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await page.locator('#add-mapping-btn').click();
+  const before = await state(page);
+  await page.locator('#output-stage [data-corner]').first().click(); await page.keyboard.press('ArrowRight');
+  assert.notDeepEqual((await state(page)).mappings, before.mappings, 'ArrowRight nudges the selected corner');
+  assert.deepEqual(await show(), idle, 'nudging a corner keeps the current sketch');
+  for (const key of ['ArrowRight', 'Space', 'f']) await onPage(key);
+  assert.deepEqual(await show(), idle, 'slideshow shortcuts stay off while the editor is open');
+  await page.locator('.mapping-list-item .name').first().dblclick();
+  const input = page.locator('.mapping-list-item .name-input');
+  await input.press('End'); await input.pressSequentially(' Ff');
+  assert.match(await input.inputValue(), / Ff$/, 'the name field receives Space and F');
+  assert.deepEqual(await show(), idle, 'typing a mapping name triggers no slideshow shortcut');
+  await input.press('Escape');
+  await closeEditor(page);
+  assert.equal(await page.locator('#dc-inline-editor').isHidden(), true);
+  await shortcutsWork(1, 'after closing the editor');
+}
 async function recovery(page) {
   await start(page, 320);
   await page.evaluate(() => { window.oldTrack = document.querySelector('#source-video').srcObject.getVideoTracks()[0]; document.querySelector('#sketch-iframe').contentWindow.gl.getExtension('WEBGL_lose_context').loseContext(); });
@@ -670,7 +736,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, sample })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, sample })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
