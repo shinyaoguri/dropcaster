@@ -26,6 +26,35 @@ export const CONTROL_PANEL_CSS = `
       .dc-banner .dc-banner-text { flex: 1 1 auto; }
       #dc-webgl-lost-banner { background: #ca8a04; }
 
+      /* 編集履歴のバー。3 カラムの上に全幅で置く細い行 (Undo / Redo)。 */
+      .dc-edit-toolbar {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        height: 28px;
+        padding: 0 8px;
+        box-sizing: border-box;
+        background: #222;
+        border-bottom: 1px solid #333;
+      }
+      .dc-history-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 22px;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        background: transparent;
+        color: #ddd;
+        cursor: pointer;
+      }
+      .dc-history-btn:hover:not(:disabled) { background: #3a3a3a; }
+      .dc-history-btn:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
+      .dc-history-btn:disabled { opacity: .35; cursor: default; }
+
       .control-container {
         display: flex;
         width: 100%;

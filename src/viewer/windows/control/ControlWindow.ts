@@ -133,6 +133,7 @@ export class ControlWindow extends BaseWindow {
     this.ctrl.applyExternal(host.getState());
     this.setupHostSubscriptions();
     this.setupControls();
+    this.setupHistoryControls();
     this.updateTestPatternUI(host.getTestPatternKind());
     this.setupMessageListener();
     // state が丸ごと差し替わった時の UI 一括再描画。disposeHost で外れる。
@@ -143,6 +144,7 @@ export class ControlWindow extends BaseWindow {
     this.langUnsub?.();
     this.langUnsub = onLangChange(() => {
       if (this.scopeEl) applyControlTranslations(this.scopeEl);
+      this.renderHistoryButtons();
       // panel 側にも refresh を促す（dynamic な textContent 更新を巻き直す）
       this.mappingsList.invalidate();
       this.mappingsList.rerender();
@@ -177,6 +179,66 @@ export class ControlWindow extends BaseWindow {
     this.mappingsList.rerender();
     // 出力レイアウトタブが表示中なら追従更新（出力をドラッグしてサイズが変わった時など）
     if (this.activeTab === 'layout') this.layoutPanel.refresh();
+  }
+
+  /**
+   * 編集履歴のバー (Undo / Redo) とショートカットを結ぶ。購読とキー操作は disposeHost で外れる。
+   * Cmd/Ctrl+Z で Undo、Shift+Cmd/Ctrl+Z と Ctrl+Y で Redo。入力欄の中では文字入力の Undo に任せる。
+   */
+  private setupHistoryControls(): void {
+    const scope = this.scopeEl;
+    const doc = this.hostDoc;
+    if (!scope || !doc) return;
+    scope.querySelector('#dc-undo-btn')?.addEventListener('click', () => this.runHistory('undo'));
+    scope.querySelector('#dc-redo-btn')?.addEventListener('click', () => this.runHistory('redo'));
+    const onKey = (e: KeyboardEvent) => this.handleHistoryKey(e);
+    doc.addEventListener('keydown', onKey);
+    this.hostUnsubs.push(
+      () => doc.removeEventListener('keydown', onKey),
+      this.ctrl.onHistoryChange(() => this.renderHistoryButtons()),
+    );
+    this.renderHistoryButtons();
+  }
+
+  private runHistory(direction: 'undo' | 'redo'): void {
+    // 矢印キーの連続入力の途中なら、そこまでを 1 件として確定してから戻す。
+    this.keyboardNudge.endNudge();
+    if (direction === 'undo') this.ctrl.undo(); else this.ctrl.redo();
+  }
+
+  private handleHistoryKey(e: KeyboardEvent): void {
+    if (e.defaultPrevented || e.altKey || !(e.metaKey || e.ctrlKey)) return;
+    const key = e.key.toLowerCase();
+    const undo = key === 'z' && !e.shiftKey;
+    const redo = (key === 'z' && e.shiftKey) || (key === 'y' && e.ctrlKey && !e.metaKey && !e.shiftKey);
+    if (!undo && !redo) return;
+    // 名前や数値の入力欄ではブラウザ標準の文字入力 Undo に任せる。
+    const target = e.target as HTMLElement | null;
+    if (target?.isContentEditable || target?.closest?.('input, textarea, select, [contenteditable]')) return;
+    // 確認ダイアログ (閉じる確認など) が開いている間は編集を動かさない。
+    if (this.hostDoc?.querySelector('dialog[open]')) return;
+    e.preventDefault();
+    this.runHistory(redo ? 'redo' : 'undo');
+  }
+
+  /** Undo / Redo ボタンの有効・無効と、ショートカットを含む名前を現在の言語で書き直す。 */
+  private renderHistoryButtons(): void {
+    const scope = this.scopeEl;
+    if (!scope) return;
+    const status = this.ctrl.getHistoryStatus();
+    const mac = /Mac|iPhone|iPad/.test(this.hostDoc?.defaultView?.navigator.platform ?? '');
+    const buttons: Array<[string, boolean, string, string]> = [
+      ['#dc-undo-btn', status.canUndo, t('control.history.undo'), mac ? '⌘Z' : 'Ctrl+Z'],
+      ['#dc-redo-btn', status.canRedo, t('control.history.redo'), mac ? '⇧⌘Z' : 'Ctrl+Shift+Z'],
+    ];
+    for (const [selector, enabled, label, shortcut] of buttons) {
+      const btn = scope.querySelector<HTMLButtonElement>(selector);
+      if (!btn) continue;
+      btn.disabled = !enabled;
+      btn.title = `${label} (${shortcut})`;
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('aria-keyshortcuts', mac ? shortcut.replace('⇧', 'Shift+').replace('⌘', 'Meta+') : shortcut.replace('Ctrl', 'Control'));
+    }
   }
 
   /**

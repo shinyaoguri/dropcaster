@@ -147,6 +147,9 @@ const en = {
     'Click a corner to select → use arrow keys to nudge (Shift+arrow for 10px)',
   'control.sourceSettings.selection': 'Selection',
   'control.reset': 'Reset',
+  'control.history.label': 'Edit history',
+  'control.history.undo': 'Undo',
+  'control.history.redo': 'Redo',
 
   // ツール: テストパターン
   'control.testPattern.title': 'Test pattern',
@@ -356,6 +359,9 @@ const ja: Record<keyof typeof en, string> = {
   'control.sourceSettings.hint': '枠をクリックで選択 → 矢印キーで微調整（Shift+矢印で10px）',
   'control.sourceSettings.selection': '選択領域',
   'control.reset': 'リセット',
+  'control.history.label': '編集履歴',
+  'control.history.undo': '元に戻す',
+  'control.history.redo': 'やり直す',
 
   'control.testPattern.title': 'テストパターン',
   'control.testPattern.hint': 'プロジェクションの校正用にソース映像を一時的に差し替えます',

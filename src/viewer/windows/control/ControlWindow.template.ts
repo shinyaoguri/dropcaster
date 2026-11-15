@@ -20,6 +20,15 @@ export function controlPanelHtml(): string {
         <span class="dc-banner-icon">⚠</span>
         <span class="dc-banner-text" data-i18n-html="control.banner.webglLost">${t('control.banner.webglLost')}</span>
       </div>
+      <!-- 編集履歴のバー。3 カラム全体に効く操作なので、全幅で 3 カラムの上に置く -->
+      <div class="dc-edit-toolbar" role="toolbar" data-i18n-aria-label="control.history.label" aria-label="${t('control.history.label')}">
+        <button type="button" id="dc-undo-btn" class="dc-history-btn" disabled>
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+        </button>
+        <button type="button" id="dc-redo-btn" class="dc-history-btn" disabled>
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+        </button>
+      </div>
       <div class="control-container">
         <!-- ツールカラム -->
         <div class="column tool-column" data-resize-target="tool">
