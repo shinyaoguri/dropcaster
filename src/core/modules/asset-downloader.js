@@ -35,8 +35,9 @@ export function extractDeckardUrls(codeTabs) {
  *
  * 配信サーバは参照 URL をデコードしてからファイルを探すので、保存名はデコード後の名前にし、
  * 参照はその名前をエンコードし直したものにする (#114)。参照に残る `%XX` は、Vite (sirv) の
- * decodeURI でも decodeURIComponent でも同じ文字に戻るものだけになる。ASCII だけの名前は
- * 保存名・参照とも従来と同じ。
+ * decodeURI でも decodeURIComponent でも同じ文字に戻るものだけになる。`%XX` を含まず、
+ * URL の解析でエスケープされる文字 (`^` `{` `}` など) も含まない ASCII の名前は、保存名・参照とも
+ * 従来と同じ。それ以外の名前は保存名が変わる (従来の参照は 404 になっていた)。
  *
  * デコード後の名前は Unicode の NFC に揃える。macOS は NFC と NFD の名前を同じファイルとして
  * 扱う一方、Vite (dev の public 配信・preview) はディレクトリに実在する名前と文字列で照合する。
@@ -45,7 +46,9 @@ export function extractDeckardUrls(codeTabs) {
  * デコードに失敗する名前、デコード後にパス区切り (`/` `\`)・NUL・`.` `..` になる名前は
  * 拒否する (パストラバーサルと意図しないサブディレクトリを防ぐ)。`#` `?` を含む名前も、
  * decodeURI はデコードせず decodeURIComponent はデコードするので、サーバによって参照先が
- * 割れる。どの名前で保存しても全サーバで解決できないので拒否する。拒否した URL は
+ * 割れる。どの名前で保存しても全サーバで解決できないので拒否する。制御文字 (C0・DEL) と
+ * 先頭・末尾の空白も、URL の解析で削られて参照が保存名とずれるので拒否する。最後に、作った
+ * 参照がどちらのデコードでも保存名に戻ることを確かめ、戻らなければ拒否する。拒否した URL は
  * 書き換えずに絶対 URL のまま残る。
  *
  * @param {string} absUrl
@@ -72,19 +75,35 @@ export function assetPathsForUrl(absUrl) {
     } catch {
       return null;
     }
-    if (name === '.' || name === '..' || /[/\\\0#?]/.test(name)) return null;
-    names.push(name);
+    if (name === '.' || name === '..' || /[/\\#?\x00-\x1f\x7f]|^\s|\s$/.test(name)) return null;
+    const ref = encodePathSegment(name);
+    // 不変条件をその場で確かめる: 参照をどちらの方式でデコードしても保存名に戻ること
+    if (!decodesTo(ref, name)) return null;
+    names.push({ name, ref });
   }
   return {
-    filePath: `assets/${names.join('/')}`,
-    urlPath: `assets/${names.map(encodePathSegment).join('/')}`,
+    filePath: `assets/${names.map((n) => n.name).join('/')}`,
+    urlPath: `assets/${names.map((n) => n.ref).join('/')}`,
   };
+}
+
+/**
+ * 参照 ref を Vite (sirv) の decodeURI でも decodeURIComponent でもデコードすると name に戻るか。
+ * @param {string} ref
+ * @param {string} name
+ */
+function decodesTo(ref, name) {
+  try {
+    return decodeURI(ref) === name && decodeURIComponent(ref) === name;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * デコード済みのファイル名を、URL のパス 1 セグメントとしてエンコードする。
  * URL の解析と同じ規則 (空白・非 ASCII などを `%XX` に、`@` `+` などはそのまま) に、
- * `%` 自体のエスケープを加える。`/` `\` `#` `?` は呼び出し側で拒否済み。
+ * `%` 自体のエスケープを加える。`/` `\` `#` `?`・制御文字・先頭末尾の空白は呼び出し側で拒否済み。
  * @param {string} name
  */
 function encodePathSegment(name) {

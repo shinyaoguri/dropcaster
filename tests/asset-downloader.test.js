@@ -97,7 +97,38 @@ for (const [label, name, fileName] of [
   });
 }
 
-test('downloadAssets keeps ASCII-only names and references as before', async () => {
+// 1 文字ずつ差し込んだ名前で不変条件を総当たりする。保存したなら、参照をどちらの方式で
+// デコードしても保存したただ 1 つのファイルに戻る。拒否したなら何も書かない。
+// URL パーサはタブ・改行を削り、末尾の空白・制御文字を削るので、制御文字と境界 (先頭・末尾) を含める。
+test('downloadAssets either rejects a name or rewrites to a URL that resolves to the saved file, for every ASCII char and position', async () => {
+  const chars = [];
+  for (let c = 0; c < 0x80; c++) chars.push(c);
+  const escapes = chars.map((c) => `%${c.toString(16).toUpperCase().padStart(2, '0')}`);
+  // 非 ASCII の空白・制御文字 (C1 制御文字 U+0085・NBSP・全角空白)
+  escapes.push('%C2%85', '%C2%A0', '%E3%80%80');
+  const failures = [];
+  for (const esc of escapes) {
+    for (const name of [`a${esc}b.png`, `${esc}b.png`, `a.png${esc}`]) {
+      const url = DIR + name;
+      const { outDir, map } = await download([url]);
+      const files = listFiles(outDir);
+      const ref = map.get(url);
+      if (ref === undefined) {
+        if (readdirSync(outDir).length !== 0) failures.push(`${name}: rejected but wrote ${JSON.stringify(files)}`);
+        continue;
+      }
+      if (files.length !== 1) { failures.push(`${name}: wrote ${JSON.stringify(files)}`); continue; }
+      for (const [how, decode] of Object.entries({ decodeURI, decodeURIComponent })) {
+        let decoded;
+        try { decoded = decode(ref); } catch { decoded = '(decode error)'; }
+        if (decoded !== files[0]) failures.push(`${name}: saved ${JSON.stringify(files[0])} but ${how}(${JSON.stringify(ref)}) is ${JSON.stringify(decoded)}`);
+      }
+    }
+  }
+  assert.deepEqual(failures, []);
+});
+
+test('downloadAssets keeps plain ASCII names (no %XX, nothing the URL parser escapes) and references as before', async () => {
   const urls = [
     DIR + 'foo.png',
     DIR + 'bar.png?v=3',
@@ -127,6 +158,14 @@ test('downloadAssets writes nothing for names that cannot be saved and served as
     DIR + '%zz.png', // 不正なエンコード
     DIR + 'a%23b.png', // # は decodeURI がデコードせず、サーバ間で参照先が割れる
     DIR + 'a%3Fb.png', // ? も同じ
+    // URL パーサが削る文字: 参照にすると消えて保存名とずれる
+    DIR + 'x.png%20', // 末尾の空白
+    DIR + '%20x.png', // 先頭の空白
+    DIR + 'a%0Ab.png', // LF
+    DIR + 'a%0Db.png', // CR
+    DIR + 't%09.png', // タブ
+    DIR + 'a%01b.png', // その他の C0 制御文字
+    DIR + 'a%7Fb.png', // DEL
   ];
   const { outDir, map } = await download(urls);
   assert.deepEqual([...map.entries()], []);
