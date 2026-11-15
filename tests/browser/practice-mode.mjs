@@ -708,6 +708,9 @@ async function maskSelect(page, base) {
   await at(.5, .56);
   assert.deepEqual(await state(page), selected, 'clicking the active mask keeps the state');
   assert.deepEqual(await history(), selectedHistory, 'clicking the active mask keeps the history');
+  // マスクが当たるのは多角形だけで、外側を押すと背面のマッピングが選ばれる
+  await at(.26, .6);
+  assert.equal((await state(page)).activeId, initial, 'clicking outside the mask polygon selects the mapping behind it');
   // ペン描画中に既存マスクやマッピングを押しても切り替わらず、頂点が増える
   await page.locator('#add-mask-btn').click();
   const draft = (await state(page)).activeId;

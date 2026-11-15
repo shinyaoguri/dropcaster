@@ -156,8 +156,7 @@ export class InactivePreviewPool {
           }
           entry.polyline!.setAttribute('points', m.points.map(p => `${p.x},${p.y}`).join(' '));
         }
-        // drafting 中は pointer-events を切って canvas-host への click（頂点追加）を通す
-        entry.div.style.pointerEvents = drafting ? 'none' : '';
+        // 当たり判定は polyline だけ。drafting 中に canvas-host（頂点追加）へ通すのは CSS（.preview-mask.drafting）が担う
         continue;
       }
 
