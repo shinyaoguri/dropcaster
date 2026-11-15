@@ -25,6 +25,7 @@ import {
   isMappingEnabled,
   isMaskEntry,
   mappingColor,
+  mappingDisplayNames,
   parseMappingsState,
   withActiveOutputSet,
   withActiveSet,
@@ -235,17 +236,13 @@ export class MappingsListPanel {
 
     const canRemoveMapping = state.mappings.length > 1;
     const penDrafting = this.isPenDrafting();
-    // 同 kind 内での通し番号（"Mapping 1, 2, ..." / "Mask 1, 2, ..."）を作るためのカウンタ
-    let mappingNum = 0;
-    let maskNum = 0;
+    const displayNames = mappingDisplayNames(state.mappings);
 
     state.mappings.forEach((m, idx) => {
       const mask = isMaskEntry(m);
-      if (mask) maskNum += 1; else mappingNum += 1;
       const isActive = m.id === state.activeId;
       const enabled = isMappingEnabled(m);
-      const fallbackName = mask ? `Mask ${maskNum}` : `Mapping ${mappingNum}`;
-      const displayName = m.name ?? fallbackName;
+      const displayName = displayNames[idx];
       const color = mappingColor(idx);
 
       const item = doc.createElement('div');

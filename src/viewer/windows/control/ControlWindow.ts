@@ -369,6 +369,7 @@ ${CONTROL_PANEL_CSS}
       this.sourceCrop.attach(scope, this.hostDoc, this.ctrl, {
         getSourceVideo: () => this.sourceVideo,
         setKeyboardSourceSelection: () => this.keyboardNudge.setSelection({ type: 'source' }),
+        onActivate: (id) => this.ctrl.replaceState(withActiveSet(this.ctrl.getState(), id)),
         onSourceChanged: () => {
           this.mappingArea.refreshVideoCrop();
           this.inactivePreviews.sync(this.ctrl.getState());
