@@ -11,7 +11,7 @@
 //   - 新しい版が待機しているあいだは、操作画面にだけ通知を出し、押したときだけ
 //     APPLY_UPDATE_MESSAGE を送って 1 度だけ再読み込みする
 //   - 遅延読み込みのチャンクが取れない (デプロイで旧版の資産が消えた) ときも、
-//     自動で再読み込みせず、再読み込みを案内する。オフラインなら接続の確認を案内する
+//     自動で再読み込みせず、再読み込みを案内する (原因は断定しない)。オフラインなら接続の確認を案内する
 //     (watchLazyLoadFailures)
 
 import { getConfig } from '../config.js';
@@ -33,13 +33,14 @@ export function registerServiceWorker(): void {
 
 /**
  * 遅延読み込み (3D プレビュー・会場ページ) のチャンクが取れなかったら、再読み込みを案内する。
- * オフラインで取れなかったときは、新しい版ではなく接続の確認を案内する (原因が違うため)。
+ * navigator.onLine が true でも外に出られない会場はあるので、新しい版か接続の不安定かは断定しない。
+ * オフラインと分かるときは接続の確認を案内する。
  * 失敗そのものは各画面のエラー処理に任せる (preventDefault しない)。SW の有無によらず、
  * 開いたままのページが旧版の資産を参照していれば起きるので、登録とは別に受ける。
  */
 export function watchLazyLoadFailures(): void {
   window.addEventListener('vite:preloadError', () => {
-    showUpdateNotice(navigator.onLine === false ? 'offline' : 'reload', reloadPage);
+    showUpdateNotice(navigator.onLine === false ? 'offline' : 'loadFailed', reloadPage);
   });
 }
 

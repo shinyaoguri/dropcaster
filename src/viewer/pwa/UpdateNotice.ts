@@ -2,18 +2,21 @@
 // 出力ウィンドウは about:blank の別 document なので、ここで足す要素は映らない。
 //
 //   update  新しい版の SW が待機している。押すと適用して再読み込みする
-//   reload  このページは旧版のまま、新しい版がすでに出ている (遅延読み込みの失敗・別タブでの適用)。
-//           押すと再読み込みする
-//   offline オフラインで遅延読み込みの画面が取れなかった。接続を確かめてから再読み込みしてもらう
+//   reload      このページは旧版のまま、別のタブで新しい版が適用された。押すと再読み込みする
+//   loadFailed  遅延読み込みの画面が取れなかった (オンライン)。新しい版か接続の不安定か、原因は
+//               断定できない (Wi-Fi にはつながるが外に出られない会場もある)。押すと再読み込みする
+//   offline     オフラインで遅延読み込みの画面が取れなかった。接続を確かめてから再読み込みしてもらう
 //
 // どれも押したときだけ再読み込みする。上演中に勝手に再読み込みすると出力ウィンドウが閉じるため。
 
 import './updateNotice.css';
 import { onLangChange, t, type MessageKey } from '../i18n/index.js';
 
-export type UpdateNoticeState = 'update' | 'reload' | 'offline';
+export type UpdateNoticeState = 'update' | 'reload' | 'loadFailed' | 'offline';
 
-const TEXT: Record<UpdateNoticeState, MessageKey> = { update: 'pwa.available', reload: 'pwa.reloadRequired', offline: 'pwa.offline' };
+const TEXT: Record<UpdateNoticeState, MessageKey> = {
+  update: 'pwa.available', reload: 'pwa.reloadRequired', loadFailed: 'pwa.loadFailed', offline: 'pwa.offline',
+};
 
 let element: HTMLElement | null = null;
 let state: UpdateNoticeState | null = null;
