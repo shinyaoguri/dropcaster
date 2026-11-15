@@ -159,6 +159,11 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 オフラインのホームにシェルが、各作品に自分の HTML が返ることをルート配信とサブパス配信で確かめる
 （viewer のビルドは不要。`CHROMIUM_PATH` も同じく使える）。SW テンプレートを変えたら実行する。
 
+`npm run test:routes` は両 viewer エントリで、Gist / OpenProcessing の取得や作品 iframe の読み込みを
+保留したまま別ルートへ移り、遅れて届いた成功・失敗の結果が今の画面を上書きしないこと、破棄した
+作品ページが離脱警告などのリスナーを付け直さないことを確かめる。ルート遷移・`App.ts` の世代確認・
+`SketchPageController` の後始末を変えたら実行する。`ROUTES_CASE=<ケース名>` で 1 件だけ流せる。
+
 `npm run test:projection-runtime` は両 viewer エントリで編集状態の停止・再開、テストパターン中の
 作品切替、WebGL ロストからの復旧とキャンセルを検証する。実際の UI / popup / captureStream と
 決定的な作品 fixture を使い、CI でも実行する。既存 Chromium は同じく `CHROMIUM_PATH` で指定する。

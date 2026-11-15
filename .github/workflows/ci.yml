@@ -57,6 +57,10 @@ jobs:
         timeout-minutes: 5
         run: npm run test:sw
 
+      - name: Verify stale async routes and destroyed pages stay inert (both viewer entries)
+        timeout-minutes: 5
+        run: npm run test:routes
+
       - name: Verify CSS/GPU projection and preview lifecycle
         timeout-minutes: 5
         run: npm run test:poc
