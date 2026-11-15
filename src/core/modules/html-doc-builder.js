@@ -100,6 +100,19 @@ function dropAttributes(attrText, names) {
   return attrText.replace(ATTRIBUTE_PATTERN, (attr, name) => (names.has(name.toLowerCase()) ? '' : attr));
 }
 
+/**
+ * 開始タグの属性列に、指定した名前の属性があるか。
+ * @param {string} attrText
+ * @param {string} name 属性名 (小文字)
+ * @returns {boolean}
+ */
+function hasAttribute(attrText, name) {
+  for (const m of attrText.matchAll(ATTRIBUTE_PATTERN)) {
+    if (m[1].toLowerCase() === name) return true;
+  }
+  return false;
+}
+
 /** 開始タグ内の属性 1 つ (名前と、あれば `=` と値)。 */
 const ATTRIBUTE_PATTERN = /([^\s"'>\/=]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
 
@@ -136,19 +149,43 @@ function utf8ToBase64(text) {
 
 /**
  * `<link rel="stylesheet" href="ファイル名">` をインライン <style> に置き換える。
+ * media・title など style 要素でも意味を持つ属性は引き継ぎ、link だけの属性は落とす。
+ * data: URL の <link> にはしない (CSS 内の相対 url() が data: 基準になって壊れるため)。
  * @param {string} doc
  * @param {Map<string, string>} files
  * @returns {string}
  */
 function inlineFileStylesheets(doc, files) {
-  return doc.replace(/<link\b[^>]*>/gi, (whole) => {
+  return doc.replace(/<link\b([^>]*)>/gi, (whole, attrText) => {
     if (!/\brel\s*=\s*(["']?)stylesheet\1/i.test(whole)) return whole;
     const m = /\bhref\s*=\s*(["'])([^"']+)\1/i.exec(whole);
     if (!m) return whole;
     const name = normalizeFileRef(m[2]);
     if (!files.has(name)) return whole;
-    return `<style>\n${files.get(name)}\n</style>`;
+    // disabled の link は適用されない。style には同じ意味の属性が無いので埋め込まずに残す
+    if (hasAttribute(attrText, 'disabled')) return whole;
+    const kept = dropAttributes(attrText.replace(/\/\s*$/, ''), LINK_ONLY_ATTRS).trim();
+    return `<style${kept ? ` ${kept}` : ''}>\n${escapeStyleText(files.get(name) ?? '')}\n</style>`;
   });
+}
+
+/**
+ * <link> にだけ意味がある (style 要素に移すと意味が変わるか無意味な) 属性。
+ * type は style では text/css 以外だと無効になるので、内容が CSS と分かっている以上は落とす。
+ */
+const LINK_ONLY_ATTRS = new Set([
+  'rel', 'href', 'type', 'integrity', 'crossorigin', 'referrerpolicy', 'as', 'hreflang',
+  'sizes', 'fetchpriority', 'imagesrcset', 'imagesizes', 'color',
+]);
+
+/**
+ * <style> の中身 (RAWTEXT) が `</style` で途中終了しないよう、CSS のエスケープ `<\/style` にする。
+ * CSS では `\/` は `/` と同じ値なので、文字列やコメント内の意味は変わらない。
+ * @param {string} css
+ * @returns {string}
+ */
+function escapeStyleText(css) {
+  return String(css).replace(/<\/(style)/gi, '<\\/$1');
 }
 
 /**

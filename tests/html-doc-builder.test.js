@@ -162,3 +162,46 @@ test('inline script: integrity on external scripts is left alone', () => {
   const tag = '<script src="https://cdn.example.com/p5.js" integrity="sha384-abc" crossorigin="anonymous"></script>';
   assert.ok(assemble(tag, {}).includes(tag));
 });
+
+// 組み立て後の <style> を { attrs, css } で返す。
+function styles(html) {
+  return [...html.matchAll(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi)].map(m => ({ attrs: attrsOf(`<script${m[1]}>`), css: m[2] }));
+}
+
+test('inline stylesheet: media, title and other style-meaningful attributes are carried to <style>', () => {
+  const html = assemble(
+    [
+      '<link rel="stylesheet" href="screen.css">',
+      '<link rel="stylesheet" media="print" href="print.css" title="Print" id="print-css">',
+      "<link href='dark.css' rel='stylesheet' media='(prefers-color-scheme: dark)' type='text/css' integrity='sha384-x' crossorigin>",
+    ].join('\n'),
+    { 'screen.css': 'a{}', 'print.css': 'b{}', 'dark.css': 'c{}' },
+  );
+  const [screen, print, dark] = styles(html);
+  assert.equal(screen.attrs.size, 0, 'a plain stylesheet stays a plain <style>');
+  assert.equal(print.attrs.get('media'), 'print');
+  assert.equal(print.attrs.get('title'), 'Print');
+  assert.equal(print.attrs.get('id'), 'print-css');
+  assert.equal(dark.attrs.get('media'), '(prefers-color-scheme: dark)');
+  for (const name of ['rel', 'href', 'type', 'integrity', 'crossorigin']) {
+    assert.ok(!dark.attrs.has(name), `link-only attribute ${name} is not carried`);
+  }
+  assert.equal(dark.css.trim(), 'c{}');
+});
+
+test('inline stylesheet: </style in the CSS cannot end the <style> element', () => {
+  const css = '#t::after { content: "</style><p id=leak>"; } /* </STYLE > */ .x{}';
+  const html = assemble('<head><link rel="stylesheet" href="s.css"></head><body><p id="after">after</p></body>', { 's.css': css });
+  const all = styles(html);
+  assert.equal(all.length, 1);
+  // `\/` は CSS のエスケープで `/` と同じ値。大文字小文字を問わず、残りの CSS も同じ <style> に収まる
+  assert.equal(all[0].css.trim(), '#t::after { content: "<\\/style><p id=leak>"; } /* <\\/STYLE > */ .x{}');
+  assert.ok(html.includes('<p id="after">after</p>'));
+});
+
+test('inline stylesheet: a disabled stylesheet link is not turned into an always-applied <style>', () => {
+  const tag = '<link rel="stylesheet" href="alt.css" disabled>';
+  const html = assemble(tag, { 'alt.css': 'body{color:red}' });
+  assert.ok(html.includes(tag), 'left as written');
+  assert.equal(styles(html).length, 0);
+});
