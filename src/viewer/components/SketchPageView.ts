@@ -130,7 +130,7 @@ export class SketchPageView {
     // updateFullscreenState() を呼んでくる ＝ この View 自身は fullscreenchange を購読しない）
     fullscreenBtn.addEventListener('click', () => {
       const container = document.querySelector('.fullscreen-sketch-container') as HTMLDivElement;
-      if (document.fullscreenElement) {
+      if (this.isFullscreen) {
         document.exitFullscreen();
       } else if (!this.isProjecting) { // 編集中は全画面に入らない（ボタンも出さない）
         container.requestFullscreen().catch(err => {
@@ -142,7 +142,7 @@ export class SketchPageView {
     // ウィンドウ開くボタンのイベント
     openWindowsBtn.addEventListener('click', () => {
       // 全画面中はマッピングに入らない（ボタンも出さない）。編集中に押されたときは閉じる側なので通す
-      if (document.fullscreenElement && !this.isProjecting) return;
+      if (this.isFullscreen && !this.isProjecting) return;
       this.openWindowsToggleCallback?.();
     });
   }
@@ -166,12 +166,20 @@ export class SketchPageView {
     this.isFullscreen = isFullscreen;
     this.updateFullscreenUI(isFullscreen);
     this.updateModeEntries();
+    // 編集中に全画面へ入ったら（⛶ の要求が編集の開始より後に確定した、作品の iframe が要求した等）すぐ抜ける
+    if (isFullscreen && this.isProjecting) this.leaveFullscreen();
+  }
+
+  private leaveFullscreen(): void {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => { /* 既に抜けている */ });
   }
 
   /**
    * 作品の全画面とマッピング編集は両立させない (#103)。全画面はマッピングをせずにそのまま映すための表示で、
    * 両方が重なると編集も作品も見えない画面になりうる。全画面中はマッピングの入口を、
    * 編集中は全画面の入口を、表示もフォーカスもできないようにする（hidden と disabled）。
+   * 入口を閉じるだけでは要求の確定待ちや作品からの要求ですり抜けるので、状態でも守る
+   * （編集を始めるとき・編集中に全画面へ入ったときに全画面を抜ける）。
    */
   private updateModeEntries(): void {
     const set = (id: string, unavailable: boolean) => {
@@ -205,6 +213,7 @@ export class SketchPageView {
     this.isProjecting = active;
     document.querySelector('.fullscreen-sketch-container')?.classList.toggle('projecting', active);
     this.updateModeEntries();
+    if (active) this.leaveFullscreen();
 
     if (active) {
       this.renderSourceCropBoxes();

@@ -321,16 +321,16 @@ body {
   z-index: 1000;
 }
 
-/* フルスクリーン時のカーソル制御 */
-.fullscreen-sketch-container.fullscreen {
+/* フルスクリーン時のカーソル制御（編集中は全画面にしないが、念のため編集の上ではカーソルを消さない） */
+.fullscreen-sketch-container.fullscreen:not(.projecting) {
   cursor: none !important;
 }
 
-.fullscreen-sketch-container.fullscreen * {
+.fullscreen-sketch-container.fullscreen:not(.projecting) * {
   cursor: none !important;
 }
 
-.fullscreen-sketch-container.fullscreen iframe {
+.fullscreen-sketch-container.fullscreen:not(.projecting) iframe {
   cursor: none !important;
 }
 
