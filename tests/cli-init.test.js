@@ -3,10 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { writeProjectFiles } from '../src/cli/commands/init.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli', 'index.js');
 
@@ -167,6 +169,64 @@ test('複数の書き込み先をふさぐ親 (sketches) が通常ファイル�
   assert.equal(output.match(/^ {2}sketches$/gm)?.length, 1, output);
   assert.match(output, /^ {2}README\.md$/m);
   assertNothingWritten(project, ['README.md']);
+});
+
+// 権限で書き込みを失敗させるので、権限を無視する root と、POSIX の権限が無い Windows では飛ばす
+const cannotDenyWrite = process.platform === 'win32' || process.getuid?.() === 0;
+
+test('書き込みの途中で失敗したら、この実行で作ったファイルとディレクトリを消し、再実行できる', { skip: cannotDenyWrite }, (t) => {
+  const ws = makeWorkspace(t);
+  const project = join(ws, 'exhibit');
+  put(project, 'LICENSE', 'MIT\n');
+  const locked = join(project, 'sketches/sample-sketch');
+  mkdirSync(locked, { recursive: true });
+  // public/icon.svg から README.md までは書けるが、sample-sketch の中には書けない
+  chmodSync(locked, 0o555);
+  // 途中で失敗しても一時ディレクトリを消せるように戻す (先に消されていれば何もしない)
+  t.after(() => existsSync(locked) && chmodSync(locked, 0o755));
+
+  const failed = runInit(ws, 'exhibit');
+
+  assert.notEqual(failed.status, 0, failed.output);
+  assert.match(failed.output, /EACCES/);
+  assertNothingWritten(project, []);
+  // この実行で作った public/ は消え、元からあったものは残る
+  assert.equal(existsSync(join(project, 'public')), false);
+  assert.equal(existsSync(locked), true);
+  assert.equal(readFileSync(join(project, 'LICENSE'), 'utf-8'), 'MIT\n');
+
+  // 原因を取り除けば、自分が書きかけたファイルに妨げられずにやり直せる
+  chmodSync(locked, 0o755);
+  const retried = runInit(ws, 'exhibit');
+
+  assert.equal(retried.status, 0, retried.output);
+  for (const rel of TEMPLATE_FILES) {
+    assert.equal(existsSync(join(project, rel)), true, `${rel} が生成されるはず`);
+  }
+});
+
+test('書き込みが途中で失敗したら、この実行で作った多段のディレクトリまで消す', async (t) => {
+  const ws = makeWorkspace(t);
+  const project = join(ws, 'new-parent', 'gallery');
+  // 2 件目は 1 件目のために作ったディレクトリと同じパスなので、wx の作成が EEXIST で失敗する
+  const files = /** @type {Array<[string, string]>} */ ([['public/icon.svg', 'svg'], ['public', 'clash']]);
+
+  await assert.rejects(writeProjectFiles(project, ['', 'public'], files), { code: 'EEXIST' });
+
+  assert.equal(existsSync(join(ws, 'new-parent')), false);
+});
+
+test('書き込みの失敗を戻すとき、元からあったディレクトリと他人が置いたファイルは残す', async (t) => {
+  const ws = makeWorkspace(t);
+  const project = join(ws, 'gallery');
+  put(project, 'notes.txt', 'mine\n');
+  const files = /** @type {Array<[string, string]>} */ ([['public/icon.svg', 'svg'], ['notes.txt', 'template']]);
+
+  await assert.rejects(writeProjectFiles(project, ['', 'public'], files), { code: 'EEXIST' });
+
+  assert.equal(readFileSync(join(project, 'notes.txt'), 'utf-8'), 'mine\n');
+  assert.equal(existsSync(join(project, 'public')), false);
+  assert.equal(existsSync(project), true);
 });
 
 test('存在しないディレクトリへの初期化は 7 件を生成して成功する', (t) => {

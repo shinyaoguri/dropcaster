@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -69,6 +69,60 @@ async function findNonDirectoryAncestor(root, rel) {
     if (!stats.isDirectory()) return prefix;
   }
   return null;
+}
+
+/**
+ * projectPath 配下に dirs を作り、files を書き出す。既存のファイルは上書きしない
+ * (wx。検査から書き込みまでの間に作られたファイルも EEXIST で失敗する)。
+ * 途中で失敗したら、この呼び出しで作ったファイルと (空の) ディレクトリだけを消してから
+ * 例外を投げ直す。書きかけを残すと、再実行時に自分が書いたものを衝突として報告してしまうため。
+ * @param {string} projectPath
+ * @param {string[]} dirs projectPath からの相対パス。親を先に並べる
+ * @param {Array<[string, string]>} files projectPath からの相対パスと内容
+ */
+export async function writeProjectFiles(projectPath, dirs, files) {
+  /** @type {string[]} この呼び出しで作ったディレクトリ (作った順) */
+  const createdDirs = [];
+  /** @type {string[]} この呼び出しで作ったファイル */
+  const createdFiles = [];
+  try {
+    for (const dir of dirs) {
+      const target = join(projectPath, dir);
+      // recursive の mkdir は、最初に作ったディレクトリを返す (何も作らなければ undefined)
+      const first = await fs.mkdir(target, { recursive: true });
+      if (first) {
+        const below = relative(first, target);
+        createdDirs.push(first);
+        if (below) {
+          let current = first;
+          for (const segment of below.split(sep)) {
+            current = join(current, segment);
+            createdDirs.push(current);
+          }
+        }
+      }
+    }
+    for (const [rel, content] of files) {
+      const target = join(projectPath, rel);
+      // 作成と書き込みを分け、作成に成功した時点で自分のファイルとして記録する
+      const handle = await fs.open(target, 'wx');
+      createdFiles.push(target);
+      try {
+        await handle.writeFile(content, 'utf-8');
+      } finally {
+        await handle.close();
+      }
+    }
+  } catch (error) {
+    for (const file of createdFiles.reverse()) {
+      await fs.rm(file, { force: true }).catch(() => {});
+    }
+    // 空でなければ rmdir は失敗するので、ほかの誰かが置いたものは消さない
+    for (const dir of createdDirs.reverse()) {
+      await fs.rmdir(dir).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 export async function init(options) {
@@ -298,14 +352,8 @@ function windowResized() {
 
     // sketches/ は作品ソース、public/ は dropcaster scan が sketches.json / sketches/ / previews/ を
     // 生成する先。どちらも git にコミットして GitHub Pages のデプロイに含める
-    for (const dir of ['', 'sketches', 'sketches/sample-sketch', 'public', 'public/sketches', 'public/previews']) {
-      await fs.mkdir(join(projectPath, dir), { recursive: true });
-    }
-
-    // 検査から書き込みまでの間に作られたファイルも上書きしない (wx は既存なら EEXIST で失敗する)
-    for (const [rel, content] of files) {
-      await fs.writeFile(join(projectPath, rel), content, { encoding: 'utf-8', flag: 'wx' });
-    }
+    const dirs = ['', 'sketches', 'sketches/sample-sketch', 'public', 'public/sketches', 'public/previews'];
+    await writeProjectFiles(projectPath, dirs, files);
 
     spinner.succeed(t('init.created'));
 
