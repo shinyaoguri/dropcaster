@@ -12,7 +12,7 @@ import { normalizeBase } from '../src/cli/utils/base.js';
 // build 以外の入口も同じ設置先 base の規則に従う (#175)。
 // - build() を command 無しで呼んでも、options.base を明示すればそれが効く
 // - preview は dropcaster.config.js の base で配信する (--base オプションは無い)
-// - dev はルート配信なので、config に base があっても manifest は '/' で作る
+// - dev はルート配信なので、config に base・start_url・scope があっても manifest は '/' で作る
 
 const cli = resolve(fileURLToPath(new URL('../src/cli/index.js', import.meta.url)));
 const originalCwd = process.cwd();
@@ -60,26 +60,42 @@ test('preview serves the build under the base from dropcaster.config.js', async 
   }
 });
 
-test('dev writes a root-scoped manifest even when the config has a base', async () => {
-  const child = spawn(process.execPath, [cli, 'dev', '--port', '0'], { cwd: gallery, stdio: 'ignore' });
+/**
+ * dev を起動して public/manifest.json が書かれるのを待つ。
+ * @param {object} config dropcaster.config.js の中身
+ * @returns {Promise<{ start_url: string, scope: string }>}
+ */
+async function devManifest(config) {
+  const devGallery = await mkdtemp(join(tmpdir(), 'dropcaster-dev-base-'));
+  await writeFile(join(devGallery, 'dropcaster.config.js'), `export default ${JSON.stringify(config)};\n`);
+  const child = spawn(process.execPath, [cli, 'dev', '--port', '0'], { cwd: devGallery, stdio: 'ignore' });
   try {
-    const manifestPath = join(gallery, 'public', 'manifest.json');
+    const manifestPath = join(devGallery, 'public', 'manifest.json');
     const deadline = Date.now() + 15_000;
-    /** @type {{ start_url: string, scope: string } | undefined} */
-    let manifest;
-    while (!manifest && Date.now() < deadline) {
+    while (Date.now() < deadline) {
       try {
-        manifest = JSON.parse(await readFile(manifestPath, 'utf-8'));
+        return JSON.parse(await readFile(manifestPath, 'utf-8'));
       } catch {
         await new Promise(r => setTimeout(r, 50));
       }
     }
-    assert.ok(manifest, 'dev did not write public/manifest.json in time');
-    assert.equal(manifest.start_url, '/');
-    assert.equal(manifest.scope, '/');
+    assert.fail('dev did not write public/manifest.json in time');
   } finally {
     child.kill();
+    await rm(devGallery, { recursive: true, force: true });
   }
+}
+
+test('dev writes a root-scoped manifest even when the config has a base', async () => {
+  const manifest = await devManifest({ base: '/exhibit/' });
+  assert.equal(manifest.start_url, '/');
+  assert.equal(manifest.scope, '/');
+});
+
+test('dev pins start_url and scope to / even when the config sets them for the deployed base', async () => {
+  const manifest = await devManifest({ base: '/exhibit/', start_url: '/exhibit/', scope: '/exhibit/' });
+  assert.equal(manifest.start_url, '/');
+  assert.equal(manifest.scope, '/');
 });
 
 test('normalizeBase boundaries match the viewer and reject relative / URL bases', () => {

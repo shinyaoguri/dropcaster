@@ -6,7 +6,6 @@ import chalk from 'chalk';
 import { loadConfig } from '../utils/config.js';
 import { resolveBuildInfo } from '../../core/build-info.js';
 import { generateManifest } from '../utils/manifest.js';
-import { manifestConfigFor } from '../utils/base.js';
 import { generateServiceWorker } from '../utils/service-worker.js';
 import { promises as fs } from 'fs';
 import { t } from '../i18n/index.js';
@@ -30,9 +29,10 @@ export async function dev(options) {
     // ※ dev は localhost なので main.ts は SW を登録しない（--host で LAN IP 経由のときだけ登録される）。
     //   そのためのファイルとして置いておくだけ。dev は毎回新しい cacheVersion で出して、
     //   古いキャッシュを activate 時に確実に捨てる。
-    // dev はルート配信 (下の BASE_URL も '/') なので、config に設置先 base があっても
-    // manifest は '/' で作る。config のまま渡すと start_url '/'・scope '/exhibit/' と食い違う (#175)。
-    const devConfig = manifestConfigFor(config, '/');
+    // dev はルート配信 (下の BASE_URL も '/') なので、config に設置先 base・start_url・scope が
+    // あっても manifest は '/' で作る。config のまま渡すと start_url '/'・scope '/exhibit/' のように
+    // 食い違う (#175)。build で明示された start_url・scope を尊重するのは build 側だけ。
+    const devConfig = { ...config, base: '/', start_url: '/', scope: '/' };
     await generateManifest(devConfig, publicDir);
     await generateServiceWorker(publicDir, { cacheVersion: `dev-${Date.now()}` });
     
