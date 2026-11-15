@@ -287,7 +287,7 @@ OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（�
 
 オプション:
 - `-o, --output <dir>` - 出力ディレクトリ (デフォルト: "dist")
-- `-b, --base <path>` - ベースURLパス (デフォルト: "/")
+- `--base <path>` - ベースURLパス。未指定なら `dropcaster.config.js` の `base`、それも無ければ "/"。末尾の "/" は補われる
 
 ### `dropcaster dev`
 開発サーバーを起動。
