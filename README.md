@@ -239,7 +239,7 @@ OPENPROCESSING_API_TOKEN=your_token npm run scan
 scan のたびに、`sketches.json` の `title` / `description` を次の順で決めます（上ほど優先、値の無い情報源は飛ばす）。
 
 1. 手動メタデータ（作品ディレクトリの `dropcaster.meta.json`、下の例）
-2. その scan の `--fetch-userdata` で OpenProcessing Public API から取った値
+2. その scan の `--fetch-userdata` で OpenProcessing Public API から取った値（取得に失敗した作品は前回の `sketches.json` の値を保つ）
 3. `_op-meta.json` の `title` / `description`（`dropcaster fetch` が取り込み時に API から保存したもの。空文字は値なし）
 4. `index.html` の `<title>` / `<meta name="description">`
 5. 前回の `sketches.json` の値（上のどれにも値が無いときだけ残す）
