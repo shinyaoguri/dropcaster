@@ -6,6 +6,7 @@ import { build as viteBuild } from 'vite';
 import chalk from 'chalk';
 import ora from 'ora';
 import { loadConfig } from '../utils/config.js';
+import { resolveBuildInfo } from '../../core/build-info.js';
 import { generateManifest } from '../utils/manifest.js';
 import { generateServiceWorker } from '../utils/service-worker.js';
 import { copyPublicFiles } from '../utils/files.js';
@@ -150,6 +151,7 @@ export async function build(options) {
       },
       define: {
         'import.meta.env.DROPCASTER_CONFIG': JSON.stringify(config),
+        'import.meta.env.DROPCASTER_BUILD': JSON.stringify(resolveBuildInfo(rootDir)),
         'import.meta.env.BASE_URL': JSON.stringify(options.base)
       }
     });

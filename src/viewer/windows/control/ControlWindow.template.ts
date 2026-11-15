@@ -10,8 +10,10 @@
  * を呼んで属性に書かれたキーから現在言語のテキストを書き戻す。
  */
 import { t, type MessageKey } from '../../i18n/index.js';
+import { buildInfoHtml } from '../../utils/buildInfo';
 
 export function controlPanelHtml(): string {
+  const buildInfoMarkup = buildInfoHtml();
   return `
       <div class="dc-control-shell">
       <div id="dc-webgl-lost-banner" class="dc-banner dc-banner-warn" hidden role="status">
@@ -143,6 +145,8 @@ export function controlPanelHtml(): string {
             </div>
 
           </div>
+          <!-- 動いている版。tool-content の外に置き、スクロールしても下端に見えるようにする -->
+          ${buildInfoMarkup ? `<footer class="dc-build-info">${buildInfoMarkup}</footer>` : ''}
         </div>
 
         <!-- tool ↔ source の区切りリサイザ -->

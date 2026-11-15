@@ -9,12 +9,17 @@
 
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { resolveBuildInfo } from '../../src/core/build-info.js';
 
 const projectRoot = resolve(__dirname, '..', '..');
 
 export default defineConfig({
   root: __dirname,
   base: '/',
+  // ツールカラム下端に出す版 (#154)
+  define: {
+    'import.meta.env.DROPCASTER_BUILD': JSON.stringify(resolveBuildInfo(projectRoot)),
+  },
   publicDir: resolve(__dirname, 'public'),
   resolve: {
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json'],
