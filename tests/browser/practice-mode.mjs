@@ -820,6 +820,171 @@ async function confirmClose(page, base) {
   assert.equal(await page.locator('#dc-inline-editor').isHidden(), true, 'confirming closes the editor');
   assert.equal(await page.evaluate(() => window.confirmTrack.readyState), 'ended', 'confirming releases the stream as before');
 }
+/**
+ * 単独作品ページでは、作品の全画面 (⛶) とマッピング編集を両立させない (#103)。
+ * 全画面中はマッピングへ入る操作を、編集中は全画面へ入る操作を出さず、どの順でも黒一色にならない。
+ * gallery の作品 (/a) と、OP / Gist と同じ srcdoc 経路の作品 (/b) で確かめる。
+ */
+async function fullscreenMapping(page, base) {
+  const mapping = page.locator('#open-windows-btn'), fullscreen = page.locator('#fullscreen-btn');
+  // 編集か作品のどちらかが描画されているか (黒一色でないか)
+  const shown = p => p.evaluate(() => {
+    const rendered = el => {
+      if (!el) return false;
+      const style = getComputedStyle(el), rect = el.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    return { editor: rendered(document.querySelector('#dc-inline-editor')), sketch: rendered(document.querySelector('#sketch-iframe')) };
+  });
+  const notBlack = async (p, when) => {
+    const s = await shown(p);
+    assert.ok(s.editor || s.sketch, `${when}: the editor or the sketch is visible (got ${JSON.stringify(s)})`);
+    return s;
+  };
+  // ボタンが出ていないこと、キーボード (フォーカスして Enter) でも押せないこと。
+  // 結果の確認 (黒画面にならないか等) を先に行い、出ていない・フォーカスできないことは最後に確かめる
+  const pressViaKeyboard = async (p, button) => {
+    const shownBefore = await p.locator(button).isVisible();
+    const focused = await p.evaluate(selector => { const b = document.querySelector(selector); b.focus(); return document.activeElement === b; }, button);
+    if (focused) { await p.keyboard.press('Enter'); await p.waitForTimeout(500); } // 全画面の切り替えは非同期
+    return () => {
+      assert.equal(shownBefore, false, `${button} is not shown`);
+      assert.equal(focused, false, `${button} cannot take keyboard focus`);
+    };
+  };
+  // 全画面の出入りは非同期で、fullscreenElement が先に変わり、fullscreenchange (.fullscreen の付け外し) が後から届く。
+  // 起きるべき変化は固定の待ちでなく、状態がそろうまで期限付きで待つ (遅い CI でも同じ結果になるように)。
+  // 起きないことの確認 (全画面に入っていない等) だけは、固定の待ちのあとに確かめる
+  const until = async (p, predicate, message, arg) => {
+    try { await p.waitForFunction(predicate, arg, { timeout: 5000 }); } catch {
+      const now = await p.evaluate(() => ({ fullscreen: document.fullscreenElement && (document.fullscreenElement.id || document.fullscreenElement.className),
+        container: document.querySelector('.fullscreen-sketch-container').className, seen: window.fs103,
+        mapping: document.querySelector('#open-windows-btn').hidden, editor: !document.querySelector('#dc-inline-editor').hidden }));
+      assert.fail(`${message} (state: ${JSON.stringify(now)})`);
+    }
+  };
+  const enterFullscreen = (p, message) => until(p, () => document.fullscreenElement !== null
+    && document.querySelector('.fullscreen-sketch-container.fullscreen') && document.querySelector('#open-windows-btn').hidden, message);
+  const leaveFullscreen = (p, message) => until(p, () => document.fullscreenElement === null
+    && !document.querySelector('.fullscreen-sketch-container.fullscreen') && !document.querySelector('#open-windows-btn').hidden
+    && !document.querySelector('#fullscreen-btn').hidden, message);
+  const isFullscreen = p => p.evaluate(() => document.fullscreenElement !== null);
+  const editorOpen = p => p.locator('#dc-inline-editor').isVisible();
+  const layout = p => p.evaluate(() => {
+    const c = document.querySelector('.fullscreen-sketch-container');
+    return { classes: [...c.classList].sort().join(' '), buttons: ['#fullscreen-btn', '#open-windows-btn'].map(s => {
+      const b = document.querySelector(s), style = getComputedStyle(b);
+      return `${s}:${style.display}/${style.opacity}/${style.pointerEvents}/${b.disabled}/${b.hidden}`;
+    }).join(' ') };
+  });
+  const initial = await layout(page);
+
+  // 1) 全画面にすると、マッピングの入口は出ず、キーボードでも入れない
+  await fullscreen.click(); await enterFullscreen(page, '⛶ enters fullscreen and hides the mapping entry');
+  await page.mouse.move(600, 400); await page.mouse.move(620, 420); // 全画面中に隠れた UI を出す
+  await snapshot(page, base.name + '-fullscreen');
+  const mappingHidden = await pressViaKeyboard(page, '#open-windows-btn');
+  await notBlack(page, 'fullscreen');
+  assert.equal(await editorOpen(page), false, 'fullscreen: no key opens the editor');
+  assert.equal(await isFullscreen(page), true);
+  assert.deepEqual(await shown(page), { editor: false, sketch: true });
+  mappingHidden();
+  // 2) 全画面を ⛶ で抜けると、レイアウトとマッピングの入口が元に戻る
+  await fullscreen.click(); await leaveFullscreen(page, '⛶ leaves fullscreen and brings both entries back');
+  assert.deepEqual(await layout(page), initial, 'leaving fullscreen restores the layout');
+  // 3) 編集中は全画面の入口が出ず、キーボード (⛶ へのフォーカス、F キー) でも全画面にならない
+  await mapping.click(); await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth > 0);
+  await snapshot(page, base.name + '-editing');
+  const fullscreenHidden = await pressViaKeyboard(page, '#fullscreen-btn');
+  for (const key of ['f', 'F']) { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(key); }
+  await page.waitForTimeout(500);
+  await notBlack(page, 'editing');
+  assert.equal(await isFullscreen(page), false, 'editing: no key enters fullscreen');
+  assert.deepEqual(await shown(page), { editor: true, sketch: false });
+  fullscreenHidden();
+  // 4) 想定外の経路で編集中に全画面へ入っても、すぐ抜けて編集を見せ続ける。コンテナでも作品の iframe でも同じ
+  const settle = p => p.waitForTimeout(500); // 全画面の出入りは非同期
+  const fsElement = p => p.evaluate(() => document.fullscreenElement && (document.fullscreenElement.id || document.fullscreenElement.className));
+  // 編集画面の中央で実際に指している要素のカーソル (none ならカーソルが消えている)
+  const editorCursor = p => p.evaluate(() => {
+    const r = document.querySelector('#dc-inline-editor').getBoundingClientRect();
+    const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return el && document.querySelector('#dc-inline-editor').contains(el) ? getComputedStyle(el).cursor : `not on the editor: ${el?.tagName}`;
+  });
+  const gesture = (p, action) => p.evaluate(action => {
+    // Playwright のクリックをユーザー操作として、その処理の中で全画面を要求する
+    document.querySelector('#fs103')?.remove();
+    const b = document.createElement('button'); b.id = 'fs103'; b.textContent = 'fs';
+    b.style.cssText = 'position:fixed;left:0;bottom:0;z-index:99999';
+    b.onclick = new Function(action); document.body.append(b);
+    window.fs103 = []; // fullscreenchange ごとの全画面要素 (入ったことの確認)
+    window.fsName = el => el && (el.id || (el.classList.contains('fullscreen-sketch-container') ? 'container' : el.tagName));
+    document.onfullscreenchange = () => window.fs103.push(window.fsName(document.fullscreenElement));
+  }, action).then(() => p.locator('#fs103').click());
+  // 全画面に一度入り (fullscreenchange で要素 name)、その後に抜けた (null) ところまで待つ
+  const enteredThenLeft = name => until(page, name => window.fs103.join() === `${name},` && document.fullscreenElement === null
+    && !document.querySelector('.fullscreen-sketch-container.fullscreen'), `${name} fullscreen entered while editing is exited at once`, name);
+  await gesture(page, `document.querySelector('.fullscreen-sketch-container').requestFullscreen()`);
+  await enteredThenLeft('container');
+  assert.deepEqual(await shown(page), { editor: true, sketch: false }, 'the editor stays after the container fullscreen');
+  await gesture(page, `document.querySelector('#sketch-iframe').contentDocument.documentElement.requestFullscreen()`);
+  await enteredThenLeft('sketch-iframe');
+  assert.deepEqual(await shown(page), { editor: true, sketch: false }, 'the editor stays after the sketch fullscreen');
+  // 全画面のクラス (.fullscreen) が編集中に付いても、編集は隠れず、カーソルも消えない (黒画面の規則が戻ると赤くなる)
+  await page.evaluate(() => document.querySelector('.fullscreen-sketch-container').classList.add('fullscreen'));
+  await notBlack(page, 'the fullscreen class while editing');
+  assert.notEqual(await editorCursor(page), 'none', 'the fullscreen class while editing keeps the cursor on the editor');
+  await page.evaluate(() => { document.querySelector('.fullscreen-sketch-container').classList.remove('fullscreen'); document.querySelector('#fs103').remove(); });
+  // 5) 編集を閉じると全画面の入口が戻り、全画面に入れる
+  await closeEditor(page);
+  assert.deepEqual(await layout(page), initial, 'closing the editor restores the layout');
+  await fullscreen.click(); await enterFullscreen(page, '⛶ enters fullscreen again after the editor closes');
+  await page.evaluate(() => document.exitFullscreen()); await leaveFullscreen(page, 'leaving that fullscreen brings both entries back');
+  // 6) ⛶ の全画面が確定する前に (同じ操作の中で) マッピングを押しても、全画面と編集は重ならない
+  await gesture(page, `document.querySelector('#fullscreen-btn').click(); document.querySelector('#open-windows-btn').click();`);
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth > 0);
+  assert.equal(await editorOpen(page), true, '⛶ then mapping in one task opens the editor');
+  // ⛶ の要求は編集の開始より後に確定する。入って抜けるところまで待ち、その後は全画面に戻らないことを確かめる
+  await until(page, () => window.fs103.join() === 'container,' && document.fullscreenElement === null, '⛶ then mapping in one task leaves fullscreen');
+  await settle(page);
+  assert.equal(await fsElement(page), null, '⛶ then mapping in one task stays out of fullscreen');
+  assert.notEqual(await editorCursor(page), 'none', '⛶ then mapping in one task keeps the cursor on the editor');
+  await page.evaluate(() => document.querySelector('#fs103').remove());
+  await closeEditor(page);
+  assert.deepEqual(await layout(page), initial, 'closing that editor restores the layout');
+
+  // 7) 作品の読み込み前に ⛶ を押しても、全画面の間はマッピングの入口が出ない
+  const early = await page.context().newPage();
+  let releaseSketch; const held = new Promise(resolve => { releaseSketch = resolve; });
+  await early.route('**/sketches/a/index.html', async route => { await held; await route.fulfill({ contentType: 'text/html', body: sketchHtml() }); });
+  await early.goto(base.url + '/a'); await early.waitForSelector('#fullscreen-btn');
+  await early.locator('#fullscreen-btn').click(); await early.waitForFunction(() => document.fullscreenElement !== null);
+  await enterFullscreen(early, 'fullscreen before the sketch loads is reflected and hides the mapping entry');
+  await early.mouse.move(600, 400); await early.mouse.move(620, 420);
+  assert.equal(await early.locator('#open-windows-btn').isVisible(), false, 'fullscreen before the sketch loads hides the mapping entry');
+  releaseSketch();
+  await early.waitForFunction(() => document.querySelector('#sketch-iframe')?.contentDocument?.querySelector('canvas'));
+  assert.equal(await early.locator('#open-windows-btn').isVisible(), false, 'the mapping entry stays hidden after the sketch loads');
+  // 読み込み後の作品の上でマウスを動かしても、自動で隠れた UI が戻る (作品の document の操作も拾う)
+  await early.waitForFunction(() => document.querySelector('#fullscreen-btn').style.opacity === '0', null, { timeout: 6000 });
+  await early.mouse.move(700, 450); await early.mouse.move(720, 470);
+  await early.waitForFunction(() => document.querySelector('#fullscreen-btn').style.opacity === '1', null, { timeout: 2000 })
+    .catch(() => assert.fail('moving over the loaded sketch shows the hidden UI again'));
+  await early.evaluate(() => document.exitFullscreen());
+  await leaveFullscreen(early, 'leaving fullscreen brings the mapping entry back');
+  await early.close();
+
+  // OP / Gist と同じ srcdoc 経路の作品でも、全画面中はマッピングに入れない
+  const other = await page.context().newPage();
+  await other.goto(base.url + '/b'); await other.waitForSelector('#sketch-iframe');
+  await other.locator('#fullscreen-btn').click(); await enterFullscreen(other, 'srcdoc: ⛶ enters fullscreen and hides the mapping entry');
+  await other.mouse.move(600, 400); await other.mouse.move(620, 420);
+  const srcdocHidden = await pressViaKeyboard(other, '#open-windows-btn');
+  await notBlack(other, 'srcdoc fullscreen');
+  assert.equal(await editorOpen(other), false, 'srcdoc fullscreen: no key opens the editor');
+  srcdocHidden();
+  await other.close();
+}
 
 
 try {
@@ -831,7 +996,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, maskSelect, sample, slideshowDraft })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, maskSelect, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));

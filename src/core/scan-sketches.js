@@ -108,6 +108,8 @@ async function scanSketches(options = {}) {
     const sketches = [];
     const currentSketchNames = new Set();
     const sketchIds = []; // ユーザー情報取得用の数値スケッチID
+    /** @type {string[]} sketchIds に載せた作品のディレクトリ名 */
+    const fetchTargetNames = [];
     const newSketches = [];
     /** @type {string[]} public へのコピーに失敗した作品 */
     const copyFailures = [];
@@ -126,19 +128,15 @@ async function scanSketches(options = {}) {
       const sketchInfo = await analyzeSketch(entry.name, sketchPath);
       if (!sketchInfo) continue;
 
-      // 既存の情報を復元（手動メタデータで明示指定されていないフィールドのみ）
+      // 既存の情報を復元（手動メタデータで明示指定されていないフィールドのみ）。
+      // title / description は、作品のディレクトリの情報源 (手動メタデータ・_op-meta.json・HTML) の
+      // どれにも値が無いときだけ戻す。今回の --fetch-userdata の値は後で上書きする (#115)
       const existing = existingSketchData[entry.name];
       if (existing) {
         const manual = sketchInfo.__manualMetadataFields || new Set();
+        const explicit = sketchInfo.__explicitMetadataFields || new Set();
         if (existing.userData && !manual.has('userData')) sketchInfo.userData = existing.userData;
-        if (existing.title && existing.title !== entry.name && !manual.has('title')) sketchInfo.title = existing.title;
-        if (
-          existing.description &&
-          existing.description !== `${entry.name}${DEFAULT_DESCRIPTION_SUFFIX}` &&
-          !manual.has('description')
-        ) {
-          sketchInfo.description = existing.description;
-        }
+        restoreCatalogText(sketchInfo, existing, explicit);
         if (existing.sketchUrl && !manual.has('sketchUrl')) sketchInfo.sketchUrl = existing.sketchUrl;
         if (existing.previewGif && !manual.has('previewGif')) sketchInfo.previewGif = existing.previewGif;
       }
@@ -171,9 +169,12 @@ async function scanSketches(options = {}) {
       if (isNewInWatch) newSketches.push(entry.name);
 
       // 数値（または "sketch" + 数値）のディレクトリ名は OpenProcessing のスケッチ ID とみなす
-      if (/^\d+$/.test(entry.name)) sketchIds.push(entry.name);
-      else if (entry.name.startsWith('sketch') && /^\d+$/.test(entry.name.slice('sketch'.length))) {
+      if (/^\d+$/.test(entry.name)) {
+        sketchIds.push(entry.name);
+        fetchTargetNames.push(entry.name);
+      } else if (entry.name.startsWith('sketch') && /^\d+$/.test(entry.name.slice('sketch'.length))) {
         sketchIds.push(entry.name.slice('sketch'.length));
+        fetchTargetNames.push(entry.name);
       }
 
       const shouldGeneratePreview = previewToolsOk && (generatePreviews || (watchMode && newSketches.includes(entry.name)));
@@ -196,6 +197,8 @@ async function scanSketches(options = {}) {
     if (fetchUserData && sketchIds.length > 0) {
       console.error(t('scan.fetchingMetadata', { count: sketchIds.length }));
       const padTotal = String(sketchIds.length).length;
+      /** @type {Set<string>} API から値を取れた作品 */
+      const fetchedNames = new Set();
       try {
         const userDataResults = await fetchUserDataForSketches(sketchIds, {
           ...fetchOptions,
@@ -222,6 +225,7 @@ async function scanSketches(options = {}) {
           // 数値ID と "sketch" プレフィックス付きID の両方で照合
           const idx = sketches.findIndex(s => s.id === userData.sketchId || s.id === `sketch${userData.sketchId}`);
           if (idx === -1) continue;
+          fetchedNames.add(sketches[idx].id);
           const manual = sketches[idx].__manualMetadataFields || new Set();
           if (!manual.has('title') && userData.sketchTitle && userData.sketchTitle !== 'Unknown Title') {
             sketches[idx].title = userData.sketchTitle;
@@ -240,6 +244,16 @@ async function scanSketches(options = {}) {
         console.error(t('scan.metadataResult', { ok: updated, ng: errors, total: userDataResults.length }));
       } catch (error) {
         console.error(t('scan.metadataFetchFailed', { error: error.message }));
+      }
+
+      // 取得に失敗した作品 (404・通信の失敗・レート制限など) は、前回のカタログの title / description を
+      // 保つ。前回 API から取った値を、汎用の <title> などで落とさないため (手動メタデータは除く)
+      for (const name of fetchTargetNames) {
+        if (fetchedNames.has(name)) continue;
+        const sketchInfo = sketches.find(s => s.id === name);
+        const existing = existingSketchData[name];
+        if (!sketchInfo || !existing) continue;
+        restoreCatalogText(sketchInfo, existing, sketchInfo.__manualMetadataFields || new Set());
       }
     }
 
@@ -304,6 +318,25 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     },
   };
   scanSketches(options);
+}
+
+/**
+ * 前回のカタログの title / description を戻す。前回の値が既定値 (ディレクトリ名 / 既定の説明文) なら戻さない。
+ * @param {{ id: string, title: string, description: string }} sketchInfo
+ * @param {{ title?: string, description?: string }} existing 前回のカタログの項目
+ * @param {Set<string>} keep 今の値を保ち、戻さない項目
+ */
+function restoreCatalogText(sketchInfo, existing, keep) {
+  if (existing.title && existing.title !== sketchInfo.id && !keep.has('title')) {
+    sketchInfo.title = existing.title;
+  }
+  if (
+    existing.description &&
+    existing.description !== `${sketchInfo.id}${DEFAULT_DESCRIPTION_SUFFIX}` &&
+    !keep.has('description')
+  ) {
+    sketchInfo.description = existing.description;
+  }
 }
 
 function getArgValue(args, name) {

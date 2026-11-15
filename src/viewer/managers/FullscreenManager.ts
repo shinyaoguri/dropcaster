@@ -20,6 +20,8 @@ export class FullscreenManager {
   initialize(): void {
     document.addEventListener('fullscreenchange', this.boundFullscreenChange);
     this.mouseHandler.initialize(this.handleMouseActivity);
+    // 購読より前に全画面へ入っていたら、今の状態を反映する
+    if (!!document.fullscreenElement !== this.isFullscreen) this.handleFullscreenChange();
   }
 
   private handleFullscreenChange(): void {
