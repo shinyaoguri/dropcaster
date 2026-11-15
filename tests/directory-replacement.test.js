@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isReplacementResidue, replaceDirectory } from '../src/core/modules/directory-replacement.js';
+import {
+  isReplacementResidue,
+  readPreviousMarker,
+  removeReplacedPrevious,
+  replaceDirectory,
+  REPLACEMENT_MARKER_FILE,
+} from '../src/core/modules/directory-replacement.js';
 
 const permissionSkip = process.platform === 'win32' || process.getuid?.() === 0
   ? 'file permissions are not enforced for this user / platform'
@@ -115,10 +121,33 @@ test('when only removing the previous version fails, the replacement succeeds an
       assert.ok(isReplacementResidue(result.leftover.path.slice(root.length + 1)), result.leftover.path);
       assert.match(result.leftover.error.message, /EACCES|EPERM/);
       assert.deepEqual(await readdir(target), ['new.txt']);
+      // 旧版には「差し替え済み」の印が残り、後で消してよいと分かる
+      assert.deepEqual(await readPreviousMarker(result.leftover.path), { target: 'work', reason: 'replaced' });
+      // 消せるようになれば removeReplacedPrevious で片付く。途中で失敗しても印は最後まで残る
+      await assert.rejects(removeReplacedPrevious(result.leftover.path));
+      assert.deepEqual(await readPreviousMarker(result.leftover.path), { target: 'work', reason: 'replaced' });
+      await chmod(join(result.leftover.path, 'locked'), 0o755);
+      await removeReplacedPrevious(result.leftover.path);
+      assert.deepEqual(await readdir(root), ['work']);
     } finally {
       for (const name of await readdir(root)) {
         await chmod(join(root, name, 'locked'), 0o755).catch(() => {});
       }
     }
+  });
+});
+
+test('readPreviousMarker trusts only a marker written for that very directory', async () => {
+  await withTempDir(async (root) => {
+    const previous = join(root, '.dc-previous-0123456789abcdef');
+    await mkdir(previous);
+    assert.equal(await readPreviousMarker(previous), null, 'no marker');
+    const write = (marker) => writeFile(join(previous, REPLACEMENT_MARKER_FILE), JSON.stringify(marker));
+    await write({ previous: '.dc-previous-0123456789abcdef', target: 'sketch1', reason: 'not-restored' });
+    assert.deepEqual(await readPreviousMarker(previous), { target: 'sketch1', reason: 'not-restored' });
+    await write({ previous: '.dc-previous-ffffffffffffffff', target: 'sketch1', reason: 'replaced' });
+    assert.equal(await readPreviousMarker(previous), null, 'a marker from another move is stale');
+    await write({ previous: '.dc-previous-0123456789abcdef', target: 'sketch1', reason: 'other' });
+    assert.equal(await readPreviousMarker(previous), null, 'unknown reason');
   });
 });
