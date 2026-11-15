@@ -126,16 +126,19 @@ async function scanSketches(options = {}) {
       const sketchInfo = await analyzeSketch(entry.name, sketchPath);
       if (!sketchInfo) continue;
 
-      // 既存の情報を復元（手動メタデータで明示指定されていないフィールドのみ）
+      // 既存の情報を復元（手動メタデータで明示指定されていないフィールドのみ）。
+      // title / description は、作品のディレクトリの情報源 (手動メタデータ・_op-meta.json・HTML) の
+      // どれにも値が無いときだけ戻す。今回の --fetch-userdata の値は後で上書きする (#115)
       const existing = existingSketchData[entry.name];
       if (existing) {
         const manual = sketchInfo.__manualMetadataFields || new Set();
+        const explicit = sketchInfo.__explicitMetadataFields || new Set();
         if (existing.userData && !manual.has('userData')) sketchInfo.userData = existing.userData;
-        if (existing.title && existing.title !== entry.name && !manual.has('title')) sketchInfo.title = existing.title;
+        if (existing.title && existing.title !== entry.name && !explicit.has('title')) sketchInfo.title = existing.title;
         if (
           existing.description &&
           existing.description !== `${entry.name}${DEFAULT_DESCRIPTION_SUFFIX}` &&
-          !manual.has('description')
+          !explicit.has('description')
         ) {
           sketchInfo.description = existing.description;
         }
