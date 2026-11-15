@@ -254,9 +254,13 @@ async function keysCase(page) {
   const take = (name = 'source') => page.evaluate(n => window.runtimeRegression[n].contentWindow.keyLog.splice(0), name);
   const downUp = log => log.filter(k => k.type !== 'keypress').map(k => [k.type, k.key, k.code, k.which]);
   await popup.evaluate(() => {
+    // 全画面の切り替え (開始・解除) を数える。CI の Chrome は実際に全画面へ入るので、
+    // 2 回目の切り替えは exitFullscreen になる。
     window.fullscreenCalls = 0;
     const request = Element.prototype.requestFullscreen;
     Element.prototype.requestFullscreen = function () { window.fullscreenCalls++; return request.call(this); };
+    const exit = Document.prototype.exitFullscreen;
+    Document.prototype.exitFullscreen = function () { window.fullscreenCalls++; return exit.call(this); };
     // 出力ウィンドウ側の転送 listener より後に登録し、元のイベントの defaultPrevented を見る。
     window.prevented = [];
     addEventListener('keydown', e => window.prevented.push([e.key, e.defaultPrevented]));
