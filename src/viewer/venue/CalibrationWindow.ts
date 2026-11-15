@@ -1,3 +1,4 @@
+import { randomId } from '../utils/randomId';
 import { OutputWindow } from '../windows/output/OutputWindow';
 import { defaultMappingsState } from '../utils/mappingTransform';
 import type { CalibrationProjection } from './CalibrationProjection';
@@ -14,7 +15,7 @@ export interface CalibrationWindowHooks {
 export class CalibrationWindow {
   private output: OutputWindow | null = null;
   private monitor?: ReturnType<typeof setInterval>;
-  private readonly id = `venue-calibration-${crypto.randomUUID()}`;
+  private readonly id = `venue-calibration-${randomId()}`;
   private readonly projection: CalibrationProjection;
   private readonly changed: () => void;
   private readonly hooks: CalibrationWindowHooks;

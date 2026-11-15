@@ -1,3 +1,4 @@
+import { randomId } from '../utils/randomId';
 import { t } from '../i18n/index';
 import { button, field, label, quaternion, rotation, vectorFields } from './controls';
 import { defaultScene, MAX_VENUE_OBJECTS, type VenueObject, type VenueScene, type Vec3 } from './project';
@@ -79,7 +80,7 @@ export class VenueBuilder {
   duplicate(): void {
     const objects = this.objects(), source = objects.find(o => o.id === this.selected);
     if (!source || objects.length >= MAX_VENUE_OBJECTS) return;
-    const object = structuredClone(source); object.id = crypto.randomUUID();
+    const object = structuredClone(source); object.id = randomId();
     object.name = `${source.name.slice(0, 180)} ${t('practice.copySuffix')}`;
     object.position[0] = Math.min(10000, object.position[0] + 0.25); object.position[2] = Math.min(10000, object.position[2] + 0.25);
     this.selected = object.id; this.change({ ...this.scene, objects: [...objects, object] }, false);
