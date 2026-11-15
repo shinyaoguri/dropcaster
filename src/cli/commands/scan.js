@@ -97,8 +97,14 @@ export async function scan(options = {}) {
         for (const line of lines) {
           const trimmedLine = line.trim();
           
+          // 子プロセスの警告は既定の表示でも利用者に届ける (進捗表示を崩さないようスピナーを避けて出す)
+          if (isChildWarning(trimmedLine)) {
+            if (spinner) spinner.clear();
+            console.error(chalk.yellow(trimmedLine));
+            if (spinner) spinner.render();
+          }
           // フレームキャプチャの進捗表示（\rで上書き）
-          if (trimmedLine.includes('Frame') && trimmedLine.includes('%')) {
+          else if (trimmedLine.includes('Frame') && trimmedLine.includes('%')) {
             if (spinner) {
               spinner.stop();
               spinner = null;
@@ -175,9 +181,11 @@ export async function scan(options = {}) {
         console.error(chalk.red(t('scan.failed', { code })));
         if (stderr) {
           console.error(chalk.red('Error details:'));
-          console.error(stderr);
+          // 📋 の行と警告は進捗の表示で出し済みなので繰り返さない
+          const shownLive = (line) => line.includes('📋') || isChildWarning(line.trim());
+          console.error(stderr.split('\n').filter(line => !shownLive(line)).join('\n'));
         }
-        reject(new Error(`Scan failed with exit code ${code}`));
+        reject(new ScanFailedError(code));
       }
     });
 
@@ -189,6 +197,27 @@ export async function scan(options = {}) {
       reject(err);
     });
   });
+}
+
+/**
+ * scan-sketches.js が出す警告の行か (console.warn の `Warning: …`)。
+ * @param {string} line 前後の空白を除いた行
+ */
+function isChildWarning(line) {
+  return line.startsWith('Warning:');
+}
+
+/**
+ * 子プロセスの scan が非 0 で終了した。原因はここまでに表示済みなので、CLI はスタックを出さずに
+ * 終了コードだけ返す (src/cli/index.js)。
+ */
+export class ScanFailedError extends Error {
+  /** @param {number | null} code 子プロセスの終了コード (シグナル終了なら null) */
+  constructor(code) {
+    super(`Scan failed with exit code ${code}`);
+    this.name = 'ScanFailedError';
+    this.exitCode = typeof code === 'number' && code > 0 ? code : 1;
+  }
 }
 
 // scan:resetコマンド用のヘルパー関数
