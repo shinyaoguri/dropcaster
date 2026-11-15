@@ -323,6 +323,16 @@ export const CONTROL_PANEL_CSS = `
         background: #333;
       }
 
+      /* 押せないことは地色を変えずにボタンごと淡くして示す。BaseWindow の generic な
+         button:disabled の塗りと .tool-button:hover より詳細度を上げる (#186)。 */
+      .tool-button:disabled,
+      .tool-button:disabled:hover {
+        background: #444;
+        border-color: #555;
+        opacity: .45;
+        cursor: not-allowed;
+      }
+
       .section-hint {
         margin: 0 0 8px 0;
         font-size: 11px;

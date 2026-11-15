@@ -369,6 +369,13 @@ async function outputs(page) {
   const first = (await state(page)).outputs[0].id;
   for (let i = 0; i < 3; i++) { await page.locator('#add-output-btn').click(); await page.locator('#add-mapping-btn').click(); }
   assert.equal(await page.locator('#add-output-btn').isDisabled(), true);
+  // 上限で押せない「出力を追加」も、汎用 button:disabled の明るい塗りではなく通常の地色のまま淡くする (#186)
+  const addLook = () => page.locator('#add-output-btn').evaluate(el => { el.getAnimations().forEach(a => a.finish()); const s = getComputedStyle(el); return { background: s.backgroundColor, opacity: Number(s.opacity) }; });
+  const disabledAdd = await addLook();
+  assert.equal(disabledAdd.background, 'rgb(68, 68, 68)', 'a disabled tool button keeps its own fill');
+  assert.ok(disabledAdd.opacity < 0.5, 'a disabled tool button dims itself');
+  await page.locator('#add-output-btn').hover();
+  assert.equal((await addLook()).background, 'rgb(68, 68, 68)', 'hovering a disabled tool button does not highlight it');
   assert.equal(page.context().pages().length, 1, 'adding a practice output does not open a popup');
   const last = (await state(page)).outputs[3].id;
   await page.locator('#practice-output').selectOption(last);
