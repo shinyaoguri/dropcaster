@@ -16,9 +16,15 @@
 //
 // 出力: 完成した HTML 文字列。iframe.srcdoc にそのまま代入できる。
 
-import { assembleDocumentFromFiles, findIndexFileName, escapeAttr } from './html-doc-builder.js';
+import { assembleDocumentFromFiles, findIndexFileName, escapeAttr, embeddedScriptAttrs } from './html-doc-builder.js';
 
 const DECKARD_HOST = 'https://deckard.openprocessing.org/';
+
+/**
+ * p5js モードで全タブを連結したコードに付ける名前 (data-dc-file と sourceURL)。
+ * 連結後のコードは OP 上のどのタブとも 1 対 1 に対応しないので、合成した名前にする。
+ */
+const P5JS_JOINED_FILE = 'op-sketch.js';
 
 // 型は隣の op-sketch-builder.d.ts が正本（JSDoc からはこの typedef 経由で参照する）
 /** @typedef {import('./op-sketch-builder.js').OpSketchMeta} OpSketchMeta */
@@ -69,9 +75,7 @@ ${shims ? `<script>\n${shims}\n<\/script>` : ''}
 <script src="${escapeAttr(meta.engineURL || '')}"><\/script>
 ${libsHtml}
 </head><body>
-<script>
-${codeRewritten}
-<\/script>
+<script ${embeddedScriptAttrs(codeRewritten, P5JS_JOINED_FILE)}><\/script>
 </body></html>`;
 }
 
@@ -92,7 +96,7 @@ export function rewriteAssetUrls(text, assetProxyBaseUrl) {
  * p5js モードの「全タブを 1 本の <script> に連結」方式は適用できない。
  * またコードタブは fileBase (deckard CDN) 上にファイルとして存在しない
  * （存在するのはアップロードされたアセットだけ）ため、相対パス参照の解決は
- * html-doc-builder に委ねる（インライン展開 + fetch/XHR shim）。
+ * html-doc-builder に委ねる（script は data: URL・CSS はインラインで埋め込み + fetch/XHR shim）。
  *
  * ここが担うのは OP 固有の詰め替えだけ:
  *   - code タブ (title/code) → 仮想ファイル表
@@ -311,7 +315,16 @@ const ERROR_SHIM = `(function(){
   function post(level, msg, extra){
     try { parent.postMessage(Object.assign({ __dcOp: true, level: level, msg: String(msg) }, extra || {}), '*'); } catch(e) {}
   }
-  window.addEventListener('error', function(e){ post('error', e.message || e.error || 'unknown', { file: e.filename, line: e.lineno }); });
+  // 埋め込んだ script のエラーは filename が data: URL になるので、data-dc-file の元のファイル名に読み替える
+  function fileOf(url){
+    if (typeof url !== 'string' || url.indexOf('data:') !== 0) return url;
+    var scripts = document.getElementsByTagName('script');
+    for (var i = 0; i < scripts.length; i++) {
+      if (scripts[i].src === url) return scripts[i].getAttribute('data-dc-file') || 'data:';
+    }
+    return 'data:';
+  }
+  window.addEventListener('error', function(e){ post('error', e.message || e.error || 'unknown', { file: fileOf(e.filename), line: e.lineno }); });
   window.addEventListener('unhandledrejection', function(e){ post('rejection', (e.reason && (e.reason.message || e.reason)) || 'rejection'); });
   ['log','warn','error','info'].forEach(function(lv){
     var orig = console[lv].bind(console);
