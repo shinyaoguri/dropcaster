@@ -38,6 +38,10 @@ export function extractDeckardUrls(codeTabs) {
  * decodeURI でも decodeURIComponent でも同じ文字に戻るものだけになる。ASCII だけの名前は
  * 保存名・参照とも従来と同じ。
  *
+ * デコード後の名前は Unicode の NFC に揃える。macOS は NFC と NFD の名前を同じファイルとして
+ * 扱う一方、Vite (dev の public 配信・preview) はディレクトリに実在する名前と文字列で照合する。
+ * 同じ名前が NFC と NFD の両方で参照されると、後から保存した側の参照が 404 になる (#114 で実測)。
+ *
  * デコードに失敗する名前、デコード後にパス区切り (`/` `\`)・NUL・`.` `..` になる名前は
  * 拒否する (パストラバーサルと意図しないサブディレクトリを防ぐ)。`#` `?` を含む名前も、
  * decodeURI はデコードせず decodeURIComponent はデコードするので、サーバによって参照先が
@@ -64,7 +68,7 @@ export function assetPathsForUrl(absUrl) {
   for (const segment of segments) {
     let name;
     try {
-      name = decodeURIComponent(segment);
+      name = decodeURIComponent(segment).normalize('NFC');
     } catch {
       return null;
     }

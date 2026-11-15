@@ -78,6 +78,9 @@ for (const [label, name, fileName] of [
   ['a raw space', 'a b.png', 'a b.png'],
   ['encoded Japanese', '%E6%97%A5%E6%9C%AC.png', '日本.png'],
   ['raw Japanese', '日本.png', '日本.png'],
+  // NFD (か + 濁点) は NFC (が) に揃えて保存・参照する。macOS は両者を同じファイルとして扱い、
+  // Vite は実在する名前と文字列で照合するので、両方の形で参照されると片方が 404 になる
+  ['encoded decomposed (NFD) Japanese', '%E3%81%8B%E3%82%99.png', 'が.png'],
   ['an encoded percent sign (%25)', '100%25.png', '100%.png'],
   ['an encoded reserved char allowed in paths (%40)', 'foo%402x.png', 'foo@2x.png'],
 ]) {
