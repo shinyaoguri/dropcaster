@@ -21,7 +21,7 @@ async function setup(context,base){
   return page;
 }
 async function ready(page){
-  await page.waitForSelector('#venue-canvas');await page.waitForFunction(()=>window.calibrationPage?.editor && !document.querySelector('.dc-venue-main').inert);
+  await page.waitForSelector('#venue-canvas');await page.waitForFunction(()=>window.calibrationPage?.editor && !document.querySelector('#venue-model-pane').inert);
   await page.evaluate(()=>{window.practicePreview=window.calibrationPage.preview;window.venueEditor=window.calibrationPage.editor});
 }
 async function current(page){return page.evaluate(()=>structuredClone(window.calibrationPage.session.changes.get()))}
@@ -37,13 +37,13 @@ async function load(page,value){
 async function snapshot(page,name){if(artifactDir)await page.screenshot({path:resolve(artifactDir,name+'.png')})}
 async function pixels(page){return page.evaluate(()=>{const p=window.calibrationPage.projection;p.render();const gl=p.renderer.getContext(),bytes=new Uint8Array(p.canvas.width*p.canvas.height*4);gl.readPixels(0,0,p.canvas.width,p.canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,bytes);let hash=2166136261,sum=0,white=0;for(let i=0;i<bytes.length;i+=4){sum+=bytes[i]+bytes[i+1]+bytes[i+2];if(bytes[i]>220&&bytes[i+1]>220&&bytes[i+2]>220)white++;hash=Math.imul(hash^bytes[i],16777619);hash=Math.imul(hash^bytes[i+1],16777619);hash=Math.imul(hash^bytes[i+2],16777619)}return {hash,sum,white,width:p.canvas.width,height:p.canvas.height}})}
 async function workflow(page,base){
-  assert.equal(await page.locator('iframe,#source-video,.source-column').count(),0,'venue creation has no sketch source');
+  assert.equal(await page.locator('iframe,#source-video').count(),0,'venue creation has no sketch source');
   assert.equal(page.context().pages().length,1,'entry does not open physical output');
   const initial=await current(page);assert.equal(initial.content.length,0);assert.equal(initial.venue.scene.objects.length,4);
   const before=await pixels(page);assert.ok(before.white>100,'visible model edges are rendered');
   await page.locator('#practice-audience').click();await page.locator('#practice-guides').uncheck();await page.locator('#venue-edit-done').click();
   assert.deepEqual(await pixels(page),before,'observer, frustum guides and handles never change physical output');
-  await page.locator('#venue-projector-tab').click();await change(page,'#practice-p-position-0',1.25);await change(page,'#practice-shift-0',12);
+  await change(page,'#practice-p-position-0',1.25);await change(page,'#practice-shift-0',12);
   assert.notEqual((await pixels(page)).hash,before.hash,'projector pose changes actual alignment image');
   const popupWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const output=await popupWait;
   await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
@@ -56,17 +56,18 @@ async function workflow(page,base){
   await output.waitForFunction(()=>{const v=document.querySelector('video'),c=document.createElement('canvas');c.width=1920;c.height=1080;const x=c.getContext('2d');x.drawImage(v,0,0);const center=x.getImageData(960,540,1,1).data,cell=x.getImageData(1056,594,1,1).data;return center[0]>200&&center[1]<150&&cell[0]<10});
   await output.setViewportSize({width:700,height:500});assert.equal((await pixels(page)).width,1920);
   await page.locator('#venue-resolution').selectOption('1280x800');await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1280);
+  assert.equal((await current(page)).venue.projectors[0].aspect,1.6,'choosing output pixels sets the projector aspect ratio');
   await output.close();await page.waitForFunction(()=>window.outputTrack.readyState==='ended');
-  await page.locator('#venue-pattern').selectOption('outline');await page.locator('#venue-objects-tab').click();await page.locator('#venue-edit').click();
+  await page.locator('#venue-pattern').selectOption('outline');await page.locator('#venue-edit').click();
   await page.locator('#practice-start-objects').click();await page.locator('#venue-kind').selectOption('tetrahedron');await page.locator('#venue-add').click();
   await change(page,'#practice-object-position-0',2);await page.locator('#venue-kind').selectOption('prism');await page.locator('#venue-add').click();await change(page,'#practice-object-position-0',-2);
   const shared=await download(page);assert.equal(shared.format,'dropcaster-venue');assert.equal(shared.schemaVersion,2);assert.deepEqual(shared.venue.scene.objects.map(o=>o.kind),['box','tetrahedron','prism']);assert.equal('content' in shared,false);
-  await page.locator('#venue-files-tab').click();await change(page,'#venue-name','Measured stage');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
+  await change(page,'#venue-name','Measured stage');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
   const saved=await current(page);
-  await page.locator('.dc-venue-header a').click();assert.equal(await page.locator('#venue-canvas').count(),0);
+  await page.locator('#venue-close').click();assert.equal(await page.locator('#venue-canvas').count(),0);
   assert.equal(await page.evaluate(()=>window.practicePreview.diagnostics().disposed),true);
   await page.locator('a[href="/venue"]').click();await ready(page);assert.deepEqual((await current(page)).venue,saved.venue);assert.equal((await current(page)).name,'Measured stage');
-  await page.locator('[data-lang-set=ja]').click();assert.equal(await page.locator('[data-lang-set=ja]').getAttribute('aria-pressed'),'true');
+  await page.locator('#venue-menu > summary').click();await page.locator('[data-lang-set=ja]').click();assert.equal(await page.locator('[data-lang-set=ja]').getAttribute('aria-pressed'),'true');
   await snapshot(page,base.name+'-venue-desktop-ja');await page.setViewportSize({width:900,height:800});await snapshot(page,base.name+'-venue-narrow-ja');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.ok((await page.locator('#venue-canvas').boundingBox()).height>=200);
@@ -109,14 +110,82 @@ async function interaction(page,base){
   await page.locator('#venue-focus').click();await venueDrag(page,'rotate','Y');const rotated=(await current(page)).venue.scene.objects;
   assert.notDeepEqual(rotated[0].quaternion,original[0].quaternion);await venueDrag(page,'scale','X');const sized=(await current(page)).venue.scene.objects;
   assert.notDeepEqual(sized[0].size,rotated[0].size);
-  await venueDrag(page,'translate','X',false);await page.locator('#venue-output-tab').dispatchEvent('click');await page.mouse.up();
-  assert.deepEqual((await current(page)).venue.scene.objects,sized,'projected-image tab cancels pending drag');
-  await page.locator('#venue-model-tab').click();await page.locator('#venue-snap').check();await venueDrag(page,'translate','X');
+  await page.locator('#venue-snap').check();await venueDrag(page,'translate','X');
   const x=(await current(page)).venue.scene.objects[0].position[0];assert.ok(Math.abs(x*10-Math.round(x*10))<1e-8);
   await page.locator('#venue-snap').uncheck();await page.locator('#venue-copy').click();assert.equal((await current(page)).venue.scene.objects.length,2);
   await page.locator('#venue-delete').click();assert.equal((await current(page)).venue.scene.objects.length,1);
   await load(page,await download(page));assert.equal((await current(page)).venue.scene.objects.length,1);
   await snapshot(page,base.name+'-venue-editing');
+}
+/** 投影される像 (#venue-image) の上に見えている会場の頂点 (ワールド座標)。 */
+async function visibleVertex(page){
+  return page.evaluate(()=>{
+    const preview=window.calibrationPage.preview,camera=preview.projector,V=camera.position.constructor;
+    for(const mesh of preview.venueMeshes()){mesh.updateWorldMatrix(true,false);const attr=mesh.geometry.attributes.position;
+      for(let i=0;i<attr.count;i++){const w=new V().fromBufferAttribute(attr,i).applyMatrix4(mesh.matrixWorld),v=w.clone().project(camera);if(Math.abs(v.x)<.9&&Math.abs(v.y)<.9&&v.z<1)return w.toArray()}}
+    throw Error('no visible venue vertex');
+  });
+}
+/** その頂点が、いまの仮想プロジェクタで #venue-image のどこに映るか (CSS px)。 */
+async function onImage(page,world){
+  return page.evaluate(world=>{
+    const camera=window.calibrationPage.preview.projector,image=document.querySelector('#venue-image').getBoundingClientRect();
+    const v=new camera.position.constructor(...world).project(camera);
+    return {x:image.left+(v.x+1)/2*image.width,y:image.top+(1-v.y)/2*image.height};
+  },world);
+}
+async function projector(page){return (await current(page)).venue.projectors[0]}
+async function adjust(page,base){
+  // 2D (投影される像) と 3D が同時に、重ならずに見えている
+  const image=await page.locator('#venue-image').boundingBox(),model=await page.locator('#venue-canvas').boundingBox();
+  assert.ok(image.width>200&&image.height>100&&model.width>200&&model.height>200,'both panes are visible together');
+  assert.ok(image.x+image.width<=model.x+1,'projected image sits left of the 3D venue');
+  const original=await projector(page),revision=(await current(page)).venue.revision,before=await pixels(page);
+  // キー: 連打の途中は表示だけが動き、止まってから 1 回だけ確定する
+  await page.locator('#venue-output-stage').focus();
+  for(let i=0;i<5;i++)await page.keyboard.press('ArrowRight');
+  assert.notEqual(await page.evaluate(()=>window.calibrationPage.adjuster.pending),null,'keys preview before committing');
+  assert.deepEqual(await projector(page),original,'nothing is saved while keys are still coming');
+  assert.notEqual((await pixels(page)).hash,before.hash,'the real projector image follows the keys immediately');
+  await page.waitForFunction(r=>window.calibrationPage.session.changes.get().venue.revision===r+1,revision);
+  const turned=await projector(page);assert.notDeepEqual(turned.quaternion,original.quaternion);assert.deepEqual(turned.position,original.position);
+  await page.waitForTimeout(700);assert.equal((await current(page)).venue.revision,revision+1,'five presses are one change');
+  await page.locator('#venue-undo-projector').click();
+  await page.waitForFunction(q=>JSON.stringify(window.calibrationPage.session.changes.get().venue.projectors[0].quaternion)===JSON.stringify(q),original.quaternion);
+  assert.equal((await pixels(page)).hash,before.hash,'one undo restores the whole adjustment');
+  // 入力欄では矢印キーを横取りしない
+  await page.locator('#venue-name').focus();await page.keyboard.press('ArrowRight');
+  assert.equal(await page.evaluate(()=>window.calibrationPage.adjuster.pending),null,'typing keys stay in the field');
+  // 刻みの切替: G で細かくなり、矢印 1 回が 0.1°
+  await page.locator('#venue-output-stage').focus();await page.keyboard.press('g');
+  assert.equal(await page.locator('#venue-step-fine').getAttribute('aria-pressed'),'true');
+  await page.keyboard.press('=');await page.waitForTimeout(650);
+  assert.ok(Math.abs((await projector(page)).verticalFovDegrees-(original.verticalFovDegrees-.1))<1e-9,'fine zoom step is 0.1°');
+  await page.keyboard.press('g');assert.equal(await page.locator('#venue-step-coarse').getAttribute('aria-pressed'),'true');
+  // ドラッグ: 押した頂点が、ドラッグした先にちょうど映る
+  const vertex=await visibleVertex(page),start=await onImage(page,vertex),centre=await page.locator('#venue-image').boundingBox();
+  const dx=start.x>centre.x+centre.width/2?-40:40,dy=start.y>centre.y+centre.height/2?-25:25;
+  const dragging=(await current(page)).venue.revision;
+  await page.mouse.move(start.x,start.y);await page.mouse.down();await page.mouse.move(start.x+dx,start.y+dy,{steps:8});
+  assert.equal((await current(page)).venue.revision,dragging,'a drag only previews until release');
+  await page.mouse.up();
+  await page.waitForFunction(r=>window.calibrationPage.session.changes.get().venue.revision===r+1,dragging);
+  const landed=await onImage(page,vertex);
+  assert.ok(Math.hypot(landed.x-(start.x+dx),landed.y-(start.y+dy))<2,`the grabbed outline follows the pointer (${JSON.stringify({start,landed})})`);
+  // 出力窓でのキーも効く
+  const outputWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const output=await outputWait;
+  await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
+  const beforeKey=await projector(page);await output.keyboard.press('ArrowUp');
+  await page.waitForFunction(q=>JSON.stringify(window.calibrationPage.session.changes.get().venue.projectors[0].quaternion)!==JSON.stringify(q),beforeKey.quaternion);
+  // 全画面: その画面の実ピクセル数が出力解像度とアスペクト比になる
+  await output.keyboard.press('f');
+  const screen=await output.waitForFunction(()=>document.fullscreenElement&&{w:Math.round(innerWidth*devicePixelRatio),h:Math.round(innerHeight*devicePixelRatio)}).then(h=>h.jsonValue());
+  await page.waitForFunction(s=>{const c=window.calibrationPage.projection.canvas;return c.width===s.w&&c.height===s.h},screen);
+  assert.ok(Math.abs((await projector(page)).aspect-screen.w/screen.h)<1e-9,'fullscreen pixels set the projector aspect ratio');
+  await output.waitForFunction(s=>document.querySelector('video')?.videoWidth===s.w,screen);
+  assert.match(await page.locator('#venue-resolution option:checked').textContent(),new RegExp(`${screen.w} × ${screen.h}`));
+  await snapshot(page,base.name+'-venue-adjust');
+  await output.close();
 }
 async function recovery(page){
   const baseline=await download(page);
@@ -126,7 +195,7 @@ async function recovery(page){
   await page.evaluate(()=>{const text=File.prototype.text;File.prototype.text=function(){File.prototype.text=text;const result=text.call(this);return new Promise(resolve=>{window.finishVenueRead=async()=>resolve(await result)})}});
   await page.locator('#venue-file').setInputFiles({name:'delayed.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(baseline))});
   await page.locator('#practice-start-objects').click();await page.evaluate(()=>window.finishVenueRead());assert.equal((await current(page)).venue.scene.objects.length,1,'stale import cannot overwrite a newer edit');
-  await page.locator('#venue-files-tab').click();await page.locator('#venue-glb-file').setInputFiles({name:'wall.glb',mimeType:'model/gltf-binary',buffer:venueFixture()});
+  await page.locator('#venue-glb-file').setInputFiles({name:'wall.glb',mimeType:'model/gltf-binary',buffer:venueFixture()});
   await page.waitForFunction(()=>window.calibrationPage.session.changes.get().venue.scene.kind==='glb');assert.equal((await current(page)).assets.length,1);
   const glb=await download(page);await page.locator('#venue-glb-file').setInputFiles({name:'bad.glb',mimeType:'model/gltf-binary',buffer:venueFixture(d=>{d.scenes[0].nodes=[]})});
   await page.waitForFunction(()=>document.querySelector('#venue-status').classList.contains('is-error'));assert.deepEqual(await download(page),glb);
@@ -138,11 +207,11 @@ async function recovery(page){
   await page.evaluate(()=>{window.track=window.calibrationPage.projection.stream.getVideoTracks()[0];window.calibrationPage.projection.renderer.getContext().getExtension('WEBGL_lose_context').loseContext()});
   await page.waitForFunction(()=>document.querySelector('#venue-reload')?.hidden===false);assert.equal(output.isClosed(),true);assert.equal(await page.evaluate(()=>window.track.readyState),'ended');assert.equal(await page.locator('#venue-open-output').isDisabled(),true);
   assert.equal((await download(page)).name,'Recovered venue','graphics loss preserves exportable document');
-  await page.locator('.dc-venue-header a').click();
+  await page.locator('#venue-close').click();
   await page.evaluate(()=>{window.getContext=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){if(/webgl/.test(type))return null;return window.getContext.call(this,type,...args)}});
   await page.locator('a[href="/venue"]').click();await page.waitForSelector('#venue-reload');
   assert.equal(await page.locator('#venue-open-output').isDisabled(),true);assert.equal((await download(page)).name,'Recovered venue','initial WebGL failure preserves saved document and export');
-  await page.locator('.dc-venue-header a').click();assert.equal(await page.locator('#venue-canvas').count(),0);
+  await page.locator('#venue-close').click();assert.equal(await page.locator('#venue-canvas').count(),0);
   await page.evaluate(()=>{HTMLCanvasElement.prototype.getContext=window.getContext});
 }
 
@@ -165,20 +234,22 @@ async function isolation(page,base){
   const livePromise=page.waitForEvent('popup');await page.locator('#outputs-list .open-btn').first().click();const live=await livePromise;
   await live.waitForFunction(()=>document.querySelector('video')?.videoWidth===640);
   await page.locator('#practice-menu > summary').click();const venuePromise=page.waitForEvent('popup');await page.locator('#practice-venue').click();const venue=await venuePromise;
-  await venue.waitForSelector('#venue-canvas');await venue.waitForFunction(()=>!document.querySelector('.dc-venue-main').inert);
+  await venue.waitForSelector('#venue-canvas');await venue.waitForFunction(()=>!document.querySelector('#venue-model-pane').inert);
   assert.equal(await page.locator('#dc-practice-canvas').count(),0,'opening venue setup never initializes the mapping preview');
   assert.equal(await venue.locator('iframe,#source-video').count(),0);
-  await venue.locator('#venue-files-tab').click();await venue.locator('#venue-copy-mapping').click();
+  await venue.locator('#venue-menu > summary').click();await venue.locator('#venue-copy-mapping').click();
   await venue.waitForFunction(()=>document.querySelector('#venue-status').textContent==='Venue loaded');
-  await venue.locator('#venue-objects-tab').click();await venue.locator('#practice-start-objects').click();
-  await venue.locator('#venue-files-tab').click();await change(venue,'#venue-name','Independent room');
+  await venue.locator('#practice-start-objects').click();
+  await change(venue,'#venue-name','Independent room');
   await venue.waitForFunction(()=>document.querySelector('#venue-storage').textContent==='Venue draft saved in this browser');
   const shared=await download(venue);assert.equal('content' in shared,false);assert.deepEqual(shared.venue.layout,{...baseline.draft.venue.layout,activeOutputId:baseline.draft.venue.layout.activeOutputId??baseline.layout.outputs[0].id});
   const check=await page.evaluate(async modules=>({layout:structuredClone(window.mappingWC.events.state.get()),draft:await(await import(`${modules}/practice/projectStore.ts`)).readProject(),storage:{...localStorage},track:window.originalTrack.readyState}),base.modules);
   assert.deepEqual(check.layout,baseline.layout);assert.deepEqual(check.draft,baseline.draft);assert.deepEqual(check.storage,baseline.storage);assert.equal(check.track,'live');
   const calibrationPromise=venue.waitForEvent('popup');await venue.locator('#venue-open-output').click();const calibration=await calibrationPromise;
   await calibration.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);assert.equal(live.isClosed(),false);
-  const closed=calibration.waitForEvent('close');await venue.locator('.dc-venue-header a').click();await closed;
+  const closed=calibration.waitForEvent('close');await venue.locator('#venue-close').click();
+  assert.equal(await venue.locator('#venue-close-confirm').evaluate(d=>d.open),true,'leaving with the projector output open asks first');
+  assert.equal(calibration.isClosed(),false);await venue.locator('#venue-close-confirm-btn').click();await closed;
   assert.equal(live.isClosed(),false);assert.equal(await page.evaluate(()=>window.originalTrack.readyState),'live');await venue.close();
   await page.locator('#preview-tab').click();await page.waitForSelector('#dc-practice-canvas');
   await page.waitForFunction(()=>!document.querySelector('#dc-practice-status').textContent.includes('Preparing'));
@@ -201,7 +272,7 @@ try{
     const server=await createServer({configFile:resolve(root,config),root:hosted?resolve(root,'apps/web'):root,server:{host:'127.0.0.1',port:0,open:false,watch:null,hmr:false},logLevel:'error'});
     try{
       await server.listen();const base={name,url:`http://127.0.0.1:${server.httpServer.address().port}`,modules:hosted?`/@fs${root.slice(0,-1)}/src/viewer`:'/src/viewer'};
-      for(const [testName,run] of Object.entries({workflow,interaction,recovery,isolation})){
+      for(const [testName,run] of Object.entries({workflow,interaction,adjust,recovery,isolation})){
         if(process.env.VENUE_CASE&&process.env.VENUE_CASE!==testName)continue;
         const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'}),errors=[];
         context.on('page',page=>page.on('pageerror',error=>errors.push(error.message)));
