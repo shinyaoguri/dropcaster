@@ -164,6 +164,13 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 作品ページが離脱警告などのリスナーを付け直さないことを確かめる。ルート遷移・`App.ts` の世代確認・
 `SketchPageController` の後始末を変えたら実行する。`ROUTES_CASE=<ケース名>` で 1 件だけ流せる。
 
+`npm run test:slideshow` は両 viewer エントリのスライドショーで iframe ごとの rAF 回数を数え、
+先読みした非表示の作品が待機中に描画せず、表示した作品だけが動くことを確かめる。Next / Previous、
+連続切替、読み込み中の切替、待機中のリサイズ、マッピング中の出力も含む。`SketchPool` / `SketchFrame` の
+pause・resume・先読み、`SlideshowView` の切替を変えたら実行する。`SLIDESHOW_ENTRY=gallery|hosted`、
+`SLIDESHOW_CASE=<ケース名>` で絞り込め、`SLIDESHOW_ARTIFACT_DIR=/tmp/slideshow-images` で切替前後の
+スクリーンショットを保存できる。
+
 `npm run test:projection-runtime` は両 viewer エントリで編集状態の停止・再開、テストパターン中の
 作品切替、WebGL ロストからの復旧とキャンセルを検証する。実際の UI / popup / captureStream と
 決定的な作品 fixture を使い、CI でも実行する。既存 Chromium は同じく `CHROMIUM_PATH` で指定する。
