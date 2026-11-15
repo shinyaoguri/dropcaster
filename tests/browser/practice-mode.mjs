@@ -223,6 +223,14 @@ async function lifecycle(page, base) {
   assert.ok(afterMask < beforeMask, 'existing mask editing updates the real GPU composite');
   await page.evaluate(async base => (await import(`${base}/i18n/index.ts`)).setLang('ja'), base.modules);
   assert.equal(await page.locator('#practice-stop').getAttribute('aria-label'), '編集を閉じる');
+  // 「設定・共有」は見出しの左にアイコンだけで置き、名前は title / aria-label で示す (#150)。
+  const menuSummary = page.locator('#practice-menu > summary');
+  assert.deepEqual(await page.locator('.tool-column > .column-header').evaluate(h => [...h.children].map(e => e.id || e.className || e.tagName.toLowerCase())), ['practice-menu', 'h2', 'dc-workspace-actions'], 'menu, heading, then close actions');
+  assert.equal((await menuSummary.innerText()).trim(), '', 'menu button has no visible text');
+  assert.equal(await menuSummary.getAttribute('aria-label'), '設定・共有'); assert.equal(await menuSummary.getAttribute('title'), '設定・共有');
+  await page.evaluate(async base => (await import(`${base}/i18n/index.ts`)).setLang('en'), base.modules);
+  assert.equal(await menuSummary.getAttribute('aria-label'), 'Settings & sharing'); assert.equal(await menuSummary.getAttribute('title'), 'Settings & sharing');
+  await page.evaluate(async base => (await import(`${base}/i18n/index.ts`)).setLang('ja'), base.modules);
   await menuAction(page, '#practice-settings'); await snapshot(page, base.name + '-desktop-ja');
   await page.setViewportSize({ width: 900, height: 800 }); await snapshot(page, base.name + '-narrow-ja');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
