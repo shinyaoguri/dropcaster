@@ -14,10 +14,14 @@
 //   DC_FAIL_WRITE_BASENAME  そのファイル名への fs/promises.writeFile を ENOSPC で失敗させる
 //   DC_FAIL_RENAME_FROM     移動元のディレクトリ名がこの正規表現に一致する fs/promises.rename を
 //                           EBUSY で失敗させる
+//   DC_REMOVE_STAGING_AT_ASSET  N 件目のアセット取得の時点で、cwd の sketches/ 直下の .dc-staging-* を
+//                           消す (並行して走る別の fetch が、開始時の掃除で staging を消した状況)。
+//                           消した後、そのアセットの保存先ディレクトリを作り直す (消されたのがこの
+//                           アセットの mkdir の直前だった場合と同じ状態。この取得自体は成功する)
 
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import fsPromises from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 
 const fixturePath = process.env.DC_OP_FIXTURE;
@@ -28,6 +32,19 @@ const API_PREFIX = 'https://openprocessing.org/api/sketch/';
 /** @param {unknown} body @param {number} [status] */
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+let assetRequests = 0;
+
+/** @param {string} url */
+function removeStagingDirectories(url) {
+  const sketches = join(process.cwd(), 'sketches');
+  const assetDir = new URL(url).pathname.split('/').filter(Boolean).slice(0, -1);
+  for (const name of readdirSync(sketches)) {
+    if (!/^\.dc-staging-/.test(name)) continue;
+    rmSync(join(sketches, name), { recursive: true, force: true });
+    mkdirSync(join(sketches, name, 'assets', ...assetDir), { recursive: true });
+  }
 }
 
 globalThis.fetch = async (input) => {
@@ -41,6 +58,10 @@ globalThis.fetch = async (input) => {
     const body = sub === 'code' ? sketch.code : sketch.meta;
     if (body == null) return json({ success: false, message: `stub: ${sub || 'meta'} unavailable` }, 500);
     return json(body);
+  }
+  if (url.startsWith('https://deckard.openprocessing.org/')) {
+    assetRequests++;
+    if (assetRequests === Number(process.env.DC_REMOVE_STAGING_AT_ASSET)) removeStagingDirectories(url);
   }
   const asset = fixture.assets?.[url];
   if (asset) return new Response(asset.body ?? '', { status: asset.status ?? 200 });

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -34,7 +34,7 @@ const htmlWithoutIndex = [{ orderID: 0, title: 'main.js', code: 'console.log("no
 
 /**
  * @typedef {{ meta?: object | null, code?: object[] | null, status?: number }} SketchFixture
- * @typedef {{ sketch: SketchFixture, assets?: Record<string, { body?: string, status?: number }>, failWrite?: string, failRename?: string }} Scenario
+ * @typedef {{ sketch: SketchFixture, assets?: Record<string, { body?: string, status?: number }>, failWrite?: string, failRename?: string, removeStagingAtAsset?: number }} Scenario
  */
 
 /**
@@ -58,6 +58,7 @@ async function runFetch(root, args, scenario) {
         DC_OP_FIXTURE: fixturePath,
         DC_FAIL_WRITE_BASENAME: scenario.failWrite ?? '',
         DC_FAIL_RENAME_FROM: scenario.failRename ?? '',
+        DC_REMOVE_STAGING_AT_ASSET: String(scenario.removeStagingAtAsset ?? ''),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -89,23 +90,50 @@ async function unlockDirectories(dir) {
   }
 }
 
-/** 既存の (旧版の) 作品を置く。手で置いたファイルを含める */
-async function writeOldSketch(root) {
+const OLD_OP_META = JSON.stringify({ visualID: ID, title: 'old version' });
+
+/**
+ * 既存の (旧版の) 作品を置く。手で置いたファイルを含める
+ * @param {string} root
+ * @param {{ opMeta?: boolean }} [options] opMeta: 以前の fetch で取り込んだ作品として _op-meta.json を置く
+ */
+async function writeOldSketch(root, { opMeta = false } = {}) {
   const dir = join(root, 'sketches', `sketch${ID}`);
   await mkdir(join(dir, 'assets'), { recursive: true });
   await writeFile(join(dir, 'index.html'), '<!doctype html><title>old version</title>', 'utf-8');
   await writeFile(join(dir, 'mySketch.js'), '// old version', 'utf-8');
   await writeFile(join(dir, 'assets', 'old.png'), 'PNG old', 'utf-8');
+  if (opMeta) await writeFile(join(dir, '_op-meta.json'), OLD_OP_META, 'utf-8');
   return dir;
 }
 
-/** @param {string} dir */
-async function assertOldSketchIntact(dir) {
+/**
+ * @param {string} dir
+ * @param {{ opMeta?: boolean, previous?: boolean }} [options] previous: 退避した旧版 (印のファイルを除いて比べる)
+ */
+async function assertOldSketchIntact(dir, { opMeta = false, previous = false } = {}) {
   assert.equal(await readFile(join(dir, 'index.html'), 'utf-8'), '<!doctype html><title>old version</title>');
   assert.equal(await readFile(join(dir, 'mySketch.js'), 'utf-8'), '// old version');
   assert.equal(await readFile(join(dir, 'assets', 'old.png'), 'utf-8'), 'PNG old');
-  assert.deepEqual((await readdir(dir)).sort(), ['assets', 'index.html', 'mySketch.js']);
+  if (opMeta) assert.equal(await readFile(join(dir, '_op-meta.json'), 'utf-8'), OLD_OP_META);
+  const entries = (await readdir(dir)).filter((name) => !(previous && name === '.dc-replacement.json')).sort();
+  assert.deepEqual(entries, opMeta
+    ? ['_op-meta.json', 'assets', 'index.html', 'mySketch.js']
+    : ['assets', 'index.html', 'mySketch.js']);
 }
+
+/**
+ * ディレクトリとその中身の更新時刻を過去にずらす (中断した fetch が前に残した作業用ディレクトリ)
+ * @param {string} path
+ * @param {Date} time
+ */
+async function age(path, time) {
+  const entries = await readdir(path, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) await age(join(path, entry.name), time);
+  await utimes(path, time, time);
+}
+
+const TWO_HOURS_AGO = new Date(Date.now() - 2 * 60 * 60 * 1000);
 
 /** sketches/ に作品以外 (作業用ディレクトリなど) が残っていないこと */
 async function assertSketchesDirHolds(root, expected) {
@@ -257,6 +285,13 @@ test('when only removing the old version fails, the new version is in place and 
     assert.equal(residue.length, 1, `expected one leftover: ${residue.join(', ')}`);
     assert.match(residue[0], /^\.dc-previous-[0-9a-f]{16}$/);
     assert.match(result.output, new RegExp(`could not remove the previous version at \\S*${residue[0]}`));
+    assert.match(result.output, /next fetch/, 'the user is told that a later fetch removes it');
+
+    // 差し替え済みの印があるので、消せるようになれば次の fetch の開始時に片付く
+    await chmod(join(root, 'sketches', residue[0], 'locked'), 0o755);
+    const next = await runFetch(root, ['--overwrite'], { sketch: { meta: p5Meta, code: p5Code } });
+    assert.equal(next.code, 0, describe(next.output));
+    await assertSketchesDirHolds(root, [`sketch${ID}`]);
   });
 });
 
@@ -316,44 +351,82 @@ test('a sketch without code tabs is rejected before anything is written (new and
   await withTempProject(async (root) => {
     const created = await runFetch(root, [], { sketch: { meta: p5Meta, code: [] } });
     assert.equal(created.code, 1, describe(created.output));
-    assert.match(created.output, /no code tabs/);
+    assert.match(created.output, /has no code/);
     assert.equal(await exists(join(root, 'sketches', `sketch${ID}`)), false);
 
     const dir = await writeOldSketch(root);
     const overwritten = await runFetch(root, ['--overwrite'], { sketch: { meta: p5Meta, code: [] } });
     assert.equal(overwritten.code, 1, describe(overwritten.output));
-    assert.match(overwritten.output, /no code tabs/);
+    assert.match(overwritten.output, /has no code/);
     await assertOldSketchIntact(dir);
     await assertSketchesDirHolds(root, [`sketch${ID}`]);
   });
 });
 
-test('fetch removes leftover work directories in sketches/, but keeps an old version that was not superseded', async () => {
+test('a sketch whose tabs are all empty is rejected like one without tabs (new and --overwrite)', async () => {
+  await withTempProject(async (root) => {
+    const emptyTabs = [
+      { orderID: 0, title: 'mySketch', code: '' },
+      { orderID: 1, title: 'helpers', code: null },
+      { orderID: 2, title: 'blank', code: '  \n' },
+    ];
+    const created = await runFetch(root, [], { sketch: { meta: p5Meta, code: emptyTabs } });
+    assert.equal(created.code, 1, describe(created.output));
+    assert.match(created.output, /has no code/);
+    assert.equal(await exists(join(root, 'sketches', `sketch${ID}`)), false);
+
+    const dir = await writeOldSketch(root);
+    const overwritten = await runFetch(root, ['--overwrite'], { sketch: { meta: p5Meta, code: emptyTabs } });
+    assert.equal(overwritten.code, 1, describe(overwritten.output));
+    assert.match(overwritten.output, /has no code/);
+    await assertOldSketchIntact(dir);
+    await assertSketchesDirHolds(root, [`sketch${ID}`]);
+  });
+});
+
+test('fetch removes old staging and replaced old versions in sketches/, but keeps anything that may be the only copy', async () => {
   await withTempProject(async (root) => {
     const sketches = join(root, 'sketches');
-    const staging = join(sketches, '.dc-staging-0123456789abcdef');
-    const superseded = join(sketches, '.dc-previous-aaaaaaaaaaaaaaaa');
-    const stranded = join(sketches, '.dc-previous-bbbbbbbbbbbbbbbb');
-    const unknown = join(sketches, '.dc-previous-cccccccccccccccc');
+    /** @param {string} name @param {string} reason @param {string} [target] */
+    const marker = (name, reason, target = 'sketch456') => JSON.stringify({ previous: name, target, reason });
+    const oldStaging = join(sketches, '.dc-staging-0123456789abcdef');
+    // 並行して走っている別の fetch の staging (更新されたばかり)
+    const activeStaging = join(sketches, '.dc-staging-fedcba9876543210');
+    const replaced = join(sketches, '.dc-previous-aaaaaaaaaaaaaaaa');
+    const notRestored = join(sketches, '.dc-previous-bbbbbbbbbbbbbbbb');
+    const unmarked = join(sketches, '.dc-previous-cccccccccccccccc');
+    const staleMarker = join(sketches, '.dc-previous-dddddddddddddddd');
     const userDot = join(sketches, '.notes');
-    for (const dir of [staging, superseded, stranded, unknown, userDot]) await mkdir(dir, { recursive: true });
-    await writeFile(join(staging, 'index.html'), 'half written', 'utf-8');
-    // sketch456 はあるので、この旧版は置き換え済み
+    for (const dir of [oldStaging, activeStaging, replaced, notRestored, unmarked, staleMarker, userDot]) {
+      await mkdir(dir, { recursive: true });
+    }
+    await writeFile(join(oldStaging, 'index.html'), 'half written', 'utf-8');
+    await age(oldStaging, TWO_HOURS_AGO);
+    await writeFile(join(activeStaging, 'index.html'), 'being written', 'utf-8');
+    await writeFile(join(replaced, '.dc-replacement.json'), marker('.dc-previous-aaaaaaaaaaaaaaaa', 'replaced'), 'utf-8');
+    await writeFile(join(notRestored, '.dc-replacement.json'),
+      marker('.dc-previous-bbbbbbbbbbbbbbbb', 'not-restored', 'sketch789'), 'utf-8');
+    await writeFile(join(notRestored, 'index.html'), 'only copy', 'utf-8');
+    // 印が無い旧版は、差し替えの途中で止まった唯一の版かもしれない。_op-meta.json の作品が今あっても消さない
     await mkdir(join(sketches, 'sketch456'));
-    await writeFile(join(superseded, '_op-meta.json'), JSON.stringify({ visualID: '456' }), 'utf-8');
-    // sketch789 は無いので、この旧版が唯一の版
-    await writeFile(join(stranded, '_op-meta.json'), JSON.stringify({ visualID: '789' }), 'utf-8');
-    await writeFile(join(unknown, 'index.html'), 'no metadata', 'utf-8');
+    await writeFile(join(unmarked, '_op-meta.json'), JSON.stringify({ visualID: '456' }), 'utf-8');
+    // 別の退避で書かれた印 (利用者が旧版を戻した後、また退避された) は信用しない
+    await writeFile(join(staleMarker, '.dc-replacement.json'), marker('.dc-previous-0000000000000000', 'replaced'), 'utf-8');
+    await writeFile(join(staleMarker, 'index.html'), 'stale marker', 'utf-8');
 
     const result = await runFetch(root, [], { sketch: { meta: p5Meta, code: p5Code } });
     assert.equal(result.code, 0, describe(result.output));
-    assert.equal(await exists(staging), false, 'staging left by an interrupted fetch is removed');
-    assert.equal(await exists(superseded), false, 'an old version whose sketch was replaced is removed');
-    assert.equal(await readFile(join(stranded, '_op-meta.json'), 'utf-8'), JSON.stringify({ visualID: '789' }));
-    assert.equal(await readFile(join(unknown, 'index.html'), 'utf-8'), 'no metadata');
+    assert.equal(await exists(oldStaging), false, 'staging left by an interrupted fetch long ago is removed');
+    assert.equal(await readFile(join(activeStaging, 'index.html'), 'utf-8'), 'being written',
+      'a recently updated staging may belong to a fetch that is still running');
+    assert.equal(await exists(replaced), false, 'an old version whose replacement completed is removed');
+    assert.equal(await readFile(join(notRestored, 'index.html'), 'utf-8'), 'only copy');
+    assert.equal(await readFile(join(unmarked, '_op-meta.json'), 'utf-8'), JSON.stringify({ visualID: '456' }));
+    assert.equal(await readFile(join(staleMarker, 'index.html'), 'utf-8'), 'stale marker');
     assert.ok(await exists(userDot), 'user dot directories are not touched');
-    assert.match(result.output, /\S*\.dc-previous-bbbbbbbbbbbbbbbb/);
+    assert.match(result.output, /\S*\.dc-previous-bbbbbbbbbbbbbbbb could not be moved back to \S*sketch789/);
     assert.match(result.output, /\S*\.dc-previous-cccccccccccccccc/);
+    assert.match(result.output, /\S*\.dc-previous-dddddddddddddddd/);
   });
 });
 
@@ -362,6 +435,7 @@ test('fetch warns and continues when a leftover work directory cannot be removed
     const staging = join(root, 'sketches', '.dc-staging-0123456789abcdef');
     await mkdir(join(staging, 'locked'), { recursive: true });
     await writeFile(join(staging, 'locked', 'file.txt'), 'x', 'utf-8');
+    await age(staging, TWO_HOURS_AGO);
     await chmod(join(staging, 'locked'), 0o555);
 
     const result = await runFetch(root, [], { sketch: { meta: p5Meta, code: p5Code } });
@@ -373,7 +447,8 @@ test('fetch warns and continues when a leftover work directory cannot be removed
 
 test('when the old version cannot be put back after a failed swap, fetch names where it is and later fetches keep it', async () => {
   await withTempProject(async (root) => {
-    const dir = await writeOldSketch(root);
+    // 以前の fetch で取り込んだ作品 (_op-meta.json がある)
+    const dir = await writeOldSketch(root, { opMeta: true });
 
     // staging を所定の名前へ移すのも、退避した旧版を戻すのも失敗させる
     const result = await runFetch(root, ['--overwrite'], {
@@ -387,11 +462,53 @@ test('when the old version cannot be put back after a failed swap, fetch names w
     assert.match(residue[0], /^\.dc-previous-[0-9a-f]{16}$/);
     assert.match(result.output, new RegExp(residue[0]), `the message must name where the old version is${describe(result.output)}`);
     assert.equal(await exists(dir), false);
-    await assertOldSketchIntact(join(root, 'sketches', residue[0]));
+    const previous = join(root, 'sketches', residue[0]);
+    await assertOldSketchIntact(previous, { opMeta: true, previous: true });
 
     // 次の fetch (ここでは検証で失敗するもの) の開始時の掃除で、唯一の旧版を消さない
     const next = await runFetch(root, [], { sketch: { meta: p5Meta, code: [] } });
     assert.equal(next.code, 1, describe(next.output));
-    await assertOldSketchIntact(join(root, 'sketches', residue[0]));
+    await assertOldSketchIntact(previous, { opMeta: true, previous: true });
+
+    // 同じ作品を取り込み直して sketch123 ができても、戻せなかった旧版は置き換え済みとみなさない
+    const refetched = await runFetch(root, [], { sketch: { meta: p5Meta, code: p5Code } });
+    assert.equal(refetched.code, 0, describe(refetched.output));
+    const later = await runFetch(root, ['--overwrite'], { sketch: { meta: p5Meta, code: p5Code } });
+    assert.equal(later.code, 0, describe(later.output));
+    assert.match(later.output, new RegExp(`${residue[0]} could not be moved back`), describe(later.output));
+    await assertOldSketchIntact(previous, { opMeta: true, previous: true });
+  });
+});
+
+// 反証で見つかった点: 並行して走る別の fetch が、開始時の掃除で書き出し中の staging を消した場合
+
+const SECOND_ASSET_URL = ASSET_URL.replace('tex.png', 'tex2.png');
+const twoAssets = { [ASSET_URL]: { body: 'PNG new' }, [SECOND_ASSET_URL]: { body: 'PNG new 2' } };
+const p5CodeWithTwoAssets = [
+  { orderID: 0, title: 'mySketch', code: `loadImage('${ASSET_URL}'); loadImage('${SECOND_ASSET_URL}'); // new version` },
+];
+
+test('a new fetch fails, without leaving a sketch, when its staging is removed while writing', async () => {
+  await withTempProject(async (root) => {
+    const result = await runFetch(root, [], {
+      sketch: { meta: p5Meta, code: p5CodeWithTwoAssets }, assets: twoAssets, removeStagingAtAsset: 2,
+    });
+    assert.equal(result.code, 1, `a sketch that refers to missing local assets must not be written${describe(result.output)}`);
+    assert.match(result.output, /assets\/user1\/visual123\/habc\/tex\.png/, `the missing file is named${describe(result.output)}`);
+    assert.equal(await exists(join(root, 'sketches', `sketch${ID}`)), false);
+    await assertSketchesDirHolds(root, []);
+  });
+});
+
+test('--overwrite keeps the existing sketch when its staging is removed while writing', async () => {
+  await withTempProject(async (root) => {
+    const dir = await writeOldSketch(root);
+    const result = await runFetch(root, ['--overwrite'], {
+      sketch: { meta: p5Meta, code: p5CodeWithTwoAssets }, assets: twoAssets, removeStagingAtAsset: 2,
+    });
+    assert.equal(result.code, 1, describe(result.output));
+    assert.match(result.output, /left unchanged/);
+    await assertOldSketchIntact(dir);
+    await assertSketchesDirHolds(root, [`sketch${ID}`]);
   });
 });

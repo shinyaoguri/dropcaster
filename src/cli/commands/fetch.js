@@ -4,12 +4,13 @@
 // `npm run scan` がそのまま処理できる形を吐く。
 
 import { resolve, join } from 'path';
-import { mkdir, writeFile, access, readdir, readFile, rm, stat } from 'fs/promises';
+import { mkdir, writeFile, access, readdir, rm, stat } from 'fs/promises';
 import chalk from 'chalk';
 import ora from 'ora';
 import { OpenProcessingApiClient } from '../../core/modules/op-api-client.js';
 import { assembleLocalOpSketchHtml, planHtmlModeLocalFiles } from '../../core/modules/op-sketch-builder.js';
 import {
+  assetPathsForUrl,
   extractDeckardUrls,
   downloadAssets,
   rewriteCodeWithAssetMap,
@@ -17,11 +18,19 @@ import {
 import {
   isReplacementResidue,
   PreviousNotRestoredError,
+  readPreviousMarker,
+  removeReplacedPrevious,
   replaceDirectory,
+  REPLACEMENT_MARKER_FILE,
 } from '../../core/modules/directory-replacement.js';
+import { getLatestMtime } from '../../core/modules/file-manager.js';
 import { t } from '../i18n/index.js';
 
 const SUPPORTED_MODES = ['p5js', 'html'];
+
+// これより長く更新されていない staging は、中断した fetch の残骸とみなして開始時に消す。
+// 新しいものは、同じ sketches/ で並行して走っている別の fetch が書き出し中かもしれない
+const STALE_STAGING_MS = 60 * 60 * 1000;
 
 /** --overwrite で、同梱できなかったアセットがあるときに投げる (既存の作品を差し替えない) */
 class AssetDownloadError extends Error {
@@ -65,7 +74,8 @@ export async function fetchCommand(idArg, options = {}) {
     console.error(chalk.yellow(`⚠ ${t('fetch.modeNotSupported', { mode: meta.mode })}`));
     process.exit(1);
   }
-  if (codeTabs.length === 0) {
+  // タブが無い・全タブが空の作品は、空の作品で旧版を置き換えないよう検証で拒否する
+  if (codeTabs.every((tab) => String(tab?.code ?? '').trim() === '')) {
     console.error(chalk.red(`❌ ${t('fetch.noCodeTabs')}`));
     process.exit(1);
   }
@@ -115,7 +125,7 @@ export async function fetchCommand(idArg, options = {}) {
       console.error(chalk.red(`❌ ${t('fetch.writeFailed', { dir: outDir, error: error?.message ?? String(error) })}`));
     }
     if (error instanceof PreviousNotRestoredError) {
-      console.error(chalk.yellow(`   ${t('fetch.previousAt', { path: error.previousPath, dir: outDir })}`));
+      console.error(chalk.yellow(`   ${t('fetch.previousAt', { path: error.previousPath, dir: outDir, marker: REPLACEMENT_MARKER_FILE })}`));
     } else {
       console.error(chalk.yellow(`   ${t(existed ? 'fetch.existingKept' : 'fetch.nothingCreated')}`));
     }
@@ -252,14 +262,37 @@ async function writeSketchFiles(outDir, { visualID, meta, sortedTabs, htmlPlan, 
   };
   await writeFile(join(outDir, '_op-meta.json'), JSON.stringify(opMeta, null, 2), 'utf-8');
 
+  // 書き出したものが staging に揃っているか確かめる。書き出し中に staging が消されると
+  // (並行する別の fetch の掃除など)、後の書き込みが作り直した staging に、消える前に書いた分が無い
+  const expected = [
+    ...[...assetMap.keys()].map((url) => assetPathsForUrl(url)?.filePath).filter(Boolean),
+    ...writtenFiles,
+    '_op-meta.json',
+  ];
+  const missing = [];
+  for (const relativePath of expected) {
+    if (!(await isFile(join(outDir, relativePath)))) missing.push(relativePath);
+  }
+  if (missing.length > 0) {
+    throw new Error(`${missing.length} written file(s) disappeared before the sketch was put in place `
+      + `(was the work directory removed by another fetch?): ${missing.join(', ')}`);
+  }
+
   return { writtenFiles, assetCount: assetMap.size };
 }
 
+/** @param {string} path */
+async function isFile(path) {
+  try { return (await stat(path)).isFile(); } catch { return false; }
+}
+
 /**
- * sketches/ 直下の差し替えの作業用ディレクトリ (replaceDirectory の残骸) を消す。
- * staging は未完成の書き出しなので消してよい。退避した旧版 (.dc-previous-*) は、差し替え先の作品が
- * 今ある (= 置き換え済み) と _op-meta.json から確かめられるときだけ消す。差し替えの途中で止まった・
- * 旧版を戻せなかったときは、それが作品の唯一の版なので残して場所を伝える。
+ * sketches/ 直下の差し替えの作業用ディレクトリ (replaceDirectory の残骸) を片付ける。
+ * - staging: 長く更新されていないもの (中断した fetch の残骸) だけを消す。新しいものは並行して走る
+ *   別の fetch が書き出し中かもしれない。
+ * - 退避した旧版 (.dc-previous-*): 印で「差し替えは済み、削除だけ失敗した」と確かめられたものだけを消す。
+ *   戻せなかった旧版や印の無い旧版 (差し替えの途中で止まった) は作品の唯一の版かもしれないので、
+ *   残して場所を伝える。
  * 消せなければ警告して続ける (次の fetch がまた試す)。
  * @param {string} sketchesDir
  */
@@ -273,31 +306,25 @@ async function removeLeftoverWorkDirectories(sketchesDir) {
   for (const entry of entries) {
     if (!isReplacementResidue(entry.name)) continue;
     const path = join(sketchesDir, entry.name);
-    if (entry.name.startsWith('.dc-previous-') && !(await isSupersededPrevious(sketchesDir, path))) {
-      console.warn(chalk.yellow(`⚠ ${t('fetch.previousKeptForRecovery', { path })}`));
-      continue;
-    }
     try {
-      await rm(path, { recursive: true, force: true });
+      if (entry.name.startsWith('.dc-staging-')) {
+        if (Date.now() - (await getLatestMtime(path)).getTime() < STALE_STAGING_MS) continue;
+        await rm(path, { recursive: true, force: true });
+        continue;
+      }
+      const marker = await readPreviousMarker(path);
+      if (marker?.reason === 'replaced') {
+        await removeReplacedPrevious(path);
+      } else if (marker?.reason === 'not-restored') {
+        console.warn(chalk.yellow(`⚠ ${t('fetch.previousNotRestoredKept', {
+          path, target: join(sketchesDir, marker.target), marker: REPLACEMENT_MARKER_FILE,
+        })}`));
+      } else {
+        console.warn(chalk.yellow(`⚠ ${t('fetch.previousKeptForRecovery', { path })}`));
+      }
     } catch (error) {
       console.warn(chalk.yellow(`⚠ ${t('fetch.leftoverNotRemoved', { path, error: error?.message ?? String(error) })}`));
     }
-  }
-}
-
-/**
- * 退避した旧版の作品が、すでに新しい版に置き換わっているか。
- * @param {string} sketchesDir
- * @param {string} previousPath
- */
-async function isSupersededPrevious(sketchesDir, previousPath) {
-  try {
-    const { visualID } = JSON.parse(await readFile(join(previousPath, '_op-meta.json'), 'utf-8'));
-    const id = String(visualID ?? '');
-    if (!/^\d+$/.test(id)) return false;
-    return (await stat(join(sketchesDir, `sketch${id}`))).isDirectory();
-  } catch {
-    return false;
   }
 }
 
