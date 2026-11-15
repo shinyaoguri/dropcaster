@@ -120,8 +120,7 @@ test('dropcaster scan (CLI) exits non-zero when a sketch copy fails', async () =
     assert.match(output, /ENOTDIR/);
     // 失敗は日常的な経路なので、Node の未処理 rejection のスタックを出さない
     assert.doesNotMatch(output, /Error: Scan failed|at ChildProcess|node:internal/);
-    assert.equal(output.match(/📋 Scanned/g)?.length, 1, `the summary line must appear once${describe(output)}`);
-  });
+    assert.equal(output.match(/📋 Scanned/g)?.length, 1, `the summary line must appear once${describe(output)}`);  });
 });
 
 test('when 1 of 2 sketches fails to copy, the other is cataloged and copied and the failed one is not', { skip: permissionSkip }, async () => {
@@ -290,7 +289,7 @@ test('a previous catalog entry is not kept when the public copy left behind has 
   });
 });
 
-test('when only removing the previous copy fails, the update is published and the leftover is skipped by scan cleanup and build', { skip: permissionSkip }, async () => {
+test('when only removing the previous copy fails, the update is published with a visible warning and the leftover is retried by later scans', { skip: permissionSkip }, async () => {
   await withTempProject(async (root) => {
     const ready = await writeSketch(root, 'ready', 'ready-v1');
     const first = await run(root, []);
@@ -306,9 +305,10 @@ test('when only removing the previous copy fails, the update is published and th
     await utimes(join(ready, 'index.html'), future, future);
 
     const second = await run(root, []);
-    assert.equal(second.code, 0, `the new copy is in place, so the scan succeeds${describe(second.stderr)}`);
-    assert.match(second.stderr, /could not remove the previous copy of ready at \S*\.dc-previous-[0-9a-f]{16}/);
-    assert.doesNotMatch(second.stderr, /Keeping the previously published copy/);
+    const secondOutput = second.stderr;
+    assert.equal(second.code, 0, `the new copy is in place, so the scan succeeds${describe(secondOutput)}`);
+    assert.match(secondOutput, /could not remove the previous copy of ready at \S*\.dc-previous-[0-9a-f]{16}/);
+    assert.doesNotMatch(secondOutput, /Keeping the previously published copy/);
     // title は既存の項目から引き継がれる (既存の仕様) ので、今回の解析結果かは lastModified で見る
     assert.equal((await readCatalog(root)).find((s) => s.id === 'ready')?.lastModified, future.toISOString(),
       'the catalog entry must come from this scan, not the previous one');
@@ -319,10 +319,12 @@ test('when only removing the previous copy fails, the update is published and th
     assert.equal(residue.length, 1, `expected one leftover: ${publicEntries.join(', ')}`);
     assert.match(residue[0], /^\.dc-previous-[0-9a-f]{16}$/);
 
-    // 次の scan は残骸を作品の削除として扱わない
+    // 消せないあいだは、次の scan が削除を試みて警告する (作品の削除としては扱わない)
     const third = await run(root, []);
     assert.equal(third.code, 0, describe(third.stderr));
-    assert.doesNotMatch(third.stderr, /Removed deleted sketch|\.dc-previous-/);
+    assert.doesNotMatch(third.stderr, /Removed deleted sketch/);
+    assert.match(third.stderr, new RegExp(`Warning: could not remove leftover ${residue[0]}`));
+    assert.ok(await exists(join(root, 'public', 'sketches', residue[0])));
 
     // build は残骸を dist に持ち込まないが、利用者のドットディレクトリはそのまま運ぶ
     await mkdir(join(root, 'public', '.well-known'), { recursive: true });
@@ -330,6 +332,12 @@ test('when only removing the previous copy fails, the update is published and th
     await copyPublicFiles(join(root, 'public'), join(root, 'dist'));
     assert.deepEqual(await readdir(join(root, 'dist', 'sketches')), ['ready']);
     assert.equal(await readFile(join(root, 'dist', '.well-known', 'security.txt'), 'utf-8'), 'contact');
+
+    // 消せるようになれば、次の全件 scan で片付く
+    await chmod(join(root, 'public', 'sketches', residue[0], 'locked'), 0o755);
+    const fourth = await run(root, []);
+    assert.equal(fourth.code, 0, describe(fourth.stderr));
+    assert.deepEqual(await readdir(join(root, 'public', 'sketches')), ['ready']);
   });
 });
 
@@ -345,7 +353,7 @@ test('replacement work directories in sketches/ are not cataloged as sketches', 
   });
 });
 
-test('cleanup of removed sketches leaves replacement work directories in public/sketches alone', async () => {
+test('a full scan removes replacement work directories left in public/sketches without treating them as sketches', async () => {
   await withTempProject(async (root) => {
     await writeSketch(root, 'ready', 'ready');
     const work = join(root, 'public', 'sketches', '.dc-staging-0123456789abcdef');
@@ -354,8 +362,44 @@ test('cleanup of removed sketches leaves replacement work directories in public/
 
     const result = await run(root, []);
     assert.equal(result.code, 0, describe(result.stderr));
-    assert.doesNotMatch(result.stderr, /Removed deleted sketch/);
-    assert.equal(await readFile(join(work, 'index.html'), 'utf-8'), 'in progress');
+    assert.doesNotMatch(result.stderr, /Removed deleted sketch: \.dc-/);
+    assert.equal(await exists(work), false, 'the leftover must be removed');
+    assert.deepEqual((await readCatalog(root)).map((s) => s.id), ['ready']);
+  });
+});
+
+// 修正前の rm → cp が途中で失敗し、index.html だけ先に入った残骸も「最新」とみなさない
+test('a newer copy that has index.html but misses other files of the sketch is recopied', async () => {
+  await withTempProject(async (root) => {
+    await writeSketch(root, 's1', 's1');
+    const partial = join(root, 'public', 'sketches', 's1');
+    await mkdir(partial, { recursive: true });
+    await writeFile(join(partial, 'index.html'), '<!doctype html><title>s1</title><canvas></canvas>', 'utf-8');
+    const future = new Date(Date.now() + 60_000);
+    await utimes(join(partial, 'index.html'), future, future);
+    await utimes(partial, future, future);
+
+    const result = await run(root, []);
+    assert.equal(result.code, 0, describe(result.stderr));
+    assert.doesNotMatch(result.stderr, /s1 is up to date/);
+    assert.equal(await readFile(join(partial, 'data.txt'), 'utf-8'), 'data of s1');
+  });
+});
+
+test('an unchanged rescan stays up to date with nested files and excluded metadata files', async () => {
+  await withTempProject(async (root) => {
+    const dir = await writeSketch(root, 'nested', 'nested');
+    await mkdir(join(dir, 'assets', 'img'), { recursive: true });
+    await writeFile(join(dir, 'assets', 'img', 'a.txt'), 'a', 'utf-8');
+    // public へはコピーしないファイル (手動メタデータ) があっても「最新」の判定を崩さない
+    await writeFile(join(dir, 'dropcaster.meta.json'), JSON.stringify({ title: 'Nested' }), 'utf-8');
+
+    const first = await run(root, []);
+    assert.equal(first.code, 0, describe(first.stderr));
+    assert.equal(await exists(join(root, 'public', 'sketches', 'nested', 'dropcaster.meta.json')), false);
+    const second = await run(root, []);
+    assert.equal(second.code, 0, describe(second.stderr));
+    assert.match(second.stderr, /✓ nested is up to date/);
   });
 });
 

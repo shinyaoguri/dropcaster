@@ -116,7 +116,8 @@ async function scanSketches(options = {}) {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      // 差し替えの作業用ディレクトリ (fetch --overwrite などの残骸) は作品ではない
+      // 差し替えの作業用ディレクトリ (replaceDirectory の staging / 旧版) は作品ではない。
+      // 今は sketches/ に作られないが、#167 で fetch --overwrite が使う予定
       if (isReplacementResidue(entry.name)) continue;
       if (targetSketch && entry.name !== targetSketch) continue;
 

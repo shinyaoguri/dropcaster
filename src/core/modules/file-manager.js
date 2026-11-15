@@ -15,8 +15,12 @@ export async function cleanupRemovedSketches(currentSketchNames, publicSketchesD
     // publicSketchesDirの既存ディレクトリをチェック
     const publicEntries = await readdir(publicSketchesDir, { withFileTypes: true });
     for (const entry of publicEntries) {
-      // 差し替えの作業用ディレクトリ (残骸を含む) は作品ではないので消さない
-      if (isReplacementResidue(entry.name)) continue;
+      // 差し替えの作業用ディレクトリの残骸 (旧版を消せなかったもの・異常終了で残った staging) は
+      // 作品ではない。削除を試み、消せなければ警告して次回また試す
+      if (isReplacementResidue(entry.name)) {
+        await removeReplacementResidue(join(publicSketchesDir, entry.name), entry.name);
+        continue;
+      }
       if (entry.isDirectory() && !currentSketchNames.has(entry.name)) {
         const oldSketchPath = join(publicSketchesDir, entry.name);
         const oldPreviewPath = join(previewsDir, `${entry.name}.gif`);
@@ -38,6 +42,19 @@ export async function cleanupRemovedSketches(currentSketchNames, publicSketchesD
     }
   } catch (error) {
     console.warn('Warning: Failed to cleanup removed sketches:', error.message);
+  }
+}
+
+/**
+ * @param {string} path
+ * @param {string} name
+ */
+async function removeReplacementResidue(path, name) {
+  try {
+    await rm(path, { recursive: true, force: true });
+    console.error(`🗑️ Removed leftover ${name}`);
+  } catch (error) {
+    console.warn(`Warning: could not remove leftover ${name} (will retry on the next scan): ${error.message}`);
   }
 }
 
@@ -66,7 +83,8 @@ export async function copySketchToPublic(sketchName, sourcePath, destinationDir,
   }));
   console.error(`📁 Copied ${sketchName} to public directory`);
   if (leftover) {
-    // 新しいコピーは置けている。消せなかった旧版の場所だけ伝える (scan・build は対象外にする)
+    // 新しいコピーは置けている。消せなかった旧版の場所だけ伝える (作品・build の対象外で、
+    // 次の全件 scan の cleanupRemovedSketches が削除を試みる)
     console.error(`Warning: could not remove the previous copy of ${sketchName} at ${leftover.path}: ${leftover.error.message}`);
   }
   return 'copied';
@@ -86,20 +104,69 @@ export async function isServableSketchCopy(copyPath) {
 }
 
 /**
- * public 側のコピーが配信できる形で、元より新しければ最新とみなす。それ以外 (コピーが無い・
- * ファイルになっている・入口が欠けている・読めない) はコピーし直す。
+ * public 側のコピーが最新か。配信できる形で、元からコピーするはずのファイルが過不足なく揃い、
+ * 元より新しいときだけ最新とみなす。それ以外 (コピーが無い・ファイルになっている・入口や
+ * 一部のファイルが欠けている・余分なファイルがある・どちらかが読めない) はコピーし直す。
+ * ファイルの揃いを見るのは、修正前の rm → cp が途中で失敗して残した、新しく見える部分的な
+ * コピーを「最新」と誤判定しないため。
  * @param {string} sourcePath
  * @param {string} destinationPath
  */
 async function isCopyUpToDate(sourcePath, destinationPath) {
   try {
     if (!(await isServableSketchCopy(destinationPath))) return false;
-    const sourceMtime = await getLatestMtime(sourcePath);
-    const destMtime = await getLatestMtime(destinationPath);
-    return sourceMtime <= destMtime;
+    const source = await readTree(sourcePath, shouldCopySketchFile);
+    const dest = await readTree(destinationPath);
+    return haveSameEntries(source.files, dest.files) && source.latestMtime <= dest.latestMtime;
   } catch {
     return false;
   }
+}
+
+/**
+ * ツリーの最新 mtime (getLatestMtime と同じく全エントリが対象) と、ファイルの相対パスの集合を返す。
+ * include が false を返したエントリ (とその配下) は集合に入れない (コピーしないファイル)。
+ * @param {string} root
+ * @param {(path: string) => boolean} [include]
+ * @returns {Promise<{ latestMtime: Date, files: Set<string> }>}
+ */
+async function readTree(root, include = () => true) {
+  /** @type {Set<string>} */
+  const files = new Set();
+
+  /**
+   * @param {string} path
+   * @param {string} relativePath
+   * @param {boolean} listed
+   * @returns {Promise<Date>}
+   */
+  async function walk(path, relativePath, listed) {
+    const stats = await stat(path);
+    if (!stats.isDirectory()) {
+      if (listed) files.add(relativePath);
+      return stats.mtime;
+    }
+    const entries = await readdir(path, { withFileTypes: true });
+    const mtimes = await Promise.all(entries.map((entry) => {
+      const childPath = join(path, entry.name);
+      const childRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+      return walk(childPath, childRelative, listed && include(childPath));
+    }));
+    return mtimes.reduce((latest, current) => (current > latest ? current : latest), stats.mtime);
+  }
+
+  const latestMtime = await walk(root, '', true);
+  return { latestMtime, files };
+}
+
+/**
+ * @param {Set<string>} a
+ * @param {Set<string>} b
+ */
+function haveSameEntries(a, b) {
+  if (a.size !== b.size) return false;
+  for (const value of a) if (!b.has(value)) return false;
+  return true;
 }
 
 function shouldCopySketchFile(source) {
