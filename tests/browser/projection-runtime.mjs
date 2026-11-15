@@ -307,6 +307,22 @@ async function keysCase(page) {
   assert.deepEqual(downUp(await take('nextSource')), [['keydown', '3', 'Digit3', 51], ['keyup', '3', 'Digit3', 51]], 'new source receives keys');
 
   assert.doesNotMatch(await popup.locator('#dc-output-hint').textContent(), /\bF\b/, 'hint no longer offers F');
+
+  // 出力を足して 2 台目の出力ウィンドウを開く。そちらで押したキーも同じ作品へ届く。
+  await click(page, '#add-output-btn');
+  const [second] = await Promise.all([page.waitForEvent('popup'), page.evaluate(() => {
+    const { wc } = window.runtimeRegression;
+    return void wc.openOutputWindowFor(wc.events.state.get().outputs.at(-1).id);
+  })]);
+  await second.waitForSelector('#dc-output-stage');
+  await second.keyboard.press('4');
+  assert.deepEqual(downUp(await take('nextSource')), [['keydown', '4', 'Digit4', 52], ['keyup', '4', 'Digit4', 52]], 'second output forwards keys');
+
+  // 全画面はダブルクリックで引き続き切り替えられる。
+  // （上の全画面ボタンでの Enter でも 1 回呼ばれているので、差分で見る）
+  const before = await popup.evaluate(() => window.fullscreenCalls);
+  await popup.locator('#dc-output-stage').dblclick();
+  assert.equal(await popup.evaluate(() => window.fullscreenCalls), before + 1, 'double-click still toggles output fullscreen');
 }
 
 async function recoveryCase(page, base) {
