@@ -120,7 +120,11 @@ test('dropcaster scan (CLI) exits non-zero when a sketch copy fails', async () =
     assert.match(output, /ENOTDIR/);
     // 失敗は日常的な経路なので、Node の未処理 rejection のスタックを出さない
     assert.doesNotMatch(output, /Error: Scan failed|at ChildProcess|node:internal/);
-    assert.equal(output.match(/📋 Scanned/g)?.length, 1, `the summary line must appear once${describe(output)}`);  });
+    assert.equal(output.match(/📋 Scanned/g)?.length, 1, `the summary line must appear once${describe(output)}`);
+    // 子プロセスの警告は進捗の表示で出し、失敗時の詳細では繰り返さない
+    assert.equal(output.match(/Warning: Failed to cleanup removed sketches/g)?.length, 1,
+      `the warning must appear once${describe(output)}`);
+  });
 });
 
 test('when 1 of 2 sketches fails to copy, the other is cataloged and copied and the failed one is not', { skip: permissionSkip }, async () => {
@@ -304,8 +308,9 @@ test('when only removing the previous copy fails, the update is published with a
     const future = new Date(Date.now() + 60_000);
     await utimes(join(ready, 'index.html'), future, future);
 
-    const second = await run(root, []);
-    const secondOutput = second.stderr;
+    // 既定の dropcaster scan (進捗だけを拾う表示) でも警告が利用者に見える
+    const second = await run(root, ['--no-previews'], { cli: true });
+    const secondOutput = second.stdout + second.stderr;
     assert.equal(second.code, 0, `the new copy is in place, so the scan succeeds${describe(secondOutput)}`);
     assert.match(secondOutput, /could not remove the previous copy of ready at \S*\.dc-previous-[0-9a-f]{16}/);
     assert.doesNotMatch(secondOutput, /Keeping the previously published copy/);
