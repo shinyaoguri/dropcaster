@@ -1259,6 +1259,41 @@ export const CONTROL_PANEL_CSS = `
         min-height: 20px;
       }
 
+      /* 非 active な mapping の source 枠。一覧と同じ識別色の点線で、active の枠より背面
+         （DOM 上で #selection-box より前に置く）。クリックでその mapping を active にする。 */
+      .source-inactive-box {
+        position: absolute;
+        box-sizing: border-box;
+        border: 2px dashed var(--mapping-color, rgba(255, 0, 255, 0.7));
+        /* 明るい映像の上でも線が埋もれないよう、外側に暗い縁を付ける */
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+        background: color-mix(in srgb, var(--mapping-color, #ff00ff) 8%, transparent);
+        pointer-events: auto;
+        cursor: pointer;
+      }
+      .source-inactive-box:hover {
+        border-style: solid;
+        background: color-mix(in srgb, var(--mapping-color, #ff00ff) 14%, transparent);
+      }
+      .source-inactive-box.disabled {
+        opacity: 0.45;
+      }
+      .source-inactive-label {
+        position: absolute;
+        top: 0;
+        left: 0;
+        max-width: 100%;
+        padding: 1px 4px;
+        overflow: hidden;
+        font-size: 10px;
+        line-height: 1.3;
+        color: #000;
+        background: var(--mapping-color, #ff00ff);
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        pointer-events: none;
+      }
+
       /* 矢印キーで微調整中の選択枠（白いリング） */
       #selection-box.kbd-selected {
         box-shadow: 0 0 0 2px #fff, 0 0 6px rgba(0, 0, 0, 0.8);

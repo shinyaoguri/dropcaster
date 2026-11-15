@@ -159,6 +159,19 @@ export function mappingColor(index: number): string {
 }
 
 /**
+ * mappings 配列の各項目の表示名（index 対応）。name が無ければ kind ごとの通し番号
+ * （"Mapping 1, 2, ..." / "Mask 1, 2, ..."）を充てる。一覧とソースカラムで同じ名前を出すための共通式。
+ */
+export function mappingDisplayNames(mappings: readonly MappingItem[]): string[] {
+  let mappingNum = 0;
+  let maskNum = 0;
+  return mappings.map((m) => {
+    const fallback = isMaskEntry(m) ? `Mask ${++maskNum}` : `Mapping ${++mappingNum}`;
+    return m.name ?? fallback;
+  });
+}
+
+/**
  * 既定の出力1件を生成する。position は原点（複数並べる場合は呼び出し側で
  * オフセットする — withAddedOutput が右に詰めて配置する）。
  */

@@ -9,9 +9,20 @@
  * source 変更は mapping 側プレビュー（#cropped-video の clip-path / 非 active
  * preview の warp signature）にも波及するので、変更通知は `onSourceChanged`
  * コールバックで親へ送り、親が他 panel へファンアウトする。
+ *
+ * 非 active な mapping の source 矩形も、一覧と同じ識別色の点線枠と表示名で #selection-box の
+ * 背面に描く（どこを切り出しているかを同時に見るため）。クリックでその mapping を active にする
+ * （マッピングカラムの非 active プレビューと同じ操作）。枠は id キーで使い回す。
  */
 
 import type { SourceRect } from '../../../utils/mappingTransform';
+import {
+  getActiveMapping,
+  isMappingEnabled,
+  isMaskEntry,
+  mappingColor,
+  mappingDisplayNames,
+} from '../../../utils/mappingTransform';
 import { CleanupStack } from '../../../utils/cleanupStack';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
@@ -22,6 +33,13 @@ export interface SourceCropPanelAttachOptions {
   onSourceChanged: () => void;
   /** mousedown 時に「source 矩形を矢印キー nudge 対象に設定」する callback。 */
   setKeyboardSourceSelection: () => void;
+  /** 非 active な mapping の枠がクリックされたときに呼ばれる（その mapping を active にする）。 */
+  onActivate: (id: string) => void;
+}
+
+interface InactiveBox {
+  box: HTMLDivElement;
+  label: HTMLSpanElement;
 }
 
 const MIN_SIZE = 5;
@@ -32,6 +50,8 @@ export class SourceCropPanel {
   private ctrl: MappingsController | null = null;
   private opts: SourceCropPanelAttachOptions | null = null;
   private selectionBox: HTMLDivElement | null = null;
+  /** 非 active な mapping の source 枠（mapping id → DOM）。 */
+  private inactiveBoxes = new Map<string, InactiveBox>();
   private cleanups = new CleanupStack();
 
   attach(scope: HTMLElement, doc: Document, ctrl: MappingsController, opts: SourceCropPanelAttachOptions): void {
@@ -64,11 +84,15 @@ export class SourceCropPanel {
     const box = this.selectionBox;
     const ctrl = this.ctrl;
     if (!box || !ctrl) return;
+    // mask が active のときは選択中の source が無い。フォールバックの全面枠を出すと「何かが選択中」に
+    // 見え、他の mapping の枠も覆ってクリックできなくなるので隠す。
+    box.hidden = !getActiveMapping(ctrl.getState());
     const s = ctrl.getActiveSource();
     box.style.left = `${s.x}%`;
     box.style.top = `${s.y}%`;
     box.style.width = `${s.width}%`;
     box.style.height = `${s.height}%`;
+    this.syncInactiveBoxes();
   }
 
   /** selectionBox 要素を外から取りたいときに使う（keyboard nudge の選択 UI 用）。 */
@@ -76,11 +100,96 @@ export class SourceCropPanel {
 
   destroy(): void {
     this.cleanups.runAll();
+    for (const { box } of this.inactiveBoxes.values()) box.remove();
+    this.inactiveBoxes.clear();
     this.scope = null;
     this.doc = null;
     this.ctrl = null;
     this.opts = null;
     this.selectionBox = null;
+  }
+
+  /**
+   * 非 active な mapping の source 枠を state に合わせる。mask は source を持たないので描かない。
+   * 枠は #selection-box の直前に置き、重なった部分では active の枠（ドラッグ・リサイズ）を優先する。
+   * 非 active 同士は面積の大きい順に並べ、大きな枠の内側にある小さな枠もクリックできるようにする。
+   */
+  private syncInactiveBoxes(): void {
+    const selectionBox = this.selectionBox;
+    const overlay = selectionBox?.parentElement;
+    const doc = this.doc;
+    const ctrl = this.ctrl;
+    if (!selectionBox || !overlay || !doc || !ctrl) return;
+    const state = ctrl.getState();
+    const names = mappingDisplayNames(state.mappings);
+    const seen = new Set<string>();
+    const ordered: { box: HTMLDivElement; label: HTMLSpanElement; area: number; corner: string }[] = [];
+    state.mappings.forEach((m, idx) => {
+      if (isMaskEntry(m) || m.id === state.activeId) return;
+      seen.add(m.id);
+      let entry = this.inactiveBoxes.get(m.id);
+      if (!entry) entry = this.createInactiveBox(doc, m.id);
+      const { box, label } = entry;
+      ordered.push({
+        box,
+        label,
+        area: m.source.width * m.source.height,
+        corner: `${Math.round(m.source.x)},${Math.round(m.source.y)}`,
+      });
+      box.style.left = `${m.source.x}%`;
+      box.style.top = `${m.source.y}%`;
+      box.style.width = `${m.source.width}%`;
+      box.style.height = `${m.source.height}%`;
+      box.style.setProperty('--mapping-color', mappingColor(idx));
+      box.classList.toggle('disabled', !isMappingEnabled(m));
+      label.textContent = names[idx];
+      box.title = names[idx];
+    });
+    // 同じ面積なら一覧の並び（配列の先頭ほど前面）に合わせる（sort は安定なので配列順を保つ）
+    ordered.reverse().sort((a, b) => b.area - a.area);
+    // 左上の角がほぼ同じ枠どうしはラベルが重なって背面の名前が読めないので、前面から順に 1 行ずつ下げる
+    const stacked = new Map<string, number>();
+    for (let i = ordered.length - 1; i >= 0; i--) {
+      const { label, corner } = ordered[i];
+      const n = stacked.get(corner) ?? 0;
+      stacked.set(corner, n + 1);
+      label.style.top = n === 0 ? '' : `${n * 1.3}em`;
+    }
+    const current = Array.from(overlay.querySelectorAll(':scope > .source-inactive-box'));
+    const inOrder = current.length === ordered.length && ordered.every(({ box }, i) => current[i] === box);
+    // ドラッグ中は毎フレーム呼ばれるので、順序が変わったときだけ DOM を動かす
+    if (!inOrder) for (const { box } of ordered) overlay.insertBefore(box, selectionBox);
+    for (const [id, { box }] of this.inactiveBoxes) {
+      if (seen.has(id)) continue;
+      box.remove();
+      this.inactiveBoxes.delete(id);
+    }
+  }
+
+  private createInactiveBox(doc: Document, id: string): InactiveBox {
+    const box = doc.createElement('div');
+    box.className = 'source-inactive-box';
+    box.dataset.mappingId = id;
+    const label = doc.createElement('span');
+    label.className = 'source-inactive-label';
+    box.appendChild(label);
+    box.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || this.isPenDrafting()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.opts?.onActivate(id);
+    });
+    const entry = { box, label };
+    this.inactiveBoxes.set(id, entry);
+    return entry;
+  }
+
+  /** ペン描画中は他項目への切替をロックする（一覧・マッピングカラムと同じ）。 */
+  private isPenDrafting(): boolean {
+    const state = this.ctrl?.getState();
+    if (!state) return false;
+    const active = state.mappings.find(m => m.id === state.activeId);
+    return !!active && isMaskEntry(active) && !!active.drafting;
   }
 
   private wireResetButton(): void {
