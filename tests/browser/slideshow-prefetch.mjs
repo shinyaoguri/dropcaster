@@ -90,7 +90,7 @@ function assertIdle(m, marker, label) {
 }
 
 /** hold に渡した作品 (path 経路) の応答は、テストが release() を呼ぶまで返さない。 */
-async function setup(browser, base, { hold = null } = {}) {
+async function setup(browser, base, { hold = null, query = '' } = {}) {
   const context = await browser.newContext({ serviceWorkers: 'block' });
   context.setDefaultTimeout(15_000);
   const errors = [];
@@ -107,7 +107,7 @@ async function setup(browser, base, { hold = null } = {}) {
     });
   });
   const page = await context.newPage();
-  await page.goto(base.url + '/slideshow');
+  await page.goto(base.url + '/slideshow' + query);
   return { context, page, errors, held, release: () => release() };
 }
 
@@ -184,6 +184,22 @@ const cases = {
     assertIdle(m, 'c', 'マッピング中の Next');
   },
 
+  // srcdoc の作品も「先読み → 停止 → 表示 → 再開」と進む (b から始めて c を先読みさせる)
+  async srcdocPrefetchResumes({ page }) {
+    await waitForPair(page, 'b', 'c');
+    await page.waitForTimeout(200);
+    const idle = await measure(page);
+    assertRunning(idle, 'b', 'srcdoc の先読み待機中');
+    assertIdle(idle, 'c', 'srcdoc の先読み待機中');
+    await page.locator('#next-btn').click();
+    await page.waitForFunction(() => document.querySelector('#current-sketch-number').textContent === '3');
+    await waitForPair(page, 'c', 'd');
+    await page.waitForTimeout(FADE_SETTLE_MS);
+    const m = await measure(page);
+    assertRunning(m, 'c', 'srcdoc の先読みを表示');
+    assertIdle(m, 'd', 'srcdoc の先読みを表示');
+  },
+
   // 待機中に作品がフレームを取り消して掛け直しても (リサイズ・全画面化)、表示後の描画ループは 1 本のまま
   async resizeWhilePaused({ page }) {
     await waitForPair(page, 'a', 'b');
@@ -201,6 +217,26 @@ const cases = {
     assert.ok(m.b.delta <= baseline * 1.5,
       `待機中のリサイズ: 表示後の b の描画ループが多重化した (1 本ぶん ${baseline}, ${JSON.stringify(m)})`);
     assertIdle(m, 'c', '待機中のリサイズ');
+  },
+
+  // B を表示した直後に Next を 2 回押し、D の読み込みを保留する。後から来た先読みの完了や
+  // 取り消された切替が、表示中の frame を止めない (どの作品が表示されるかはここでは見ない)
+  async previewRaceKeepsVisibleRunning({ page, held, release }) {
+    await waitForPair(page, 'a', 'b');
+    await page.locator('#next-btn').click();
+    await page.waitForFunction(() => document.querySelector('#current-sketch-number').textContent === '2');
+    await page.waitForTimeout(50);
+    await page.evaluate(() => { const next = document.querySelector('#next-btn'); next.click(); next.click(); });
+    await held;
+    await page.waitForTimeout(FADE_SETTLE_MS);
+    release();
+    await page.waitForTimeout(1500);
+    const m = await measure(page);
+    const visible = Object.entries(m).filter(([, f]) => f.visible);
+    assert.ok(visible.length > 0, `競合後: 表示中の frame が無い (${JSON.stringify(m)})`);
+    for (const [marker, f] of visible) {
+      assert.ok(f.delta >= MIN_RUNNING, `競合後: 表示中の ${marker} が止まった (${JSON.stringify(m)})`);
+    }
   },
 
   // 切替を連続で押しても、最後に表示した作品だけが進み、残りは止まる
@@ -245,7 +281,10 @@ try {
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}` };
       for (const [caseName, run] of Object.entries(cases)) {
         if (process.env.SLIDESHOW_CASE && process.env.SLIDESHOW_CASE !== caseName) continue;
-        const env = await setup(browser, base, { hold: { nextBeforePrefetchCompletes: 'b', supersededShow: 'd' }[caseName] ?? null });
+        const env = await setup(browser, base, {
+          hold: { nextBeforePrefetchCompletes: 'b', supersededShow: 'd', previewRaceKeepsVisibleRunning: 'd' }[caseName] ?? null,
+          query: caseName === 'srcdocPrefetchResumes' ? '?index=1' : '',
+        });
         try {
           await run({ ...env, base });
           assert.deepEqual(env.errors, [], `${name}/${caseName}: browser errors`);
