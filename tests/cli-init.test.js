@@ -112,6 +112,30 @@ test('リンク先の無いシンボリックリンクも既存として扱い�
   assertNothingWritten(project, ['README.md']);
 });
 
+test('途中のディレクトリのシンボリックリンクは利用者の意図として辿り、リンク先で衝突を検査する', (t) => {
+  const ws = makeWorkspace(t);
+  const shared = join(ws, 'shared-sketches');
+  put(shared, 'sample-sketch/mySketch.js', '// 共有ディレクトリの作品\n');
+  const project = join(ws, 'exhibit');
+  mkdirSync(project);
+  symlinkSync(shared, join(project, 'sketches'));
+
+  const refused = runInit(ws, 'exhibit');
+
+  assert.notEqual(refused.status, 0, refused.output);
+  assert.match(refused.output, /sketches\/sample-sketch\/mySketch\.js/);
+  assert.equal(readFileSync(join(shared, 'sample-sketch/mySketch.js'), 'utf-8'), '// 共有ディレクトリの作品\n');
+  assertNothingWritten(project, ['sketches/sample-sketch/mySketch.js']);
+
+  // 衝突が無くなれば、リンク先の共有ディレクトリにサンプル作品を書く
+  rmSync(join(shared, 'sample-sketch'), { recursive: true });
+  const created = runInit(ws, 'exhibit');
+
+  assert.equal(created.status, 0, created.output);
+  assert.equal(existsSync(join(shared, 'sample-sketch/mySketch.js')), true);
+  assert.equal(existsSync(join(project, 'README.md')), true);
+});
+
 test('書き込み先の親 (public) が通常ファイルなら、それを残したまま非 0 終了し、何も書かない', (t) => {
   const ws = makeWorkspace(t);
   const project = join(ws, 'exhibit');
