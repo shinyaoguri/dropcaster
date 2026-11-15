@@ -35,6 +35,16 @@ function fixture({ webgl = false, width = 320, height = 240, color = 'red', dela
   </script><body></body>`;
 }
 
+// p5.js 1.x と同じく window の key* listener で受け、e.which で keyCode / keyIsDown を決める作品。
+// Tab だけ preventDefault して、作品側の取り消しが出力ウィンドウの元のイベントに戻るかを見る。
+const keyRecorder = `
+  window.keyLog = [];
+  for (const type of ['keydown', 'keyup', 'keypress']) addEventListener(type, e => {
+    keyLog.push({ type, key: e.key, code: e.code, which: e.which, keyCode: e.keyCode, repeat: e.repeat, shift: e.shiftKey });
+    if (type === 'keydown' && e.key === 'Tab') e.preventDefault();
+  });`;
+const keyFixture = () => fixture().replace('<script>', `<script>${keyRecorder}`);
+
 async function setup(page, base) {
   await page.goto(base.url);
   await page.waitForSelector('input'); // entry smoke test, before mounting the real editor
@@ -233,6 +243,90 @@ async function patternCase(page) {
   });
   await waitVideo(page, 640);
   assert.equal(await page.locator('.test-pattern-btn.active').getAttribute('data-pattern'), 'off');
+}
+
+async function keysCase(page) {
+  await addSource(page, keyFixture());
+  await addSource(page, keyFixture(), 'nextSource');
+  const popup = await start(page);
+  await popup.waitForSelector('#dc-output-stage');
+  // 作品に届いたキー（keypress を除く）を [type, key, code, which] で取り出して消す。
+  const take = (name = 'source') => page.evaluate(n => window.runtimeRegression[n].contentWindow.keyLog.splice(0), name);
+  const downUp = log => log.filter(k => k.type !== 'keypress').map(k => [k.type, k.key, k.code, k.which]);
+  await popup.evaluate(() => {
+    // 全画面の切り替え (開始・解除) を数える。CI の Chrome は実際に全画面へ入るので、
+    // 2 回目の切り替えは exitFullscreen になる。
+    window.fullscreenCalls = 0;
+    const request = Element.prototype.requestFullscreen;
+    Element.prototype.requestFullscreen = function () { window.fullscreenCalls++; return request.call(this); };
+    const exit = Document.prototype.exitFullscreen;
+    Document.prototype.exitFullscreen = function () { window.fullscreenCalls++; return exit.call(this); };
+    // 出力ウィンドウ側の転送 listener より後に登録し、元のイベントの defaultPrevented を見る。
+    window.prevented = [];
+    addEventListener('keydown', e => window.prevented.push([e.key, e.defaultPrevented]));
+  });
+
+  await popup.keyboard.press('2');
+  const two = await take();
+  assert.deepEqual(downUp(two), [['keydown', '2', 'Digit2', 50], ['keyup', '2', 'Digit2', 50]], 'digit reaches the sketch');
+  assert.ok(two.some(k => k.type === 'keypress' && k.key === '2'), 'keypress (p5 keyTyped) reaches the sketch');
+
+  await popup.keyboard.down('Space');
+  await popup.keyboard.down('Space');
+  await popup.keyboard.up('Space');
+  assert.deepEqual((await take()).filter(k => k.type !== 'keypress').map(k => [k.type, k.code, k.which, k.repeat]),
+    [['keydown', 'Space', 32, false], ['keydown', 'Space', 32, true], ['keyup', 'Space', 32, false]], 'hold and repeat');
+
+  await popup.keyboard.press('Shift+KeyA');
+  assert.deepEqual((await take()).filter(k => k.key === 'A').map(k => [k.type, k.which, k.shift]),
+    [['keydown', 65, true], ['keypress', 65, true], ['keyup', 65, true]], 'modifier state reaches the sketch');
+
+  await popup.keyboard.press('f');
+  assert.deepEqual(downUp(await take()), [['keydown', 'f', 'KeyF', 70], ['keyup', 'f', 'KeyF', 70]], 'f goes to the sketch');
+  assert.equal(await popup.evaluate(() => window.fullscreenCalls), 0, 'f no longer toggles output fullscreen');
+
+  await popup.keyboard.press('Tab');
+  assert.deepEqual(await popup.evaluate(() => window.prevented.filter(([key]) => key === 'Tab' || key === '2')),
+    [['2', false], ['Tab', true]], 'sketch preventDefault cancels the original key');
+  await take();
+
+  await popup.keyboard.down('a');
+  await popup.evaluate(() => dispatchEvent(new FocusEvent('blur')));
+  assert.deepEqual(downUp(await take()), [['keydown', 'a', 'KeyA', 65], ['keyup', 'a', 'KeyA', 65]], 'blur releases held keys');
+  await popup.keyboard.up('a');
+  await take();
+
+  await popup.locator('#dc-output-fs').focus();
+  await popup.keyboard.press('Enter');
+  assert.deepEqual(await take(), [], 'keys on the output UI button stay in the output window');
+  await popup.evaluate(() => document.activeElement.blur());
+
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ControlOrMeta+z');
+  assert.deepEqual(await take(), [], 'main window keys do not reach the sketch');
+
+  await page.evaluate(() => window.runtimeRegression.wc.setSource(window.runtimeRegression.nextSource));
+  await popup.keyboard.press('3');
+  assert.deepEqual(await take(), [], 'replaced source no longer receives keys');
+  assert.deepEqual(downUp(await take('nextSource')), [['keydown', '3', 'Digit3', 51], ['keyup', '3', 'Digit3', 51]], 'new source receives keys');
+
+  assert.doesNotMatch(await popup.locator('#dc-output-hint').textContent(), /\bF\b/, 'hint no longer offers F');
+
+  // 出力を足して 2 台目の出力ウィンドウを開く。そちらで押したキーも同じ作品へ届く。
+  await click(page, '#add-output-btn');
+  const [second] = await Promise.all([page.waitForEvent('popup'), page.evaluate(() => {
+    const { wc } = window.runtimeRegression;
+    return void wc.openOutputWindowFor(wc.events.state.get().outputs.at(-1).id);
+  })]);
+  await second.waitForSelector('#dc-output-stage');
+  await second.keyboard.press('4');
+  assert.deepEqual(downUp(await take('nextSource')), [['keydown', '4', 'Digit4', 52], ['keyup', '4', 'Digit4', 52]], 'second output forwards keys');
+
+  // 全画面はダブルクリックで引き続き切り替えられる。
+  // （上の全画面ボタンでの Enter でも 1 回呼ばれているので、差分で見る）
+  const before = await popup.evaluate(() => window.fullscreenCalls);
+  await popup.locator('#dc-output-stage').dblclick();
+  assert.equal(await popup.evaluate(() => window.fullscreenCalls), before + 1, 'double-click still toggles output fullscreen');
 }
 
 async function recoveryCase(page, base) {
@@ -594,7 +688,7 @@ try {
       await server.listen();
       const base = { url: `http://127.0.0.1:${server.httpServer.address().port}`,
         modules: hosted ? `/@fs${root}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase })) {
+      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, keys: keysCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase })) {
         if (process.env.RUNTIME_CASE && process.env.RUNTIME_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
         const errors = [];
