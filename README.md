@@ -288,10 +288,12 @@ OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（�
 オプション:
 - `-o, --output <dir>` - 出力ディレクトリ (デフォルト: "dist")
 - `--base <path>` - 配信先のベースURLパス。未指定なら `dropcaster.config.js` の `base`、それも無ければ "/"。
-  先頭と末尾の "/" は補われる（`exhibit` → `/exhibit/`）。`./` のような相対パスや URL は指定できない
+  先頭と末尾の "/" は補われる（`exhibit` → `/exhibit/`）。`./` のような相対パス・URL、`?`・`#`・空白・
+  バックスラッシュを含む値は指定できない。決まった base は出力先の `dropcaster-build.json` に記録される
 
 ### `dropcaster preview [options]`
-ビルド済みの出力を配信して確認。`dropcaster.config.js` の `base` があればその配下（例: `/exhibit/`）で配信する。
+ビルド済みの出力を配信して確認。build 時に決まった base（`--base` を含む。出力先の `dropcaster-build.json`）の
+配下（例: `/exhibit/`）で配信する。記録の無い古い出力では `dropcaster.config.js` の `base`、それも無ければ "/"。
 
 オプション:
 - `-p, --port <port>` - ポート (デフォルト: 4173)
