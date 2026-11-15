@@ -48,6 +48,22 @@ const embedFiles = {
   'legacy.js': "document.documentElement.dataset.legacy = 'ran';",
   'tricky.js': "window.tricky = \"<!--<script>\";\ndocument.getElementById('target').dataset.tricky = 'ran';",
 };
+// #110: 埋め込んだ script の相対パスの import は未対応 (README に明記)。絶対 URL なら通る
+const ABS_MODULE_URL = 'https://cdn.example.test/dc-abs.js';
+const importFiles = {
+  'index.html': [
+    '<!doctype html><html><head>',
+    '<script type="module" src="rel-static.js"></script>',
+    '<script type="module" src="abs-static.js"></script>',
+    '<script src="rel-dynamic.js"></script>',
+    '</head><body><div id="target"></div></body></html>',
+  ].join('\n'),
+  'util.js': 'export const v = 1;',
+  'rel-static.js': "import { v } from './util.js';\ndocument.getElementById('target').dataset.relStatic = 'ran' + v;",
+  'abs-static.js': `import { abs } from '${ABS_MODULE_URL}';\ndocument.getElementById('target').dataset.absStatic = abs;`,
+  'rel-dynamic.js': "import('./util.js').then(\n  () => { document.documentElement.dataset.relDynamic = 'resolved'; },\n  (e) => { document.documentElement.dataset.relDynamic = 'rejected:' + e.name; },\n);",
+};
+
 const gistFilesJson = (id, files) => ({
   id, description: 'embed', owner: { login: 'tester' }, html_url: `https://gist.github.com/${id}`, updated_at: '2026-11-16T00:00:00Z',
   files: Object.fromEntries(Object.entries(files).map(([filename, content]) => [filename, { filename, content, truncated: false }])),
@@ -217,6 +233,30 @@ const cases = {
       module: 'ran', defer: 'ran', legacy: null, tricky: 'ran', after: true, leak: false,
       width: '7px', color: 'rgb(0, 128, 0)', afterContent: '"</style><p id=leak>"',
     }, '埋め込み後の作品が元のファイル構成と違う動きをした');
+  },
+
+  // #110: 相対パスの static import / import() は解決できない (未対応として固定)。絶対 URL の import は通る
+  async gistEmbedsRelativeImportUnsupported(env) {
+    const { page, gist, context } = env;
+    await context.route(ABS_MODULE_URL, (r) => r.fulfill({
+      contentType: 'text/javascript', headers: { 'access-control-allow-origin': '*' }, body: "export const abs = 'ran';",
+    }));
+    await clickLink(page, `/gist/${GIST_A}`);
+    await gist.release(`/gists/${GIST_A}`, { json: gistFilesJson(GIST_A, importFiles) });
+    const target = page.frameLocator('#sketch-iframe').locator('#target');
+    await target.waitFor({ state: 'attached' });
+    await settle(page);
+    const observed = await target.evaluate((t) => ({
+      relStatic: t.dataset.relStatic ?? null,
+      absStatic: t.dataset.absStatic ?? null,
+      relDynamic: document.documentElement.dataset.relDynamic ?? null,
+    }));
+    assert.deepEqual(observed, { relStatic: null, absStatic: 'ran', relDynamic: 'rejected:TypeError' },
+      '相対 import の扱いが README の記述 (未対応・絶対 URL は可) と違う');
+    // static import の解決失敗は module の読み込みエラーとして出る。想定したこの 1 件だけを除き、残りは共通の検査に回す
+    const expected = env.errors.filter((m) => /Failed to resolve module specifier "\.\/util\.js"/.test(m));
+    assert.equal(expected.length, 1, `相対 static import の解決失敗が出ていない: ${JSON.stringify(env.errors)}`);
+    env.errors.splice(0, env.errors.length, ...env.errors.filter((m) => !expected.includes(m)));
   },
 
   // 再現 B: 作品 iframe の読み込み中に離脱しても、破棄済みコントローラーがリスナーを付け直さない
