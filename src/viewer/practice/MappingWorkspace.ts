@@ -20,7 +20,9 @@ export class MappingWorkspace {
   private panel: PracticePanel | null = null;
   private pendingPanel: Promise<void> | null = null;
   private editor: ControlWindow | null = null;
-  /** ツールカラムの見出し行に差し込む「設定・共有」と閉じる。 */
+  /** ツールカラムの見出し行の左端 (見出しの前) に差し込む「設定・共有」メニュー。 */
+  private menu: HTMLDetailsElement | null = null;
+  /** ツールカラムの見出し行の右端に差し込む閉じるとその確認ダイアログ。 */
   private toolbar: HTMLElement | null = null;
   /** ツール見出しの直下に差し込む状態文と再試行。 */
   private notice: HTMLElement | null = null;
@@ -34,7 +36,7 @@ export class MappingWorkspace {
   private error = false;
   private disposed = false;
   private closeMenuOutside = (event: PointerEvent): void => {
-    const menu = this.toolbar?.querySelector<HTMLDetailsElement>('#practice-menu');
+    const menu = this.menu;
     if (menu && !menu.contains(event.target as Node)) menu.open = false;
   };
 
@@ -78,15 +80,19 @@ export class MappingWorkspace {
     this.notice.innerHTML = `<span id="dc-practice-status" role="status" aria-live="polite"></span>
       <button type="button" id="practice-retry" class="tool-button" data-i18n="practice.retry" hidden></button>`;
     toolHeader.after(this.notice);
-    this.toolbar = document.createElement('div'); this.toolbar.className = 'dc-workspace-actions';
-    this.toolbar.innerHTML = `<details id="practice-menu" class="dc-workspace-menu"><summary>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 3v6m8 0v6m-6 0v6"/></svg><span data-i18n="practice.menu"></span>
+    // 「設定・共有」は見出しの前にアイコンだけで置き、名前は title と aria-label で示す。
+    // DOM 順も表示順と同じにして、読み上げとフォーカスの順を見た目に揃える。
+    const menu = document.createElement('details'); menu.id = 'practice-menu'; menu.className = 'dc-workspace-menu';
+    menu.innerHTML = `<summary data-i18n-title="practice.menu" data-i18n-aria-label="practice.menu">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 3v6m8 0v6m-6 0v6"/></svg>
       </summary><div class="dc-workspace-menu-items">
         <button type="button" id="practice-settings" data-i18n="calibration.previewSettings"></button>
         <a id="practice-venue" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer" data-i18n="calibration.open"></a>
         <button type="button" id="practice-project" data-i18n="practice.storage"></button>
-      </div></details>
-      <button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      </div>`;
+    this.menu = menu; toolHeader.prepend(menu);
+    this.toolbar = document.createElement('div'); this.toolbar.className = 'dc-workspace-actions';
+    this.toolbar.innerHTML = `<button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       <dialog id="practice-stop-confirm" class="dc-workspace-confirm" aria-labelledby="practice-stop-confirm-title" aria-describedby="practice-stop-confirm-hint"><div class="dc-workspace-confirm-body">
         <p id="practice-stop-confirm-title" class="dc-workspace-confirm-title" data-i18n="practice.stopConfirm"></p>
         <p id="practice-stop-confirm-hint" class="dc-workspace-confirm-hint" data-i18n="practice.stopConfirmHint"></p>
@@ -96,7 +102,6 @@ export class MappingWorkspace {
         </div>
       </div></dialog>`;
     toolHeader.append(this.toolbar);
-    const menu = this.toolbar.querySelector<HTMLDetailsElement>('#practice-menu')!;
     menu.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || !menu.open) return;
       event.preventDefault(); event.stopPropagation(); menu.open = false; menu.querySelector('summary')!.focus();
@@ -120,7 +125,7 @@ export class MappingWorkspace {
       editor.selectTab('preview'); void this.ensurePanel();
     });
     for (const [button, id] of [['practice-settings', 'dc-practice-settings'], ['practice-project', 'dc-practice-project']]) {
-      this.toolbar.querySelector(`#${button}`)!.addEventListener('click', async () => {
+      menu.querySelector(`#${button}`)!.addEventListener('click', async () => {
         menu.open = false;
         const generation = this.generation;
         await this.ensurePanel();
@@ -201,6 +206,7 @@ export class MappingWorkspace {
     this.notice.classList.toggle('is-visible', this.error || (!!retry && !retry.hasAttribute('hidden')));
   }
   private translate(): void {
+    if (this.menu) applyControlTranslations(this.menu);
     if (this.toolbar) applyControlTranslations(this.toolbar);
     if (this.notice) applyControlTranslations(this.notice);
     this.status(this.statusKey, this.error);
@@ -211,6 +217,7 @@ export class MappingWorkspace {
     document.removeEventListener('pointerdown', this.closeMenuOutside);
     this.offTab?.(); this.offTab = null;
     this.panel?.dispose(); this.panel = null; this.editor = null;
+    this.menu?.remove(); this.menu = null;
     this.toolbar?.remove(); this.toolbar = null;
     this.notice?.remove(); this.notice = null;
     this.scope?.classList.remove('dc-mapping-workspace'); this.scope = null;
