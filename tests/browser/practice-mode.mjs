@@ -369,6 +369,13 @@ async function outputs(page) {
   const first = (await state(page)).outputs[0].id;
   for (let i = 0; i < 3; i++) { await page.locator('#add-output-btn').click(); await page.locator('#add-mapping-btn').click(); }
   assert.equal(await page.locator('#add-output-btn').isDisabled(), true);
+  // 上限で押せない「出力を追加」も、汎用 button:disabled の明るい塗りではなく通常の地色のまま淡くする (#186)
+  const addLook = () => page.locator('#add-output-btn').evaluate(el => { el.getAnimations().forEach(a => a.finish()); const s = getComputedStyle(el); return { background: s.backgroundColor, opacity: Number(s.opacity) }; });
+  const disabledAdd = await addLook();
+  assert.equal(disabledAdd.background, 'rgb(68, 68, 68)', 'a disabled tool button keeps its own fill');
+  assert.ok(disabledAdd.opacity < 0.5, 'a disabled tool button dims itself');
+  await page.locator('#add-output-btn').hover();
+  assert.equal((await addLook()).background, 'rgb(68, 68, 68)', 'hovering a disabled tool button does not highlight it');
   assert.equal(page.context().pages().length, 1, 'adding a practice output does not open a popup');
   const last = (await state(page)).outputs[3].id;
   await page.locator('#practice-output').selectOption(last);
@@ -456,7 +463,7 @@ async function sample(page, base) {
 }
 
 /** 編集の Undo / Redo (#161): 1 操作 = 1 件、選択だけでは積まない、入力欄の Cmd+Z は奪わない、保存と一致する。 */
-async function history(page) {
+async function history(page, base) {
   await page.locator(entryButton).click();
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
   const undoBtn = page.locator('#dc-undo-btn'), redoBtn = page.locator('#dc-redo-btn');
@@ -466,6 +473,17 @@ async function history(page) {
   assert.ok(Math.abs(bar.y + bar.height - columns.y) <= 1 && Math.abs(bar.width - columns.width) <= 1, 'the bar spans the three columns right above them');
   assert.equal(await undoBtn.isDisabled(), true, 'nothing to undo on entry');
   assert.equal(await redoBtn.isDisabled(), true);
+  // 押せないことはアイコンを淡くして示し、汎用の button:disabled の塗りを付けない (ホバー中も)
+  const look = el => { const s = getComputedStyle(el); return { background: s.backgroundColor, opacity: Number(s.opacity) }; };
+  const clear = 'rgba(0, 0, 0, 0)';
+  for (const btn of [undoBtn, redoBtn]) {
+    const idle = await btn.evaluate(look);
+    assert.equal(idle.background, clear, 'a disabled history button has no fill');
+    assert.ok(idle.opacity < 0.5, 'a disabled history button dims its icon');
+    await btn.hover();
+    assert.equal((await btn.evaluate(look)).background, clear, 'hovering a disabled history button adds no fill');
+  }
+  if (artifactDir) await page.locator('.dc-edit-toolbar').screenshot({ path: resolve(artifactDir, base.name + '-history-disabled.png') });
   const ids = async () => (await state(page)).mappings.map(m => m.id);
   const initialIds = await ids();
 

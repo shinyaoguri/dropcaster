@@ -53,7 +53,9 @@ export const CONTROL_PANEL_CSS = `
       }
       .dc-history-btn:hover:not(:disabled) { background: #3a3a3a; }
       .dc-history-btn:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
-      .dc-history-btn:disabled { opacity: .35; cursor: default; }
+      /* 押せないことはアイコンを淡くして示す。BaseWindow の generic な button:disabled / button:hover の
+         塗りより詳細度を上げて背景を透明に保つ (ホバー中も)。 */
+      .dc-history-btn:disabled { background: transparent; opacity: .35; cursor: default; }
 
       .control-container {
         display: flex;
@@ -319,6 +321,16 @@ export const CONTROL_PANEL_CSS = `
 
       .tool-button:active {
         background: #333;
+      }
+
+      /* 押せないことは地色を変えずにボタンごと淡くして示す。BaseWindow の generic な
+         button:disabled の塗りと .tool-button:hover より詳細度を上げる (#186)。 */
+      .tool-button:disabled,
+      .tool-button:disabled:hover {
+        background: #444;
+        border-color: #555;
+        opacity: .45;
+        cursor: not-allowed;
       }
 
       .section-hint {
