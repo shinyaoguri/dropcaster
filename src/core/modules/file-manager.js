@@ -1,9 +1,11 @@
 import { readdir, stat, cp, mkdir, rm } from 'fs/promises';
 import { basename, join } from 'path';
 import { MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './constants.js';
-import { replaceDirectory } from './directory-replacement.js';
+import { isReplacementResidue, replaceDirectory } from './directory-replacement.js';
 
 const SKETCH_COPY_EXCLUDES = new Set([MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE]);
+// 作品の入口。scan はこれのあるディレクトリを作品とみなし、カタログの path はここを指す
+const SKETCH_ENTRY_FILE = 'index.html';
 
 /**
  * 削除されたスケッチのクリーンアップ
@@ -13,6 +15,8 @@ export async function cleanupRemovedSketches(currentSketchNames, publicSketchesD
     // publicSketchesDirの既存ディレクトリをチェック
     const publicEntries = await readdir(publicSketchesDir, { withFileTypes: true });
     for (const entry of publicEntries) {
+      // 差し替えの作業用ディレクトリ (残骸を含む) は作品ではないので消さない
+      if (isReplacementResidue(entry.name)) continue;
       if (entry.isDirectory() && !currentSketchNames.has(entry.name)) {
         const oldSketchPath = join(publicSketchesDir, entry.name);
         const oldPreviewPath = join(previewsDir, `${entry.name}.gif`);
@@ -56,23 +60,40 @@ export async function copySketchToPublic(sketchName, sourcePath, destinationDir,
     return 'up-to-date';
   }
 
-  await replaceDirectory(destinationPath, (stagingPath) => cp(sourcePath, stagingPath, {
+  const { leftover } = await replaceDirectory(destinationPath, (stagingPath) => cp(sourcePath, stagingPath, {
     recursive: true,
     filter: shouldCopySketchFile
   }));
   console.error(`📁 Copied ${sketchName} to public directory`);
+  if (leftover) {
+    // 新しいコピーは置けている。消せなかった旧版の場所だけ伝える (scan・build は対象外にする)
+    console.error(`Warning: could not remove the previous copy of ${sketchName} at ${leftover.path}: ${leftover.error.message}`);
+  }
   return 'copied';
 }
 
 /**
- * public 側のコピーが元より新しければ最新とみなす。判定できない (コピーが無い・読めない) ときは
- * コピーし直す。
+ * public 側のコピーが配信できる形か (ディレクトリで、入口の index.html がある)。
+ * @param {string} copyPath public/sketches/<作品名>
+ */
+export async function isServableSketchCopy(copyPath) {
+  try {
+    if (!(await stat(copyPath)).isDirectory()) return false;
+    return (await stat(join(copyPath, SKETCH_ENTRY_FILE))).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * public 側のコピーが配信できる形で、元より新しければ最新とみなす。それ以外 (コピーが無い・
+ * ファイルになっている・入口が欠けている・読めない) はコピーし直す。
  * @param {string} sourcePath
  * @param {string} destinationPath
  */
 async function isCopyUpToDate(sourcePath, destinationPath) {
   try {
-    await stat(destinationPath);
+    if (!(await isServableSketchCopy(destinationPath))) return false;
     const sourceMtime = await getLatestMtime(sourcePath);
     const destMtime = await getLatestMtime(destinationPath);
     return sourceMtime <= destMtime;

@@ -2,36 +2,54 @@
 // (#174 の scan のコピー、#167 の fetch --overwrite)。新しい中身を兄弟の staging ディレクトリに
 // 組み立て、完成してから rename で差し替えることで、失敗しても旧版を残し、残骸を置かない。
 
+import { randomBytes } from 'crypto';
 import { mkdir, rename, rm } from 'fs/promises';
-import { basename, dirname, join } from 'path';
+import { dirname, join } from 'path';
 
-let sequence = 0;
+// 作業用ディレクトリの名前。対象の名前を含めない (長い名前で ENAMETOOLONG を起こさないため)。
+// 異常終了や旧版の削除失敗で残ったものは、作品の検出・掃除・build のコピーから外す。
+const RESIDUE_NAME_PATTERN = /^\.dc-(?:staging|previous)-[0-9a-f]{16}$/;
+
+/**
+ * replaceDirectory が作る作業用ディレクトリ (staging / 退避した旧版) の名前か。
+ * 利用者のドットディレクトリ (`.well-known` など) は含まない。
+ * @param {string} name パスではなくディレクトリ名
+ */
+export function isReplacementResidue(name) {
+  return RESIDUE_NAME_PATTERN.test(name);
+}
+
+/**
+ * @template T
+ * @typedef {object} ReplaceResult
+ * @property {T} value build の戻り値
+ * @property {{ path: string, error: Error } | null} leftover 差し替え後に消せなかった旧版。差し替え自体は済んでいる
+ */
 
 /**
  * destinationPath を、build が staging に組み立てた中身で差し替える。
  *
  * - build が失敗したら staging を消して例外をそのまま投げる。destinationPath には触れない。
- * - staging は destinationPath と同じ親に `.名前.staging-…` として置く (rename は同じ
- *   ファイルシステム内でしか成り立たないため)。親ディレクトリは呼び出し側が用意する。
+ * - staging は destinationPath と同じ親に置く (rename は同じファイルシステム内でしか
+ *   成り立たないため)。親ディレクトリは呼び出し側が用意する。
  * - 差し替えは「旧版を退避 → staging を所定の名前へ → 退避した旧版を消す」の順。
- *   staging を所定の名前へ移せなかったときは旧版を戻す。
+ *   staging を所定の名前へ移せなかったときは旧版を戻して例外を投げる。
+ * - 最後の旧版の削除だけが失敗したときは、差し替えは成功として扱い、残骸を leftover で返す。
  *
  * @template T
- * @param {string} destinationPath 差し替える対象 (無くてもよい)
+ * @param {string} destinationPath 差し替える対象 (無くてもよい。ディレクトリでなくてもよい)
  * @param {(stagingPath: string) => Promise<T>} build 作成済みの空ディレクトリ stagingPath に中身を組み立てる
- * @returns {Promise<T>} build の戻り値
+ * @returns {Promise<ReplaceResult<T>>}
  */
 export async function replaceDirectory(destinationPath, build) {
   const parent = dirname(destinationPath);
-  const name = basename(destinationPath);
-  const suffix = `${process.pid}-${Date.now().toString(36)}-${sequence++}`;
-  const stagingPath = join(parent, `.${name}.staging-${suffix}`);
-  const previousPath = join(parent, `.${name}.previous-${suffix}`);
+  const stagingPath = join(parent, `.dc-staging-${randomBytes(8).toString('hex')}`);
+  const previousPath = join(parent, `.dc-previous-${randomBytes(8).toString('hex')}`);
 
-  let result;
+  let value;
   try {
     await mkdir(stagingPath);
-    result = await build(stagingPath);
+    value = await build(stagingPath);
   } catch (error) {
     await discard(stagingPath);
     throw error;
@@ -56,15 +74,15 @@ export async function replaceDirectory(destinationPath, build) {
     throw error;
   }
 
+  let leftover = null;
   if (movedPrevious) {
     try {
       await rm(previousPath, { recursive: true, force: true });
     } catch (error) {
-      // 差し替えは済んでいる。旧版の残骸がどこにあるかを伝えて失敗として扱う
-      throw new Error(`${destinationPath} was replaced, but the previous version remains at ${previousPath}: ${error.message}`, { cause: error });
+      leftover = { path: previousPath, error };
     }
   }
-  return result;
+  return { value, leftover };
 }
 
 /** @param {string} path */

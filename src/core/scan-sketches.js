@@ -5,7 +5,8 @@ import { resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { fetchUserDataForSketches } from './modules/op-api-client.js';
 import { analyzeSketch } from './modules/sketch-analyzer.js';
-import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists, fileExists } from './modules/file-manager.js';
+import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists, fileExists, isServableSketchCopy } from './modules/file-manager.js';
+import { isReplacementResidue } from './modules/directory-replacement.js';
 import { generateSketchPreview } from './modules/preview-generator.js';
 import { checkPreviewTools } from './check-env.js';
 import { DEFAULT_DESCRIPTION_SUFFIX, MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './modules/constants.js';
@@ -115,6 +116,8 @@ async function scanSketches(options = {}) {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      // 差し替えの作業用ディレクトリ (fetch --overwrite などの残骸) は作品ではない
+      if (isReplacementResidue(entry.name)) continue;
       if (targetSketch && entry.name !== targetSketch) continue;
 
       currentSketchNames.add(entry.name);
@@ -151,7 +154,7 @@ async function scanSketches(options = {}) {
       } catch (error) {
         console.error(t('scan.copyFailed', { name: entry.name, error: error.message }));
         const previous = existingSketchList.find(s => s.id === entry.name);
-        const keepPrevious = Boolean(previous) && await isDirectory(resolve(publicSketchesDir, entry.name));
+        const keepPrevious = Boolean(previous) && await isServableSketchCopy(resolve(publicSketchesDir, entry.name));
         if (keepPrevious) {
           sketches.push(previous);
           console.error(t('scan.copyFailedKeptPrevious', { name: entry.name }));
@@ -328,11 +331,6 @@ async function writeManualMetadataTemplate(sketchId, reason) {
   await writeFile(templatePath, `${JSON.stringify(template, null, 2)}\n`, 'utf-8');
   console.error(t('scan.manualTemplateCreated', { reason, path: `${sketchName}/${MANUAL_METADATA_TEMPLATE_FILE}` }));
   console.error(t('scan.manualTemplateRename', { file: MANUAL_METADATA_FILE }));
-}
-
-/** @param {string} path */
-async function isDirectory(path) {
-  try { return (await stat(path)).isDirectory(); } catch { return false; }
 }
 
 async function findSketchDirectoryName(sketchId) {

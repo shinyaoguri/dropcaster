@@ -1,9 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { replaceDirectory } from '../src/core/modules/directory-replacement.js';
+import { isReplacementResidue, replaceDirectory } from '../src/core/modules/directory-replacement.js';
+
+const permissionSkip = process.platform === 'win32' || process.getuid?.() === 0
+  ? 'file permissions are not enforced for this user / platform'
+  : false;
 
 /** @param {(root: string) => Promise<void>} fn */
 async function withTempDir(fn) {
@@ -17,12 +21,12 @@ test('replaces an existing directory with the built contents and leaves no stagi
     await mkdir(target);
     await writeFile(join(target, 'old.txt'), 'old');
 
-    const value = await replaceDirectory(target, async (staging) => {
+    const result = await replaceDirectory(target, async (staging) => {
       await writeFile(join(staging, 'new.txt'), 'new');
       return 'built';
     });
 
-    assert.equal(value, 'built');
+    assert.deepEqual(result, { value: 'built', leftover: null });
     assert.deepEqual(await readdir(target), ['new.txt']);
     assert.deepEqual(await readdir(root), ['work']);
   });
@@ -73,5 +77,48 @@ test('fails with the cause when the parent cannot hold directories', async () =>
       { code: 'ENOTDIR' },
     );
     assert.equal(built, false);
+  });
+});
+
+test('staging names do not include the destination name, so long names do not hit ENAMETOOLONG', async () => {
+  await withTempDir(async (root) => {
+    const longName = 'a'.repeat(240);
+    let stagingName = '';
+    await replaceDirectory(join(root, longName), async (staging) => {
+      stagingName = staging.slice(root.length + 1);
+      await writeFile(join(staging, 'a.txt'), 'a');
+    });
+    assert.ok(isReplacementResidue(stagingName), `unexpected staging name: ${stagingName}`);
+    assert.deepEqual(await readdir(root), [longName]);
+  });
+});
+
+test('isReplacementResidue matches only the helper work directories, not user dot directories', () => {
+  assert.equal(isReplacementResidue('.dc-staging-0123456789abcdef'), true);
+  assert.equal(isReplacementResidue('.dc-previous-0123456789abcdef'), true);
+  const others = ['.well-known', '.git', 'sketch1', '.dc-staging-', '.dc-staging-xyz',
+    'x.dc-previous-0123456789abcdef', '.dc-other-0123456789abcdef'];
+  for (const name of others) {
+    assert.equal(isReplacementResidue(name), false, name);
+  }
+});
+
+test('when only removing the previous version fails, the replacement succeeds and reports the leftover', { skip: permissionSkip }, async () => {
+  await withTempDir(async (root) => {
+    const target = join(root, 'work');
+    await mkdir(join(target, 'locked'), { recursive: true });
+    await writeFile(join(target, 'locked', 'old.txt'), 'old');
+    await chmod(join(target, 'locked'), 0o555);
+    try {
+      const result = await replaceDirectory(target, (staging) => writeFile(join(staging, 'new.txt'), 'new'));
+      assert.ok(result.leftover, 'leftover must be reported');
+      assert.ok(isReplacementResidue(result.leftover.path.slice(root.length + 1)), result.leftover.path);
+      assert.match(result.leftover.error.message, /EACCES|EPERM/);
+      assert.deepEqual(await readdir(target), ['new.txt']);
+    } finally {
+      for (const name of await readdir(root)) {
+        await chmod(join(root, name, 'locked'), 0o755).catch(() => {});
+      }
+    }
   });
 });

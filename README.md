@@ -280,8 +280,9 @@ OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（�
 ### `dropcaster scan [options]`
 スケッチをスキャンして `public/sketches/` にコピーし、`public/sketches.json` を生成（デフォルトでプレビュー GIF も生成）。
 コピーできなかったスケッチがあると、スケッチ名と原因を表示して終了コード 1 で終わる。コピーできたスケッチは
-`sketches.json` に載り、失敗したスケッチは今回の内容では載らない（前回のコピーが `public/sketches/` に
-残っていれば、それと前回の項目をそのまま残す）。
+`sketches.json` に載り、失敗したスケッチは今回の内容では載らない（`index.html` のある前回のコピーが
+`public/sketches/` に残っていれば、それと前回の項目をそのまま残す）。`public/sketches/` 側のコピーを
+最新とみなして省くのは、それが `index.html` のあるディレクトリのときだけ。
 
 オプション:
 - `--sketch <name>` - 特定のスケッチのみスキャン（`sketches.json` は既存にマージ）
