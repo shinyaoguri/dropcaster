@@ -33,6 +33,8 @@ export class CalibrationProjection {
   private key = '';
   private stream: MediaStream | null = null;
   private disposed = false;
+  /** 実際に描き直した回数。画面上の縮小表示はこれが変わったときだけ描き直す。 */
+  revision = 0;
   constructor(preview: ProjectionPreview) {
     this.preview = preview;
     this.canvas.id = 'venue-projection-canvas';
@@ -70,6 +72,7 @@ export class CalibrationProjection {
       this.patternMaterial.uniforms.kind.value = this.pattern === 'grid' ? 1 : this.pattern === 'white' ? 2 : 3;
       this.renderer.render(this.patternScene, this.patternCamera);
     }
+    this.revision++;
     (this.stream?.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined)?.requestFrame?.();
   }
   capture(): MediaStream {

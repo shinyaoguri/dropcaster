@@ -16,6 +16,12 @@ const STORAGE_KEY = 'dropcaster.control.columnWidths.v1';
 export class ColumnResizers {
   /** attach 時に追加した listener / 進行中の drag を撤去するためのフック群。 */
   private cleanups = new CleanupStack();
+  /** 列幅の保存先。画面ごとに分けて、別の画面の列幅を持ち込まない。 */
+  private readonly storageKey: string;
+
+  constructor(storageKey = STORAGE_KEY) {
+    this.storageKey = storageKey;
+  }
 
   attach(scope: HTMLElement, doc: Document): void {
     const toolCol = scope.querySelector<HTMLElement>('.tool-column');
@@ -91,13 +97,13 @@ export class ColumnResizers {
         tool: toolCol.getBoundingClientRect().width,
         source: sourceCol.getBoundingClientRect().width,
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(this.storageKey, JSON.stringify(payload));
     } catch { /* ignore quota / private mode */ }
   }
 
   private restoreColumnWidths(toolCol: HTMLElement, sourceCol: HTMLElement): void {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(this.storageKey);
       if (!raw) return;
       const data = JSON.parse(raw) as { tool?: number; source?: number };
       if (typeof data.tool === 'number' && data.tool > 0) {
