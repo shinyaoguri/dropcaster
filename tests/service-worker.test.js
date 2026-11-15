@@ -80,17 +80,21 @@ test('generateServiceWorker waits for all windows to close before activating a n
   });
 });
 
-test('generateServiceWorker precaches the assets the shell loads and carries content caches over on activate (#164)', async () => {
+test('generateServiceWorker precaches the shell strictly and keeps content caches across versions (#164)', async () => {
   await withTempDir(async (dir) => {
-    await generateServiceWorker(dir);
+    await generateServiceWorker(dir, { cacheVersion: 'v9' });
     const sw = await readFile(join(dir, 'sw.js'), 'utf-8');
     // 新しい版の資産は旧版のページが開いている間は取られない。install で揃えないと、
-    // 閉じた後にオフラインで開いたとき JS / CSS が無く何も出ない
-    assert.match(sw, /await precacheShellAssets\(cache\);/);
+    // 閉じた後にオフラインで開いたとき JS / CSS が無く何も出ない。取れなければ install ごと失敗させる
+    assert.match(sw, /event\.waitUntil\(precacheShell\(\)\);/);
+    assert.doesNotMatch(sw.slice(sw.indexOf('async function precacheShell'), sw.indexOf('async function fetchRequired')),
+      /cache\.put\([^)]*\)\.catch/, '必須の資産の保存の失敗を握りつぶしている');
     // サブパス配信の assets/ も shell (CacheFirst) から引く。runtime に落ちると事前キャッシュが使われない
-    assert.match(sw, /url\.pathname\.startsWith\(`\$\{SCOPE_PATH\}assets\/`\)/);
-    // 作品・カタログ・API・CDN は版によらないので引き継ぐ。shell は版ごとなので引き継がない
-    const carried = sw.match(/const CARRIED_OVER_CACHES = \[([^\]]+)\];/)?.[1].split(',').map(s => s.trim());
-    assert.deepEqual(carried, ['LOCAL_CACHE', 'OP_META_CACHE', 'GIST_CACHE', 'OP_CDN_CACHE', 'RUNTIME_CACHE']);
+    assert.match(sw, /isScopeAsset\(url\) \|\|/);
+    // 版を持つのは shell だけ。中身のバケットは版をまたいで同じ名前を使う (溜め込まず、写しもしない)
+    assert.match(sw, /const SHELL_CACHE\s*= `\$\{SHELL_PREFIX\}\$\{CACHE_VERSION\}`;/);
+    for (const name of ['LOCAL_CACHE', 'OP_META_CACHE', 'GIST_CACHE', 'OP_CDN_CACHE', 'RUNTIME_CACHE']) {
+      assert.match(sw, new RegExp(`const ${name}\\s*= 'dropcaster-[a-z-]+';`), `${name} が版を持っている`);
+    }
   });
 });

@@ -65,6 +65,7 @@ function startServer(dir, state, basePath) {
     if (!full.startsWith(`${basePath}/`)) { res.writeHead(404).end(); return; }
     const pathname = full.slice(basePath.length);
     if (pathname === '/sw.js') {
+      state.swFetches = (state.swFetches ?? 0) + 1;
       res.writeHead(200, { 'Content-Type': CONTENT_TYPES['.js'], 'Cache-Control': 'no-cache' }).end(state.sw);
       return;
     }
@@ -109,6 +110,32 @@ const loads = (page) => page.evaluate(() => Number(sessionStorage.getItem('dcLoa
 const cacheNames = (page) => page.evaluate(() => caches.keys());
 const hasController = (page) => page.evaluate(() => navigator.serviceWorker.controller !== null);
 const hasWaiting = (page) => page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting);
+const CONTENT_CACHES = ['dropcaster-gist', 'dropcaster-local', 'dropcaster-op-cdn', 'dropcaster-op-meta', 'dropcaster-runtime'];
+/** dropcaster-shell-* と、それ以外 (中身のバケット) に分ける。 */
+async function bucketNames(page) {
+  const names = (await cacheNames(page)).filter(n => n.startsWith('dropcaster-')).sort();
+  return { shell: names.filter(n => n.startsWith('dropcaster-shell-')), content: names.filter(n => !n.startsWith('dropcaster-shell-')) };
+}
+const cachedIn = (page, bucket, url) => page.evaluate(async ([b, u]) => !!(await (await caches.open(b)).match(u)), [bucket, url]);
+
+/** 新しい版を配信して update() し、その install が終わる (待機に入るか失敗する) まで待つ。 */
+async function publishAndSettle(page, state, version) {
+  state.sw = await swSource(version);
+  const before = state.swFetches ?? 0;
+  await until(() => page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration()).update().catch(() => {}); return true; }), 'registration.update()');
+  await until(async () => (state.swFetches ?? 0) > before, `新しい版 ${version} の sw.js が取られる`);
+  await until(() => page.evaluate(async () => !(await navigator.serviceWorker.getRegistration()).installing), `新しい版 ${version} の install が終わる`);
+  await sleep(SETTLE_MS);
+}
+
+/** 全ウィンドウを閉じて開き直し、version の shell だけが残る (= その版が有効になる) まで待つ。 */
+async function reopenAfterClose(context, base, version) {
+  for (const p of context.pages()) await p.close();
+  const page = await context.newPage();
+  await page.goto(base.url + '/');
+  await until(async () => (await bucketNames(page)).shell.join() === `dropcaster-shell-${version}`, `全ウィンドウを閉じた後に ${version} が有効になる`);
+  return page;
+}
 
 /** SPA の中で route へ移る (ページの読み込みを起こさない)。 */
 function navigateInApp(page, base, route) {
@@ -116,8 +143,8 @@ function navigateInApp(page, base, route) {
     base.path + route);
 }
 
-async function newContext(browser) {
-  const context = await browser.newContext({ locale: process.env.SW_UPDATE_LOCALE || 'en-US', viewport: { width: 1280, height: 800 } });
+async function newContext(browser, options = {}) {
+  const context = await browser.newContext({ locale: process.env.SW_UPDATE_LOCALE || 'en-US', viewport: { width: 1280, height: 800 }, ...options });
   context.setDefaultTimeout(TIMEOUT_MS);
   // 操作画面の読み込み回数をタブごとに数える (作品の iframe と about:blank の出力ウィンドウは数えない)
   await context.addInitScript(() => {
@@ -313,19 +340,79 @@ const cases = {
     } finally { await context.close(); }
   },
 
-  // 会場ページの遅延チャンクが取れない (事前キャッシュも失敗し、デプロイで消えた) ときは、
-  // 自動で再読み込みせず新しい版の案内を出す
-  async lazyChunkMissing({ browser, base, state }) {
-    const { context } = await newContext(browser);
+  // 新しい版の install 中にシェルの資産が 1 つでも取れなければ、新しい版は待機に入らず旧版のまま動く。
+  // 取れるようになれば、次の更新確認でやり直して待機に入る
+  async installFailureKeepsOld({ browser, base, state }) {
+    const { context, errors } = await newContext(browser);
     try {
+      const page = await openControlled(context, base, '/a');
+      const before = await loads(page);
       state.blocked = VENUE_CHUNK;
-      const page = await openControlled(context, base, '/');
+      await publishAndSettle(page, state, 'v2');
+      assert.equal(await hasWaiting(page), false, '資産が取れないまま新しい版が待機に入った');
+      assert.deepEqual((await bucketNames(page)).shell, ['dropcaster-shell-v1'], '失敗した install の shell が残った / 旧版の shell が消えた');
+      assert.equal(await page.locator(notice).count(), 0, '待機していないのに更新通知が出た');
+      assert.equal(await loads(page), before, '操作画面が再読み込みされた');
+      state.blocked = null;
+      await publishAndSettle(page, state, 'v2');
+      assert.equal(await hasWaiting(page), true, '資産が取れるようになっても新しい版が待機に入らない');
+      assert.ok(await cachedIn(page, 'dropcaster-shell-v2', `${base.url}/`), '新しい版の shell にシェル HTML が無い');
+      // アイコンは任意: 配信されていれば事前キャッシュし、無くても (cli-subpath は public/ が空) install は通る
+      const icon = `${base.url}/icon.svg`;
+      const iconRes = await fetch(icon); // テストのサーバは無いファイルに SPA fallback の HTML を返す
+      const iconServed = iconRes.ok && !iconRes.headers.get('content-type').includes('text/html');
+      assert.equal(await cachedIn(page, 'dropcaster-shell-v2', icon), iconServed, `アイコン (配信 ${iconServed}) の事前キャッシュ`);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  },
+
+  // 中身のバケットは版を持たず、2 回更新しても 1 組だけで中身が引き継がれる。入れ替わるのは shell だけ。
+  // 版を持っていたころのバケットは 1 回だけ移して消し、runtime のサブパスの assets/ は移さない
+  async contentCachesStable({ browser, base, state }) {
+    const { context, errors } = await newContext(browser);
+    try {
+      let page = await openControlled(context, base, '/a');
+      await page.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.querySelector('canvas'));
+      const legacy = { kept: `${base.url}/legacy-runtime.txt`, asset: `${base.url}/assets/legacy-old.js`, local: `${base.url}/legacy-local.json` };
+      await page.evaluate(async ({ kept, asset, local }) => {
+        await (await caches.open('dropcaster-runtime-old')).put(kept, new Response('kept'));
+        await (await caches.open('dropcaster-runtime-old')).put(asset, new Response('old asset'));
+        await (await caches.open('dropcaster-local-old')).put(local, new Response('[]'));
+      }, legacy);
+      const sketch = `${base.url}/sketches/a/index.html`;
+      for (const version of ['v2', 'v3']) {
+        await publishAndSettle(page, state, version);
+        page = await reopenAfterClose(context, base, version);
+        const buckets = await bucketNames(page);
+        assert.deepEqual(buckets.shell, [`dropcaster-shell-${version}`], `${version}: shell が入れ替わらない`);
+        assert.ok(buckets.content.every(n => CONTENT_CACHES.includes(n)) && buckets.content.includes('dropcaster-local')
+          && buckets.content.includes('dropcaster-runtime'), `${version}: 中身のバケットが 1 組でない: ${buckets.content.join(', ')}`);
+        assert.ok(await cachedIn(page, 'dropcaster-local', sketch), `${version}: v1 のときに取った作品が引き継がれない`);
+        assert.ok(await cachedIn(page, 'dropcaster-runtime', legacy.kept), `${version}: 版を持っていたころの runtime の中身が移らない`);
+        assert.ok(await cachedIn(page, 'dropcaster-local', legacy.local), `${version}: 版を持っていたころの local の中身が移らない`);
+        assert.equal(await cachedIn(page, 'dropcaster-runtime', legacy.asset), false, `${version}: runtime の assets/ が移った`);
+      }
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  },
+
+  // 会場ページの遅延チャンクが取れない (SW が無い環境で、デプロイで消えた) ときは、
+  // 自動で再読み込みせず、原因を断定せずに再読み込みを案内する。SW があれば install が
+  // 遅延チャンクまで事前キャッシュするので、この失敗は SW の無い環境 (enablePwa: false・
+  // secure context でない) でだけ起きる
+  async lazyChunkMissing({ browser, base, state }) {
+    const { context } = await newContext(browser, { serviceWorkers: 'block' });
+    try {
+      const page = await context.newPage();
+      await page.goto(base.url + '/');
+      await page.waitForFunction(() => (document.querySelector('#app')?.innerHTML.length ?? 0) > 0);
+      state.blocked = VENUE_CHUNK;
       const before = await loads(page);
       await navigateInApp(page, base, '/venue');
-      await page.waitForSelector(`${notice}[data-state="reload"]`);
+      await page.waitForSelector(`${notice}[data-state]`);
       await sleep(SETTLE_MS);
       assert.equal(await loads(page), before, '遅延読み込みの失敗で自動的に再読み込みした');
-      await assertNoticeOnlyInControl(page, null, 'reload', '遅延読み込みの失敗後');
+      await assertNoticeOnlyInControl(page, null, 'loadFailed', '遅延読み込みの失敗後');
       await snapshot(page, `${base.name}-reload-notice`);
       state.blocked = null;
       await page.locator(`${notice} button[data-action="reload"]`).click();
@@ -336,10 +423,11 @@ const cases = {
 
   // オフラインで遅延チャンクが取れないときは、新しい版ではなく接続を確かめるよう案内する
   async lazyChunkOffline({ browser, base, state }) {
-    const { context } = await newContext(browser);
+    const { context } = await newContext(browser, { serviceWorkers: 'block' });
     try {
-      state.blocked = VENUE_CHUNK;
-      const page = await openControlled(context, base, '/');
+      const page = await context.newPage();
+      await page.goto(base.url + '/');
+      await page.waitForFunction(() => (document.querySelector('#app')?.innerHTML.length ?? 0) > 0);
       const before = await loads(page);
       await context.setOffline(true);
       await navigateInApp(page, base, '/venue');

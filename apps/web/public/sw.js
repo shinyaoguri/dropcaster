@@ -24,8 +24,10 @@
 // 上書きする)。作者が直して投影し直す動線を壊さないよう鮮度を優先し、
 // キャッシュはオフライン時の保険として持つ。
 //
-// キャッシュ世代管理: CACHE_VERSION を変えれば古い bucket を activate 時に一掃する。
-// shell 以外の中身は新しい版のバケットへ引き継いでから消す (CARRIED_OVER_CACHES)。
+// キャッシュ世代管理: 版 (CACHE_VERSION) を持つのは shell だけで、版を上げると activate で
+// 古い shell を消す。中身のバケット (local / op-meta / gist / op-cdn / runtime) は版を持たず、
+// 版をまたいで同じものを使う。デプロイでは中身を消さず、中身は各戦略の再取得 (SWR・NetworkFirst・
+// op-meta の 24h) で新しくなる。消したいときは利用者がブラウザでサイトのデータを削除する (#164)。
 // クォータ管理は browser に委ねる (HTTP cache のように LRU evict される)。
 //
 // このファイルは src/cli/utils/sw-template.js の正本。public/sw.js と
@@ -35,20 +37,17 @@
 /* global self, caches, fetch, Response */
 
 const CACHE_VERSION = 'v1';
-const SHELL_CACHE   = `dropcaster-shell-${CACHE_VERSION}`;
-const LOCAL_CACHE   = `dropcaster-local-${CACHE_VERSION}`;
-const OP_META_CACHE = `dropcaster-op-meta-${CACHE_VERSION}`;
-const GIST_CACHE    = `dropcaster-gist-${CACHE_VERSION}`;
-const OP_CDN_CACHE  = `dropcaster-op-cdn-${CACHE_VERSION}`;
-const RUNTIME_CACHE = `dropcaster-runtime-${CACHE_VERSION}`;
-
-const ALL_CACHES = [SHELL_CACHE, LOCAL_CACHE, OP_META_CACHE, GIST_CACHE, OP_CDN_CACHE, RUNTIME_CACHE];
-
-// 版によらない中身 (ローカル作品とカタログ・OP / Gist の API・外部 CDN・その他) は、activate で
-// 旧版のバケットから引き継いでから旧版を消す。新しい版は旧版のページが開いている間に入り、閉じた時点で
-// 有効になるので、引き継がないと閉じた後にオフラインで開いたとき作品カタログなどが消えている (#164)。
-// shell は版ごとのアプリ本体なので引き継がない (install で新しい版の分を揃える)。
-const CARRIED_OVER_CACHES = [LOCAL_CACHE, OP_META_CACHE, GIST_CACHE, OP_CDN_CACHE, RUNTIME_CACHE];
+const SHELL_PREFIX  = 'dropcaster-shell-';
+const SHELL_CACHE   = `${SHELL_PREFIX}${CACHE_VERSION}`;
+// 中身のバケットは版を持たない (上の「キャッシュ世代管理」)。新しい版は旧版のページが開いている間に入り、
+// 閉じた時点で有効になるので、版ごとに分けて activate で消すと、閉じた後にオフラインで開いたとき
+// 作品カタログなどが消えている (#164)。
+const LOCAL_CACHE   = 'dropcaster-local';
+const OP_META_CACHE = 'dropcaster-op-meta';
+const GIST_CACHE    = 'dropcaster-gist';
+const OP_CDN_CACHE  = 'dropcaster-op-cdn';
+const RUNTIME_CACHE = 'dropcaster-runtime';
+const CONTENT_CACHES = [LOCAL_CACHE, OP_META_CACHE, GIST_CACHE, OP_CDN_CACHE, RUNTIME_CACHE];
 
 // 更新の適用時期: install では skipWaiting しない。新しい版はブラウザ標準のライフサイクルどおり、
 // そのオリジンのタブ・ウィンドウがすべて閉じたときに有効になる (#164)。上演中に切り替えると
@@ -58,14 +57,16 @@ const CARRIED_OVER_CACHES = [LOCAL_CACHE, OP_META_CACHE, GIST_CACHE, OP_CDN_CACH
 // SKIP_WAITING を送って再読み込みしていたので、それに応じると移行時の上演が止まる。
 const APPLY_UPDATE_MESSAGE = 'DC_APPLY_UPDATE';
 
-// install 時にシェル (ルート HTML と manifest) と、シェルが読み込む資産を取りにいく。
+// install 時にシェル (ルート HTML) と、シェルが読み込む資産を取りにいく。
 // 新しい版の資産は、旧版のページが開いている間は誰も取りにいかない。install で揃えておかないと、
 // 全ウィンドウを閉じて新しい版が有効になった後、オフラインで開いたときに JS / CSS が無く何も出ない (#164)。
-const SHELL_PRECACHE = [
-  './',
-  './manifest.json',
-];
-// シェルから辿る資産の上限 (誤検出が続いても install が終わるように)
+//   必須  シェル HTML と、そこから辿った JS / CSS (CSS の url() を含む)。1 つでも取れなければ install を
+//         失敗させる。新しい版は待機に入らず、旧版のまま動き続け、次の更新確認でやり直す
+//   任意  manifest とアイコン (HTML の <link rel="manifest|icon|apple-touch-icon">)。無くてもアプリは
+//         動くので、取れなくても install は続ける (アイコンを置いていないギャラリーで更新が止まらないように)
+const SHELL_HTML = './';
+const SHELL_OPTIONAL = ['./manifest.json'];
+// 必須の資産の上限。超えたら辿り方の誤検出とみなし、install を失敗させる (黙って一部だけ入れない)
 const SHELL_ASSET_LIMIT = 200;
 
 // オフラインで navigate された時のフォールバック先 (キャッシュ済みの shell '/')
@@ -79,27 +80,18 @@ const SCOPE_PATH = new URL(self.registration.scope).pathname;
 const OP_META_FRESH_MS = 24 * 60 * 60 * 1000;
 
 self.addEventListener('install', (event) => {
-  event.waitUntil((async () => {
-    const cache = await caches.open(SHELL_CACHE);
-    await Promise.all(SHELL_PRECACHE.map(url =>
-      cache.add(new Request(url, { cache: 'reload' })).catch(() => undefined)
-    ));
-    await precacheShellAssets(cache);
-  })());
+  event.waitUntil(precacheShell());
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const names = await caches.keys();
-    // dropcaster-* で始まる古いバケットだけ扱う (他アプリの cache を触らない)
-    const stale = names.filter(name => name.startsWith('dropcaster-') && !ALL_CACHES.includes(name));
-    for (const current of CARRIED_OVER_CACHES) {
-      const prefix = current.slice(0, current.length - CACHE_VERSION.length);
-      for (const name of stale) {
-        if (name.startsWith(prefix)) await carryOver(name, current).catch(() => {});
-      }
-    }
-    await Promise.all(stale.map(name => caches.delete(name)));
+    // dropcaster-* で始まるバケットだけ扱う (他アプリの cache を触らない)。
+    // 版を上げたときに消すのは古い shell だけ。
+    await Promise.all(names
+      .filter(name => name.startsWith(SHELL_PREFIX) && name !== SHELL_CACHE)
+      .map(name => caches.delete(name)));
+    await migrateVersionedContentCaches(names);
     await self.clients.claim();
   })());
 });
@@ -157,7 +149,7 @@ self.addEventListener('fetch', (event) => {
     // 資産 (precacheShellAssets) を、オフラインで引けるようにするため (#164)
     if (
       matchSegment(url.pathname, 'assets') ||
-      url.pathname.startsWith(`${SCOPE_PATH}assets/`) ||
+      isScopeAsset(url) ||
       url.pathname.endsWith('/manifest.json') ||
       url.pathname.endsWith('/icon.svg') ||
       url.pathname.endsWith('/favicon.ico')
@@ -304,35 +296,65 @@ async function refreshOpMeta(req, cache) {
 
 // --- 更新 -------------------------------------------------------------------
 
-// シェル HTML が読み込む JS / CSS と、そこから辿れるチャンク (遅延読み込みの画面を含む) と
-// CSS の url() を shell に入れる。ベストエフォート: 取れないものは飛ばす (従来の precache と同じく
-// install 自体は失敗させない)。辿るのは scope 内の URL だけ。
-async function precacheShellAssets(cache) {
-  const shell = await cache.match(OFFLINE_NAVIGATION_FALLBACK);
-  if (!shell) return;
-  const queue = refsInHtml(await shell.text(), OFFLINE_NAVIGATION_FALLBACK);
-  const seen = new Set();
-  while (queue.length > 0 && seen.size < SHELL_ASSET_LIMIT) {
-    const url = queue.shift();
-    if (seen.has(url)) continue;
-    seen.add(url);
-    const res = await fetch(url).catch(() => null);
-    if (!isCacheable(res)) continue;
-    const path = new URL(url).pathname;
-    if (path.endsWith('.js')) queue.push(...refsInScript(await res.clone().text(), url));
-    else if (path.endsWith('.css')) queue.push(...refsInStyle(await res.clone().text(), url));
-    await cache.put(url, res).catch(() => {});
+// シェル HTML と、そこから辿れる資産を shell に入れる (上の SHELL_HTML の説明)。必須のものが
+// 1 つでも取れなければ例外で install を失敗させ、この install で作った shell を消す。
+async function precacheShell() {
+  const existed = await caches.has(SHELL_CACHE);
+  const cache = await caches.open(SHELL_CACHE);
+  try {
+    const html = await fetchRequired(new Request(SHELL_HTML, { cache: 'reload' }), 'text/html');
+    await cache.put(OFFLINE_NAVIGATION_FALLBACK, html.clone());
+    const { required, optional } = refsInHtml(await html.text(), OFFLINE_NAVIGATION_FALLBACK);
+    // 任意のもの: 取れなければ (SPA fallback の HTML が返っても) 入れずに続ける
+    await Promise.all([...new Set([...SHELL_OPTIONAL.map(u => new URL(u, OFFLINE_NAVIGATION_FALLBACK).href), ...optional])]
+      .map(url => fetchRequired(url, 'not-html').then(res => cache.put(url, res)).catch(() => undefined)));
+    const queue = required;
+    const seen = new Set();
+    while (queue.length > 0) {
+      const url = queue.shift();
+      if (seen.has(url)) continue;
+      seen.add(url);
+      if (seen.size > SHELL_ASSET_LIMIT) throw new Error(`shell precache: more than ${SHELL_ASSET_LIMIT} assets`);
+      const path = new URL(url).pathname;
+      const res = await fetchRequired(url, path.endsWith('.js') || path.endsWith('.css') ? 'not-html' : null);
+      if (path.endsWith('.js')) queue.push(...refsInScript(await res.clone().text(), url));
+      else if (path.endsWith('.css')) queue.push(...refsInStyle(await res.clone().text(), url));
+      await cache.put(url, res);
+    }
+  } catch (err) {
+    // 一部だけ入った shell を残さない (同じ版を使っている有効な shell は消さない)
+    if (!existed) await caches.delete(SHELL_CACHE);
+    throw err;
   }
 }
 
-// <script src> と <link href> のうち、JS / CSS だけ (manifest やアイコンは SHELL_PRECACHE と実リクエストに任せる)
-function refsInHtml(html, baseUrl) {
-  const refs = [];
-  for (const m of html.matchAll(/<(?:script|link)\b[^>]*?\s(?:src|href)=["']([^"']+)["']/gi)) {
-    const url = inScope(m[1], baseUrl);
-    if (url && /\.(?:js|css)$/.test(new URL(url).pathname)) refs.push(url);
+// 200 で、期待する種類の応答だけを受け取る。SPA fallback が欠けた資産の代わりに HTML を返しても
+// 資産として入れない。
+async function fetchRequired(req, expect) {
+  const res = await fetch(req);
+  const type = res.headers.get('Content-Type') || '';
+  const isHtml = /text\/html/i.test(type);
+  if (!isCacheable(res) || (expect === 'text/html' && !isHtml) || (expect === 'not-html' && isHtml)) {
+    throw new Error(`shell precache: ${res.status} ${type} for ${typeof req === 'string' ? req : req.url}`);
   }
-  return refs;
+  return res;
+}
+
+// <script src> と <link rel="stylesheet|modulepreload" href> の JS / CSS は必須、
+// <link rel="manifest|icon|apple-touch-icon"> は任意
+function refsInHtml(html, baseUrl) {
+  const required = [];
+  const optional = [];
+  for (const m of html.matchAll(/<(script|link)\b[^>]*>/gi)) {
+    const tag = m[0];
+    const ref = tag.match(/\s(?:src|href)=["']([^"']+)["']/i)?.[1];
+    const url = ref && inScope(ref, baseUrl);
+    if (!url) continue;
+    const rel = tag.match(/\srel=["']([^"']+)["']/i)?.[1].toLowerCase() ?? '';
+    if (/\.(?:js|css)$/.test(new URL(url).pathname)) required.push(url);
+    else if (/(?:^|\s)(?:manifest|icon|apple-touch-icon)(?:\s|$)/.test(rel)) optional.push(url);
+  }
+  return { required, optional };
 }
 
 // バンドラが出すチャンク間の参照: import("./x.js") / from "./x.js" (チャンクからの相対) と、
@@ -370,11 +392,22 @@ function inScope(ref, baseUrl) {
   }
 }
 
-// 旧版のバケットの中身を、新しい版のバケットに無いものだけ写す
-async function carryOver(fromName, toName) {
+// 中身のバケットが版を持っていたころ (dropcaster-local-<版> など) の中身を、版の無い名前へ 1 回だけ移して
+// 旧名を消す。runtime にあるサブパス配信の assets/ は移さない (いまは shell から引くので読まれずに残る)。
+async function migrateVersionedContentCaches(names) {
+  for (const current of CONTENT_CACHES) {
+    for (const name of names.filter(n => n.startsWith(`${current}-`))) {
+      await copyMissing(name, current, (req) => current !== RUNTIME_CACHE || !isScopeAsset(new URL(req.url)))
+        .catch(() => {});
+      await caches.delete(name);
+    }
+  }
+}
+
+async function copyMissing(fromName, toName, keep) {
   const [from, to] = await Promise.all([caches.open(fromName), caches.open(toName)]);
   for (const req of await from.keys()) {
-    if (await to.match(req)) continue;
+    if (!keep(req) || await to.match(req)) continue;
     const res = await from.match(req);
     if (res) await to.put(req, res);
   }
@@ -394,6 +427,10 @@ function isCacheable(res) {
 function isScopeRoot(url) {
   return url.origin === self.location.origin &&
     (url.pathname === SCOPE_PATH || url.pathname === `${SCOPE_PATH}index.html`);
+}
+
+function isScopeAsset(url) {
+  return url.origin === self.location.origin && url.pathname.startsWith(`${SCOPE_PATH}assets/`);
 }
 
 function isLocalSketchPath(url) {
