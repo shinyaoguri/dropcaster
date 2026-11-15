@@ -61,6 +61,11 @@ async function start(page, width = 640) {
   await page.waitForFunction(w => document.querySelector('#source-video')?.videoWidth === w && window.practicePreview?.diagnostics().memory.textures > 0, width);
   await page.waitForFunction(() => !document.querySelector('#dc-practice-status')?.textContent.includes('Preparing'));
 }
+/** × は確認ダイアログを開くだけなので、閉じるには「閉じる」まで押す。 */
+async function closeEditor(page) {
+  await page.locator('#practice-stop').click();
+  await page.locator('#practice-stop-confirm-btn').click();
+}
 async function change(page, selector, value) { await page.locator(selector).fill(String(value)); await page.locator(selector).press('Tab'); }
 async function menuAction(page, id) {
   if (!await page.locator('#practice-menu').evaluate(e => e.open)) await page.locator('#practice-menu > summary').click();
@@ -119,7 +124,7 @@ async function workspace(page, base) {
   const nextPopup = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click();
   const output = await nextPopup;
   await output.waitForFunction(() => [...document.querySelectorAll('video')].some(v => v.videoWidth === 640));
-  await page.locator('#practice-stop').click();
+  await closeEditor(page);
   assert.equal(await page.locator('#dc-inline-editor').isHidden(), true);
   assert.equal(await page.evaluate(() => window.workspaceTrack.readyState), 'live');
   const width = isSlideshow ? 1280 : 640;
@@ -178,7 +183,7 @@ async function workspace(page, base) {
   await snapshot(page, `${base.name}-workspace${isSlideshow ? '-slideshow' : ''}-narrow-ja`);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.evaluate(() => { window.finalTrack = document.querySelector('#source-video').srcObject.getVideoTracks()[0]; });
-  await page.locator('#practice-stop').click();
+  await closeEditor(page);
   assert.equal(await page.evaluate(() => window.finalTrack.readyState), 'ended');
 }
 async function lifecycle(page, base) {
@@ -228,7 +233,7 @@ async function lifecycle(page, base) {
   await popup.close(); await page.waitForTimeout(1200);
   assert.equal(await page.evaluate(() => window.firstTrack.readyState), 'live', 'closing last output preserves practice');
   const popupPromise2 = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click(); const popup2 = await popupPromise2;
-  await page.locator('#practice-stop').click();
+  await closeEditor(page);
   assert.equal(await page.locator('#dc-inline-editor').isHidden(), true);
   assert.deepEqual(await page.evaluate(() => ({ track: window.firstTrack.readyState, disposed: window.firstPreview.diagnostics().disposed })), { track: 'live', disposed: true });
   await popup2.close(); await page.waitForFunction(() => window.firstTrack.readyState === 'ended');
@@ -237,7 +242,7 @@ async function lifecycle(page, base) {
     await start(page);
     assert.equal(await page.evaluate(() => window.practicePreview.projector.position.x), 1.25);
     await page.evaluate(() => { window.lastTrack = document.querySelector('#source-video').srcObject.getVideoTracks()[0]; window.lastPreview = window.practicePreview; });
-    await page.locator('#practice-stop').click();
+    await closeEditor(page);
     assert.deepEqual(await page.evaluate(() => ({ track: window.lastTrack.readyState, disposed: window.lastPreview.diagnostics().disposed })), { track: 'ended', disposed: true });
   }
 }
@@ -389,7 +394,7 @@ async function unavailable(page) {
   await page.evaluate(() => { HTMLCanvasElement.prototype.getContext = window.originalGetContext; });
   await page.locator('#practice-retry').click(); await page.waitForSelector('#dc-practice-canvas');
   assert.equal((await state(page)).mappings.length, 2);
-  await page.locator('#practice-stop').click();
+  await closeEditor(page);
   assert.equal(await page.locator('#dc-inline-editor').isHidden(), true);
 }
 async function cancellation(page) {
@@ -399,7 +404,7 @@ async function cancellation(page) {
   await page.waitForSelector('#practice-stop');
   await page.waitForFunction(() => window.practiceWC.events.stream.get());
   await page.evaluate(() => { window.pendingTrack = window.practiceWC.events.stream.get().getVideoTracks()[0]; });
-  await page.locator('#practice-stop').click();
+  await closeEditor(page);
   assert.equal(await page.evaluate(() => window.pendingTrack.readyState), 'ended');
   assert.ok(release, 'panel module is pending'); release();
   await page.waitForTimeout(400);
@@ -422,11 +427,11 @@ async function loading(page) {
   await page.locator(entryButton).click(); await page.locator('#preview-tab').click();
   await page.waitForSelector('#dc-practice-canvas');
   await page.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.includes('Waiting'));
-  await page.locator('#practice-stop').click();
+  await closeEditor(page);
   assert.equal(await page.locator('#dc-inline-editor').isHidden(), true, 'stop works while the iframe is loading');
   assert.ok(release); release();
   await start(page, 320); // Canvas arrives later than the previous five-second readiness timeout.
-  await page.locator('#practice-stop').click();
+  await closeEditor(page);
 }
 
 async function sample(page, base) {
@@ -442,6 +447,52 @@ async function sample(page, base) {
   await snapshot(page, base.name + '-sample');
 }
 
+async function confirmClose(page, base) {
+  await start(page);
+  await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click();
+  await page.locator('#output-stage [data-corner]').first().click();
+  const before = await state(page);
+  const dialog = page.locator('#practice-stop-confirm');
+  const openDialog = async () => {
+    await page.locator('#practice-stop').click();
+    assert.equal(await dialog.evaluate(d => d.open && d.matches(':modal')), true, 'x opens a modal confirmation');
+    assert.equal(await page.locator('#dc-inline-editor').isVisible(), true, 'one click on x never closes the editor');
+  };
+  await openDialog();
+  assert.equal(await page.locator('#practice-stop-cancel').evaluate(e => e === document.activeElement), true, 'cancel has the initial focus');
+  await page.keyboard.press('ArrowRight');
+  assert.deepEqual(await state(page), before, 'keys inside the dialog do not reach editor shortcuts');
+  const frames = await page.evaluate(() => new Promise((resolve, reject) => {
+    const video = document.querySelector('#source-video'); let count = 0;
+    const timer = setTimeout(() => reject(new Error(`only ${count} frames`)), 5000);
+    const tick = () => { if (++count >= 5) { clearTimeout(timer); resolve(count); } else video.requestVideoFrameCallback(tick); };
+    video.requestVideoFrameCallback(tick);
+  }));
+  assert.equal(frames, 5, 'the sketch keeps streaming while the dialog is open');
+  await page.keyboard.press('Escape');
+  assert.equal(await dialog.evaluate(d => d.open), false, 'Esc dismisses the dialog');
+  assert.equal(await page.locator('#dc-inline-editor').isVisible(), true, 'Esc keeps the editor open');
+  await openDialog(); await page.locator('#practice-stop-cancel').click();
+  assert.equal(await dialog.evaluate(d => d.open), false);
+  assert.equal(await page.locator('#dc-inline-editor').isVisible(), true, 'cancel keeps the editor open');
+  await openDialog();
+  const box = await dialog.boundingBox(), viewport = page.viewportSize();
+  assert.ok(Math.abs(box.x + box.width / 2 - viewport.width / 2) < 2 && Math.abs(box.y + box.height / 2 - viewport.height / 2) < 2, 'the dialog is centred');
+  await page.mouse.click(4, 4);
+  assert.equal(await dialog.evaluate(d => d.open), false, 'clicking the backdrop dismisses the dialog');
+  assert.equal(await page.locator('#dc-inline-editor').isVisible(), true, 'backdrop click keeps the editor open');
+  assert.deepEqual(await state(page), before, 'dismissing never changes mappings');
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  await openDialog();
+  assert.equal(await page.locator('#practice-stop-confirm-title').innerText(), '編集を閉じますか？');
+  assert.equal(await page.locator('#practice-stop-confirm-btn').innerText(), '閉じる');
+  await snapshot(page, base.name + '-close-confirm-ja');
+  await page.evaluate(() => { window.confirmTrack = document.querySelector('#source-video').srcObject.getVideoTracks()[0]; });
+  await page.locator('#practice-stop-confirm-btn').click();
+  assert.equal(await page.locator('#dc-inline-editor').isHidden(), true, 'confirming closes the editor');
+  assert.equal(await page.evaluate(() => window.confirmTrack.readyState), 'ended', 'confirming releases the stream as before');
+}
+
 
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
@@ -452,7 +503,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, sample })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, recovery, outputs, unavailable, cancellation, loading, confirmClose, sample })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));

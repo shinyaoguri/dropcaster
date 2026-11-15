@@ -20,6 +20,17 @@ export function installPracticeStyles(): void {
     .dc-workspace-menu-items button:hover, .dc-workspace-menu-items a:hover { background:#444; }
     .dc-workspace-actions .dc-workspace-close { display:flex; align-items:center; padding:5px; }
     .dc-workspace-actions .dc-workspace-close:hover { background:#444; }
+    /* × の確認ダイアログ。背景クリックの判定のため dialog 自身は余白を持たず、中身の body が余白を持つ。 */
+    .dc-workspace-confirm { margin:auto; padding:0; border:1px solid #555; border-radius:8px; background:#292929; color:#eee; box-shadow:0 12px 32px #000a; max-width:min(360px, calc(100vw - 32px)); }
+    .dc-workspace-confirm::backdrop { background:#0008; }
+    .dc-workspace-confirm-body { padding:16px 18px 14px; font:13px/1.5 system-ui; }
+    .dc-workspace-confirm-title { margin:0 0 4px; font-size:14px; font-weight:600; }
+    .dc-workspace-confirm-hint { margin:0 0 14px; color:#bbb; white-space:normal; }
+    .dc-workspace-confirm-actions { display:flex; justify-content:flex-end; gap:8px; }
+    .dc-workspace-actions .dc-workspace-confirm-actions button { padding:6px 14px; border-color:#555; background:#333; font:13px system-ui; }
+    .dc-workspace-actions .dc-workspace-confirm-actions button:hover { background:#444; }
+    .dc-workspace-actions .dc-workspace-confirm-actions button.is-danger { border-color:#dc2626; background:#b91c1c; color:white; }
+    .dc-workspace-actions .dc-workspace-confirm-actions button.is-danger:hover { background:#dc2626; }
     /* 平常時の状態文は読み上げ用に残し、見た目からは外す。エラーと再試行があるときだけ出す。 */
     .dc-workspace-notice:not(.is-visible) { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
     .dc-workspace-notice.is-visible { display:flex; flex-direction:column; gap:6px; padding:8px 12px; border-bottom:1px solid #444; background:#2a2a2a; font:12px system-ui; color:#aaa; }
