@@ -51,6 +51,7 @@ const en = {
   'build.completed': '✨ Build completed',
   'build.output': '  Output: {dir}',
   'build.failed': 'Build failed',
+  'base.invalid': 'base must be a path starting with "/" (e.g. "/my-gallery/"); got "{base}". Relative paths and URLs are not supported.',
 
   // scan
   'scan.sketchesNotFound': '❌ sketches directory not found: {dir}',
@@ -151,6 +152,7 @@ const ja = {
   'build.completed': '✨ ビルドが完了しました',
   'build.output': '  出力先: {dir}',
   'build.failed': 'ビルドに失敗しました',
+  'base.invalid': 'base は / から始まるパスで指定してください (例: "/my-gallery/")。指定値: "{base}"。相対パスや URL は使えません。',
 
   'scan.sketchesNotFound': '❌ sketchesディレクトリが見つかりません: {dir}',
   'scan.hintRunInProjectRoot': '💡 ヒント: dropcasterプロジェクトのルートディレクトリで実行してください',

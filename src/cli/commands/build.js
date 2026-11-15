@@ -8,6 +8,7 @@ import ora from 'ora';
 import { loadConfig } from '../utils/config.js';
 import { resolveBuildInfo } from '../../core/build-info.js';
 import { generateManifest } from '../utils/manifest.js';
+import { resolveBase, manifestConfigFor } from '../utils/base.js';
 import { generateServiceWorker } from '../utils/service-worker.js';
 import { copyPublicFiles } from '../utils/files.js';
 
@@ -70,22 +71,9 @@ async function assertSafeOutputDir(outputDir, cwd) {
 }
 
 /**
- * 配信先のベースパスを 1 か所で決める (#175)。
- * CLI で明示した `--base` > dropcaster.config.js の `base` > `'/'` の順で採り、末尾を `/` にそろえる。
- * `--base` には既定値 `'/'` があるので、値ではなく commander の値の出どころ (`'cli'` か否か) で
- * 明示されたかを判断する — そうしないと既定値が常に config を上書きしてしまう。
+ * 配信先 base は `--base` (明示したとき) > dropcaster.config.js の `base` > `'/'` で決める
+ * (src/cli/utils/base.js の resolveBase)。command 無しで呼ぶときは options.base を与えれば明示とみなす。
  *
- * @param {string | undefined} cliBase commander が渡す `options.base` (未指定でも既定値が入る)
- * @param {string | undefined} cliBaseSource `command.getOptionValueSource('base')`
- * @param {string | undefined} configBase dropcaster.config.js の `base`
- * @returns {string}
- */
-function resolveBase(cliBase, cliBaseSource, configBase) {
-  const base = (cliBaseSource === 'cli' ? cliBase : configBase) || '/';
-  return base.endsWith('/') ? base : `${base}/`;
-}
-
-/**
  * @param {{ output: string, base?: string }} options
  * @param {import('commander').Command} [command] commander が action の末尾に渡すコマンド
  */
@@ -95,7 +83,7 @@ export async function build(options, command) {
   try {
     // Load user config
     const config = await loadConfig(process.cwd());
-    const base = resolveBase(options.base, command?.getOptionValueSource('base'), config.base);
+    const base = resolveBase(options, command, config);
     const outputDir = resolve(process.cwd(), options.output);
 
     // 出力先が cwd 自身／その祖先／保護対象サブディレクトリ等になっていないか検証
@@ -116,13 +104,7 @@ export async function build(options, command) {
     
     // Generate PWA manifest
     spinner.text = 'Generating PWA manifest...';
-    const manifestStartUrl = config.start_url === '/' ? base : config.start_url;
-    await generateManifest({
-      ...config,
-      base,
-      start_url: manifestStartUrl || base,
-      scope: config.scope || base
-    }, outputDir);
+    await generateManifest(manifestConfigFor(config, base), outputDir);
     
     // Generate Service Worker (multi-bucket cache; template at src/cli/utils/sw-template.js)
     spinner.text = 'Generating Service Worker...';
@@ -171,7 +153,8 @@ export async function build(options, command) {
         assetsInlineLimit: 4096  // 4KB以下のアセットをインライン化
       },
       define: {
-        'import.meta.env.DROPCASTER_CONFIG': JSON.stringify(config),
+        // 埋め込む config の base も解決・正規化後の値にそろえる
+        'import.meta.env.DROPCASTER_CONFIG': JSON.stringify({ ...config, base }),
         'import.meta.env.DROPCASTER_BUILD': JSON.stringify(resolveBuildInfo(rootDir)),
         'import.meta.env.BASE_URL': JSON.stringify(base)
       }
