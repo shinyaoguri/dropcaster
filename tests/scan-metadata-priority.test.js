@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { analyzeSketch } from '../src/core/modules/sketch-analyzer.js';
 
 // #115: 再 scan で既存の sketches.json の title / description が HTML の新しい値より優先され、
 // HTML の変更が反映されなかった。決定した優先順位 (タイトル・説明とも):
@@ -243,4 +244,79 @@ test('--sketch re-scan reflects the target HTML change and leaves other entries 
     assert.equal(other.title, 'Other title');
     assert.equal(other.description, 'Other description');
   });
+});
+
+test('re-scan reflects a changed multi-line title and a content-first meta description', async () => {
+  await withTempProject(async (root) => {
+    /** @param {string} title @param {string} description */
+    const page = (title, description) =>
+      `<!doctype html><html><head>\n<title lang="en">\n  ${title}\n</title>\n` +
+      `<meta content="${description}" name="description">\n</head><body></body></html>`;
+    await writeIndex(root, 'demo', page('Old title', 'Old description'));
+    await scanOk(root);
+    await writeIndex(root, 'demo', page('New title', 'New description'));
+    await scanOk(root);
+    const demo = await entry(root, 'demo');
+    assert.equal(demo.title, 'New title');
+    assert.equal(demo.description, 'New description');
+  });
+});
+
+// HTML の読み取りは analyzeSketch を直接呼んで確かめる (scan と同じ関数)
+/** @param {string} headHtml */
+async function analyzeHead(headHtml) {
+  const root = await mkdtemp(join(tmpdir(), 'dc-analyze-'));
+  try {
+    await writeFile(join(root, 'index.html'), `<!doctype html><html><head>${headHtml}</head><body></body></html>`, 'utf-8');
+    const info = await analyzeSketch('demo', root);
+    assert.ok(info, 'analyzeSketch returned null');
+    return info;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+/** @type {[string, string, string][]} */
+const titleCases = [
+  ['plain', '<title>Plain</title>', 'Plain'],
+  ['uppercase tag', '<TITLE>Upper</TITLE>', 'Upper'],
+  ['attribute on the tag', '<title lang="ja">属性付き</title>', '属性付き'],
+  ['line breaks inside', '<title>\n  Multi\n  line\n</title>', 'Multi line'],
+  ['HTML entities', '<title>Tom &amp; Jerry &lt;3 &#x2014; &#8212;</title>', 'Tom & Jerry <3 — —'],
+  // 知らない名前 (Object のプロパティ名を含む) はそのまま残す
+  ['unknown entities', '<title>&unknown; &constructor; &#0;</title>', '&unknown; &constructor; &#0;'],
+];
+for (const [label, head, expected] of titleCases) {
+  test(`HTML title is read: ${label}`, async () => {
+    assert.equal((await analyzeHead(head)).title, expected);
+  });
+}
+
+test('blank HTML title is treated as no value', async () => {
+  const info = await analyzeHead('<title>  </title>');
+  assert.equal(info.title, 'demo');
+  assert.ok(!info.__explicitMetadataFields?.has('title'));
+});
+
+/** @type {[string, string, string][]} */
+const descriptionCases = [
+  ['name then content', '<meta name="description" content="Plain">', 'Plain'],
+  ['content then name', '<meta content="Content first" name="description">', 'Content first'],
+  ['unquoted values', '<meta name=description content=Unquoted>', 'Unquoted'],
+  ['apostrophe inside double quotes', '<meta name="description" content="Don\'t panic">', "Don't panic"],
+  ['double quotes inside single quotes', `<meta name='description' content='Say "hi"'>`, 'Say "hi"'],
+  ['other attributes, uppercase name and line breaks', '<meta\n  data-x="1"\n  name="Description"\n  content="Across lines"\n/>', 'Across lines'],
+  ['greater-than inside the value', '<meta name="description" content="a > b">', 'a > b'],
+  ['HTML entities', '<meta name="description" content="&quot;Q&quot; &amp; A">', '"Q" & A'],
+];
+for (const [label, head, expected] of descriptionCases) {
+  test(`HTML meta description is read: ${label}`, async () => {
+    assert.equal((await analyzeHead(head)).description, expected);
+  });
+}
+
+test('other meta tags are not taken as the description', async () => {
+  const info = await analyzeHead('<meta name="keywords" content="a, b"><meta property="og:description" content="OG">');
+  assert.equal(info.description, 'demo スケッチ');
+  assert.deepEqual(info.tags, ['a', 'b']);
 });

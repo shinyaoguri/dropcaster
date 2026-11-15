@@ -198,31 +198,89 @@ function normalizeStringArray(value) {
 function extractMetadata(htmlContent, dirName) {
   const metadata = {};
 
-  // タイトルを抽出
-  const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i);
+  // タイトルを抽出 (属性付きの <title lang="..."> も読む。document.title と同じく空白を詰める)
+  const titleMatch = htmlContent.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
   if (titleMatch) {
-    metadata.title = titleMatch[1].trim();
+    metadata.title = decodeHtmlEntities(titleMatch[1]).replace(/[\t\n\f\r ]+/g, ' ').trim();
   }
 
+  const metaContents = extractMetaContents(htmlContent);
+
   // メタタグからdescriptionを抽出
-  const descMatch = htmlContent.match(/<meta\s+name=["\']description["\']\s+content=["\']([^"']*)["\'][^>]*>/i);
-  if (descMatch) {
-    metadata.description = descMatch[1].trim();
+  const description = metaContents.get('description');
+  if (description !== undefined) {
+    metadata.description = description.trim();
   }
 
   // メタタグからkeywordsを抽出
-  const keywordsMatch = htmlContent.match(/<meta\s+name=["\']keywords["\']\s+content=["\']([^"']*)["\'][^>]*>/i);
-  if (keywordsMatch) {
-    metadata.tags = keywordsMatch[1].split(',').map(tag => tag.trim()).filter(Boolean);
+  const keywords = metaContents.get('keywords');
+  if (keywords !== undefined) {
+    metadata.tags = keywords.split(',').map(tag => tag.trim()).filter(Boolean);
   }
 
   // カスタムメタタグを抽出
-  const sketchTypeMatch = htmlContent.match(/<meta\s+name=["\']sketch-type["\']\s+content=["\']([^"']*)["\'][^>]*>/i);
-  if (sketchTypeMatch) {
-    metadata.type = sketchTypeMatch[1].trim();
+  const sketchType = metaContents.get('sketch-type');
+  if (sketchType !== undefined) {
+    metadata.type = sketchType.trim();
   }
 
   return metadata;
+}
+
+/**
+ * <meta name="..." content="..."> を name (小文字) → content (エンティティをデコード済み) で集める。
+ * 属性の順序・他の属性・改行・引用符の種類 (" / ' / なし) を問わない。同じ name は最初のものを使う。
+ * @param {string} htmlContent
+ * @returns {Map<string, string>}
+ */
+function extractMetaContents(htmlContent) {
+  /** @type {Map<string, string>} */
+  const contents = new Map();
+  // 引用符で囲んだ値の中の > でタグを閉じない
+  const metaTagPattern = /<meta\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
+  for (const [, attributeText] of htmlContent.matchAll(metaTagPattern)) {
+    const attributes = parseAttributes(attributeText);
+    const name = attributes.get('name');
+    const content = attributes.get('content');
+    if (name === undefined || content === undefined) continue;
+    const key = name.trim().toLowerCase();
+    if (!contents.has(key)) contents.set(key, content);
+  }
+  return contents;
+}
+
+/**
+ * タグの属性部分を名前 (小文字) → 値 (エンティティをデコード済み) にする。同じ名前は最初のものを使う。
+ * @param {string} attributeText
+ * @returns {Map<string, string>}
+ */
+function parseAttributes(attributeText) {
+  /** @type {Map<string, string>} */
+  const attributes = new Map();
+  const attributePattern = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  for (const [, rawName, doubleQuoted, singleQuoted, unquoted] of attributeText.matchAll(attributePattern)) {
+    const name = rawName.toLowerCase();
+    if (attributes.has(name)) continue;
+    attributes.set(name, decodeHtmlEntities(doubleQuoted ?? singleQuoted ?? unquoted ?? ''));
+  }
+  return attributes;
+}
+
+/** @type {Record<string, string>} */
+const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+/**
+ * ブラウザがタイトルや属性値として表示する文字に揃えるため、HTML エンティティをデコードする。
+ * 数値参照と主要な名前付き参照だけを扱い、知らない名前はそのまま残す。
+ * @param {string} text
+ * @returns {string}
+ */
+function decodeHtmlEntities(text) {
+  return text.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (match, decimal, hex, name) => {
+    if (name !== undefined) return Object.hasOwn(NAMED_ENTITIES, name) ? NAMED_ENTITIES[name] : match;
+    const codePoint = decimal !== undefined ? Number(decimal) : parseInt(hex, 16);
+    return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+  });
 }
 
 /**
