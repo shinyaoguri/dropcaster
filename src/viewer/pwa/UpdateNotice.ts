@@ -4,13 +4,16 @@
 //   update  新しい版の SW が待機している。押すと適用して再読み込みする
 //   reload  このページは旧版のまま、新しい版がすでに出ている (遅延読み込みの失敗・別タブでの適用)。
 //           押すと再読み込みする
+//   offline オフラインで遅延読み込みの画面が取れなかった。接続を確かめてから再読み込みしてもらう
 //
-// どちらも押したときだけ再読み込みする。上演中に勝手に再読み込みすると出力ウィンドウが閉じるため。
+// どれも押したときだけ再読み込みする。上演中に勝手に再読み込みすると出力ウィンドウが閉じるため。
 
 import './updateNotice.css';
-import { onLangChange, t } from '../i18n/index.js';
+import { onLangChange, t, type MessageKey } from '../i18n/index.js';
 
-export type UpdateNoticeState = 'update' | 'reload';
+export type UpdateNoticeState = 'update' | 'reload' | 'offline';
+
+const TEXT: Record<UpdateNoticeState, MessageKey> = { update: 'pwa.available', reload: 'pwa.reloadRequired', offline: 'pwa.offline' };
 
 let element: HTMLElement | null = null;
 let state: UpdateNoticeState | null = null;
@@ -19,8 +22,8 @@ let langUnsub: (() => void) | null = null;
 
 /** 通知を出す (出ていれば内容を差し替える)。reload は押されたときに呼ぶ。 */
 export function showUpdateNotice(next: UpdateNoticeState, reload: () => void): void {
-  // 旧版のままでは動かないことが分かった案内 (reload) を、待機中の版の案内 (update) で弱めない
-  if (state === 'reload' && next === 'update' && element) return;
+  // 読み込めなかったことの案内 (reload / offline) を、待機中の版の案内 (update) で弱めない
+  if (state && state !== 'update' && next === 'update' && element) return;
   state = next;
   reloadAction = reload;
   if (!element) element = mount();
@@ -52,8 +55,7 @@ function dismiss(): void {
 function render(): void {
   if (!element || !state) return;
   element.dataset.state = state;
-  element.querySelector('.dc-update-notice-text')!.textContent =
-    t(state === 'update' ? 'pwa.available' : 'pwa.reloadRequired');
+  element.querySelector('.dc-update-notice-text')!.textContent = t(TEXT[state]);
   const reload = element.querySelector<HTMLButtonElement>('[data-action="reload"]')!;
   reload.textContent = t(state === 'update' ? 'pwa.apply' : 'pwa.reload');
   reload.title = t('pwa.applyHint');

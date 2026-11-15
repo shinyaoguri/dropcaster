@@ -9,9 +9,10 @@
 //     すべて閉じたときに有効になる。自動で切り替えたり再読み込みしたりしない (#164)。
 //     上演中に再読み込みすると出力ウィンドウが閉じ、作品の映像も途切れるため
 //   - 新しい版が待機しているあいだは、操作画面にだけ通知を出し、押したときだけ
-//     SKIP_WAITING を送って 1 度だけ再読み込みする
+//     APPLY_UPDATE_MESSAGE を送って 1 度だけ再読み込みする
 //   - 遅延読み込みのチャンクが取れない (デプロイで旧版の資産が消えた) ときも、
-//     自動で再読み込みせず、再読み込みを案内する (watchLazyLoadFailures)
+//     自動で再読み込みせず、再読み込みを案内する。オフラインなら接続の確認を案内する
+//     (watchLazyLoadFailures)
 
 import { getConfig } from '../config.js';
 import { getBasePath, publicAssetPath } from '../utils/paths.js';
@@ -32,12 +33,21 @@ export function registerServiceWorker(): void {
 
 /**
  * 遅延読み込み (3D プレビュー・会場ページ) のチャンクが取れなかったら、再読み込みを案内する。
+ * オフラインで取れなかったときは、新しい版ではなく接続の確認を案内する (原因が違うため)。
  * 失敗そのものは各画面のエラー処理に任せる (preventDefault しない)。SW の有無によらず、
  * 開いたままのページが旧版の資産を参照していれば起きるので、登録とは別に受ける。
  */
 export function watchLazyLoadFailures(): void {
-  window.addEventListener('vite:preloadError', () => showUpdateNotice('reload', reloadPage));
+  window.addEventListener('vite:preloadError', () => {
+    showUpdateNotice(navigator.onLine === false ? 'offline' : 'reload', reloadPage);
+  });
 }
+
+/**
+ * 新しい版の SW に適用を頼むメッセージ (sw-template.js の APPLY_UPDATE_MESSAGE と同じ値)。
+ * SKIP_WAITING ではない: それはこの変更より前の版のページが自動で送るので、SW が受けない。
+ */
+const APPLY_UPDATE_MESSAGE = 'DC_APPLY_UPDATE';
 
 let registration: ServiceWorkerRegistration | null = null;
 /** 利用者が通知で適用を選んだ。新しい版が制御を握ったら 1 度だけ再読み込みする。 */
@@ -96,7 +106,7 @@ function applyUpdate(): void {
     return;
   }
   applyRequested = true;
-  waiting.postMessage({ type: 'SKIP_WAITING' });
+  waiting.postMessage({ type: APPLY_UPDATE_MESSAGE });
 }
 
 function reloadPage(): void {

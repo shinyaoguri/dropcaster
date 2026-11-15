@@ -4,6 +4,7 @@ const labels = {
   apply: ['Reload to update', '再読み込みして更新'],
   applyHint: ['Reloading closes open output windows.', '再読み込みすると、開いている出力ウィンドウは閉じます。'],
   reloadRequired: ['A new version has been released. Please reload the page.', '新しい版が出ています。再読み込みしてください。'],
+  offline: ["Couldn't load this screen while offline. Check your connection, then reload.", 'オフラインのため読み込めませんでした。接続を確かめてから再読み込みしてください。'],
   reload: ['Reload', '再読み込み'],
   dismiss: ['Dismiss', '閉じる'],
 } as const;

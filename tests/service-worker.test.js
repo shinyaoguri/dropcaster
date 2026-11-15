@@ -67,7 +67,30 @@ test('generateServiceWorker waits for all windows to close before activating a n
     const install = sw.match(/self\.addEventListener\('install', \(event\) => \{([\s\S]*?)\n\}\);/);
     assert.ok(install, 'install ハンドラが無い');
     assert.doesNotMatch(install[1], /skipWaiting/);
-    // 利用者が通知で適用を選んだときだけ、ページからの SKIP_WAITING で切り替える
-    assert.match(sw, /event\.data\.type === 'SKIP_WAITING'\) \{\s*self\.skipWaiting\(\);/);
+    // 利用者が通知で適用を選んだときだけ、ページからの適用メッセージで切り替える。
+    // SKIP_WAITING は、この変更より前の版のページが自動で送るので受けない (移行時に上演が止まる)
+    assert.match(sw, /event\.data\.type === APPLY_UPDATE_MESSAGE\) \{\s*self\.skipWaiting\(\);/);
+    assert.doesNotMatch(sw, /['"]SKIP_WAITING['"]/);
+    const swMessage = sw.match(/const APPLY_UPDATE_MESSAGE = '([^']+)';/)?.[1];
+    const register = await readFile(new URL('../src/viewer/pwa/register.ts', import.meta.url), 'utf-8');
+    const pageMessage = register.match(/const APPLY_UPDATE_MESSAGE = '([^']+)';/)?.[1];
+    assert.ok(swMessage, 'SW に APPLY_UPDATE_MESSAGE が無い');
+    assert.notEqual(swMessage, 'SKIP_WAITING');
+    assert.equal(pageMessage, swMessage, 'ページが送る適用メッセージと SW が受けるものが違う');
+  });
+});
+
+test('generateServiceWorker precaches the assets the shell loads and carries content caches over on activate (#164)', async () => {
+  await withTempDir(async (dir) => {
+    await generateServiceWorker(dir);
+    const sw = await readFile(join(dir, 'sw.js'), 'utf-8');
+    // 新しい版の資産は旧版のページが開いている間は取られない。install で揃えないと、
+    // 閉じた後にオフラインで開いたとき JS / CSS が無く何も出ない
+    assert.match(sw, /await precacheShellAssets\(cache\);/);
+    // サブパス配信の assets/ も shell (CacheFirst) から引く。runtime に落ちると事前キャッシュが使われない
+    assert.match(sw, /url\.pathname\.startsWith\(`\$\{SCOPE_PATH\}assets\/`\)/);
+    // 作品・カタログ・API・CDN は版によらないので引き継ぐ。shell は版ごとなので引き継がない
+    const carried = sw.match(/const CARRIED_OVER_CACHES = \[([^\]]+)\];/)?.[1].split(',').map(s => s.trim());
+    assert.deepEqual(carried, ['LOCAL_CACHE', 'OP_META_CACHE', 'GIST_CACHE', 'OP_CDN_CACHE', 'RUNTIME_CACHE']);
   });
 });

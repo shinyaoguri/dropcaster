@@ -158,12 +158,14 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 `npm run test:sw` は生成した Service Worker を実 Chromium で動かし、作品 iframe を開いた後も
 オフラインのホームにシェルが、各作品に自分の HTML が返ることをルート配信とサブパス配信で確かめる
 （viewer のビルドは不要。`CHROMIUM_PATH` も同じく使える）。SW テンプレートを変えたら実行する。
-続けて `tests/browser/service-worker-update.mjs` が両 viewer エントリを OS の一時ディレクトリへビルドし、
-出力ウィンドウを開いたまま新しい版の sw.js を配信しても、操作画面が再読み込みされず出力が映り続けること、
-更新の通知が操作画面にだけ出て押したときだけ適用されること、初回訪問で再読み込みしないこと、全ウィンドウを
-閉じると新しい版になること、旧版の遅延チャンクが消えていたら再読み込みを案内することを確かめる (#164)。
-`src/viewer/pwa/` を変えたときも実行する。`SW_UPDATE_ENTRY=gallery|hosted`、`SW_UPDATE_CASE=<ケース名>` で絞り込め、
-`SW_UPDATE_ARTIFACT_DIR=/tmp/sw-update-images` で通知の表示を保存できる。
+続けて `tests/browser/service-worker-update.mjs` が両 viewer エントリと、利用者の `dropcaster build --base /sub/`
+（terser・manualChunks・サブパス配信）を OS の一時ディレクトリへビルドし、出力ウィンドウを開いたまま新しい版の
+sw.js を配信しても、操作画面が再読み込みされず出力が映り続けること、更新の通知が操作画面にだけ出て押したときだけ
+適用されること、この変更より前の版のページが送る `SKIP_WAITING` では切り替わらないこと、初回訪問で再読み込み
+しないこと、全ウィンドウを閉じると新しい版になり、そのときオフラインでもアプリ・作品カタログ・遅延読み込みの画面が
+開くこと、遅延チャンクが取れなければ再読み込み（オフラインなら接続の確認）を案内することを確かめる (#164)。
+`src/viewer/pwa/` を変えたときも実行する。`SW_UPDATE_ENTRY=gallery|hosted|cli-subpath`、`SW_UPDATE_CASE=<ケース名>`
+で絞り込め、`SW_UPDATE_ARTIFACT_DIR=/tmp/sw-update-images` で通知の表示を保存できる。
 
 `npm run test:routes` は両 viewer エントリで、Gist / OpenProcessing の取得や作品 iframe の読み込みを
 保留したまま別ルートへ移り、遅れて届いた成功・失敗の結果が今の画面を上書きしないこと、破棄した

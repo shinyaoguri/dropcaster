@@ -24,7 +24,8 @@
 // 上書きする)。作者が直して投影し直す動線を壊さないよう鮮度を優先し、
 // キャッシュはオフライン時の保険として持つ。
 //
-// キャッシュ世代管理: CACHE_VERSION を変えれば古い bucket を activate 時に一掃。
+// キャッシュ世代管理: CACHE_VERSION を変えれば古い bucket を activate 時に一掃する。
+// shell 以外の中身は新しい版のバケットへ引き継いでから消す (CARRIED_OVER_CACHES)。
 // クォータ管理は browser に委ねる (HTTP cache のように LRU evict される)。
 //
 // このファイルは src/cli/utils/sw-template.js の正本。public/sw.js と
@@ -43,17 +44,29 @@ const RUNTIME_CACHE = `dropcaster-runtime-${CACHE_VERSION}`;
 
 const ALL_CACHES = [SHELL_CACHE, LOCAL_CACHE, OP_META_CACHE, GIST_CACHE, OP_CDN_CACHE, RUNTIME_CACHE];
 
+// 版によらない中身 (ローカル作品とカタログ・OP / Gist の API・外部 CDN・その他) は、activate で
+// 旧版のバケットから引き継いでから旧版を消す。新しい版は旧版のページが開いている間に入り、閉じた時点で
+// 有効になるので、引き継がないと閉じた後にオフラインで開いたとき作品カタログなどが消えている (#164)。
+// shell は版ごとのアプリ本体なので引き継がない (install で新しい版の分を揃える)。
+const CARRIED_OVER_CACHES = [LOCAL_CACHE, OP_META_CACHE, GIST_CACHE, OP_CDN_CACHE, RUNTIME_CACHE];
+
 // 更新の適用時期: install では skipWaiting しない。新しい版はブラウザ標準のライフサイクルどおり、
 // そのオリジンのタブ・ウィンドウがすべて閉じたときに有効になる (#164)。上演中に切り替えると
 // 操作画面の再読み込みで出力ウィンドウが閉じ、activate で旧版のキャッシュも消えるため。
-// 利用者が操作画面の通知で適用を選んだときだけ、ページから SKIP_WAITING が届く。
+// 利用者が操作画面の通知で適用を選んだときだけ、ページから APPLY_UPDATE_MESSAGE が届く。
+// SKIP_WAITING は受けない: この変更より前の版のページは、新しい版が installed になると自動で
+// SKIP_WAITING を送って再読み込みしていたので、それに応じると移行時の上演が止まる。
+const APPLY_UPDATE_MESSAGE = 'DC_APPLY_UPDATE';
 
-// install 時に最低限のシェル (ルート HTML) を取りにいく。/assets/* はハッシュ付きなので
-// 実際のリクエストが来てから cache-first で取り込む。
+// install 時にシェル (ルート HTML と manifest) と、シェルが読み込む資産を取りにいく。
+// 新しい版の資産は、旧版のページが開いている間は誰も取りにいかない。install で揃えておかないと、
+// 全ウィンドウを閉じて新しい版が有効になった後、オフラインで開いたときに JS / CSS が無く何も出ない (#164)。
 const SHELL_PRECACHE = [
   './',
   './manifest.json',
 ];
+// シェルから辿る資産の上限 (誤検出が続いても install が終わるように)
+const SHELL_ASSET_LIMIT = 200;
 
 // オフラインで navigate された時のフォールバック先 (キャッシュ済みの shell '/')
 const OFFLINE_NAVIGATION_FALLBACK = new URL('./', self.registration.scope).toString();
@@ -71,25 +84,28 @@ self.addEventListener('install', (event) => {
     await Promise.all(SHELL_PRECACHE.map(url =>
       cache.add(new Request(url, { cache: 'reload' })).catch(() => undefined)
     ));
+    await precacheShellAssets(cache);
   })());
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const names = await caches.keys();
-    await Promise.all(names.map(name => {
-      // dropcaster-* で始まる古いバケットだけ捨てる (他アプリの cache を触らない)
-      if (name.startsWith('dropcaster-') && !ALL_CACHES.includes(name)) {
-        return caches.delete(name);
+    // dropcaster-* で始まる古いバケットだけ扱う (他アプリの cache を触らない)
+    const stale = names.filter(name => name.startsWith('dropcaster-') && !ALL_CACHES.includes(name));
+    for (const current of CARRIED_OVER_CACHES) {
+      const prefix = current.slice(0, current.length - CACHE_VERSION.length);
+      for (const name of stale) {
+        if (name.startsWith(prefix)) await carryOver(name, current).catch(() => {});
       }
-      return undefined;
-    }));
+    }
+    await Promise.all(stale.map(name => caches.delete(name)));
     await self.clients.claim();
   })());
 });
 
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
+  if (event.data && event.data.type === APPLY_UPDATE_MESSAGE) {
     self.skipWaiting();
   }
 });
@@ -136,9 +152,12 @@ self.addEventListener('fetch', (event) => {
       event.respondWith(staleWhileRevalidate(req, LOCAL_CACHE));
       return;
     }
-    // assets/ 配下と ico/manifest は CacheFirst (vite が hash 付きで吐く)
+    // assets/ 配下と ico/manifest は CacheFirst (vite が hash 付きで吐く)。
+    // サブパス配信 (例 /gallery/assets/*) も shell に載せる。install が事前キャッシュした
+    // 資産 (precacheShellAssets) を、オフラインで引けるようにするため (#164)
     if (
       matchSegment(url.pathname, 'assets') ||
+      url.pathname.startsWith(`${SCOPE_PATH}assets/`) ||
       url.pathname.endsWith('/manifest.json') ||
       url.pathname.endsWith('/icon.svg') ||
       url.pathname.endsWith('/favicon.ico')
@@ -281,6 +300,84 @@ async function refreshOpMeta(req, cache) {
     return stamped;
   }
   return res;
+}
+
+// --- 更新 -------------------------------------------------------------------
+
+// シェル HTML が読み込む JS / CSS と、そこから辿れるチャンク (遅延読み込みの画面を含む) と
+// CSS の url() を shell に入れる。ベストエフォート: 取れないものは飛ばす (従来の precache と同じく
+// install 自体は失敗させない)。辿るのは scope 内の URL だけ。
+async function precacheShellAssets(cache) {
+  const shell = await cache.match(OFFLINE_NAVIGATION_FALLBACK);
+  if (!shell) return;
+  const queue = refsInHtml(await shell.text(), OFFLINE_NAVIGATION_FALLBACK);
+  const seen = new Set();
+  while (queue.length > 0 && seen.size < SHELL_ASSET_LIMIT) {
+    const url = queue.shift();
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const res = await fetch(url).catch(() => null);
+    if (!isCacheable(res)) continue;
+    const path = new URL(url).pathname;
+    if (path.endsWith('.js')) queue.push(...refsInScript(await res.clone().text(), url));
+    else if (path.endsWith('.css')) queue.push(...refsInStyle(await res.clone().text(), url));
+    await cache.put(url, res).catch(() => {});
+  }
+}
+
+// <script src> と <link href> のうち、JS / CSS だけ (manifest やアイコンは SHELL_PRECACHE と実リクエストに任せる)
+function refsInHtml(html, baseUrl) {
+  const refs = [];
+  for (const m of html.matchAll(/<(?:script|link)\b[^>]*?\s(?:src|href)=["']([^"']+)["']/gi)) {
+    const url = inScope(m[1], baseUrl);
+    if (url && /\.(?:js|css)$/.test(new URL(url).pathname)) refs.push(url);
+  }
+  return refs;
+}
+
+// バンドラが出すチャンク間の参照: import("./x.js") / from "./x.js" (チャンクからの相対) と、
+// Vite の preload 依存の "assets/x.css" (base からの相対)
+function refsInScript(code, scriptUrl) {
+  const refs = [];
+  for (const m of code.matchAll(/["'`](\.{1,2}\/[^"'`\s]+?\.(?:js|css))["'`]/g)) {
+    const url = inScope(m[1], scriptUrl);
+    if (url) refs.push(url);
+  }
+  for (const m of code.matchAll(/["'`](assets\/[^"'`\s]+?\.(?:js|css))["'`]/g)) {
+    const url = inScope(m[1], OFFLINE_NAVIGATION_FALLBACK);
+    if (url) refs.push(url);
+  }
+  return refs;
+}
+
+function refsInStyle(css, styleUrl) {
+  const refs = [];
+  for (const m of css.matchAll(/url\(\s*["']?([^"')\s]+)["']?\s*\)/g)) {
+    if (m[1].startsWith('data:')) continue;
+    const url = inScope(m[1], styleUrl);
+    if (url) refs.push(url);
+  }
+  return refs;
+}
+
+function inScope(ref, baseUrl) {
+  try {
+    const url = new URL(ref, baseUrl);
+    url.hash = '';
+    return url.href.startsWith(self.registration.scope) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+// 旧版のバケットの中身を、新しい版のバケットに無いものだけ写す
+async function carryOver(fromName, toName) {
+  const [from, to] = await Promise.all([caches.open(fromName), caches.open(toName)]);
+  for (const req of await from.keys()) {
+    if (await to.match(req)) continue;
+    const res = await from.match(req);
+    if (res) await to.put(req, res);
+  }
 }
 
 // --- ヘルパ -----------------------------------------------------------------

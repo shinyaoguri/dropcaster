@@ -1,16 +1,20 @@
 // 上演中に Service Worker の新しい版が届いても、操作画面を再読み込みせず出力ウィンドウを
-// 閉じないこと、更新の通知は操作画面にだけ出ることを、両 viewer エントリの本番ビルドで確かめる (#164)。
+// 閉じないこと、更新の通知は操作画面にだけ出ることを、viewer の本番ビルドで確かめる (#164)。
 //
 // SW の待機・有効化と Vite の遅延読み込み (vite:preloadError) は本番ビルドでしか本物にならないので、
-// テストが両エントリを OS の一時ディレクトリへビルドし、静的サーバで配信する。sw.js はテンプレート
-// (generateServiceWorker) から版だけ変えて差し替え、registration.update() で更新を起こす。
-// 作品は rAF で canvas を塗り替えるだけの fixture で、サーバが sketches.json と一緒に返す。
+// テストが OS の一時ディレクトリへビルドし、静的サーバで配信する。ビルドは 3 経路:
+//   gallery      このリポジトリの vite.config.ts (ルート配信)
+//   hosted       apps/web/vite.config.ts (ルート配信)
+//   cli-subpath  利用者の `dropcaster build --base /sub/` (terser・manualChunks・サブパス配信)
+// sw.js はテンプレート (generateServiceWorker) から版だけ変えて差し替え、registration.update() で
+// 更新を起こす。作品は rAF で canvas を塗り替えるだけの fixture で、サーバが sketches.json と一緒に返す。
 //
-// 絞り込み: SW_UPDATE_ENTRY=gallery|hosted、SW_UPDATE_CASE=<ケース名>。
+// 絞り込み: SW_UPDATE_ENTRY=gallery|hosted|cli-subpath、SW_UPDATE_CASE=<ケース名>。
 // SW_UPDATE_ARTIFACT_DIR=<dir> で通知の表示を保存する (SW_UPDATE_LOCALE=ja-JP で日本語の表示)。
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +30,8 @@ const TIMEOUT_MS = 20_000;
 const SETTLE_MS = 1_500;
 const entryButton = '#open-windows-btn, #mapping-btn';
 const notice = '#dc-update-notice';
+// 会場ページの遅延チャンク。Vite 既定は name-hash.js、dropcaster build は name.hash.js
+const VENUE_CHUNK = /^\/assets\/VenueCalibrationPage[-.]/;
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
@@ -49,10 +55,15 @@ async function swSource(version) {
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
-/** state.sw を sw.js として返し、state.blocked に当たるパスは 404 にする (デプロイで消えた旧チャンク)。 */
-function startServer(dir, state) {
+/**
+ * basePath (例 '/sub') の下で dir を配信する。state.sw を sw.js として返し、state.blocked に当たる
+ * パス (basePath を除いた形) は 404 にする (デプロイで消えた旧チャンク・取れなかったチャンク)。
+ */
+function startServer(dir, state, basePath) {
   const server = createServer(async (req, res) => {
-    const pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    const full = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    if (!full.startsWith(`${basePath}/`)) { res.writeHead(404).end(); return; }
+    const pathname = full.slice(basePath.length);
     if (pathname === '/sw.js') {
       res.writeHead(200, { 'Content-Type': CONTENT_TYPES['.js'], 'Cache-Control': 'no-cache' }).end(state.sw);
       return;
@@ -76,6 +87,7 @@ function startServer(dir, state) {
 }
 
 function stopServer(server) {
+  if (!server.listening) return Promise.resolve();
   server.closeAllConnections();
   return new Promise((done) => server.close(() => done()));
 }
@@ -96,6 +108,13 @@ async function until(fn, label, timeout = TIMEOUT_MS) {
 const loads = (page) => page.evaluate(() => Number(sessionStorage.getItem('dcLoads') || 0));
 const cacheNames = (page) => page.evaluate(() => caches.keys());
 const hasController = (page) => page.evaluate(() => navigator.serviceWorker.controller !== null);
+const hasWaiting = (page) => page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting);
+
+/** SPA の中で route へ移る (ページの読み込みを起こさない)。 */
+function navigateInApp(page, base, route) {
+  return page.evaluate((path) => { history.pushState({}, '', path); dispatchEvent(new PopStateEvent('popstate')); },
+    base.path + route);
+}
 
 async function newContext(browser) {
   const context = await browser.newContext({ locale: process.env.SW_UPDATE_LOCALE || 'en-US', viewport: { width: 1280, height: 800 } });
@@ -143,10 +162,14 @@ async function openMappingOutput(page) {
   return popup;
 }
 
-async function openVenueOutput(page) {
-  await page.evaluate(() => { history.pushState({}, '', '/venue'); dispatchEvent(new PopStateEvent('popstate')); });
+async function openVenue(page, base) {
+  await navigateInApp(page, base, '/venue');
   await page.waitForSelector('#venue-canvas');
   await page.waitForFunction(() => !document.querySelector('#venue-model-pane')?.inert);
+}
+
+async function openVenueOutput(page, base) {
+  await openVenue(page, base);
   const popupPromise = page.waitForEvent('popup');
   await page.locator('#venue-open-output').click();
   const popup = await popupPromise;
@@ -179,7 +202,7 @@ function keepsShow(path, open) {
     const { context, errors } = await newContext(browser);
     try {
       const page = await openControlled(context, base, path);
-      const popup = await open(page);
+      const popup = await open(page, base);
       const before = await loads(page);
       // 自動の再読み込みに保存待ちの離脱確認 (#168) が出ないこと (#164 の関連事象)
       const dialogs = [];
@@ -217,8 +240,10 @@ const cases = {
     } finally { await context.close(); }
   },
 
-  // 全ウィンドウを閉じて開き直すと、新しい版の SW とキャッシュで動き、通知は出ない
-  async applyAfterClose({ browser, base, state }) {
+  // 全ウィンドウを閉じて開き直すと、新しい版の SW とキャッシュで動き、通知は出ない。
+  // 開き直す時点で配信が止まっていても (オフライン)、新しい版のアプリ・作品カタログ・
+  // 遅延読み込みの画面が開く (新しい版は旧版が開いている間に入り、閉じた時点で旧版のバケットを消すため)
+  async applyAfterClose({ browser, base, state, server }) {
     const { context, errors } = await newContext(browser);
     try {
       const page = await openControlled(context, base, '/a');
@@ -228,15 +253,27 @@ const cases = {
         ['dropcaster-shell-v1', 'dropcaster-shell-v2'], '開いている間は旧版のキャッシュが残る (旧版の SW が有効のまま)');
       await popup.close();
       await page.close();
+
+      await stopServer(server);
       const next = await context.newPage();
-      await next.goto(base.url + '/a');
+      await next.goto(base.url + '/');
       await until(async () => {
         const names = await cacheNames(next);
         return names.includes('dropcaster-shell-v2') && !names.some(n => n.endsWith('-v1'));
       }, '全ウィンドウを閉じた後に新しい版が有効になる');
+      await next.waitForFunction(() => (document.querySelector('#app')?.innerHTML.length ?? 0) > 0, null, { timeout: 5_000 })
+        .catch(() => {});
+      assert.ok(await next.evaluate(() => document.querySelector('#app')?.innerHTML.length ?? 0) > 0,
+        'オフラインで開き直したアプリが描画されない (新しい版のシェルの資産がキャッシュに無い)');
+      const titles = await next.evaluate(async (url) => {
+        const res = await fetch(url).catch(() => null);
+        return res?.ok ? (await res.json()).map(s => s.title) : null;
+      }, `${base.url}/sketches.json`);
+      assert.deepEqual(titles, ['A', 'B'], 'オフラインで作品カタログ (sketches.json) が取れない');
       await sleep(SETTLE_MS);
       assert.equal(await loads(next), 1, '開き直したページが再読み込みされた');
       assert.equal(await next.locator(notice).isVisible(), false, '新しい版で開いたページに更新通知が出た');
+      await openVenue(next, base);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   },
@@ -258,14 +295,33 @@ const cases = {
     } finally { await context.close(); }
   },
 
-  // デプロイで旧版の遅延チャンクが消えた後に会場ページを開くと、自動で再読み込みせず案内を出す
+  // この修正より前の版のページは、新しい版が installed になると自動で SKIP_WAITING を送っていた。
+  // 新しい版の SW はそれを受けて切り替わらない (切り替わると旧ページが再読み込みされ、出力が閉じる)
+  async legacySkipWaiting({ browser, base, state }) {
+    const { context, errors } = await newContext(browser);
+    try {
+      const page = await openControlled(context, base, '/a');
+      await publishUpdate(page, state, 'v2');
+      const before = await loads(page);
+      await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).waiting.postMessage({ type: 'SKIP_WAITING' }));
+      await sleep(SETTLE_MS);
+      assert.equal(await hasWaiting(page), true, '旧版のページからの SKIP_WAITING で新しい版に切り替わった');
+      assert.ok((await cacheNames(page)).includes('dropcaster-shell-v1'), '旧版のキャッシュが消えた');
+      assert.equal(await loads(page), before, '操作画面が再読み込みされた');
+      assert.equal(await page.locator(notice).getAttribute('data-state'), 'update', '通知の種類が変わった');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  },
+
+  // 会場ページの遅延チャンクが取れない (事前キャッシュも失敗し、デプロイで消えた) ときは、
+  // 自動で再読み込みせず新しい版の案内を出す
   async lazyChunkMissing({ browser, base, state }) {
     const { context } = await newContext(browser);
     try {
+      state.blocked = VENUE_CHUNK;
       const page = await openControlled(context, base, '/');
-      state.blocked = /^\/assets\/VenueCalibrationPage-/;
       const before = await loads(page);
-      await page.evaluate(() => { history.pushState({}, '', '/venue'); dispatchEvent(new PopStateEvent('popstate')); });
+      await navigateInApp(page, base, '/venue');
       await page.waitForSelector(`${notice}[data-state="reload"]`);
       await sleep(SETTLE_MS);
       assert.equal(await loads(page), before, '遅延読み込みの失敗で自動的に再読み込みした');
@@ -277,11 +333,47 @@ const cases = {
       await page.waitForSelector('#venue-canvas');
     } finally { await context.close(); }
   },
+
+  // オフラインで遅延チャンクが取れないときは、新しい版ではなく接続を確かめるよう案内する
+  async lazyChunkOffline({ browser, base, state }) {
+    const { context } = await newContext(browser);
+    try {
+      state.blocked = VENUE_CHUNK;
+      const page = await openControlled(context, base, '/');
+      const before = await loads(page);
+      await context.setOffline(true);
+      await navigateInApp(page, base, '/venue');
+      await page.waitForSelector(`${notice}[data-state]`);
+      await sleep(SETTLE_MS);
+      assert.equal(await loads(page), before, 'オフラインの遅延読み込みの失敗で自動的に再読み込みした');
+      await assertNoticeOnlyInControl(page, null, 'offline', 'オフラインの遅延読み込みの失敗後');
+      await snapshot(page, `${base.name}-offline-notice`);
+      await context.setOffline(false);
+      state.blocked = null;
+      await page.locator(`${notice} button[data-action="reload"]`).click();
+      await until(async () => await loads(page) === before + 1, '案内のボタンで再読み込みする');
+      await page.waitForSelector('#venue-canvas');
+    } finally { await context.close(); }
+  },
 };
 
+/** 利用者の `dropcaster build` で /sub/ 配信用にビルドする。 */
+async function buildWithCli(outDir) {
+  const gallery = await mkdtemp(join(tmpdir(), 'dc-sw-update-gallery-'));
+  try {
+    await mkdir(join(gallery, 'public'));
+    await writeFile(join(gallery, 'dropcaster.config.js'), 'export default {};\n');
+    const run = spawnSync(process.execPath, [resolve(root, 'src/cli/index.js'), 'build', '--base', '/sub/', '--output', outDir], {
+      cwd: gallery, encoding: 'utf-8', env: { ...process.env, DROPCASTER_LANG: 'en' },
+    });
+    assert.equal(run.status, 0, `dropcaster build failed: ${run.stderr}`);
+  } finally { await rm(gallery, { recursive: true, force: true }); }
+}
+
 const entries = [
-  { name: 'gallery', config: 'vite.config.ts', root },
-  { name: 'hosted', config: 'apps/web/vite.config.ts', root: resolve(root, 'apps/web') },
+  { name: 'gallery', basePath: '', build: (outDir) => build({ configFile: resolve(root, 'vite.config.ts'), root, logLevel: 'error', build: { outDir, emptyOutDir: true } }) },
+  { name: 'hosted', basePath: '', build: (outDir) => build({ configFile: resolve(root, 'apps/web/vite.config.ts'), root: resolve(root, 'apps/web'), logLevel: 'error', build: { outDir, emptyOutDir: true } }) },
+  { name: 'cli-subpath', basePath: '/sub', build: buildWithCli },
 ];
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--enable-unsafe-swiftshader'] });
@@ -291,15 +383,14 @@ try {
     if (process.env.SW_UPDATE_ENTRY && process.env.SW_UPDATE_ENTRY !== entry.name) continue;
     const outDir = await mkdtemp(join(tmpdir(), `dc-sw-update-${entry.name}-`));
     try {
-      await build({ configFile: resolve(root, entry.config), root: entry.root, logLevel: 'error',
-        build: { outDir, emptyOutDir: true } });
+      await entry.build(outDir);
       for (const [caseName, run] of Object.entries(cases)) {
         if (process.env.SW_UPDATE_CASE && process.env.SW_UPDATE_CASE !== caseName) continue;
         const state = { sw: await swSource('v1'), blocked: null };
-        const server = await startServer(outDir, state);
-        const base = { name: entry.name, url: `http://127.0.0.1:${server.address().port}` };
+        const server = await startServer(outDir, state, entry.basePath);
+        const base = { name: entry.name, path: entry.basePath, url: `http://127.0.0.1:${server.address().port}${entry.basePath}` };
         try {
-          await run({ browser, base, state });
+          await run({ browser, base, state, server });
           console.log(`${entry.name}/${caseName}: PASS`);
         } catch (err) {
           failures.push(`${entry.name}/${caseName}`);
