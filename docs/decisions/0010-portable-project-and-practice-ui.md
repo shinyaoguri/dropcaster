@@ -48,7 +48,11 @@ builtin/checkerboard は配布物に内蔵した調整用映像。順序・間�
 ### 保存・取込
 
 - IndexedDB `dropcaster.projects` の `projects` store に draft と名前付き Project を保存。
-  書込は直列化し、600 ms の末尾 debounce。容量不足でもメモリ内編集と export を維持する。
+  書込は直列化する。名前・フォームの確定・取り込み・プロジェクタの確定のような離散的な確定は、
+  その場で書込を始める。600 ms の末尾 debounce は 2D のドラッグなど連続して届く変更と、
+  スライドショーの作品送りに追従する参照の更新だけに残し、止まってから 1 回書く
+  （2026-11-16 改訂。[#168](https://github.com/shinyaoguri/dropcaster/issues/168)）。
+  容量不足でもメモリ内編集と export を維持する。
 - 2D の作業状態は従来の `dropcaster.mappings.v2` を継続する。通常再開時は最新の
   WindowController の 2D 状態を優先し、古い IndexedDB の非同期読込で巻き戻さない。
 - 明示 import は schema・有限値・一意 ID・参照・GLB を検証し、3D scene 構築の成功後に
@@ -58,8 +62,11 @@ builtin/checkerboard は配布物に内蔵した調整用映像。順序・間�
 - GLB は 20 MiB、package は 30 MiB、会場は 30 万三角形まで。静的・非圧縮の GLB を対象にし、
   skin/animation、未対応必須拡張、外部 URI、循環 node、範囲外 buffer を拒否する。
   基本色と埋込 base-color texture を表示する。PBR の光学的再現は行わない。
-- 書込失敗時に保存成功とは表示しない。ブラウザを閉じる直前の非同期保存は保証できないため、
-  ユーザーには保存表示の確認と portable package の書出を提供する。
+- 書込失敗時に保存成功とは表示しない。離散的な確定は即時に保存を始め、保存待ちや書込中が
+  残っているときは離脱前に確認を出して知らせる。黙って失わない。再読み込みでは離脱時に始めた
+  IndexedDB の書込が完了しないため、pagehide での保存には頼らない（2026-11-16 改訂。#168）。
+  OS の強制終了などは対象外で、保存表示の確認と portable package の書出で補う。
+  この規則は `/venue` の会場下書きにも同じく適用する。
 
 ### UI と寿命
 

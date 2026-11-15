@@ -4,7 +4,7 @@ import { program } from 'commander';
 import { build } from './commands/build.js';
 import { dev } from './commands/dev.js';
 import { preview } from './commands/preview.js';
-import { scan, scanReset } from './commands/scan.js';
+import { scan, scanReset, ScanFailedError } from './commands/scan.js';
 import { init } from './commands/init.js';
 import { doctor } from './commands/doctor.js';
 import { fetchCommand } from './commands/fetch.js';
@@ -87,4 +87,12 @@ program
   .option('-v, --verbose', 'Show per-file progress')
   .action(fetchCommand);
 
-program.parse();
+program.parseAsync().catch((error) => {
+  // scan の失敗は原因を表示済み。スタックを出さずに終了コードだけ返す
+  if (error instanceof ScanFailedError) {
+    process.exitCode = error.exitCode;
+    return;
+  }
+  // それ以外は従来どおり未処理の rejection として扱う (スタックを表示して終了コード 1)
+  throw error;
+});

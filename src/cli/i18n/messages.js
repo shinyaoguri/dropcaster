@@ -79,6 +79,10 @@ const en = {
   'scan.scannedCount': '📋 Scanned {count} sketch(es) ({withMeta} with metadata)',
   'scan.wroteJson': '💾 Wrote {path}',
   'scan.writeJsonFailed': '❌ Failed to write public/sketches.json: {error}',
+  'scan.copyFailed': '❌ Failed to copy {name} to public/sketches: {error}',
+  'scan.copyFailedKeptPrevious': '   Keeping the previously published copy and catalog entry of {name}',
+  'scan.copyFailedNotCataloged': '   {name} is not added to public/sketches.json',
+  'scan.copyFailedSummary': '❌ {count} sketch(es) could not be copied to public/sketches: {names}',
   'scan.manualTemplateCreated': '📝 OpenProcessing fetch failed ({reason}). Manual metadata template created: {path}',
   'scan.manualTemplateRename': '   Rename to {file} and fill in values; it will be applied on the next scan',
 
@@ -180,6 +184,10 @@ const ja = {
   'scan.scannedCount': '📋 {count} 個のスケッチをスキャン（うち {withMeta} 件にメタデータ）',
   'scan.wroteJson': '💾 {path} を生成',
   'scan.writeJsonFailed': '❌ public/sketches.json の書き込みに失敗: {error}',
+  'scan.copyFailed': '❌ {name} を public/sketches にコピーできませんでした: {error}',
+  'scan.copyFailedKeptPrevious': '   {name} は前回公開したコピーとカタログ項目を残します',
+  'scan.copyFailedNotCataloged': '   {name} は public/sketches.json に載せません',
+  'scan.copyFailedSummary': '❌ {count} 件のスケッチを public/sketches にコピーできませんでした: {names}',
   'scan.manualTemplateCreated': '📝 OpenProcessing 取得失敗（{reason}）。手動メタデータ雛形を作成: {path}',
   'scan.manualTemplateRename': '   {file} にリネームして値を埋めると次回 scan で反映されます',
 
