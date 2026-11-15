@@ -3,6 +3,7 @@ import type { Sketch } from '../types/sketch';
 import { Emitter } from '../utils/emitter';
 import { createProject, parseProject, reconcileProjectLayout, type Project, type ContentReference } from './project';
 import { readProject, writeProject } from './projectStore';
+import { DraftSaver, type StorageState } from './draftSaver';
 
 export interface ShowContext { sketches: Sketch[]; currentIndex: number; intervalSeconds: number }
 export function contentReference(sketch: Sketch): ContentReference {
@@ -15,23 +16,25 @@ export function contentReference(sketch: Sketch): ContentReference {
 /** Working Project; WindowController remains the sole owner of the live 2D layout. */
 export class ProjectSession {
   readonly changes: Emitter<Project>;
-  readonly storage = new Emitter<'saved' | 'saving' | 'error'>('saved');
+  readonly storage = new Emitter<StorageState>('saved');
   readonly ready: Promise<void>;
   private wc: WindowController;
   private off: () => void;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private saver: DraftSaver;
   private disposed = false;
   private initialized = false;
-  private saveVersion = 0;
   private followContext = true;
   private getContext: () => ShowContext;
 
   constructor(wc: WindowController, getContext: () => ShowContext) {
     this.wc = wc; this.getContext = getContext;
     this.changes = new Emitter(createProject(wc.events.state.get()));
+    this.saver = new DraftSaver(() => writeProject(this.changes.get()), state => this.storage.set(state));
     this.off = wc.events.state.subscribe(layout => {
       this.changes.set(reconcileProjectLayout(this.changes.get(), layout));
-      if (this.initialized) this.scheduleSave();
+      // 2D の変更はドラッグ中に毎フレーム届くので、止まってから書く。2D そのものは WindowController が
+      // localStorage へ同期で残す。下書きから開く /project では待ちの間の離脱に確認が出る。
+      if (this.initialized) this.saver.schedule();
     });
     this.ready = this.restore();
   }
@@ -53,39 +56,29 @@ export class ProjectSession {
     const content = context.sketches.map(contentReference);
     this.changes.set({ ...this.changes.get(), content, show: { contentIds: content.map(c => c.id),
       currentIndex: context.currentIndex, intervalSeconds: context.intervalSeconds } });
-    if (this.initialized) this.scheduleSave();
+    // 作品の自動送り・連打のたびに資産ごと書かないよう、まとめて書く。参照は再表示時に表示中の作品から作り直す。
+    if (this.initialized) this.saver.schedule();
   }
+  /** A discrete commit (name, import, undo of an import, copy): saving starts now. */
   update(next: Project, layout = false, replaceContent = true): void {
     if (this.disposed) return;
     if (layout && replaceContent) this.followContext = false; // Keep imported references until the user opens them.
     const project = { ...next, updatedAt: new Date().toISOString() };
     this.changes.set(project);
     if (layout) this.wc.applyStateFromInline(project.venue.layout);
-    this.scheduleSave();
+    void this.save(); // Also takes over the layout write the line above scheduled.
   }
   followCurrentContent(): void { this.followContext = true; this.updateContent(); }
-  private scheduleSave(): void {
-    clearTimeout(this.timer);
-    this.saveVersion++;
-    this.storage.set('saving');
-    this.timer = setTimeout(() => { this.timer = undefined; void this.save(); }, 600);
-  }
   async save(named = false): Promise<void> {
-    clearTimeout(this.timer); this.timer = undefined;
-    const version = ++this.saveVersion;
-    this.storage.set('saving');
+    const project = this.changes.get();
     try {
-      const project = this.changes.get();
-      await writeProject(project);
-      if (named) await writeProject(project, project.id);
-      if (version === this.saveVersion) this.storage.set('saved');
-    } catch (error) {
-      if (version === this.saveVersion) this.storage.set('error');
-      if (named) throw error;
-    }
+      await this.saver.save(async () => {
+        await writeProject(project);
+        if (named) await writeProject(project, project.id);
+      });
+    } catch (error) { if (named) throw error; }
   }
   dispose(): void {
-    this.disposed = true; this.off();
-    if (this.timer) { clearTimeout(this.timer); this.timer = undefined; void this.save(); }
+    this.disposed = true; this.off(); this.saver.dispose();
   }
 }

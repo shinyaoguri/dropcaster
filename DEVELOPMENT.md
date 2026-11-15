@@ -164,6 +164,13 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 作品ページが離脱警告などのリスナーを付け直さないことを確かめる。ルート遷移・`App.ts` の世代確認・
 `SketchPageController` の後始末を変えたら実行する。`ROUTES_CASE=<ケース名>` で 1 件だけ流せる。
 
+`npm run test:slideshow` は両 viewer エントリのスライドショーで iframe ごとの rAF 回数を数え、
+先読みした非表示の作品が待機中に描画せず、表示した作品だけが動くことを確かめる。Next / Previous、
+連続切替、読み込み中の切替、待機中のリサイズ、マッピング中の出力も含む。`SketchPool` / `SketchFrame` の
+pause・resume・先読み、`SlideshowView` の切替を変えたら実行する。`SLIDESHOW_ENTRY=gallery|hosted`、
+`SLIDESHOW_CASE=<ケース名>` で絞り込め、`SLIDESHOW_ARTIFACT_DIR=/tmp/slideshow-images` で切替前後の
+スクリーンショットを保存できる。
+
 `npm run test:projection-runtime` は両 viewer エントリで編集状態の停止・再開、テストパターン中の
 作品切替、WebGL ロストからの復旧とキャンセルを検証する。実際の UI / popup / captureStream と
 決定的な作品 fixture を使い、CI でも実行する。既存 Chromium は同じく `CHROMIUM_PATH` で指定する。
@@ -172,7 +179,7 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 `npm run test:practice` は製品の個別作品／スライドショー UI からマッピングを起動し、実出力との併用、
 3Dの遅延初期化・タブ非表示中の描画休止・明示的な実出力開始、投影ガイドの分離、既存編集、GLB／パッケージ保存、異常 import、容量不足、描画復旧・終了を両エントリで検証する。
 `PRACTICE_ARTIFACT_DIR=/tmp/practice-images` でスクリーンショットを保存できる。
-`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=workspace|workspaceSlideshow|lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample`
+`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=workspace|workspaceSlideshow|lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample|slideshowDraft`
 で失敗箇所だけを再実行できる。内蔵サンプルの実 UI は `/mapping`（`/practice` も互換 URL として維持）。GLB サンプルは `docs/samples/`。
 
 ## 注意点 / 既知の TODO
@@ -196,7 +203,7 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
   gitignore 済みの `.claude/settings.local.json` 側に置く。
 
 `npm run test:venue` は独立した `/venue` のGUI操作・実出力・共有・マッピングとの分離を両viewerで検証する。
-`VENUE_ENTRY=gallery|hosted`、`VENUE_CASE=workflow|interaction|recovery|isolation` で絞り込める。
+`VENUE_ENTRY=gallery|hosted`、`VENUE_CASE=workflow|interaction|recovery|isolation|reload` で絞り込める。
 `VENUE_ARTIFACT_DIR=/tmp/venue-images` でスクリーンショットを保存できる。
 `interaction` は実ポインタで移動・回転・サイズ・取消・undoを検証し、`workflow` は輪郭／グリッド／白黒の実ピクセル・popup・解像度・保存再開を確認する。
 `recovery` は不正・遅延読込、GLB、容量不足、WebGL停止時の出力終了と書出を確認する。

@@ -61,6 +61,10 @@ jobs:
         timeout-minutes: 5
         run: npm run test:routes
 
+      - name: Verify slideshow prefetch frames stay paused until shown (both viewer entries)
+        timeout-minutes: 5
+        run: npm run test:slideshow
+
       - name: Verify CSS/GPU projection and preview lifecycle
         timeout-minutes: 5
         run: npm run test:poc
