@@ -245,7 +245,7 @@ export class LayoutPanel {
     // 本体ドラッグ → position 更新
     dispose.push(this.attachBodyDrag(div, resizeSE, outputId));
     // 右下ハンドル → size リサイズ
-    dispose.push(this.attachResizeDrag(resizeSE, outputId));
+    dispose.push(this.attachResizeDrag(div, resizeSE, outputId));
 
     return { div, label, resizeSE, canvasWindow, previews: new Map(), dispose };
   }
@@ -368,6 +368,7 @@ export class LayoutPanel {
         if (!out) return null;
         this.setActiveOutput(outputId);
         div.classList.add('dragging');
+        this.isolateLayer(div, true);
         e.preventDefault();
         return {
           startX: e.clientX,
@@ -393,6 +394,7 @@ export class LayoutPanel {
       },
       onEnd: () => {
         div.classList.remove('dragging');
+        this.isolateLayer(div, false);
         // drag 終了時に canvas dim を確定 + 他パネル（mapping タブ・ツール列）を追従させる。
         // replaceState() の fireChange → refreshAllFromState → layoutPanel.refresh() が
         // 走るので、ここで直接 refresh() は呼ばない（二重実行回避）。
@@ -402,7 +404,7 @@ export class LayoutPanel {
     });
   }
 
-  private attachResizeDrag(handle: HTMLDivElement, outputId: string): () => void {
+  private attachResizeDrag(div: HTMLDivElement, handle: HTMLDivElement, outputId: string): () => void {
     const doc = this.doc;
     const ctrl = this.ctrl;
     if (!doc || !ctrl) return () => {};
@@ -414,6 +416,7 @@ export class LayoutPanel {
         const out = state.outputs.find(o => o.id === outputId);
         if (!out) return null;
         this.setActiveOutput(outputId);
+        this.isolateLayer(div, true);
         e.preventDefault();
         e.stopPropagation();
         return {
@@ -437,10 +440,23 @@ export class LayoutPanel {
         this.opts?.onOutputLayoutMutated?.();
       },
       onEnd: () => {
+        this.isolateLayer(div, false);
         ctrl.commitOutputLayoutBounds();
         ctrl.replaceState(ctrl.getState());
       },
     });
+  }
+
+  /**
+   * drag/resize 中だけ出力の枠を独立した合成レイヤーにする（CSS の will-change: transform）。
+   * ドラッグ中は canvas dim を再計算しないので枠が仮想キャンバスの外へはみ出す。枠が
+   * `.dc-layout-canvas` と同じレイヤーに描かれていると、はみ出した分だけそのレイヤー
+   * （canvas px 規模）が毎フレーム広がり、確保し直しと全面の描き直しでレイアウト枠と
+   * ツール列がチラつく (#152)。常時付けないのは、fitScale が変わったときに
+   * ラスタ倍率が固定されて文字がぼやけるのを避けるため。
+   */
+  private isolateLayer(div: HTMLDivElement, on: boolean): void {
+    div.classList.toggle('is-transforming', on);
   }
 
   /**

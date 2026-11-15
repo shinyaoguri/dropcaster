@@ -906,6 +906,11 @@ export const CONTROL_PANEL_CSS = `
       .dc-layout-canvas .dc-layout-output.dragging {
         cursor: grabbing;
       }
+      /* drag/resize 中だけ独立レイヤーにし、はみ出した枠が仮想キャンバスのレイヤーを
+         毎フレーム広げないようにする（LayoutPanel.isolateLayer, #152） */
+      .dc-layout-canvas .dc-layout-output.is-transforming {
+        will-change: transform;
+      }
       .dc-layout-canvas .dc-layout-output .dc-layout-output-label {
         position: absolute;
         top: 4px;
