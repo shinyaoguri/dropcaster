@@ -8,6 +8,7 @@ import ora from 'ora';
 import { loadConfig } from '../utils/config.js';
 import { resolveBuildInfo } from '../../core/build-info.js';
 import { generateManifest } from '../utils/manifest.js';
+import { resolveBase, manifestConfigFor, writeBuildRecord } from '../utils/base.js';
 import { generateServiceWorker } from '../utils/service-worker.js';
 import { copyPublicFiles } from '../utils/files.js';
 
@@ -69,12 +70,20 @@ async function assertSafeOutputDir(outputDir, cwd) {
   }
 }
 
-export async function build(options) {
+/**
+ * 配信先 base は `--base` (明示したとき) > dropcaster.config.js の `base` > `'/'` で決める
+ * (src/cli/utils/base.js の resolveBase)。command 無しで呼ぶときは options.base を与えれば明示とみなす。
+ *
+ * @param {{ output: string, base?: string }} options
+ * @param {import('commander').Command} [command] commander が action の末尾に渡すコマンド
+ */
+export async function build(options, command) {
   const spinner = ora('Building for production...').start();
-  
+
   try {
     // Load user config
     const config = await loadConfig(process.cwd());
+    const base = resolveBase(options, command, config);
     const outputDir = resolve(process.cwd(), options.output);
 
     // 出力先が cwd 自身／その祖先／保護対象サブディレクトリ等になっていないか検証
@@ -95,13 +104,7 @@ export async function build(options) {
     
     // Generate PWA manifest
     spinner.text = 'Generating PWA manifest...';
-    const manifestStartUrl = config.start_url === '/' ? options.base : config.start_url;
-    await generateManifest({
-      ...config,
-      base: options.base,
-      start_url: manifestStartUrl || options.base,
-      scope: config.scope || options.base
-    }, outputDir);
+    await generateManifest(manifestConfigFor(config, base), outputDir);
     
     // Generate Service Worker (multi-bucket cache; template at src/cli/utils/sw-template.js)
     spinner.text = 'Generating Service Worker...';
@@ -111,7 +114,7 @@ export async function build(options) {
     spinner.text = 'Building application...';
     await viteBuild({
       root: rootDir,
-      base: options.base,
+      base,
       mode: 'production',
       publicDir: false,  // Don't copy public dir from package
       build: {
@@ -150,9 +153,10 @@ export async function build(options) {
         assetsInlineLimit: 4096  // 4KB以下のアセットをインライン化
       },
       define: {
-        'import.meta.env.DROPCASTER_CONFIG': JSON.stringify(config),
+        // 埋め込む config の base も解決・正規化後の値にそろえる
+        'import.meta.env.DROPCASTER_CONFIG': JSON.stringify({ ...config, base }),
         'import.meta.env.DROPCASTER_BUILD': JSON.stringify(resolveBuildInfo(rootDir)),
-        'import.meta.env.BASE_URL': JSON.stringify(options.base)
+        'import.meta.env.BASE_URL': JSON.stringify(base)
       }
     });
     
@@ -179,15 +183,17 @@ export async function build(options) {
 
     // Ensure manifest link exists
     if (!indexHtml.includes('rel="manifest"')) {
-      const basePath = options.base.replace(/\/?$/, '/');
       indexHtml = indexHtml.replace(
         '</head>',
-        `  <link rel="manifest" href="${escapeHtml(basePath)}manifest.json">\n  </head>`
+        `  <link rel="manifest" href="${escapeHtml(base)}manifest.json">\n  </head>`
       );
     }
     
     await fs.writeFile(indexPath, indexHtml, 'utf-8');
     
+    // 解決した base を出力先に残し、preview が同じ base で配信できるようにする
+    await writeBuildRecord(outputDir, base);
+
     // Create sketches.json if it doesn't exist
     const sketchesJsonPath = join(outputDir, 'sketches.json');
     if (!await fs.access(sketchesJsonPath).then(() => true).catch(() => false)) {

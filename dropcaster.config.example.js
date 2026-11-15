@@ -30,7 +30,11 @@ export default {
   start_url: '/',
 
   // デプロイ先のベース URL（GitHub Pages のサブパスなど。例: '/my-gallery/'）
-  // dropcaster build --base <path> でも指定可。未指定なら '/'。
+  // dropcaster build と dropcaster preview に効く (dev は常にルートで配信)。
+  // build は --base <path> でも指定可 (明示した --base が優先)。どちらも未指定なら '/'。
+  // preview は build 時に決まった base (dist/dropcaster-build.json) で配信する。
+  // 先頭・末尾の '/' は補われる ('my-gallery' → '/my-gallery/')。'./' のような相対パス・URL、
+  // '?'・'#'・空白・バックスラッシュを含む値は不可。
   // base: '/',
 
   // OpenProcessing CDN (deckard.openprocessing.org) の CORS proxy ベース URL。

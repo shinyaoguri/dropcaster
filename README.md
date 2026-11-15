@@ -293,10 +293,21 @@ OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（�
 
 オプション:
 - `-o, --output <dir>` - 出力ディレクトリ (デフォルト: "dist")
-- `-b, --base <path>` - ベースURLパス (デフォルト: "/")
+- `--base <path>` - 配信先のベースURLパス。未指定なら `dropcaster.config.js` の `base`、それも無ければ "/"。
+  先頭と末尾の "/" は補われる（`exhibit` → `/exhibit/`）。`./` のような相対パス・URL、`?`・`#`・空白・
+  バックスラッシュを含む値は指定できない。決まった base は出力先の `dropcaster-build.json` に記録される
+
+### `dropcaster preview [options]`
+ビルド済みの出力を配信して確認。build 時に決まった base（`--base` を含む。出力先の `dropcaster-build.json`）の
+配下（例: `/exhibit/`）で配信する。記録の無い古い出力では `dropcaster.config.js` の `base`、それも無ければ "/"。
+
+オプション:
+- `-p, --port <port>` - ポート (デフォルト: 4173)
+- `-h, --host <host>` - ホスト (デフォルト: "localhost")
+- `-o, --output <dir>` - 配信するディレクトリ (デフォルト: "dist")
 
 ### `dropcaster dev`
-開発サーバーを起動。
+開発サーバーを起動。`base` の設定にかかわらずルート（`/`）で配信する。
 
 ### `dropcaster doctor`
 プレビュー GIF 生成に必要なツール (FFmpeg / Chromium) が揃っているか確認。
@@ -314,7 +325,7 @@ export default {
   background_color: '#ffffff',
   display: 'standalone',               // 'standalone' | 'fullscreen' | 'minimal-ui' | 'browser'
   start_url: '/',
-  // base: '/my-gallery/',             // GitHub Pages のサブパスなど（dropcaster build --base でも可）
+  // base: '/my-gallery/',             // GitHub Pages のサブパスなど。build と preview に効く（build は --base が優先）
   // assetProxyBaseUrl: '/op-cdn',     // OP CDN の CORS proxy（下記参照）
   // gistApiBaseUrl: '/gist-api',      // GitHub Gist API の中継（下記参照）
 }
