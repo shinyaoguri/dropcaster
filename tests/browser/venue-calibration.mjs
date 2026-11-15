@@ -177,6 +177,10 @@ async function adjust(page,base){
   await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
   const beforeKey=await projector(page);await output.keyboard.press('ArrowUp');
   await page.waitForFunction(q=>JSON.stringify(window.calibrationPage.session.changes.get().venue.projectors[0].quaternion)!==JSON.stringify(q),beforeKey.quaternion);
+  // Ctrl/Cmd+F (ブラウザの検索) は全画面を切り替えない
+  await output.evaluate(()=>{window.fullscreenCalls=0;const request=Element.prototype.requestFullscreen;Element.prototype.requestFullscreen=function(){window.fullscreenCalls++;return request.call(this)}});
+  for(const key of ['Control+f','Meta+f'])await output.keyboard.press(key);
+  assert.equal(await output.evaluate(()=>window.fullscreenCalls),0,'Ctrl/Cmd+F does not toggle output fullscreen');
   // 全画面: その画面の実ピクセル数が出力解像度とアスペクト比になる
   await output.keyboard.press('f');
   const screen=await output.waitForFunction(()=>document.fullscreenElement&&{w:Math.round(innerWidth*devicePixelRatio),h:Math.round(innerHeight*devicePixelRatio)}).then(h=>h.jsonValue());

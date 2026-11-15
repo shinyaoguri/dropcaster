@@ -368,6 +368,22 @@ async function slideshowShortcuts(page) {
   await onPage('Space'); assert.equal((await show()).playing, false, 'Space pauses the slideshow');
   await shortcutsWork(0, 'before editing');
   const idle = await show();
+  // 修飾キー付き (Ctrl/Cmd+F の検索、Alt+→ の進むなど) と、他が処理済みのキーは奪わない
+  for (const key of ['Control+f', 'Meta+f', 'Control+ArrowRight', 'Alt+ArrowRight', 'Meta+ArrowRight']) {
+    await onPage(key); assert.deepEqual(await show(), idle, `${key} triggers no slideshow shortcut`);
+  }
+  await page.evaluate(() => { window.claim109 = e => e.preventDefault(); addEventListener('keydown', window.claim109, true); });
+  for (const key of ['ArrowRight', 'Space', 'f']) await onPage(key);
+  assert.deepEqual(await show(), idle, 'keys already handled (defaultPrevented) trigger no slideshow shortcut');
+  await page.evaluate(() => removeEventListener('keydown', window.claim109, true));
+  // target が Element でない keydown (document へ直接 dispatch) でも例外を出さない
+  const thrown = await page.evaluate(() => {
+    const errors = [], onError = e => errors.push(e.message); addEventListener('error', onError);
+    for (const key of ['ArrowRight', 'ArrowLeft']) document.dispatchEvent(new KeyboardEvent('keydown', { key }));
+    removeEventListener('error', onError); return errors;
+  });
+  assert.deepEqual(thrown, [], 'a keydown dispatched on document does not throw');
+  assert.deepEqual(await show(), idle, '→ then ← dispatched on document returns to the first sketch');
   // 入力欄 (number input・textarea・contenteditable) への文字入力はショートカットにならない
   await page.evaluate(() => document.body.insertAdjacentHTML('beforeend', '<textarea id="t109"></textarea><div id="c109" contenteditable></div>'));
   for (const selector of ['#interval-input', '#t109', '#c109']) {
