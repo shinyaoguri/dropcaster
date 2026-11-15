@@ -417,10 +417,18 @@ export class OutputWindow extends BaseWindow {
     // DOM 順を renderOrder の逆順に並べ替える（配列先頭 = 前面 = DOM 最後）。
     // 描画対象（this.mappings + this.masks）に含まれない id（rect 外で children を持たない）は
     // そもそも DOM に居ないので、スキップしても問題ない。
-    const reversed = this.renderOrder.slice().reverse();
-    for (const id of reversed) {
+    // 順序が既に正しければ触らない: appendChild は既存ノードを外して付け直すので、
+    // state-update ごと（レイアウトのドラッグ中は毎フレーム）に <video> の描画レイヤーが
+    // 作り直されてチラつく (#152)。
+    const desired: HTMLElement[] = [];
+    for (const id of this.renderOrder.slice().reverse()) {
       const m = this.children.get(id)?.div ?? this.maskChildren.get(id)?.div;
-      if (m && m.parentElement === canvasEl) canvasEl.appendChild(m);
+      if (m && m.parentElement === canvasEl) desired.push(m);
+    }
+    const wanted = new Set<Element>(desired);
+    const current = Array.from(canvasEl.children).filter(el => wanted.has(el));
+    if (desired.some((m, i) => current[i] !== m)) {
+      for (const m of desired) canvasEl.appendChild(m);
     }
 
     return createdNew;

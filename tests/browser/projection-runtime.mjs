@@ -382,6 +382,90 @@ async function recoveryCase(page, base) {
   }), { reload: false, live: false }, 'destroy cancels reload and tracks');
 }
 
+// #152: dragging an output in the layout tab must not resize the virtual-canvas
+// compositor layer (full re-raster per frame), nor re-append the output popup's
+// <video> containers. Both made the editor and the layout view flicker.
+async function layoutDragCase(page) {
+  await addSource(page, fixture());
+  const popup = await start(page);
+  await click(page, '#add-mapping-btn');
+  await click(page, '#layout-tab');
+  await page.waitForSelector('.dc-layout-output');
+
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('DOM.enable');
+  await cdp.send('LayerTree.enable');
+  const { root: docRoot } = await cdp.send('DOM.getDocument', { depth: 0 });
+  const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: docRoot.nodeId, selector: '.dc-layout-canvas' });
+  const { node } = await cdp.send('DOM.describeNode', { nodeId });
+  let recording = false;
+  const canvasLayerSizes = new Set();
+  cdp.on('LayerTree.layerTreeDidChange', ({ layers }) => {
+    if (!recording || !layers) return;
+    for (const l of layers) {
+      if (l.backendNodeId === node.backendNodeId && l.drawsContent) canvasLayerSizes.add(`${Math.round(l.width)}x${Math.round(l.height)}`);
+    }
+  });
+
+  await popup.evaluate(() => {
+    const canvas = document.getElementById('dc-output-canvas');
+    window.dragProbe = { childList: 0, transforms: new Set() };
+    new MutationObserver(list => {
+      for (const m of list) {
+        if (m.type === 'childList') window.dragProbe.childList++;
+        else window.dragProbe.transforms.add(canvas.style.transform);
+      }
+    }).observe(canvas, { childList: true, attributes: true, attributeFilter: ['style'] });
+  });
+
+  // Drag outward so the output leaves the virtual canvas (canvas dims are fixed mid-drag).
+  // `at` is the grab point inside the element's box (the resize handle sits on the
+  // clipped corner of the output, so its centre is outside the hit area).
+  const drag = async (selector, label, at = 0.5) => {
+    canvasLayerSizes.clear();
+    await popup.evaluate(() => { window.dragProbe.childList = 0; window.dragProbe.transforms.clear(); });
+    const box = await page.locator(selector).first().boundingBox();
+    const x0 = box.x + box.width * at, y0 = box.y + box.height * at;
+    await page.mouse.move(x0, y0);
+    await page.mouse.down();
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    recording = true;
+    for (let i = 1; i <= 20; i++) {
+      await page.mouse.move(x0 + i * 4, y0 + i * 3);
+      await page.evaluate(() => new Promise(r => requestAnimationFrame(r)));
+    }
+    recording = false;
+    const probe = await popup.evaluate(() => ({ childList: window.dragProbe.childList, transforms: window.dragProbe.transforms.size }));
+    await page.mouse.up();
+    assert.ok(canvasLayerSizes.size > 0, `${label}: virtual-canvas layer observed during drag`);
+    assert.equal(canvasLayerSizes.size, 1, `${label}: virtual-canvas layer keeps its size (${[...canvasLayerSizes].join(', ')})`);
+    assert.ok(probe.transforms > 1, `${label}: output window follows the drag`);
+    assert.equal(probe.childList, 0, `${label}: output window keeps its mapping elements attached`);
+  };
+  await drag('.dc-layout-output', 'move');
+  await drag('.dc-layout-resize.se', 'resize', 0.2);
+
+  // Re-ordering mappings must still re-order the output window's elements, in both
+  // directions (one direction alone can match the creation order by chance).
+  const orders = await page.evaluate(async () => {
+    const h = window.runtimeRegression;
+    const output = [...h.wc.outputWindows.values()][0];
+    const results = [];
+    for (let i = 0; i < 2; i++) {
+      const state = h.wc.events.state.get();
+      h.wc.applyStateFromInline({ ...state, mappings: [...state.mappings].reverse() });
+      await new Promise(r => setTimeout(r, 100));
+      // First in the list is frontmost, i.e. last in DOM order.
+      const expected = h.wc.events.state.get().mappings.map(m => output.children.get(m.id)?.div).filter(Boolean).reverse();
+      const actual = [...output.getWindow().document.getElementById('dc-output-canvas').children].filter(el => expected.includes(el));
+      results.push({ count: expected.length, same: expected.every((el, j) => actual[j] === el) });
+    }
+    return results;
+  });
+  assert.deepEqual(orders, [{ count: 2, same: true }, { count: 2, same: true }], 'mapping re-order updates the output DOM order');
+  await cdp.detach();
+}
+
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
     const hosted = config.startsWith('apps/');
@@ -396,7 +480,7 @@ try {
       await server.listen();
       const base = { url: `http://127.0.0.1:${server.httpServer.address().port}`,
         modules: hosted ? `/@fs${root}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase })) {
+      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, layoutDrag: layoutDragCase })) {
         if (process.env.RUNTIME_CASE && process.env.RUNTIME_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
         const errors = [];
