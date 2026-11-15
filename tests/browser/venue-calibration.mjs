@@ -285,13 +285,45 @@ async function isolation(page,base){
   await live.close();
 }
 
+// #168: 確定した変更は保存待ちのまま再読み込みで失われない。
+async function draft(page,base){return page.evaluate(async modules=>(await import(`${modules}/practice/projectStore.ts`)).readProject('venue-draft'),base.modules)}
+async function reloaded(page){await page.waitForSelector('#venue-canvas');await page.waitForFunction(()=>!document.querySelector('#venue-model-pane').inert)}
+async function leaving(page){try{await page.evaluate(()=>location.reload())}catch{/* the page navigated away */}}
+async function reload(page,base){
+  let answer='accept';const dialogs=[];
+  page.on('dialog',dialog=>{dialogs.push(dialog.type());void(answer==='accept'?dialog.accept():dialog.dismiss())});
+  await change(page,'#venue-name','First');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
+  await change(page,'#venue-name','Second');await page.waitForTimeout(100);
+  await page.reload();await reloaded(page);
+  assert.equal(await page.inputValue('#venue-name'),'Second','a committed name survives a reload 100 ms later');
+  assert.deepEqual(dialogs,[],'a finished save does not ask before leaving');
+  // 確定と同じタスクで離脱すると保存中なので確認を出す。キャンセルすれば変更は残り、待てば保存済みになる。
+  answer='dismiss';await page.locator('#venue-name').click();
+  try{await page.evaluate(()=>{const name=document.querySelector('#venue-name');name.value='Third';name.dispatchEvent(new Event('change',{bubbles:true}));location.reload()})}catch{/* the page navigated away */}
+  assert.deepEqual(dialogs,['beforeunload'],'leaving in the same task as the commit asks first');
+  assert.equal(await page.inputValue('#venue-name'),'Third','cancelling keeps the edit');
+  await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
+  assert.equal((await draft(page,base)).name,'Third','staying finishes the save');
+  // 微調整の確定待ち (SETTLE_MS) のまま離脱しても、確定して保存してから知らせる。
+  const before=(await draft(page,base)).venue.projectors[0];
+  await page.locator('#venue-output-stage').focus();await page.keyboard.press('ArrowRight');await leaving(page);
+  assert.deepEqual(dialogs,['beforeunload','beforeunload'],'a pending nudge asks before leaving');
+  await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
+  assert.notDeepEqual((await draft(page,base)).venue.projectors[0].quaternion,before.quaternion,'the pending nudge is committed and saved');
+  // 保存済みなら新たな確認を出さない。
+  answer='accept';await page.locator('#venue-name').click();
+  await page.reload();await reloaded(page);
+  assert.deepEqual(dialogs,['beforeunload','beforeunload'],'a saved draft reloads without asking');
+  assert.equal(await page.inputValue('#venue-name'),'Third');
+}
+
 try{
   for(const config of ['vite.config.ts','apps/web/vite.config.ts']){
     const hosted=config.startsWith('apps/'),name=hosted?'hosted':'gallery';if(process.env.VENUE_ENTRY&&process.env.VENUE_ENTRY!==name)continue;
     const server=await createServer({configFile:resolve(root,config),root:hosted?resolve(root,'apps/web'):root,server:{host:'127.0.0.1',port:0,open:false,watch:null,hmr:false},logLevel:'error'});
     try{
       await server.listen();const base={name,url:`http://127.0.0.1:${server.httpServer.address().port}`,modules:hosted?`/@fs${root.slice(0,-1)}/src/viewer`:'/src/viewer'};
-      for(const [testName,run] of Object.entries({workflow,interaction,adjust,recovery,isolation})){
+      for(const [testName,run] of Object.entries({workflow,interaction,adjust,recovery,isolation,reload})){
         if(process.env.VENUE_CASE&&process.env.VENUE_CASE!==testName)continue;
         const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'}),errors=[];
         context.on('page',page=>page.on('pageerror',error=>errors.push(error.message)));

@@ -5,7 +5,8 @@ import { resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { fetchUserDataForSketches } from './modules/op-api-client.js';
 import { analyzeSketch } from './modules/sketch-analyzer.js';
-import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists, fileExists } from './modules/file-manager.js';
+import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists, fileExists, isServableSketchCopy } from './modules/file-manager.js';
+import { isReplacementResidue } from './modules/directory-replacement.js';
 import { generateSketchPreview } from './modules/preview-generator.js';
 import { checkPreviewTools } from './check-env.js';
 import { DEFAULT_DESCRIPTION_SUFFIX, MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './modules/constants.js';
@@ -108,9 +109,16 @@ async function scanSketches(options = {}) {
     const currentSketchNames = new Set();
     const sketchIds = []; // ユーザー情報取得用の数値スケッチID
     const newSketches = [];
+    /** @type {string[]} public へのコピーに失敗した作品 */
+    const copyFailures = [];
+    /** @type {Set<string>} コピーに失敗し、前回のカタログ項目も残せない作品 */
+    const droppedSketchIds = new Set();
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      // 差し替えの作業用ディレクトリ (replaceDirectory の staging / 旧版) は作品ではない。
+      // 今は sketches/ に作られないが、#167 で fetch --overwrite が使う予定
+      if (isReplacementResidue(entry.name)) continue;
       if (targetSketch && entry.name !== targetSketch) continue;
 
       currentSketchNames.add(entry.name);
@@ -135,20 +143,38 @@ async function scanSketches(options = {}) {
         if (existing.previewGif && !manual.has('previewGif')) sketchInfo.previewGif = existing.previewGif;
       }
 
-      sketches.push(sketchInfo);
-
-      if (watchMode && !existingSketches.has(entry.name)) {
-        newSketches.push(entry.name);
+      const isNewInWatch = watchMode && !existingSketches.has(entry.name);
+      if (isNewInWatch) {
         console.error(t('scan.newSketchDetected', { name: entry.name }));
       }
+
+      // コピーできなかった作品は今回の内容でカタログに載せない（配信できないため）。
+      // 前回配信できていた作品は、public に残っている前回のコピーと前回のカタログ項目を残す。
+      try {
+        await copySketchToPublic(entry.name, sketchPath, publicSketchesDir, forceRegenerate);
+      } catch (error) {
+        console.error(t('scan.copyFailed', { name: entry.name, error: error.message }));
+        const previous = existingSketchList.find(s => s.id === entry.name);
+        const keepPrevious = Boolean(previous) && await isServableSketchCopy(resolve(publicSketchesDir, entry.name));
+        if (keepPrevious) {
+          sketches.push(previous);
+          console.error(t('scan.copyFailedKeptPrevious', { name: entry.name }));
+        } else {
+          droppedSketchIds.add(entry.name);
+          console.error(t('scan.copyFailedNotCataloged', { name: entry.name }));
+        }
+        copyFailures.push(entry.name);
+        continue;
+      }
+
+      sketches.push(sketchInfo);
+      if (isNewInWatch) newSketches.push(entry.name);
 
       // 数値（または "sketch" + 数値）のディレクトリ名は OpenProcessing のスケッチ ID とみなす
       if (/^\d+$/.test(entry.name)) sketchIds.push(entry.name);
       else if (entry.name.startsWith('sketch') && /^\d+$/.test(entry.name.slice('sketch'.length))) {
         sketchIds.push(entry.name.slice('sketch'.length));
       }
-
-      await copySketchToPublic(entry.name, sketchPath, publicSketchesDir, forceRegenerate);
 
       const shouldGeneratePreview = previewToolsOk && (generatePreviews || (watchMode && newSketches.includes(entry.name)));
       if (shouldGeneratePreview) {
@@ -225,7 +251,9 @@ async function scanSketches(options = {}) {
     let outputSketches = sketches;
     if (targetSketch && existingSketchList.length > 0) {
       const scannedById = new Map(sketches.map(s => [s.id, s]));
-      outputSketches = existingSketchList.map(s => scannedById.get(s.id) ?? s);
+      outputSketches = existingSketchList
+        .filter(s => !droppedSketchIds.has(s.id))
+        .map(s => scannedById.get(s.id) ?? s);
       const knownIds = new Set(existingSketchList.map(s => s.id));
       for (const s of sketches) if (!knownIds.has(s.id)) outputSketches.push(s);
     }
@@ -244,6 +272,11 @@ async function scanSketches(options = {}) {
     } else {
       // ファイル出力しない場合は stdout に JSON（パイプ用途）
       console.log(JSON.stringify(outputSketches, null, 2));
+    }
+
+    if (copyFailures.length > 0) {
+      console.error(t('scan.copyFailedSummary', { count: copyFailures.length, names: copyFailures.join(', ') }));
+      process.exitCode = 1;
     }
 
     return outputSketches;
