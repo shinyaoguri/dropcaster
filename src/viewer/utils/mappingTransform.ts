@@ -732,9 +732,9 @@ export function parseMappingsState(data: unknown): MappingsState | null {
 
 const MIN_DIMENSION = 0.0001;
 
-/** 浮動小数の誤差で -1e-9 のように出た inset を 0 にする。本当にはみ出す値はそのまま。 */
+/** 浮動小数の誤差や最小寸法 (MIN_DIMENSION) の分だけ負に出た inset を 0 にする。本当にはみ出す値はそのまま。 */
 function snapInset(value: number): number {
-  return value < 0 && value > -1e-6 ? 0 : value;
+  return value < 0 && value > -MIN_DIMENSION ? 0 : value;
 }
 
 /** object-view-box で <video> の中身を切り出せるか（Chromium 104+）。DOM の無い環境では false。 */

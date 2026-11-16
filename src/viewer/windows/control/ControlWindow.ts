@@ -684,7 +684,7 @@ ${CONTROL_PANEL_CSS}
    */
   private updateAfterSourceChange(): void {
     this.sourceCrop.refresh();
-    // #cropped-video は source rect を clip-path で切り取って見せているので、変更を即反映する
+    // #cropped-video は source rect を applyVideoCrop で切り取って見せているので、変更を即反映する
     // （抜けるとマッピング側プレビューが古い source 表示のままになる）。
     this.mappingArea.refreshVideoCrop();
     // 非 active mapping のプレビュー warp は source も含めた signature で memoize されているので、

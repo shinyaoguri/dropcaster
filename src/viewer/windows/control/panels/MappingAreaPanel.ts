@@ -115,7 +115,7 @@ export class MappingAreaPanel {
     this.refreshTransform();
   }
 
-  /** quad の matrix3d / mapping color / 4 隅ハンドル位置 / video clip-path を全部最新化。 */
+  /** quad の matrix3d / mapping color / 4 隅ハンドル位置 / video の切り出しを全部最新化。 */
   refreshTransform(): void {
     const ctrl = this.ctrl;
     const scope = this.scope;
@@ -159,7 +159,7 @@ export class MappingAreaPanel {
     this.opts?.onQuadChanged();
   }
 
-  /** source rect 変更時に呼ぶ（clip-path のみ更新）。 */
+  /** source rect 変更時に呼ぶ（video の切り出しのみ更新）。 */
   refreshVideoCrop(): void {
     const ctrl = this.ctrl;
     if (!ctrl || !this.croppedVideo || !this.croppedContainer) return;
@@ -555,7 +555,7 @@ export class MappingAreaPanel {
 
   // ── stream bind ───────────────────────────────────────────────
 
-  /** mapping-video が持つストリームを cropped-video に共有 bind し、clip-path も初期化。 */
+  /** mapping-video が持つストリームを cropped-video に共有 bind し、切り出しも初期化。 */
   private setupCroppedVideoStream(): void {
     if (!this.croppedVideo) return;
     if (!this.mappingVideo) {

@@ -196,6 +196,10 @@ test('with object-view-box, empty or negative crops keep the minimum size instea
     assert.equal(style.transform, '');
     assert.equal(style.objectViewBox, 'inset(30% 69.9999% 69.9999% 30%)');
   }
+  // 幅 0 の切り出しが右端に接していても、最小寸法の分のはみ出しで従来の方式へ戻らない
+  const atEdge = cropWithViewBox({ x: 99.99995, y: 0, width: 0, height: 100 });
+  assert.equal(atEdge.transform, '');
+  assert.match(atEdge.objectViewBox, /^inset\(0% 0% 0% 99\.99995%\)$/);
 });
 
 test('without object-view-box support the legacy scale + translate crop is kept', () => {
