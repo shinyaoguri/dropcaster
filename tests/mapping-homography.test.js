@@ -152,3 +152,68 @@ test('crop preserves out-of-image UVs and the existing minimum size for empty / 
     nearPoint(cropUvToSourceUv({ x: 30, y: 40, width, height: width }, { x: 1, y: 1 }), { x: 0.300001, y: 0.400001 });
   }
 });
+
+/** object-view-box に対応したブラウザを装って applyVideoCrop を呼ぶ。 */
+function cropWithViewBox(source) {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'CSS');
+  Object.defineProperty(globalThis, 'CSS', {
+    configurable: true, writable: true,
+    value: { supports: (property, value) => property === 'object-view-box' && value === 'inset(0%)' },
+  });
+  try {
+    /** @type {any} */
+    const video = { style: {} };
+    applyVideoCrop(video, source);
+    return video.style;
+  } finally {
+    if (saved) Object.defineProperty(globalThis, 'CSS', saved);
+    else delete globalThis.CSS;
+  }
+}
+
+// #235: 拡大した <video> の枠外を overflow: hidden で隠すと、遠近の強い matrix3d 層の中に
+// 枠外の映像が残り、合成でクリップを誤ったフレームにマッピング領域の外へ描かれる。
+// 対応ブラウザでは <video> の箱を枠と一致させ、切り出しは object-view-box で行う。
+test('with object-view-box, the cropped video box equals the container and nothing lies outside it', () => {
+  const cases = [
+    [{ x: 66, y: 0, width: 34, height: 46 }, 'inset(0% 0% 54% 66%)'],
+    [{ x: 15, y: 25, width: 60, height: 45 }, 'inset(25% 25% 30% 15%)'],
+    [{ x: 0, y: 0, width: 100, height: 100 }, 'inset(0% 0% 0% 0%)'],
+    // UI の計算誤差で右端がわずかに 100% を越えても、はみ出しとは扱わない
+    [{ x: 97.7669, y: 0, width: 2.2331, height: 100 }, 'inset(0% 0% 0% 97.7669%)'],
+  ];
+  for (const [source, viewBox] of cases) {
+    assert.deepEqual(cropWithViewBox(source), {
+      width: '100%', height: '100%', transform: '', objectViewBox: viewBox,
+    }, JSON.stringify(source));
+  }
+});
+
+test('with object-view-box, empty or negative crops keep the minimum size instead of collapsing', () => {
+  for (const width of [0, -10]) {
+    const style = cropWithViewBox({ x: 30, y: 30, width, height: width });
+    assert.equal(style.width, '100%');
+    assert.equal(style.transform, '');
+    assert.equal(style.objectViewBox, 'inset(30% 69.9999% 69.9999% 30%)');
+  }
+});
+
+test('without object-view-box support the legacy scale + translate crop is kept', () => {
+  /** @type {any} */
+  const video = { style: {} };
+  applyVideoCrop(video, { x: 15, y: 25, width: 60, height: 45 });
+  assert.equal(video.style.transform, 'translate(-15%, -25%)');
+  assert.equal(video.style.objectViewBox, undefined);
+});
+
+test('with object-view-box, crops reaching outside the source keep the legacy crop and clear any view box', () => {
+  // UI では作れない (0..100% に制限される) が、手で編集した設定から来る。従来の描画と画素を一致させる
+  for (const source of [{ x: -25, y: 80, width: 150, height: 60 }, { x: -10, y: -20, width: 120, height: 130 }]) {
+    const style = cropWithViewBox(source);
+    assert.equal(style.objectViewBox, '', JSON.stringify(source));
+    assert.notEqual(style.transform, '', JSON.stringify(source));
+  }
+  assert.deepEqual(cropWithViewBox({ x: -25, y: 80, width: 150, height: 60 }), {
+    width: '66.66666666666666%', height: '166.66666666666669%', transform: 'translate(25%, -80%)', objectViewBox: '',
+  });
+});

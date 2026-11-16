@@ -131,7 +131,10 @@ try {
               const f = child.id === 'background' ? base : fixture;
               child.el.style.transform = f.containerStyle.transform;
               child.el.style.visibility = f.containerStyle.visibility;
-              Object.assign(child.el.querySelector('video').style, f.videoStyle);
+              const video = child.el.querySelector('video');
+              // 現在の実装は object-view-box で切り出す (#235)。固定 CSS は拡大 + translate なので外す
+              video.style.objectViewBox = '';
+              Object.assign(video.style, f.videoStyle);
             }
           }, { fixture, base: fixtures[0], mode });
           const baseline = await paintedScreenshot(popup);
