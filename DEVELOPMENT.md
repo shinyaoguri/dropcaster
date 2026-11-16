@@ -132,6 +132,7 @@ npx /path/to/dropcaster init my-gallery
 | viewer / 共有型 | `npm test`、`npm run build`、`npm run build:web` と、以下の該当ブラウザテストを両エントリで確認 |
 | Worker / hosted 設定 | `npm run build:web`、`cd apps/web && npx wrangler deploy --dry-run` |
 | 3D PoC | `npm run build:poc`、`npm run test:poc` |
+| 会場の逆算 (`src/viewer/venue/venueReconstruct.ts`) | `npm test` に加え、精度の変化は `node poc/venue-reconstruct/bench.ts` の表で比べる ([README](poc/venue-reconstruct/README.md)) |
 | Issue / PR テンプレート・文書 | YAML / Markdown リンク / symlink、変更前後の例と手順の整合性 |
 | GitHub Actions | `actionlint`、起動イベント・権限・必須ジョブ名・既存検証段の維持、PR の実行結果 |
 
