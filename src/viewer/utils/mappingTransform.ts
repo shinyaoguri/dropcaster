@@ -732,6 +732,17 @@ export function parseMappingsState(data: unknown): MappingsState | null {
 
 const MIN_DIMENSION = 0.0001;
 
+/** 浮動小数の誤差や最小寸法 (MIN_DIMENSION) の分だけ負に出た inset を 0 にする。本当にはみ出す値はそのまま。 */
+function snapInset(value: number): number {
+  return value < 0 && value > -MIN_DIMENSION ? 0 : value;
+}
+
+/** object-view-box で <video> の中身を切り出せるか（Chromium 104+）。DOM の無い環境では false。 */
+function supportsObjectViewBox(): boolean {
+  return typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
+    && CSS.supports('object-view-box', 'inset(0%)');
+}
+
 /**
  * source 矩形（ソース canvas の % 座標）が親コンテナを正確に埋めるように
  * <video> のサイズと translate を計算する。X/Y は独立にスケールするので、
@@ -742,10 +753,34 @@ const MIN_DIMENSION = 0.0001;
  *  - 親要素は overflow: hidden で destination 矩形のサイズに設定
  *  - <video> は position: absolute; top: 0; left: 0;
  *    transform-origin: top left; object-fit: fill;
+ *
+ * object-view-box に対応したブラウザ（Chromium 系）では、<video> の箱を親と同じ大きさに
+ * 保ち、切り出しは object-view-box で映像の中身に対して行う。拡大した <video> の枠外を
+ * overflow: hidden で隠す方式だと、親に掛かる遠近の強い matrix3d の層の中に枠外の映像が
+ * 残る。これが、合成でクリップを誤ったフレームにマッピング領域の外へ描かれる原因とみている
+ * (#235)。未対応のブラウザでは従来の拡大 + translate に戻す。
+ *
+ * 元映像の外へはみ出す切り出し（負の inset になるもの）も従来の方式に戻す。UI は切り出しを
+ * 0..100% に制限しているので、来るのは手で編集した設定だけ。object-view-box で描くと
+ * 従来の描画と画素が一致しないため、見た目を変えない方を選ぶ。
  */
 export function applyVideoCrop(video: HTMLVideoElement, source: SourceRect): void {
   const safeWidth = Math.max(source.width, MIN_DIMENSION);
   const safeHeight = Math.max(source.height, MIN_DIMENSION);
+  // inset は 上・右・下・左 の順。UI の計算で端がわずかに負へ出る誤差は 0 に丸める
+  const right = snapInset(100 - source.x - safeWidth);
+  const bottom = snapInset(100 - source.y - safeHeight);
+  const insideSource = source.x >= 0 && source.y >= 0 && right >= 0 && bottom >= 0;
+  const viewBoxSupported = supportsObjectViewBox();
+
+  if (insideSource && viewBoxSupported) {
+    video.style.width = '100%';
+    video.style.height = '100%';
+    video.style.transform = '';
+    (video.style as CSSStyleDeclaration & { objectViewBox: string }).objectViewBox =
+      `inset(${source.y}% ${right}% ${bottom}% ${source.x}%)`;
+    return;
+  }
   const scaleX = 100 / safeWidth;
   const scaleY = 100 / safeHeight;
 
@@ -765,6 +800,8 @@ export function applyVideoCrop(video: HTMLVideoElement, source: SourceRect): voi
   video.style.width = `${scaleX * 100}%`;
   video.style.height = `${scaleY * 100}%`;
   video.style.transform = `translate(${-source.x}%, ${-source.y}%)`;
+  // 同じ <video> で前回 object-view-box の経路を通っていたら外す（二重の切り出しを防ぐ）
+  if (viewBoxSupported) (video.style as CSSStyleDeclaration & { objectViewBox: string }).objectViewBox = '';
 }
 
 /**

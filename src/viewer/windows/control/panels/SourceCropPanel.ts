@@ -6,7 +6,7 @@
  * setActiveSource for reset/init）。selectionBox の DOM 描画は state push 後に
  * refresh() が呼ばれる契約。
  *
- * source 変更は mapping 側プレビュー（#cropped-video の clip-path / 非 active
+ * source 変更は mapping 側プレビュー（#cropped-video の切り出し / 非 active
  * preview の warp signature）にも波及するので、変更通知は `onSourceChanged`
  * コールバックで親へ送り、親が他 panel へファンアウトする。
  *
