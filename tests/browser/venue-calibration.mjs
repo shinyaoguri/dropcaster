@@ -250,6 +250,7 @@ async function isolation(page,base){
   const baseline=await page.evaluate(async modules=>({layout:structuredClone(window.mappingWC.events.state.get()),draft:await(await import(`${modules}/practice/projectStore.ts`)).readProject(),storage:{...localStorage}}),base.modules);
   assert.equal(baseline.draft.content[0].id,'a');
   await page.evaluate(()=>{window.originalTrack=document.querySelector('#source-video').srcObject.getVideoTracks()[0]});
+  await page.locator('#dc-activity-outputs').click();
   const livePromise=page.waitForEvent('popup');await page.locator('#outputs-list .open-btn').first().click();const live=await livePromise;
   await live.waitForFunction(()=>document.querySelector('video')?.videoWidth===640);
   // 会場の入口はプロジェクトパネルの末尾にある。パネルを開くと 3D を読み込むのは受け入れた代償 (#225 / ADR 0021) なので、

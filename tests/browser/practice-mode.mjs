@@ -111,11 +111,12 @@ async function workspace(page, base) {
   });
   await page.locator(entryButton).click();
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
-  // 出力とマッピング・確認のパネルを行き来するだけでは 3D を読み込まない (ADR 0012)。
-  assert.equal(await activePanel(page), 'outputs', 'the editor opens on outputs and mappings');
+  // マッピング・出力・確認のパネルを行き来するだけでは 3D を読み込まない (ADR 0012)。
+  assert.equal(await activePanel(page), 'mappings', 'the editor opens on mappings');
   await showPanel(page, 'check'); await showPanel(page, 'outputs');
   assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true');
-  await page.locator('#add-output-btn').click(); await page.locator('#add-mapping-btn').click();
+  await page.locator('#add-output-btn').click(); await showPanel(page, 'mappings'); await page.locator('#add-mapping-btn').click();
+  await showPanel(page, 'outputs');
   assert.equal(page.context().pages().length, 1, 'entering and adding outputs never opens a popup');
   assert.equal(await page.evaluate(() => window.webglAttempts), 0, '2D does not initialize WebGL');
   assert.ok(!observedRequests.get(page).some(url => /three(?:\.js|\.module|_addons)|PracticePanel/.test(url)), '2D does not load Three');
@@ -299,7 +300,7 @@ async function projects(page, base) {
   await page.waitForFunction(() => window.practiceWC !== window.previousWC);
   assert.equal(page.context().pages().length, 1, 'opening project does not open outputs');
   assert.equal((await exportProject(page)).assets[0].data, saved.assets[0].data);
-  await projectControls(page); // 開き直した編集は「出力とマッピング」から始まる
+  await projectControls(page); // 開き直した編集は「マッピング」から始まる
   await snapshot(page, base.name + '-glb');
   const missing = structuredClone(saved); missing.content[0].ref = 'missing-local-sketch';
   await importProject(page, missing);
@@ -342,7 +343,7 @@ async function slideshowDraft(page, base) {
   assert.equal(await page.inputValue('#practice-project-name'), 'Third', 'cancelling keeps the edit');
   await storageSaved(page); assert.equal((await draftProject(page, base)).name, 'Third', 'staying finishes the save');
   // ドラッグ中は書き込まず、操作の終わりで 1 回だけ保存する。
-  await page.locator('#mapping-tab').click(); await showPanel(page, 'outputs'); await page.locator('#add-mapping-btn').click(); await page.waitForTimeout(700); await storageSaved(page);
+  await page.locator('#mapping-tab').click(); await showPanel(page, 'mappings'); await page.locator('#add-mapping-btn').click(); await page.waitForTimeout(700); await storageSaved(page);
   await page.evaluate(() => { window.draftWrites = 0; const put = IDBObjectStore.prototype.put; IDBObjectStore.prototype.put = function (...args) { window.draftWrites++; return put.apply(this, args); }; });
   const box = await page.locator('#output-stage .quad-handle[data-corner="topLeft"]').boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
@@ -475,7 +476,8 @@ async function recovery(page) {
 async function outputs(page) {
   await start(page);
   const first = (await state(page)).outputs[0].id;
-  for (let i = 0; i < 3; i++) { await page.locator('#add-output-btn').click(); await page.locator('#add-mapping-btn').click(); }
+  for (let i = 0; i < 3; i++) { await showPanel(page, 'outputs'); await page.locator('#add-output-btn').click(); await showPanel(page, 'mappings'); await page.locator('#add-mapping-btn').click(); }
+  await showPanel(page, 'outputs');
   assert.equal(await page.locator('#add-output-btn').isDisabled(), true);
   // 上限で押せない「出力を追加」も、汎用 button:disabled の明るい塗りではなく通常の地色のまま淡くする (#186)
   const addLook = () => page.locator('#add-output-btn').evaluate(el => { el.getAnimations().forEach(a => a.finish()); const s = getComputedStyle(el); return { background: s.backgroundColor, opacity: Number(s.opacity) }; });
@@ -494,7 +496,8 @@ async function outputs(page) {
   assert.equal(exported.venue.projectors.length, 3);
   assert.deepEqual(exported.venue.projectors.find(p => p.outputId === last), optics);
   assert.equal(exported.venue.layout.outputs.find(o => o.id === last).position.x, 3840);
-  await page.locator('#add-output-btn').click(); await page.locator('#add-mapping-btn').click();
+  await page.locator('#add-output-btn').click(); await showPanel(page, 'mappings'); await page.locator('#add-mapping-btn').click();
+  await showPanel(page, 'outputs');
   const pages = [];
   for (const output of (await state(page)).outputs) {
     const promise = page.waitForEvent('popup');
@@ -592,6 +595,7 @@ async function history(page, base) {
     assert.equal((await btn.evaluate(look)).background, clear, 'hovering a disabled history button adds no fill');
   }
   if (artifactDir) await page.locator('.tool-column > .column-header').screenshot({ path: resolve(artifactDir, base.name + '-history-disabled.png') });
+  await showPanel(page, 'outputs');
   // 出力設定の数値欄: Escape は取消 (欄・state・書き出し JSON が編集前のまま、履歴も積まない) (#113)
   const outputLayout = async () => { const o = (await state(page)).outputs[0]; return { x: o.position.x, y: o.position.y, w: o.size.width, h: o.size.height }; };
   const layoutBefore = await outputLayout();
@@ -613,7 +617,7 @@ async function history(page, base) {
   const initialIds = await ids();
 
   // 追加 → Undo → Redo
-  await page.locator('#add-mapping-btn').click();
+  await showPanel(page, 'mappings'); await page.locator('#add-mapping-btn').click();
   const addedIds = await ids();
   assert.equal(addedIds.length, initialIds.length + 1);
   await undoBtn.click();
@@ -676,7 +680,7 @@ async function history(page, base) {
     await page.locator(`.mapping-list-item[data-id="${other}"] .name`).dblclick();
     await page.locator('.mapping-list-item .name-input').fill('renamed'); await page.locator('.mapping-list-item .name-input').press('Enter');
   });
-  await undoRestores('output x', () => change(page, '#output-x-input', 40));
+  await showPanel(page, 'outputs'); await undoRestores('output x', () => change(page, '#output-x-input', 40)); await showPanel(page, 'mappings');
 
   // ソースの crop ドラッグ 1 回 = 1 件
   await undoRestores('crop drag', async () => {
@@ -1027,26 +1031,35 @@ async function activityBar(page, base) {
   const loadedPanel = () => requests.some(url => /PracticePanel/.test(url));
   const tabs = page.locator('.dc-activity-tabs');
   assert.equal(await tabs.getAttribute('role'), 'tablist'); assert.equal(await tabs.getAttribute('aria-orientation'), 'vertical');
-  assert.deepEqual(await tabs.locator('.dc-activity-btn').evaluateAll(bs => bs.map(b => b.dataset.toolPanel)), ['outputs', 'check', 'preview3d', 'project']);
+  assert.deepEqual(await tabs.locator('.dc-activity-btn').evaluateAll(bs => bs.map(b => b.dataset.toolPanel)), ['mappings', 'outputs', 'check', 'preview3d', 'project']);
   const bar = await page.locator('.dc-activity-bar').boundingBox(), tool = await page.locator('.tool-column').boundingBox();
   assert.ok(bar.x <= 1 && bar.width <= 48 && Math.abs(bar.x + bar.width - tool.x) <= 1, 'the activity bar sits at the left edge, right before the tool column');
   assert.ok((await page.locator('.dc-activity-bar-footer #practice-stop').boundingBox()).y > (await tabs.boundingBox()).y + (await tabs.boundingBox()).height, 'close is below the panel buttons');
   const title = page.locator('#dc-tool-panel-title');
   const visible = async selector => page.locator(selector).isVisible();
-  // 既定は「出力とマッピング」。一覧と選択中の詳細 (出力設定・ソース設定・マッピング設定) が同じパネルにある。
-  assert.equal(await activePanel(page), 'outputs');
-  assert.equal(await page.locator('#dc-activity-outputs').getAttribute('aria-expanded'), 'true');
-  assert.equal(await title.innerText(), 'Outputs and mappings');
-  for (const selector of ['#add-output-btn', '#add-mapping-btn', '#output-x-input', '#reset-source-btn', '#reset-mapping-btn']) assert.equal(await visible(selector), true, `${selector} is in outputs and mappings`);
-  for (const selector of ['[data-pattern="grid"]', '#dev-mode-toggle', '#export-settings-btn']) assert.equal(await visible(selector), false, `${selector} is in another panel`);
+  // 既定は「マッピング」。マッピング一覧と選択中の詳細 (ソース設定・マッピング設定) が同じパネルにある (#228)。
+  const mappingControls = ['#add-mapping-btn', '#add-mask-btn', '#mappings-list', '#reset-source-btn', '#reset-mapping-btn'];
+  const outputControls = ['#add-output-btn', '#outputs-list', '#output-x-input'];
+  const otherControls = ['[data-pattern="grid"]', '#dev-mode-toggle', '#export-settings-btn'];
+  assert.equal(await activePanel(page), 'mappings');
+  assert.equal(await page.locator('#dc-activity-mappings').getAttribute('aria-expanded'), 'true');
+  assert.equal(await title.innerText(), 'Mappings');
+  for (const selector of mappingControls) assert.equal(await visible(selector), true, `${selector} is in mappings`);
+  for (const selector of [...outputControls, ...otherControls]) assert.equal(await visible(selector), false, `${selector} is in another panel`);
   await page.locator('#add-mapping-btn').click(); const mappings = (await state(page)).mappings.length;
+  // 出力: 出力ウィンドウ一覧と選択中の出力の位置・サイズ (出力設定)。
+  await page.locator('#dc-activity-outputs').click();
+  assert.equal(await title.innerText(), 'Outputs');
+  for (const selector of outputControls) assert.equal(await visible(selector), true, `${selector} is in outputs`);
+  for (const selector of [...mappingControls, ...otherControls]) assert.equal(await visible(selector), false, `${selector} is not in outputs`);
+  await snapshot(page, base.name + '-activity-outputs');
   // 確認: テストパターンと開発モード。ここまでは 3D を読み込まない。
   await page.locator('#dc-activity-check').click();
   assert.equal(await title.innerText(), 'Check');
   assert.equal(await visible('[data-pattern="grid"]'), true); assert.equal(await visible('#dev-mode-toggle'), true);
   assert.equal(await visible('#add-output-btn'), false);
   assert.equal(await page.locator('.dc-tool-panel.is-active').count(), 1);
-  assert.equal(loadedPanel(), false, 'outputs and check panels never load 3D');
+  assert.equal(loadedPanel(), false, 'mappings, outputs and check panels never load 3D');
   // 下端はホームへ戻る (家) と閉じる (×) だけ。会場の作成・調整は使う頻度が低いのでここには置かない (#225)。
   const homeLink = page.locator('.dc-activity-bar-footer #practice-home');
   assert.match(await homeLink.getAttribute('href'), /^\/$/); assert.equal(await homeLink.getAttribute('target'), null);
@@ -1073,17 +1086,17 @@ async function activityBar(page, base) {
   assert.equal(await visible('#practice-project-name'), false);
   await snapshot(page, base.name + '-activity-3d');
   // 列幅を変えてから畳み、開き直すと同じ幅に戻る。
-  await showPanel(page, 'outputs');
+  await showPanel(page, 'mappings');
   const resizer = await page.locator('.dc-column-resizer[data-resize-edge="tool"]').boundingBox();
   await page.mouse.move(resizer.x + resizer.width / 2, resizer.y + 200); await page.mouse.down();
   await page.mouse.move(resizer.x + resizer.width / 2 + 40, resizer.y + 200, { steps: 4 }); await page.mouse.up();
   const width = (await page.locator('.tool-column').boundingBox()).width;
   const stageWidth = (await page.locator('#output-stage').boundingBox()).width;
-  await page.locator('#dc-activity-outputs').click();
+  await page.locator('#dc-activity-mappings').click();
   assert.equal(await page.locator('.tool-column').isVisible(), false, 'pressing the selected button collapses the tool column');
   assert.equal(await page.locator('.dc-column-resizer[data-resize-edge="tool"]').isVisible(), false);
-  assert.equal(await page.locator('#dc-activity-outputs').getAttribute('aria-expanded'), 'false');
-  assert.equal(await activePanel(page), 'outputs', 'collapsing keeps the selection');
+  assert.equal(await page.locator('#dc-activity-mappings').getAttribute('aria-expanded'), 'false');
+  assert.equal(await activePanel(page), 'mappings', 'collapsing keeps the selection');
   await page.waitForFunction(w => document.querySelector('#output-stage').getBoundingClientRect().width > w + 100, stageWidth);
   const sourceX = (await page.locator('.source-column').boundingBox()).x;
   assert.ok(Math.abs(sourceX - (bar.x + bar.width)) <= 8, 'the source column follows the activity bar');
@@ -1103,16 +1116,19 @@ async function activityBar(page, base) {
   const focused = () => page.evaluate(() => document.activeElement?.dataset.toolPanel);
   await page.keyboard.press('ArrowDown'); assert.equal(await activePanel(page), 'preview3d'); assert.equal(await focused(), 'preview3d');
   await page.keyboard.press('End'); assert.equal(await activePanel(page), 'project');
-  await page.keyboard.press('ArrowDown'); assert.equal(await activePanel(page), 'outputs', 'ArrowDown wraps');
+  await page.keyboard.press('ArrowDown'); assert.equal(await activePanel(page), 'mappings', 'ArrowDown wraps');
   await page.keyboard.press('ArrowUp'); assert.equal(await activePanel(page), 'project', 'ArrowUp wraps');
-  await page.keyboard.press('Home'); assert.equal(await activePanel(page), 'outputs');
+  await page.keyboard.press('Home'); assert.equal(await activePanel(page), 'mappings');
+  await page.keyboard.press('ArrowDown'); assert.equal(await activePanel(page), 'outputs');
+  await page.keyboard.press('ArrowUp'); assert.equal(await activePanel(page), 'mappings');
   const before = await state(page);
   await page.keyboard.press('Enter'); assert.equal(await page.locator('.tool-column').isVisible(), false, 'Enter collapses');
   await page.keyboard.press('Space'); assert.equal(await page.locator('.tool-column').isVisible(), true, 'Space reopens');
   assert.deepEqual(await state(page), before, 'activity bar keys never nudge mappings');
   // 言語切替で見出しとボタン名が追従する。
   await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
-  assert.equal(await title.innerText(), '出力とマッピング');
+  assert.equal(await title.innerText(), 'マッピング');
+  assert.equal(await page.locator('#dc-activity-outputs').getAttribute('aria-label'), '出力');
   assert.equal(await page.locator('#dc-activity-check').getAttribute('aria-label'), '確認');
   assert.equal(await page.locator('#dc-activity-project').getAttribute('title'), 'プロジェクト');
   await snapshot(page, base.name + '-activity-ja');
@@ -1122,13 +1138,13 @@ async function activityBar(page, base) {
   assert.ok((await page.locator('.dc-activity-bar').boundingBox()).x <= 1);
   assert.equal(await page.locator('.tool-column').isVisible(), true);
   await snapshot(page, base.name + '-activity-narrow-ja');
-  await page.locator('#dc-activity-outputs').click();
+  await page.locator('#dc-activity-mappings').click();
   assert.equal(await page.locator('.tool-column').isVisible(), false);
   const narrowBar = await page.locator('.dc-activity-bar').boundingBox();
   assert.ok(Math.abs((await page.locator('.source-column').boundingBox()).x - (narrowBar.x + narrowBar.width)) <= 2, 'collapsed narrow layout gives the space to the source');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await snapshot(page, base.name + '-activity-narrow-collapsed-ja');
-  await page.locator('#dc-activity-outputs').click();
+  await page.locator('#dc-activity-mappings').click();
   await closeEditor(page);
 }
 
