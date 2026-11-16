@@ -3,7 +3,7 @@
 - [simple-solids.venue.json](simple-solids.venue.json): 床・箱・四面体・三角柱を組み合わせた会場。最新版の会場編集から読み込み、各部材を編集・再配布できる。
 
 - `room-8x6.venue.json`: 内寸8m×6m、高さ3mの部屋とステージ。壁・床・箱を受信側でも編集できる。
-  「設定・共有」→「保存・共有」→「プロジェクト・会場・旧JSONを読む」で読み込む。現在の作品はそのまま使える。
+  マッピング画面の左端のバー「プロジェクト」→「プロジェクト・会場・旧JSONを読む」で読み込む。現在の作品はそのまま使える。
   作成方法は[実寸の会場作成・配布手順](../venue-authoring.md)を参照。
 
 - [textured-wall.dropcaster.json](textured-wall.dropcaster.json): 6 m × 4 m の壁、GLB 内画像、投影条件、2D 配置、内蔵映像の参照を含む portable package。

@@ -121,7 +121,11 @@ const en = {
     'WebGL context lost (e.g. GPU process crash).<br>The source will reload automatically if it does not recover within 2 seconds.',
 
   // コントロールパネル: カラムヘッダ
-  'control.column.tool': 'Tools',
+  'control.activity.label': 'Tool panels',
+  'control.panel.outputs': 'Outputs and mappings',
+  'control.panel.check': 'Check',
+  'control.panel.preview3d': '3D',
+  'control.panel.project': 'Project',
   'control.column.source': 'Source selection',
   'control.tab.mapping': 'Mapping',
   'control.tab.layout': 'Output layout',
@@ -341,7 +345,11 @@ const ja: Record<keyof typeof en, string> = {
   'control.banner.webglLost':
     'WebGL コンテキストが失われました（GPU プロセスのクラッシュ等）。<br>2 秒以内に復帰しなければソースを自動リロードします。',
 
-  'control.column.tool': 'ツール',
+  'control.activity.label': 'ツールパネル',
+  'control.panel.outputs': '出力とマッピング',
+  'control.panel.check': '確認',
+  'control.panel.preview3d': '3D',
+  'control.panel.project': 'プロジェクト',
   'control.column.source': 'ソース選択',
   'control.tab.mapping': 'マッピング',
   'control.tab.layout': '出力レイアウト',

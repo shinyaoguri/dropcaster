@@ -9,7 +9,7 @@ const labels = {
   stopConfirmHint: ['Your mappings are kept. Reopen the editor to continue.', 'マッピングは保たれ、もう一度開くと続きから編集できます。'],
   stopConfirmAction: ['Close', '閉じる'], stopCancel: ['Cancel', 'キャンセル'], loading: ['Preparing 3D…', '3Dを準備中…'],
   title: ['Mapping', 'マッピング'], previewTitle: ['One projector', '1プロジェクタ'], openOutput: ['Open real output', '実出力を開く'],
-  settings: ['3D settings', '3D設定'], menu: ['Settings & sharing', '設定・共有'], storage: ['Save & share', '保存・共有'], receiveVenue: ['Load venue file', '会場ファイルを読み込む'],
+  settings: ['3D settings', '3D設定'], receiveVenue: ['Load venue file', '会場ファイルを読み込む'],
   guides: ['Projector & range', 'プロジェクタ・投影範囲'], guideHint: ['Cyan guides show the optical range, not measured light.', '水色のガイドは投影範囲の目安です。'],
   tetrahedron: ['Tetrahedron', '四面体'], prism: ['Triangular prism', '三角柱'],
   startObjects: ['Start a new venue with a box', '箱1つの会場で作り直す'], addShape: ['Shape to add', '追加する形'], addObject: ['Add', '追加'],

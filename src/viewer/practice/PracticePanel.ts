@@ -16,6 +16,8 @@ export class PracticePanel {
   readonly preview: ProjectionPreview;
   private root = document.createElement('section');
   private settings = document.createElement('div');
+  /** プロジェクトの保存・読込。ツールカラムの「プロジェクト」パネルに置く。 */
+  private project = document.createElement('div');
   private video = document.createElement('video');
   private frame = 0;
   private visible = false;
@@ -61,8 +63,9 @@ export class PracticePanel {
       <p class="dc-practice-hint">${label('practice.geometryHint')}</p></div>
       <div class="tool-section"><p class="dc-practice-hint">${label('calibration.previewHint')}</p>
       ${button('practice-load-venue', 'calibration.loadPreview')}<p id="practice-dimensions" class="dc-practice-hint"></p>
-      <a class="dc-practice-help" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer">${label('calibration.open')}</a></div>
-      <details id="dc-practice-project" class="tool-section"><summary>${label('practice.project')}</summary>
+      <a class="dc-practice-help" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer">${label('calibration.open')}</a></div>`;
+    this.project.className = 'dc-practice-settings';
+    this.project.innerHTML = `<section id="dc-practice-project" class="tool-section"><h3>${label('practice.project')}</h3>
       <label class="dc-practice-field">${label('practice.projectName')}<input id="practice-project-name" maxlength="200" required></label>
       ${button('practice-save', 'practice.save')}${button('practice-duplicate', 'practice.duplicate')}
       <p id="practice-storage" class="dc-practice-hint" role="status"></p>
@@ -72,9 +75,11 @@ export class PracticePanel {
       <input id="practice-project-file" type="file" accept=".json,application/json" hidden>
       ${button('practice-undo-import', 'practice.undoImport')}
       <h3>${label('practice.content')}</h3><ul id="practice-content-list"></ul>
-      <p class="dc-practice-hint">${label('practice.referencesOnly')}</p>${button('practice-open-content', 'practice.openContent')}</details>`;
+      <p class="dc-practice-hint">${label('practice.referencesOnly')}</p>${button('practice-open-content', 'practice.openContent')}</section>`;
     scope.querySelector('#preview-stage')!.append(this.root);
-    scope.querySelector('.tool-content')!.append(this.settings);
+    scope.querySelector('#dc-tool-panel-preview3d')!.append(this.settings);
+    // 保存・読込を、ControlWindow の「設定の入出力」より先に置く。
+    scope.querySelector('#dc-tool-panel-project')!.prepend(this.project);
     this.observer = new ResizeObserver(() => { this.resizePending = true; }); this.observer.observe(this.canvas.parentElement!);
     this.canvas.addEventListener('webglcontextlost', this.contextLost);
     this.root.querySelector<HTMLInputElement>('#practice-guides')!.addEventListener('change', event => this.preview.setGuidesVisible((event.target as HTMLInputElement).checked));
@@ -104,14 +109,16 @@ export class PracticePanel {
     this.preview.setVenue(prepared.group, prepared.dispose); this.venueKey = '';
     this.update(this.session.changes.get());
   }
-  private get<T extends HTMLElement = HTMLInputElement>(id: string): T { return this.settings.querySelector(`#${id}`)!; }
+  private get<T extends HTMLElement = HTMLInputElement>(id: string): T {
+    return (this.settings.querySelector<T>(`#${id}`) ?? this.project.querySelector<T>(`#${id}`))!;
+  }
   private val(id: string): number { return this.get<HTMLInputElement>(id).valueAsNumber; }
   private value(id: string, value: string | number): void {
     const input = this.get<HTMLInputElement>(id);
     if (document.activeElement !== input) input.value = typeof value === 'number' ? String(Number(value.toFixed(5))) : value;
   }
   private translate(): void {
-    applyControlTranslations(this.root); applyControlTranslations(this.settings);
+    applyControlTranslations(this.root); applyControlTranslations(this.settings); applyControlTranslations(this.project);
     this.update(this.session.changes.get()); this.storageStatus();
     this.canvas.setAttribute('aria-label', t('practice.viewHint'));
     this.settings.querySelectorAll('fieldset').forEach(group => {
@@ -264,7 +271,7 @@ export class PracticePanel {
     cancelAnimationFrame(this.frame); this.observer.disconnect(); this.off.forEach(off => off());
     this.canvas.removeEventListener('webglcontextlost', this.contextLost);
     this.editor.setPracticeBackground(this.selected, null); this.preview.dispose();
-    this.video.pause(); this.video.srcObject = null; this.root.remove(); this.settings.remove();
+    this.video.pause(); this.video.srcObject = null; this.root.remove(); this.settings.remove(); this.project.remove();
     // WindowController owns the borrowed stream and all of its tracks.
   }
 }

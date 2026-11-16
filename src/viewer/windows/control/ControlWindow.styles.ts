@@ -26,24 +26,79 @@ export const CONTROL_PANEL_CSS = `
       .dc-banner .dc-banner-text { flex: 1 1 auto; }
       #dc-webgl-lost-banner { background: #ca8a04; }
 
-      /* 編集履歴のバー。3 カラムの上に全幅で置く細い行 (Undo / Redo)。 */
-      .dc-edit-toolbar {
+      /* 左端のアクティビティバー。ツールカラムのパネルを切り替え、選択中の再押下でツールカラムを畳む。 */
+      .dc-activity-bar {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: space-between;
+        width: 44px;
+        padding: 6px 0;
+        box-sizing: border-box;
+        background: #181818;
+        border-right: 1px solid #333;
+      }
+      .dc-activity-tabs, .dc-activity-bar-footer {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+      .dc-activity-btn {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #8a8a8a;
+        cursor: pointer;
+      }
+      .dc-activity-btn:hover { background: transparent; color: #ddd; }
+      .dc-activity-btn:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
+      .dc-activity-btn.is-active { color: #fff; }
+      /* 選択中は左端の縦線で示す。ツールカラムを畳んでいる間は線を消し、色だけ残す。 */
+      .dc-activity-btn.is-active::before {
+        content: '';
+        position: absolute;
+        left: -4px;
+        top: 6px;
+        bottom: 6px;
+        width: 2px;
+        border-radius: 1px;
+        background: #3b82f6;
+      }
+      .is-tool-collapsed .dc-activity-btn.is-active::before { display: none; }
+      .is-tool-collapsed .tool-column,
+      .is-tool-collapsed .dc-column-resizer[data-resize-edge="tool"] { display: none; }
+      .dc-tool-panel:not(.is-active) { display: none; }
+
+      /* ツールカラムの見出し行: 左にパネル名、右に編集履歴 (Undo / Redo)。 */
+      .tool-column > .column-header { gap: 8px; }
+      .tool-column > .column-header h2 {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dc-history {
         flex: 0 0 auto;
         display: flex;
         align-items: center;
         gap: 2px;
-        height: 28px;
-        padding: 0 8px;
-        box-sizing: border-box;
-        background: #222;
-        border-bottom: 1px solid #333;
       }
       .dc-history-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
         width: 28px;
-        height: 22px;
+        height: 26px;
         padding: 0;
         border: 1px solid transparent;
         border-radius: 5px;

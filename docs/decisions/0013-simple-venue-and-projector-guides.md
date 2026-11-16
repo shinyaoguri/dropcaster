@@ -4,6 +4,7 @@
 
 採用（2026-11-12 JST）。#134 / #135。[0011](0011-measured-venue-authoring.md) の部材と保存形式、
 [0012](0012-unified-mapping-workspace.md) の上部操作を拡張する。
+「設定・共有」メニューは [0021](0021-mapping-activity-bar.md) でアクティビティバーに置き換えた。
 
 ## 文脈
 
