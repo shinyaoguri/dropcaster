@@ -180,8 +180,12 @@ async function publishUpdate(page, state, version) {
 async function openMappingOutput(page) {
   await page.locator(entryButton).click();
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth > 0);
+  // 出力とマッピングはアクティビティバーの別パネル (#228)。既定はマッピング。
+  await page.locator('#dc-activity-outputs').click();
   await page.locator('#add-output-btn').click();
+  await page.locator('#dc-activity-mappings').click();
   await page.locator('#add-mapping-btn').click();
+  await page.locator('#dc-activity-outputs').click();
   const popupPromise = page.waitForEvent('popup');
   await page.locator('#outputs-list .open-btn').first().click();
   const popup = await popupPromise;

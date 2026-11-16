@@ -106,7 +106,7 @@ export class MappingWorkspace {
       editor.selectTab('preview'); void this.ensurePanel();
     });
     // 3D とプロジェクトのパネルを開くことは、3D 設定・プロジェクトの明示操作として PracticePanel を読み込む
-    // (ADR 0012)。出力とマッピング・確認のパネルだけを使う間は Three.js を読み込まない。
+    // (ADR 0012)。マッピング・出力・確認のパネルだけを使う間は Three.js を読み込まない。
     this.offToolPanel = editor.onToolPanelChange(panel => {
       if (panel === 'preview3d' || panel === 'project') void this.ensurePanel();
     });

@@ -32,7 +32,7 @@ import type {
 
 export type ControlTab = 'mapping' | 'layout' | 'preview';
 /** 左端のアクティビティバーで切り替えるツールカラムの中身。 */
-export type ToolPanel = 'outputs' | 'check' | 'preview3d' | 'project';
+export type ToolPanel = 'mappings' | 'outputs' | 'check' | 'preview3d' | 'project';
 
 export class ControlWindow extends BaseWindow {
   private sourceVideo: HTMLVideoElement | null = null;
@@ -71,7 +71,7 @@ export class ControlWindow extends BaseWindow {
     this.tabListeners.add(listener); return () => this.tabListeners.delete(listener);
   }
   /** ツールカラムに表示中のパネルと、ツールカラムを畳んでいるか。 */
-  private activeToolPanel: ToolPanel = 'outputs';
+  private activeToolPanel: ToolPanel = 'mappings';
   private toolCollapsed = false;
   private toolPanelListeners = new Set<(panel: ToolPanel) => void>();
   /** パネルが選ばれるたびに呼ぶ (畳んだ状態から同じパネルを開き直したときも含む)。 */
@@ -319,7 +319,7 @@ export class ControlWindow extends BaseWindow {
     this.layoutPanel.destroy();
     this.outputSettings.destroy();
     this.tabListeners.clear(); this.activeTab = 'mapping';
-    this.toolPanelListeners.clear(); this.activeToolPanel = 'outputs'; this.toolCollapsed = false;
+    this.toolPanelListeners.clear(); this.activeToolPanel = 'mappings'; this.toolCollapsed = false;
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */

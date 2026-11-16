@@ -122,7 +122,8 @@ const en = {
 
   // コントロールパネル: カラムヘッダ
   'control.activity.label': 'Tool panels',
-  'control.panel.outputs': 'Outputs and mappings',
+  'control.panel.mappings': 'Mappings',
+  'control.panel.outputs': 'Outputs',
   'control.panel.check': 'Check',
   'control.panel.preview3d': '3D',
   'control.panel.project': 'Project',
@@ -346,7 +347,8 @@ const ja: Record<keyof typeof en, string> = {
     'WebGL コンテキストが失われました（GPU プロセスのクラッシュ等）。<br>2 秒以内に復帰しなければソースを自動リロードします。',
 
   'control.activity.label': 'ツールパネル',
-  'control.panel.outputs': '出力とマッピング',
+  'control.panel.mappings': 'マッピング',
+  'control.panel.outputs': '出力',
   'control.panel.check': '確認',
   'control.panel.preview3d': '3D',
   'control.panel.project': 'プロジェクト',
