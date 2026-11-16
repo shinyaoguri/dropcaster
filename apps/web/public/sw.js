@@ -2,7 +2,7 @@
 //
 // 6 つのキャッシュバケットに振り分ける:
 //   shell    アプリ本体の HTML / JS / CSS / 画像 (same-origin の navigate + assets)
-//   local    ローカル sketch (/sketches/*, /sketches.json)
+//   local    ローカル sketch (scope 相対の sketches/*, sketches.json)
 //   op-meta  OpenProcessing API (/api/sketch/* / /code)
 //   gist     GitHub Gist API (api.github.com/gists/* と、ホスト版の同一オリジン中継 /gist-api/*)
 //   op-cdn   外部 CDN (cdn.jsdelivr.net 等) と asset proxy のレスポンス
@@ -92,6 +92,7 @@ self.addEventListener('activate', (event) => {
       .filter(name => name.startsWith(SHELL_PREFIX) && name !== SHELL_CACHE)
       .map(name => caches.delete(name)));
     await migrateVersionedContentCaches(names);
+    await moveLocalSketchesOutOfRuntime();
     await self.clients.claim();
   })());
 });
@@ -139,8 +140,9 @@ self.addEventListener('fetch', (event) => {
       event.respondWith(networkFirst(req, GIST_CACHE));
       return;
     }
-    // local sketch 系 (/sketches.json, /sketches/*)
-    if (matchSegment(url.pathname, 'sketches')) {
+    // local sketch 系 (scope 相対の sketches.json, sketches/*)。サブパス配信 (例 /gallery/sketches/*) でも
+    // 作品の HTML (上の navigate) と同じ LOCAL に入れる (#179)
+    if (isLocalSketchResource(url)) {
       event.respondWith(staleWhileRevalidate(req, LOCAL_CACHE));
       return;
     }
@@ -413,6 +415,29 @@ async function copyMissing(fromName, toName, keep) {
   }
 }
 
+// サブパス配信の作品のサブリソースは、振り分けがルート前提だったころ runtime に入っていた (#179)。
+// いまは LOCAL から引くので、runtime に残っているものを LOCAL へ移す。中身のバケットは版をまたいで残るため、
+// 移さないと、更新後にオフラインで開いた作品が JS などを引けず、runtime 側にも読まれないまま残る。
+async function moveLocalSketchesOutOfRuntime() {
+  try {
+    if (!(await caches.has(RUNTIME_CACHE))) return;
+    const runtime = await caches.open(RUNTIME_CACHE);
+    const stray = (await runtime.keys()).filter(req => isLocalSketchResource(new URL(req.url)));
+    if (stray.length === 0) return;
+    const local = await caches.open(LOCAL_CACHE);
+    for (const req of stray) {
+      // LOCAL に既にあるものは上書きしない
+      if (!(await local.match(req))) {
+        const res = await runtime.match(req);
+        if (res) await local.put(req, res);
+      }
+      await runtime.delete(req);
+    }
+  } catch {
+    // 移せなくても有効化は続ける (残ったものは次の有効化でもう一度試す)
+  }
+}
+
 // --- ヘルパ -----------------------------------------------------------------
 
 function isCacheable(res) {
@@ -435,6 +460,13 @@ function isScopeAsset(url) {
 
 function isLocalSketchPath(url) {
   return url.pathname.startsWith(`${SCOPE_PATH}sketches/`);
+}
+
+// ローカル作品のファイルと作品カタログ。scope 相対で見るので、ルート配信でもサブパス配信でも同じ判定になり、
+// 同じオリジンに同居する scope の外のサイトの /sketches/ は拾わない (#179)
+function isLocalSketchResource(url) {
+  return url.origin === self.location.origin &&
+    (isLocalSketchPath(url) || url.pathname === `${SCOPE_PATH}sketches.json`);
 }
 
 function offlineResponse() {
