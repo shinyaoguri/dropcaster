@@ -21,9 +21,9 @@
 | [0008](0008-output-removal-collapses-canvas.md) | 出力の削除は追加の逆操作として仮想キャンバスを詰め直し、取り残しを残った出力へ寄せる | 採用 |
 | [0009](0009-3d-practice-contracts.md) | 3D 練習は既存 2D と座標・状態・保存を共有し、描画 PoC から段階導入する | 採用（保存形式は 0010 で確定） |
 | [0010](0010-portable-project-and-practice-ui.md) | 共通 Project v1・GLB パッケージ・既存 UI への練習統合 | 採用（UIは0012で更新） |
-| [0011](0011-measured-venue-authoring.md) | メートル単位の部材編集、Project v2、作品を含めない会場配布 | 採用 |
+| [0011](0011-measured-venue-authoring.md) | メートル単位の部材編集、Project v2、作品を含めない会場配布 | 採用（なぞる経路は0023で追加） |
 | [0012](0012-unified-mapping-workspace.md) | マッピング入口を統一し、実出力を明示操作、3Dを右側タブに置く | 採用 |
-| [0013](0013-simple-venue-and-projector-guides.md) | 基本立体の会場編集、観察専用の投影ガイド、設定・共有メニュー | 採用（メニューは0021で更新） |
+| [0013](0013-simple-venue-and-projector-guides.md) | 基本立体の会場編集、観察専用の投影ガイド、設定・共有メニュー | 採用（メニューは0021、なぞる経路は0023で更新） |
 | [0014](0014-interactive-venue-editing.md) | 会場のGUI編集を1ドラッグ単位で確定し、3D操作と数値入力を共有する | 採用 |
 | [0015](0015-standalone-venue-calibration.md) | 会場作成と実プロジェクタでの位置合わせを独立させ、3Dを作品のプレビューに特化する | 採用（画面配置は0019、マッピングからの入口は0021で更新） |
 | [0016](0016-shared-development-workflow.md) | エージェント共通の開発規約、完了条件と検証の対応、反証と視覚的証跡、CI責務の分離 | 採用 |
@@ -33,3 +33,4 @@
 | [0020](0020-sw-update-waits-for-all-windows.md) | 新しい版の Service Worker は全ウィンドウを閉じたときに有効にし、操作画面で通知する | 採用 |
 | [0021](0021-mapping-activity-bar.md) | マッピング画面と会場画面の左端にアクティビティバーを置き、ツール列をパネルで切り替える | 採用 |
 | [0022](0022-release-by-tags-and-changelog-fragments.md) | 版はタグ、変更履歴は PR ごとの断片で持ち、週 1 回ファイルを変えずにリリースする | 採用 |
+| [0023](0023-trace-corners-to-reconstruct-venue.md) | 壁に映した十字で実物の角を手でなぞり、会場とプロジェクタ条件を逆算する | 採用 |
