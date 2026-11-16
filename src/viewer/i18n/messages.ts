@@ -161,6 +161,10 @@ const en = {
   'control.history.label': 'Edit history',
   'control.history.undo': 'Undo',
   'control.history.redo': 'Redo',
+  'control.zoom.label': 'Zoom',
+  'control.zoom.in': 'Zoom in (wheel up)',
+  'control.zoom.out': 'Zoom out (wheel down)',
+  'control.zoom.fit': 'Fit to view',
 
   // ツール: テストパターン
   'control.testPattern.title': 'Test pattern',
@@ -381,6 +385,10 @@ const ja: Record<keyof typeof en, string> = {
   'control.history.label': '編集履歴',
   'control.history.undo': '元に戻す',
   'control.history.redo': 'やり直す',
+  'control.zoom.label': '拡大・縮小',
+  'control.zoom.in': '拡大（ホイールを上へ）',
+  'control.zoom.out': '縮小（ホイールを下へ）',
+  'control.zoom.fit': '全体に合わせる',
 
   'control.testPattern.title': 'テストパターン',
   'control.testPattern.hint': 'プロジェクションの校正用にソース映像を一時的に差し替えます',

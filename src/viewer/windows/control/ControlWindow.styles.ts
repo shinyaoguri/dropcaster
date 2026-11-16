@@ -1698,6 +1698,111 @@ export const CONTROL_PANEL_CSS = `
         cursor: w-resize;
       }
 
+      /* 編集ビュー（ソース列・マッピング列）の拡大・パン。右下に 縮小・倍率・拡大・全体表示 のボタン。
+         viewport（.video-container / .output-stage）は position: relative。中身の canvas-host は
+         transform で重ね合わせコンテキストを作るので、z-index は小さくても前面に出る。 */
+      .dc-zoom-controls {
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 3px;
+        background: rgba(20, 20, 20, 0.88);
+        border: 1px solid #444;
+        border-radius: 6px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+        user-select: none;
+      }
+      .dc-zoom-btn {
+        display: grid;
+        place-items: center;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        margin: 0;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: #ddd;
+        cursor: pointer;
+      }
+      .dc-zoom-btn:hover:not(:disabled) {
+        background: #333;
+        color: #fff;
+      }
+      /* 押せないことはアイコンを淡くして示す。BaseWindow の generic な button:disabled / button:hover の
+         塗りより詳細度を上げて背景を透明に保つ (ホバー中も。.dc-history-btn と同じ) */
+      .dc-zoom-btn:disabled {
+        background: transparent;
+        opacity: 0.35;
+        cursor: default;
+      }
+      .dc-zoom-btn:focus-visible {
+        outline: 2px solid #4a9eff;
+        outline-offset: 1px;
+      }
+      .dc-zoom-level {
+        min-width: 44px;
+        text-align: center;
+        font-size: 11px;
+        color: #ccc;
+        font-variant-numeric: tabular-nums;
+      }
+      /* Space を押している間（パンの待機）と、パン中のカーソル。ハンドル類の cursor より優先する */
+      .dc-pan-ready, .dc-pan-ready * {
+        cursor: grab !important;
+      }
+      .dc-panning, .dc-panning * {
+        cursor: grabbing !important;
+      }
+
+      /* ソース列の拡大中も、枠線・ハンドル・ラベルの画面上の大きさを一定に保つ。
+         .canvas-frame の scale を --source-counter-scale（= 1 / 倍率）で打ち消す。 */
+      .source-column #selection-box {
+        border-width: calc(2px * var(--source-counter-scale, 1));
+        min-width: calc(20px * var(--source-counter-scale, 1));
+        min-height: calc(20px * var(--source-counter-scale, 1));
+      }
+      .source-column .handle {
+        width: calc(12px * var(--source-counter-scale, 1));
+        height: calc(12px * var(--source-counter-scale, 1));
+        border-width: calc(2px * var(--source-counter-scale, 1));
+      }
+      .source-column .handle-nw { top: calc(-6px * var(--source-counter-scale, 1)); left: calc(-6px * var(--source-counter-scale, 1)); }
+      .source-column .handle-ne { top: calc(-6px * var(--source-counter-scale, 1)); right: calc(-6px * var(--source-counter-scale, 1)); }
+      .source-column .handle-sw { bottom: calc(-6px * var(--source-counter-scale, 1)); left: calc(-6px * var(--source-counter-scale, 1)); }
+      .source-column .handle-se { bottom: calc(-6px * var(--source-counter-scale, 1)); right: calc(-6px * var(--source-counter-scale, 1)); }
+      .source-column .edge-n, .source-column .edge-s {
+        height: calc(6px * var(--source-counter-scale, 1));
+        left: calc(6px * var(--source-counter-scale, 1));
+        right: calc(6px * var(--source-counter-scale, 1));
+      }
+      .source-column .edge-e, .source-column .edge-w {
+        width: calc(6px * var(--source-counter-scale, 1));
+        top: calc(6px * var(--source-counter-scale, 1));
+        bottom: calc(6px * var(--source-counter-scale, 1));
+      }
+      .source-column .edge-n { top: calc(-3px * var(--source-counter-scale, 1)); }
+      .source-column .edge-s { bottom: calc(-3px * var(--source-counter-scale, 1)); }
+      .source-column .edge-e { right: calc(-3px * var(--source-counter-scale, 1)); }
+      .source-column .edge-w { left: calc(-3px * var(--source-counter-scale, 1)); }
+      .source-column .source-inactive-box {
+        border-width: calc(2px * var(--source-counter-scale, 1));
+        box-shadow: 0 0 0 calc(1px * var(--source-counter-scale, 1)) rgba(0, 0, 0, 0.55);
+      }
+      .source-column .source-inactive-label {
+        padding: calc(1px * var(--source-counter-scale, 1)) calc(4px * var(--source-counter-scale, 1));
+        font-size: calc(10px * var(--source-counter-scale, 1));
+      }
+      #selection-box.kbd-selected {
+        box-shadow:
+          0 0 0 calc(2px * var(--source-counter-scale, 1)) #fff,
+          0 0 calc(6px * var(--source-counter-scale, 1)) rgba(0, 0, 0, 0.8);
+      }
+
       /* レスポンシブ対応：横幅が足りないときは tool 列を絞る。それでも足りないときは
          スクロール（control-container は flex なので各列が min-width 維持） */
       @media (max-width: 1100px) {

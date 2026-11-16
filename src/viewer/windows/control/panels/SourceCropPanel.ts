@@ -26,6 +26,8 @@ import {
 import { CleanupStack } from '../../../utils/cleanupStack';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
+import type { ViewGeometry, ViewZoom } from '../../../utils/viewZoom';
+import { attachZoomPan, type ZoomPanHandle } from '../utils/zoomPan';
 
 export interface SourceCropPanelAttachOptions {
   getSourceVideo: () => HTMLVideoElement | null;
@@ -53,6 +55,8 @@ export class SourceCropPanel {
   /** 非 active な mapping の source 枠（mapping id → DOM）。 */
   private inactiveBoxes = new Map<string, InactiveBox>();
   private cleanups = new CleanupStack();
+  /** ソースの表示の拡大・パン（表示だけ。source 矩形は % なので換算は不要）。 */
+  private zoomPan: ZoomPanHandle | null = null;
 
   attach(scope: HTMLElement, doc: Document, ctrl: MappingsController, opts: SourceCropPanelAttachOptions): void {
     this.scope = scope;
@@ -77,6 +81,57 @@ export class SourceCropPanel {
 
     this.setupDragHandlers();
     this.setupResizeHandlers();
+    this.setupZoomPan();
+  }
+
+  /** 現在の拡大・パン（テスト・デバッグ用）。 */
+  getView(): ViewZoom | null {
+    return this.zoomPan?.getView() ?? null;
+  }
+
+  /**
+   * ソース列の拡大・パン。.canvas-frame に translate + scale を当てる（中心基準）。
+   * ドラッグの換算は video.getBoundingClientRect()（変換後の大きさ）で行っているので、
+   * 拡大中も画面上の移動量どおりに source 矩形が動く。枠線・ハンドルの画面上の大きさは
+   * --source-counter-scale で倍率を打ち消して一定に保つ。
+   */
+  private setupZoomPan(): void {
+    const scope = this.scope;
+    const doc = this.doc;
+    if (!scope || !doc) return;
+    const viewport = scope.querySelector<HTMLElement>('.source-column .video-container');
+    const frame = scope.querySelector<HTMLElement>('.source-column .canvas-frame');
+    if (!viewport || !frame) return;
+    const getGeometry = (view: ViewZoom): ViewGeometry | null => {
+      const vp = viewport.getBoundingClientRect();
+      const fr = frame.getBoundingClientRect();
+      if (vp.width <= 0 || vp.height <= 0 || fr.width <= 0 || fr.height <= 0) return null;
+      // 変換後の矩形から、全体表示のときの中心と寸法へ戻す（中心基準の scale なので中心は pan だけずれる）
+      return {
+        viewW: vp.width,
+        viewH: vp.height,
+        originX: fr.left + fr.width / 2 - vp.left - view.panX,
+        originY: fr.top + fr.height / 2 - vp.top - view.panY,
+        contentW: fr.width / view.zoom,
+        contentH: fr.height / view.zoom,
+      };
+    };
+    this.zoomPan = attachZoomPan(viewport, doc, {
+      limits: { min: 1, max: 32 },
+      getGeometry,
+      onChange: (view) => {
+        frame.style.transform = view.zoom === 1 && view.panX === 0 && view.panY === 0
+          ? ''
+          : `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`;
+        frame.style.setProperty('--source-counter-scale', `${1 / view.zoom}`);
+      },
+    });
+    const handle = this.zoomPan;
+    this.cleanups.push(() => {
+      handle.dispose();
+      frame.style.transform = '';
+      frame.style.removeProperty('--source-counter-scale');
+    });
   }
 
   /** ctrl の最新 source rect を読んで selectionBox の left/top/width/height を再描画。 */
@@ -107,6 +162,7 @@ export class SourceCropPanel {
     this.ctrl = null;
     this.opts = null;
     this.selectionBox = null;
+    this.zoomPan = null;
   }
 
   /**

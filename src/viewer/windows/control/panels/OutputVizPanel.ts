@@ -28,6 +28,8 @@ import { RafThrottle } from '../../../utils/rafThrottle';
 import type { OutputBoundsMap, VideoDimensions } from '../ControlHost';
 import type { MappingsController } from '../MappingsController';
 import { t } from '../../../i18n/index.js';
+import type { ViewGeometry, ViewZoom } from '../../../utils/viewZoom';
+import { attachZoomPan, type ZoomPanHandle } from '../utils/zoomPan';
 
 export interface OutputVizPanelAttachOptions {
   getOutputBounds: () => OutputBoundsMap;
@@ -86,6 +88,8 @@ export class OutputVizPanel {
   private resizeObserver: ResizeObserver | null = null;
   /** stage resize → renderAll を 1 frame 1 回に間引く throttle。attach で初期化。 */
   private resizeThrottle: RafThrottle | null = null;
+  /** 編集ビューの拡大・パン（表示だけ。全体表示に掛け合わせる）。 */
+  private zoomPan: ZoomPanHandle | null = null;
 
   attach(scope: HTMLElement, opts: OutputVizPanelAttachOptions, ctrl: MappingsController): void {
     this.scope = scope;
@@ -121,8 +125,45 @@ export class OutputVizPanel {
       this.resizeObserver.observe(stage);
     }
 
+    // 拡大・パン。倍率は全体表示（フィット）に掛け合わせ、全体表示より小さくしても quad のはみ出しを見られるよう 25% まで縮める
+    this.zoomPan = attachZoomPan(stage, doc, {
+      limits: { min: 0.25, max: 32 },
+      getGeometry: () => this.fitGeometry(),
+      onChange: () => this.resizeThrottle?.schedule(),
+    });
+
     this.rebuildFromState();
     this.refresh();
+  }
+
+  /**
+   * 全体表示（拡大・パンなし）のときの仮想キャンバスの配置。stage の中央に、padding を残して収める。
+   * stage がまだレイアウトされていないときは null。
+   */
+  private fitGeometry(): (ViewGeometry & { fit: number }) | null {
+    const stage = this.stageEl;
+    const ctrl = this.ctrl;
+    if (!stage || !ctrl) return null;
+    const { width: canvasW, height: canvasH } = ctrl.getState().canvas;
+    const viewW = stage.clientWidth;
+    const viewH = stage.clientHeight;
+    if (viewW <= 0 || viewH <= 0 || canvasW <= 0 || canvasH <= 0) return null;
+    const padding = 16;
+    const fit = Math.min(Math.max(1, viewW - padding * 2) / canvasW, Math.max(1, viewH - padding * 2) / canvasH);
+    return {
+      fit,
+      viewW,
+      viewH,
+      originX: viewW / 2,
+      originY: viewH / 2,
+      contentW: canvasW * fit,
+      contentH: canvasH * fit,
+    };
+  }
+
+  /** 現在の拡大・パン（テスト・デバッグ用）。 */
+  getView(): ViewZoom | null {
+    return this.zoomPan?.getView() ?? null;
   }
 
   /**
@@ -189,6 +230,8 @@ export class OutputVizPanel {
   }
 
   destroy(): void {
+    this.zoomPan?.dispose();
+    this.zoomPan = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.resizeThrottle?.cancel();
@@ -344,20 +387,17 @@ export class OutputVizPanel {
     const boundsMap = this.opts?.getOutputBounds() ?? {};
     const activeOutput = state.activeOutputId;
 
-    // 仮想キャンバスを #output-stage の viewport にフィットさせる scale + 中央寄せオフセット
-    const stageRect = stage.getBoundingClientRect();
-    const padding = 16;
-    const availW = Math.max(1, stageRect.width - padding * 2);
-    const availH = Math.max(1, stageRect.height - padding * 2);
-    const scale = state.canvas.width > 0 && state.canvas.height > 0
-      ? Math.min(availW / state.canvas.width, availH / state.canvas.height)
-      : 1;
+    // 仮想キャンバスを #output-stage の viewport にフィットさせる scale + 中央寄せオフセットに、
+    // 拡大・パンを掛け合わせる: 中心 = stage 中央 + pan、倍率 = fit × zoom
+    const geom = this.fitGeometry();
+    const view = this.zoomPan?.getView() ?? { zoom: 1, panX: 0, panY: 0 };
+    const scale = (geom?.fit ?? 1) * view.zoom;
     const totalW = state.canvas.width * scale;
     const totalH = state.canvas.height * scale;
-    const offsetX = (stageRect.width - totalW) / 2;
-    const offsetY = (stageRect.height - totalH) / 2;
+    const offsetX = (geom ? geom.originX : stage.clientWidth / 2) + view.panX - totalW / 2;
+    const offsetY = (geom ? geom.originY : stage.clientHeight / 2) + view.panY - totalH / 2;
 
-    // canvas-host を canvas 寸法 × scale で中央寄せ。内側の要素は canvas px のまま座標指定する。
+    // canvas-host を canvas 寸法 × scale で配置。内側の要素は canvas px のまま座標指定する。
     canvasHost.style.width = `${state.canvas.width}px`;
     canvasHost.style.height = `${state.canvas.height}px`;
     canvasHost.style.left = `${offsetX}px`;
