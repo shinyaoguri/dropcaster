@@ -253,9 +253,13 @@ async function isolation(page,base){
   await page.locator('#dc-activity-outputs').click();
   const livePromise=page.waitForEvent('popup');await page.locator('#outputs-list .open-btn').first().click();const live=await livePromise;
   await live.waitForFunction(()=>document.querySelector('video')?.videoWidth===640);
+  // 会場の入口はプロジェクトパネルの末尾にある。パネルを開くと 3D を読み込むのは受け入れた代償 (#225 / ADR 0021) なので、
+  // 入口を押すこと自体がマッピング側に何も増やさないことを確かめる。
+  await page.locator('#dc-activity-project').click();await page.locator('#practice-project-name').waitFor();
+  const previews=await page.locator('#dc-practice-canvas').count();
   const venuePromise=page.waitForEvent('popup');await page.locator('#practice-venue').click();const venue=await venuePromise;
   await venue.waitForSelector('#venue-canvas');await venue.waitForFunction(()=>!document.querySelector('#venue-model-pane').inert);
-  assert.equal(await page.locator('#dc-practice-canvas').count(),0,'opening venue setup never initializes the mapping preview');
+  assert.equal(await page.locator('#dc-practice-canvas').count(),previews,'opening venue setup adds nothing to the mapping preview');
   assert.equal(await venue.locator('iframe,#source-video').count(),0);
   await venue.locator('#venue-menu > summary').click();await venue.locator('#venue-copy-mapping').click();
   await venue.waitForFunction(()=>document.querySelector('#venue-status').textContent==='Venue loaded');

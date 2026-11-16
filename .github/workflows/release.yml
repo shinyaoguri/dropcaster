@@ -1,0 +1,105 @@
+# 週 1 回、前回のタグ以降に増えた changelog.d/ の断片を束ねて、タグと GitHub Release を出す
+# (docs/decisions/0022)。
+#
+# **リリースはリポジトリのファイルを 1 つも変えない。** 変更履歴や package.json の版を main へ
+# 入れるには PR が要り、Actions の既定のトークンで作った PR は他のワークフローを起こさないので
+# 必須チェック (verify / pr-policy) が走らない。版はタグ、ノートは Release に置き、表示する版は
+# src/core/build-info.js がタグから求める。だから GITHUB_TOKEN だけで足り、secrets を増やさない。
+#
+# 断片が 1 つも増えていなければ見送る (scripts/release.js next-version が終了コード 2)。
+name: Release
+
+on:
+  schedule:
+    # 月曜 01:41 UTC (10:41 JST)。0 分は Actions が最も混む枠なので外す
+    - cron: '41 1 * * 1'
+  # 次の週を待てないときに手で出す
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # タグを push し、Release を作る
+      checks: read # 版にする SHA の verify を読む
+      actions: write # タグの push では起きないホスト版のデプロイを起こす
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # 版は履歴から決まる。タグと全コミットが要る
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: 次の版を決める
+        id: version
+        run: |
+          set +e
+          tag=$(node scripts/release.js next-version)
+          status=$?
+          set -e
+          if [ "$status" -eq 2 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ "$status" -eq 0 ] || exit "$status"
+          echo "版: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # 赤い SHA に版を付けない。main の push で走る verify (ci.yml) が済むまで待ち、
+      # success 以外なら版を打たずに落ちる (落ちた run は Actions の通知で気付ける)。
+      - name: 版にする SHA の verify を確かめる
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          deadline=$((SECONDS + 45 * 60))
+          while :; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?check_name=verify" \
+              --jq '[.check_runs[] | {status, conclusion}] | sort_by(.status != "completed") | first // {} | "\(.status // "missing") \(.conclusion // "")"')
+            echo "verify: $state"
+            case "$state" in
+              "completed success") break ;;
+              completed*) echo "verify が success でない SHA には版を打たない" >&2; exit 1 ;;
+            esac
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "verify が 45 分以内に終わらなかった ($state)" >&2
+              exit 1
+            fi
+            sleep 60
+          done
+
+      - name: リリースノートを組む
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          node scripts/release.js notes > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: タグを打ち、Release を作る
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          SHA: ${{ steps.version.outputs.sha }}
+        # gh release create は無いタグを --target の SHA に作るので、git の署名・身元を持ち込まない
+        run: gh release create "$TAG" --target "$SHA" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+
+      # GITHUB_TOKEN が作ったタグは他のワークフローを起こさない。表示する版はビルド時に
+      # タグから求めるので、ホスト版を作り直して新しい版を名乗らせる (workflow_dispatch は起こせる)。
+      - name: ホスト版を作り直す
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main

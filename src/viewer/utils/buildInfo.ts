@@ -2,7 +2,8 @@
 import { escapeHtml } from './html';
 
 export interface BuildInfo {
-  version: string;
+  /** タグ由来の版 (例 `0.2.0` / `0.2.0+3`)。分からなければ null */
+  version: string | null;
   commit: string | null;
 }
 
@@ -15,7 +16,7 @@ export function getBuildInfo(): BuildInfo | null {
 /** ツールカラム下端の版表示の中身。埋め込みが無い経路では空文字を返し、何も出さない。 */
 export function buildInfoHtml(info: BuildInfo | null = getBuildInfo()): string {
   if (!info) return '';
-  const version = `dropcaster v${escapeHtml(info.version)}`;
+  const version = info.version ? `dropcaster v${escapeHtml(info.version)}` : 'dropcaster';
   if (!info.commit) return `<span title="${version}">${version}</span>`;
   const commit = escapeHtml(info.commit);
   return `<span>${version}</span> · <a href="${REPOSITORY_URL}/commit/${commit}" target="_blank" rel="noopener noreferrer" title="${version} (${commit})">${commit}</a>`;

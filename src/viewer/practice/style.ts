@@ -20,6 +20,8 @@ export function installPracticeStyles(): void {
     .dc-workspace-menu-items button, .dc-workspace-menu-items a { display:block; width:100%; box-sizing:border-box; border:0; background:transparent; text-align:left; color:#eee; cursor:pointer; padding:7px 11px; text-decoration:none; border-radius:5px; font:13px system-ui; white-space:normal; }
     .dc-workspace-menu-items button:hover, .dc-workspace-menu-items a:hover { background:#444; }
     .dc-activity-bar-footer .dc-workspace-actions { flex-direction:column; gap:4px; margin:0; }
+    /* プロジェクトパネル末尾の会場の入口。<a> を他の .tool-button と同じ幅・見た目のボタンにする。 */
+    .dc-venue-entry-link { display:block; box-sizing:border-box; text-align:center; text-decoration:none; }
     .dc-workspace-actions .dc-workspace-close { box-sizing:border-box; border-radius:5px; text-decoration:none; display:flex; align-items:center; justify-content:center; width:36px; height:36px; padding:0; color:#8a8a8a; }
     .dc-workspace-actions .dc-workspace-close:hover { color:#eee; }
     .dc-workspace-actions .dc-workspace-close:hover { background:#444; }
@@ -30,10 +32,11 @@ export function installPracticeStyles(): void {
     .dc-workspace-confirm-title { margin:0 0 4px; font-size:14px; font-weight:600; }
     .dc-workspace-confirm-hint { margin:0 0 14px; color:#bbb; white-space:normal; }
     .dc-workspace-confirm-actions { display:flex; justify-content:flex-end; gap:8px; }
-    .dc-workspace-actions .dc-workspace-confirm-actions button { padding:6px 14px; border-color:#555; background:#333; font:13px system-ui; }
-    .dc-workspace-actions .dc-workspace-confirm-actions button:hover { background:#444; }
-    .dc-workspace-actions .dc-workspace-confirm-actions button.is-danger { border-color:#dc2626; background:#b91c1c; color:white; }
-    .dc-workspace-actions .dc-workspace-confirm-actions button.is-danger:hover { background:#dc2626; }
+    /* 確定がページ遷移のもの (ホームへ戻る) は <a> なので、button と同じ見た目にする。 */
+    .dc-workspace-actions .dc-workspace-confirm-actions :is(button, a) { padding:6px 14px; border:1px solid #555; border-radius:5px; background:#333; color:#eee; text-decoration:none; font:13px system-ui; }
+    .dc-workspace-actions .dc-workspace-confirm-actions :is(button, a):hover { background:#444; }
+    .dc-workspace-actions .dc-workspace-confirm-actions .is-danger { border-color:#dc2626; background:#b91c1c; color:white; }
+    .dc-workspace-actions .dc-workspace-confirm-actions .is-danger:hover { background:#dc2626; }
     /* 平常時の状態文は読み上げ用に残し、見た目からは外す。エラーと再試行があるときだけ出す。 */
     .dc-workspace-notice:not(.is-visible) { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
     .dc-workspace-notice.is-visible { display:flex; flex-direction:column; gap:6px; padding:8px 12px; border-bottom:1px solid #444; background:#2a2a2a; font:12px system-ui; color:#aaa; }

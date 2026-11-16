@@ -35,6 +35,10 @@ jobs:
       - name: Test
         run: npm test
 
+      # changelog.d/ の断片が Release の本文に組める形か (docs/decisions/0022)
+      - name: Lint changelog fragments
+        run: node scripts/release.js lint
+
       - name: Build viewer (user gallery)
         run: npm run build
 

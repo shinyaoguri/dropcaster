@@ -65,6 +65,19 @@ npx /path/to/dropcaster init my-gallery
 - npm へ公開する場合: `prepublishOnly` が `npm run build` を走らせる（成果物の dist はパッケージには
   含めず、消費側 Vite がビルドする方針 — `package.json` の `files` を参照）。
 
+## リリース
+
+判断は [ADR 0022](docs/decisions/0022-release-by-tags-and-changelog-fragments.md)。版の正本は `v<major>.<minor>.<patch>` のタグで、
+`package.json` の version（`0.0.0-dev`）は動かさない。
+
+- `feat` / `fix` / `perf` と破壊的変更の PR には `changelog.d/<slug>.<分類>.md` を 1 つ追加する
+  （書き方は [changelog.d/README.md](changelog.d/README.md)）。利用者に見えない変更はラベル `changelog: none`。
+- `.github/workflows/release.yml` が毎週月曜（と手動の `workflow_dispatch`）に、前回のタグ以降に増えた断片を束ねて
+  タグと GitHub Release を作り、ホスト版を作り直す。断片が増えていなければ何もしない。
+- 手元で次の版とノートを見る: `node scripts/release.js next-version` / `node scripts/release.js notes`
+  （断片はコミット済みのものだけ数える）。
+- 版の表示は `src/core/build-info.js` が `git describe` で求める。浅い clone（`fetch-depth: 1`）ではタグが取れず版不明になる。
+
 ## CI
 
 - `.github/workflows/ci.yml` — PR と main push で `npm test` と両ビルド
@@ -73,6 +86,7 @@ npx /path/to/dropcaster init my-gallery
   （`verify` ジョブは main のブランチ保護で必須チェックに設定済み）。
 - `.github/workflows/pr-policy.yml` — `pr-policy` ジョブが現在の PR タイトルを API から取得し、
   `scripts/check-pr-title.sh` で Conventional Commits 形式を検査する（squash merge の履歴に残るため）。
+  あわせて `node scripts/release.js check-pr` で変更履歴の断片の有無を検査する（ラベルの付け外しでも走り直す）。
   タイトル・本文編集、Ready 化ではこの軽いワークフローだけ起動する。コード push では両方を起動する。
   `verify` / `pr-policy` のジョブ名と検査内容は分離前から維持し、ブランチ保護の必須チェック名を変えない。
   PR の base を変更した場合は、reopen または追加 push で新しい base に対する `verify` を実行してから merge する。

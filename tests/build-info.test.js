@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'fs/promises';
 import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { commitFromResolved, resolveBuildInfo } from '../src/core/build-info.js';
+import { commitFromResolved, resolveBuildInfo, versionFromDescribe, UNRELEASED_VERSION } from '../src/core/build-info.js';
 
 // ツールカラム下端に出す版 (#154)。ギャラリーの node_modules に入った dropcaster から
 // ギャラリー側リポジトリの SHA を拾わないこと、GitHub から入れた解決 SHA を拾うことを固定する。
@@ -73,4 +73,70 @@ test('resolveBuildInfo uses HEAD when the package root is the git work tree', as
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
+});
+
+// 版の正本はタグ (docs/decisions/0022)。package.json の version はリリースで動かない。
+
+const GIT_ID = ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'tag.gpgSign=false', '-c', 'commit.gpgSign=false'];
+
+test('versionFromDescribe reads the release tag and how far HEAD has moved past it', () => {
+  assert.equal(versionFromDescribe('v0.2.0-0-gabc1234'), '0.2.0');
+  assert.equal(versionFromDescribe('v0.2.0-3-gabc1234'), '0.2.0+3');
+  assert.equal(versionFromDescribe('v1.10.2-12-g0123456789abcdef\n'), '1.10.2+12');
+});
+
+test('versionFromDescribe rejects outputs that are not release tags', () => {
+  assert.equal(versionFromDescribe('abc1234'), null);
+  assert.equal(versionFromDescribe('v0.2-0-gabc1234'), null);
+  assert.equal(versionFromDescribe('release-0.2.0-0-gabc1234'), null);
+  assert.equal(versionFromDescribe(null), null);
+});
+
+/** @param {string} version */
+async function makeRepo(version) {
+  const repo = await mkdtemp(join(tmpdir(), 'dropcaster-build-info-tag-'));
+  await writeFile(join(repo, 'package.json'), JSON.stringify({ name: 'dropcaster', version }));
+  git(repo, 'init', '-q');
+  git(repo, ...GIT_ID, 'commit', '-q', '--allow-empty', '-m', 'first');
+  return repo;
+}
+
+test('resolveBuildInfo takes the version from the release tag, not package.json', async () => {
+  const repo = await makeRepo(UNRELEASED_VERSION);
+  try {
+    git(repo, ...GIT_ID, 'tag', 'v0.2.0');
+    assert.equal(resolveBuildInfo(repo).version, '0.2.0');
+    git(repo, ...GIT_ID, 'commit', '-q', '--allow-empty', '-m', 'second');
+    git(repo, ...GIT_ID, 'commit', '-q', '--allow-empty', '-m', 'third');
+    assert.equal(resolveBuildInfo(repo).version, '0.2.0+2');
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test('resolveBuildInfo ignores tags that are not release versions', async () => {
+  const repo = await makeRepo(UNRELEASED_VERSION);
+  try {
+    git(repo, ...GIT_ID, 'tag', 'poc-3d');
+    assert.equal(resolveBuildInfo(repo).version, null);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test('resolveBuildInfo reports no version for an untagged unreleased package', async () => {
+  const { gallery, pkgRoot } = await makeGallery({
+    version: UNRELEASED_VERSION, resolved: `git+ssh://git@github.com/shinyaoguri/dropcaster.git#${SHA}`,
+  });
+  try {
+    await writeFile(join(pkgRoot, 'package.json'), JSON.stringify({ name: 'dropcaster', version: UNRELEASED_VERSION }));
+    assert.deepEqual(resolveBuildInfo(pkgRoot), { version: null, commit: '0123456' });
+  } finally {
+    await rm(gallery, { recursive: true, force: true });
+  }
+});
+
+test('the package itself declares the unreleased marker so tags stay the only source of the version', async () => {
+  const pkg = JSON.parse(await (await import('fs/promises')).readFile(new URL('../package.json', import.meta.url), 'utf-8'));
+  assert.equal(pkg.version, UNRELEASED_VERSION);
 });
