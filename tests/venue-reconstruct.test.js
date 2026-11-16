@@ -102,12 +102,13 @@ test('失敗系: 部屋の隅 1 つだけでは画角が決まらず、投射比
 
 test('部屋の隅 1 つでも、凹と指定し画角とレンズシフトを仕様値で与えれば、凸の解に取り違えず戻る', () => {
   // 隅 1 つの拘束は 3 本なので、会場の回転 3 を決めると画角・レンズシフトは残らない。仕様値で固定する。
+  /** @type {Pick<import('../src/viewer/venue/venueReconstruct.ts').ReconstructInput, 'initial' | 'locked'>} */
   const known = { initial: { verticalFovDegrees: 50, lensShift: [0, .08] }, locked: ['fov', 'lensShiftX', 'lensShiftY'] };
   const result = solve(front, 'oneCorner', known);
   assert.equal(result.status, 'ok', result.underdetermined.join(','));
   assert.ok(compareUpToScale(front, result.vertices, CONFIGS.oneCorner.ids).maxError < 1e-4);
   // 同じ像を凸と指定すると、反対側の解釈に寄せられて正解から離れる (指定が効いていることの確認)。
-  const flipped = CONFIGS.oneCorner.elements.map(e => e.kind === 'orthogonalCorner' ? { ...e, shape: 'convex' } : e);
+  const flipped = CONFIGS.oneCorner.elements.map(e => e.kind === 'orthogonalCorner' ? { ...e, shape: /** @type {const} */ ('convex') } : e);
   const wrong = reconstructVenue({ output: OUTPUT, vertices: observe(front, CONFIGS.oneCorner.ids), elements: flipped, ...known });
   assert.ok(compareUpToScale(front, wrong.vertices, CONFIGS.oneCorner.ids).maxError > .5);
 });
@@ -130,7 +131,7 @@ test('失敗系: 箱の上面だけでは箱の高さが決まらない', () => 
 test('失敗系: 取り違えた 1 点を外れ値として最初に挙げる', () => {
   const config = CONFIGS.roomAndBox;
   const vertices = observe(front, config.ids).map(v => v.id === 'boxTopFrontRight'
-    ? { ...v, pixel: [v.pixel[0] + 30, v.pixel[1] - 20] } : v);
+    ? { ...v, pixel: /** @type {[number, number]} */ ([v.pixel[0] + 30, v.pixel[1] - 20]) } : v);
   const result = reconstructVenue({ output: OUTPUT, vertices, elements: config.elements, fovPrior: throwRatioPrior });
   assert.equal(result.outliers[0], 'boxTopFrontRight', JSON.stringify(result.residualPixels));
 });

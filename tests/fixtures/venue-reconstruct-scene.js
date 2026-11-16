@@ -68,29 +68,46 @@ export function observe(projector, ids, { noise = 0, rng = Math.random, world = 
     const ndc = projectToNdc(projector, world[id]);
     if (!ndc || Math.abs(ndc[0]) > 1 || Math.abs(ndc[1]) > 1) throw new Error(`${id} is outside the projector image`);
     const jitter = () => (rng() * 2 - 1) * noise;
-    return { id, pixel: [(ndc[0] + 1) / 2 * OUTPUT.width + jitter(), (1 - ndc[1]) / 2 * OUTPUT.height + jitter()] };
+    /** @type {[number, number]} */
+    const pixel = [(ndc[0] + 1) / 2 * OUTPUT.width + jitter(), (1 - ndc[1]) / 2 * OUTPUT.height + jitter()];
+    return { id, pixel };
   });
 }
 
-/** 部屋の隅 (凹)。shape を外すと凹凸の手掛かりなし。 */
+/** @typedef {import('../../src/viewer/venue/venueReconstruct.ts').ReconstructElement} Element */
+
+/**
+ * 部屋の隅 (凹)。shape を null にすると凹凸の手掛かりなし。
+ * @param {'backLeft' | 'backRight'} prefix
+ * @param {'concave' | 'convex' | null} [shape]
+ * @returns {Element}
+ */
 const corner = (prefix, shape = 'concave') => ({
-  kind: 'orthogonalCorner', corner: prefix, edges: [`${prefix}Up`, prefix === 'backLeft' ? 'backRight' : 'backLeft', `${prefix}Side`],
+  kind: 'orthogonalCorner', corner: prefix,
+  edges: [`${prefix}Up`, prefix === 'backLeft' ? 'backRight' : 'backLeft', `${prefix}Side`],
   ...(shape ? { shape } : {}),
 });
 /** 箱の手前右上の角 (凸)。 */
+/** @type {Element} */
 const boxCorner = { kind: 'orthogonalCorner', corner: 'boxTopFrontRight', edges: ['boxTopFrontLeft', 'boxTopBackRight', 'boxBottomFrontRight'], shape: 'convex' };
+/** @param {string} prefix */
 const cornerIds = (prefix) => [prefix, `${prefix}Up`, `${prefix}Side`];
+/** @type {Element} */
 const boxTop = { kind: 'rectangle', vertices: ['boxTopBackLeft', 'boxTopBackRight', 'boxTopFrontRight', 'boxTopFrontLeft'] };
+/** @type {Element} */
 const boxFront = { kind: 'rectangle', vertices: ['boxTopFrontLeft', 'boxTopFrontRight', 'boxBottomFrontRight', 'boxBottomFrontLeft'] };
 const boxIds = ['boxTopBackLeft', 'boxTopBackRight', 'boxTopFrontRight', 'boxTopFrontLeft', 'boxBottomFrontRight', 'boxBottomFrontLeft'];
 const floor = /** @type {[string, string, string]} */ (['backLeft', 'backRight', 'backLeftSide']);
 // 部屋の縦の辺どうし、左右の壁の床の辺どうしは平行 (直方体の部屋の知識)。
+/** @type {Element[]} */
 const roomParallels = [
   { kind: 'parallel', segments: [['backLeft', 'backLeftUp'], ['backRight', 'backRightUp']] },
   { kind: 'parallel', segments: [['backLeft', 'backLeftSide'], ['backRight', 'backRightSide']] },
 ];
 // 床に置いた箱の縦の辺は、部屋の縦の辺と平行。
+/** @type {Element} */
 const boxUpright = { kind: 'parallel', segments: [['boxBottomFrontLeft', 'boxTopFrontLeft'], ['backLeft', 'backLeftUp']] };
+/** @type {Element} */
 const poster = { kind: 'rectangle', vertices: ['posterTopLeft', 'posterTopRight', 'posterBottomRight', 'posterBottomLeft'] };
 const posterIds = ['posterTopLeft', 'posterTopRight', 'posterBottomRight', 'posterBottomLeft'];
 
