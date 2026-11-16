@@ -6,7 +6,7 @@ import { ProjectSession, type ShowContext } from './ProjectSession';
 import { installPracticeStyles } from './style';
 import { t, onLangChange, type MessageKey } from '../i18n/index';
 import type { Project } from './project';
-import { applyControlTranslations } from '../windows/control/ControlWindow.template';
+import { activityIcon, applyControlTranslations } from '../windows/control/ControlWindow.template';
 import { routeHref } from '../utils/paths';
 
 export interface MappingWorkspaceOptions {
@@ -83,7 +83,7 @@ export class MappingWorkspace {
     this.toolbar = document.createElement('div'); this.toolbar.className = 'dc-workspace-actions';
     // ホームへ出ると作品のページを離れ、出力ウィンドウも閉じる。× と同じく 1 クリックでは出ず確認を挟む。
     // 確定は <a> なので、ルーターの内部遷移 (SPA) でホームへ移る。
-    this.toolbar.innerHTML = `<a id="practice-home" class="dc-workspace-close" href="${routeHref('/')}" data-i18n-title="practice.home" data-i18n-aria-label="practice.home"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/></svg></a>
+    this.toolbar.innerHTML = `<a id="practice-home" class="dc-workspace-close" href="${routeHref('/')}" data-i18n-title="practice.home" data-i18n-aria-label="practice.home">${activityIcon('home')}</a>
       <dialog id="practice-home-confirm" class="dc-workspace-confirm" aria-labelledby="practice-home-confirm-title" aria-describedby="practice-home-confirm-hint"><div class="dc-workspace-confirm-body">
         <p id="practice-home-confirm-title" class="dc-workspace-confirm-title" data-i18n="practice.homeConfirm"></p>
         <p id="practice-home-confirm-hint" class="dc-workspace-confirm-hint" data-i18n="practice.homeConfirmHint"></p>

@@ -12,6 +12,33 @@
 import { t, type MessageKey } from '../../i18n/index.js';
 import { buildInfoHtml } from '../../utils/buildInfo';
 
+/**
+ * アクティビティバーのアイコン (20px・線画)。マッピング画面と会場の作成・調整画面で同じ形を使う (ADR 0021)。
+ */
+const ACTIVITY_ICON_PATHS = {
+  layers: '<path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/>',
+  monitor: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  grid: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>',
+  cube: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>',
+  save: '<path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V3Z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
+  projector: '<rect x="2" y="8" width="14" height="9" rx="2"/><circle cx="9" cy="12.5" r="2.5"/><path d="m16 11 6-3v9l-6-3"/>',
+  home: '<path d="M3 21h18M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/>',
+} as const;
+export type ActivityIcon = keyof typeof ACTIVITY_ICON_PATHS;
+export function activityIcon(name: ActivityIcon): string {
+  return `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ACTIVITY_ICON_PATHS[name]}</svg>`;
+}
+
+/**
+ * アクティビティバーの 1 ボタン。`dc-activity-<panel>` が `dc-tool-panel-<panel>` を切り替える (ActivityBar)。
+ * 最初は `active` のボタンだけが選択中・タブ移動の対象。
+ */
+export function activityButtonHtml(panel: string, labelKey: MessageKey, icon: ActivityIcon, active = false): string {
+  return `<button type="button" class="dc-activity-btn${active ? ' is-active' : ''}" id="dc-activity-${panel}" role="tab" aria-selected="${active}"${active ? '' : ' tabindex="-1"'} aria-controls="dc-tool-panel-${panel}" data-tool-panel="${panel}" data-i18n-title="${labelKey}" title="${t(labelKey)}" data-i18n-aria-label="${labelKey}" aria-label="${t(labelKey)}">
+            ${activityIcon(icon)}
+          </button>`;
+}
+
 export function controlPanelHtml(): string {
   const buildInfoMarkup = buildInfoHtml();
   return `
@@ -24,21 +51,11 @@ export function controlPanelHtml(): string {
         <!-- アクティビティバー: ツールカラムの中身 (パネル) を切り替える。選択中を再度押すとツールカラムを畳む -->
         <div class="dc-activity-bar">
           <div class="dc-activity-tabs" role="tablist" aria-orientation="vertical" data-i18n-aria-label="control.activity.label" aria-label="${t('control.activity.label')}">
-          <button type="button" class="dc-activity-btn is-active" id="dc-activity-mappings" role="tab" aria-selected="true" aria-controls="dc-tool-panel-mappings" data-tool-panel="mappings" data-i18n-title="control.panel.mappings" title="${t('control.panel.mappings')}" data-i18n-aria-label="control.panel.mappings" aria-label="${t('control.panel.mappings')}">
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>
-          </button>
-          <button type="button" class="dc-activity-btn" id="dc-activity-outputs" role="tab" aria-selected="false" tabindex="-1" aria-controls="dc-tool-panel-outputs" data-tool-panel="outputs" data-i18n-title="control.panel.outputs" title="${t('control.panel.outputs')}" data-i18n-aria-label="control.panel.outputs" aria-label="${t('control.panel.outputs')}">
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-          </button>
-          <button type="button" class="dc-activity-btn" id="dc-activity-check" role="tab" aria-selected="false" tabindex="-1" aria-controls="dc-tool-panel-check" data-tool-panel="check" data-i18n-title="control.panel.check" title="${t('control.panel.check')}" data-i18n-aria-label="control.panel.check" aria-label="${t('control.panel.check')}">
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
-          </button>
-          <button type="button" class="dc-activity-btn" id="dc-activity-preview3d" role="tab" aria-selected="false" tabindex="-1" aria-controls="dc-tool-panel-preview3d" data-tool-panel="preview3d" data-i18n-title="control.panel.preview3d" title="${t('control.panel.preview3d')}" data-i18n-aria-label="control.panel.preview3d" aria-label="${t('control.panel.preview3d')}">
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg>
-          </button>
-          <button type="button" class="dc-activity-btn" id="dc-activity-project" role="tab" aria-selected="false" tabindex="-1" aria-controls="dc-tool-panel-project" data-tool-panel="project" data-i18n-title="control.panel.project" title="${t('control.panel.project')}" data-i18n-aria-label="control.panel.project" aria-label="${t('control.panel.project')}">
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V3Z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/></svg>
-          </button>
+          ${activityButtonHtml('mappings', 'control.panel.mappings', 'layers', true)}
+          ${activityButtonHtml('outputs', 'control.panel.outputs', 'monitor')}
+          ${activityButtonHtml('check', 'control.panel.check', 'grid')}
+          ${activityButtonHtml('preview3d', 'control.panel.preview3d', 'cube')}
+          ${activityButtonHtml('project', 'control.panel.project', 'save')}
           </div>
           <!-- 下端の操作 (編集を閉じる など) の差し込み先。MappingWorkspace が使う -->
           <div class="dc-activity-bar-footer"></div>

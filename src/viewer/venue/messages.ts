@@ -4,9 +4,10 @@ const labels = {
   intro: ['Project the model outline onto the real venue. Match dimensions and projector settings, then export the venue for mapping.', 'モデルの輪郭を実際の会場へ投影し、寸法とプロジェクタ設定を合わせます。完成した会場を書き出し、マッピングで読み込みます。'],
   objects: ['Solids', '立体'], projector: ['Projector', 'プロジェクタ'], output: ['Output', '出力'], model: ['3D venue', '3D会場'], projection: ['Projected image', '投影される像'],
   menu: ['Files & settings', 'ファイル・設定'], mapping: ['Open mapping ↗', 'マッピングを開く ↗'],
-  close: ['Close venue setup', '会場の調整を閉じる'], closeConfirm: ['Close venue setup?', '会場の調整を閉じますか？'],
+  // 左端のバーの下端の家。マッピング画面の「ホームに戻る」と同じ見た目・言葉にそろえる (ADR 0021)。
+  close: ['Back to home', 'ホームに戻る'], closeConfirm: ['Go back to home?', 'ホームに戻りますか？'],
   closeConfirmHint: ['The projector output will close. Your venue draft stays in this browser.', 'プロジェクタへの出力は閉じます。会場の下書きはこのブラウザに保たれます。'],
-  closeConfirmAction: ['Close', '閉じる'],
+  closeConfirmAction: ['Go home', 'ホームに戻る'],
   imageHint: ['Projected image. Drag it to move the outline onto the real venue.', '投影される像。ドラッグすると輪郭がついてきます。'],
   step: ['Step', '刻み'], coarse: ['Coarse 1° / 10 cm', '粗く 1° / 10 cm'], fine: ['Fine 0.1° / 1 cm', '細かく 0.1° / 1 cm'],
   adjustHint: ['Drag the projected image and the outline follows. Drag = aim, Shift+drag = shift, Alt+drag = roll, wheel = zoom, Alt+wheel = closer/farther.', '投影される像をドラッグすると輪郭がついてきます。ドラッグ＝向き、Shift＋ドラッグ＝平行移動、Alt＋ドラッグ＝回転、ホイール＝画角、Alt＋ホイール＝前後。'],
