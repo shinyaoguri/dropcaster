@@ -32,3 +32,4 @@
 | [0019](0019-venue-split-view-direct-projector-adjustment.md) | 会場画面は投影像と3Dを並べ、仮想プロジェクタを輪郭の直接操作で合わせる | 採用 |
 | [0020](0020-sw-update-waits-for-all-windows.md) | 新しい版の Service Worker は全ウィンドウを閉じたときに有効にし、操作画面で通知する | 採用 |
 | [0021](0021-mapping-activity-bar.md) | マッピング画面の左端にアクティビティバーを置き、ツール列をパネルで切り替える | 採用 |
+| [0022](0022-release-by-tags-and-changelog-fragments.md) | 版はタグ、変更履歴は PR ごとの断片で持ち、週 1 回ファイルを変えずにリリースする | 採用 |

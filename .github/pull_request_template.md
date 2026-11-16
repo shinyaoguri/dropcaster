@@ -14,6 +14,9 @@
 仕様・互換性・信頼境界・保証範囲・委任を変える場合は、合意済みのIssue / ADRと対応付ける。
 ゲート・hook等を追加する場合は実害のIssueと、既存機構・native機能・置換を比較した選択理由を書く -->
 
+<!-- feat / fix / perf / 破壊的変更は changelog.d/<slug>.<分類>.md を追加する (changelog.d/README.md)。
+利用者に見えない変更ならラベル `changelog: none` を付ける -->
+
 ## 確認方法
 
 <!-- 閉じるIssueごとに小見出しと表を置く。条件はIssue本文の番号で参照してよい。
