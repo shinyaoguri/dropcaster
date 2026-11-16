@@ -779,6 +779,11 @@ async function zoomPan(page, base) {
   const active = s => s.mappings.find(m => m.id === s.activeId);
   const dragged = await state(page);
   near(active(dragged).quad.topLeft.x - active(before).quad.topLeft.x, 40 * canvasPerPx, canvasPerPx, 'a zoomed corner drag converts screen px to canvas px');
+  // 矢印キーの微調整は出力の 1px 単位で、編集ビューの拡大率に依らない (出力窓が閉じていれば仮想キャンバス 1px)
+  await page.keyboard.press('ArrowRight');
+  near(active(await state(page)).quad.topLeft.x - active(dragged).quad.topLeft.x, 1, 1e-6, 'a zoomed arrow nudge moves one output px');
+  await page.keyboard.press('ArrowLeft');
+  assert.deepEqual(await state(page), dragged);
 
   // Space + ドラッグはハンドルの上から始めてもパンになり、state を変えない
   const dragHandle = await handle.boundingBox(), hostBeforePan = await box('#output-stage .dc-canvas-host');
@@ -833,6 +838,12 @@ async function zoomPan(page, base) {
   const srcAfter = active(await state(page)).source;
   near(srcBefore.width - srcAfter.width, (40 / video.width) * 100, 0.2, 'a zoomed crop drag converts screen px to %');
   near(srcBefore.height - srcAfter.height, (20 / video.height) * 100, 0.2, 'a zoomed crop drag converts screen px to % (y)');
+  // ソースの矢印キー微調整もソースの 1px 単位 (640px の映像で 1/6.4 %)
+  const selBox = await box('#selection-box');
+  await page.mouse.click(selBox.x + selBox.width / 2, selBox.y + selBox.height / 2);
+  const srcBeforeNudge = active(await state(page)).source;
+  await page.keyboard.press('ArrowRight');
+  near(active(await state(page)).source.x - srcBeforeNudge.x, 100 / 640, 1e-6, 'a zoomed source nudge moves one source px');
   await snapshot(page, `${base.name}-zoom-source`);
   await page.locator(`${srcControls} .dc-zoom-btn`).nth(2).click();
   await page.waitForTimeout(100);
@@ -852,6 +863,25 @@ async function zoomPan(page, base) {
   // Space を離せば、通常のクリックで頂点を足せる
   await page.mouse.click(host.x + host.width * 0.4, host.y + host.height * 0.4);
   assert.equal(await pen(), penBefore + 1, 'a plain click still adds a pen point');
+  for (const [fx, fy] of [[0.6, 0.4], [0.5, 0.6]]) await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
+  await page.keyboard.press('Enter');
+  // ── 拡大中のマスク頂点のドラッグも画面上の移動量を仮想キャンバス px に換算する
+  const vertex = page.locator('#output-stage .mask-vertex-handle').first();
+  const v0 = await vertex.boundingBox();
+  await page.mouse.move(v0.x + v0.width / 2, v0.y + v0.height / 2);
+  await page.mouse.wheel(0, -300);
+  await page.waitForTimeout(100);
+  const maskHost = await box('#output-stage .dc-canvas-host');
+  assert.ok(maskHost.width > host.width * 1.5, 'zoomed in over the mask');
+  const maskPerPx = before.canvas.width / maskHost.width;
+  const v1 = await vertex.boundingBox(), pointBefore = active(await state(page)).points[0];
+  const vp = { x: v1.x + v1.width / 2, y: v1.y + v1.height / 2 };
+  await page.mouse.move(vp.x, vp.y); await page.mouse.down();
+  for (let i = 1; i <= 4; i++) await page.mouse.move(vp.x + i * 10, vp.y + i * 5);
+  await page.mouse.up();
+  const pointAfter = active(await state(page)).points[0];
+  near(pointAfter.x - pointBefore.x, 40 * maskPerPx, maskPerPx, 'a zoomed mask vertex drag converts screen px to canvas px (x)');
+  near(pointAfter.y - pointBefore.y, 20 * maskPerPx, maskPerPx, 'a zoomed mask vertex drag converts screen px to canvas px (y)');
 }
 
 async function maskSelect(page, base) {
