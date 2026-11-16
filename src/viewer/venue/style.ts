@@ -44,6 +44,25 @@ export function installVenueStyles(): void {
     .dc-venue-step span:first-child { margin-right:4px; }
     .dc-venue-page .dc-venue-step .tool-button { flex:1;width:auto;margin:0;padding:5px 6px;font-size:11px; }
     .dc-venue-page .dc-venue-step .tool-button[aria-pressed=true] { background:#2563eb;border-color:#60a5fa;color:white; }
+    .dc-venue-trace-tools { display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:8px 0;font-size:12px;color:#bbb; }
+    .dc-venue-trace-tools span { grid-column:1 / -1; }
+    .dc-venue-page .dc-venue-trace-tools .tool-button { width:auto;margin:0;padding:6px;font-size:12px; }
+    .dc-venue-page .dc-venue-trace-tools .tool-button[aria-pressed=true] { background:#dc2626;border-color:#f87171;color:white; }
+    .dc-venue-trace-step { margin:6px 0;padding:6px 8px;border-left:3px solid #ef4444;background:#1f1f1f;font-size:12px;color:#eee;line-height:1.4; }
+    .dc-venue-trace-confirm { display:flex;align-items:center;gap:8px;font-size:12px;color:#bbb; }
+    .dc-venue-trace-confirm span { flex:1;font-variant-numeric:tabular-nums; }
+    .dc-venue-page .dc-venue-trace-confirm .tool-button { width:auto;margin:0;padding:5px 10px; }
+    .dc-venue-trace-points { margin:0;padding:0;list-style:none;font-size:12px;max-height:220px;overflow:auto; }
+    .dc-venue-trace-points li { display:flex;align-items:center;gap:6px;padding:2px 0;color:#ddd; }
+    .dc-venue-trace-points li > span:first-child { width:3em;font-weight:600;color:#38bdf8; }
+    .dc-venue-trace-points li.is-pending > span:first-child { color:#fde047; }
+    .dc-venue-trace-points li.is-outlier > span { color:#f87171; }
+    .dc-venue-trace-points li.is-moving { background:#262626; }
+    .dc-venue-trace-residual { flex:1;font-variant-numeric:tabular-nums;color:#aaa; }
+    .dc-venue-page .dc-venue-trace-points .tool-button { width:auto;margin:0;padding:2px 6px;font-size:11px; }
+    .dc-venue-trace-status { font-size:12px;color:#ccc;line-height:1.5;margin:8px 0; }
+    .dc-venue-trace-status p { margin:0 0 4px; }
+    .dc-venue-page.is-tracing #venue-output-stage { cursor:crosshair; }
     .dc-venue-page #practice-aspect[readonly] { opacity:.7; }
 
     /* 2 ペイン: 投影される像 (= 出力窓と同じ canvas) と 3D 会場を同時に見る */

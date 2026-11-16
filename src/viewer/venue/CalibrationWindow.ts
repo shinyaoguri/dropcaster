@@ -9,6 +9,16 @@ export interface CalibrationWindowHooks {
   key?: (event: KeyboardEvent) => void;
   /** 出力窓が全画面のときの、その画面の実ピクセル数。 */
   screen?: (width: number, height: number) => void;
+  /**
+   * 出力窓の上のマウス (#246)。出力画素 (左上原点・y 下向き) に換算して渡す。
+   * OutputWindow は出力を窓いっぱいに縦横別々に引き伸ばす (scale(sx, sy)) ので、窓の大きさの比で換算できる。
+   */
+  pointer?: (pixel: [number, number], kind: 'move' | 'click') => void;
+}
+
+/** 出力窓のクライアント座標を出力画素へ。窓いっぱいに引き伸ばした出力 (OutputWindow) の逆。 */
+export function outputPixel(clientX: number, clientY: number, viewport: { width: number; height: number }, output: { width: number; height: number }): [number, number] {
+  return [clientX * output.width / viewport.width, clientY * output.height / viewport.height];
 }
 
 /** Reuse the existing fullscreen output UI, with an identity image and its own lifetime. */
@@ -65,12 +75,19 @@ export class CalibrationWindow {
       if (width > 0 && height > 0) this.hooks.screen?.(width, height);
     };
     const key = (event: KeyboardEvent): void => this.hooks.key?.(event);
+    const pointer = (kind: 'move' | 'click') => (event: MouseEvent): void => {
+      // 全画面ボタンなど出力窓の UI の上は除く。
+      if (!this.hooks.pointer || !(child.innerWidth > 0 && child.innerHeight > 0)) return;
+      if ((event.target as Element | null)?.closest?.('button, .dc-output-ui')) return;
+      this.hooks.pointer(outputPixel(event.clientX, event.clientY, { width: child.innerWidth, height: child.innerHeight }, this.projection.canvas), kind);
+    };
+    const move = pointer('move'), click = pointer('click');
     child.addEventListener('resize', measure); child.document.addEventListener('fullscreenchange', measure);
-    child.addEventListener('keydown', key);
+    child.addEventListener('keydown', key); child.addEventListener('pointermove', move); child.addEventListener('click', click);
     this.detach = () => {
       try {
         child.removeEventListener('resize', measure); child.document.removeEventListener('fullscreenchange', measure);
-        child.removeEventListener('keydown', key);
+        child.removeEventListener('keydown', key); child.removeEventListener('pointermove', move); child.removeEventListener('click', click);
       } catch { /* closed window */ }
       this.detach = null;
     };

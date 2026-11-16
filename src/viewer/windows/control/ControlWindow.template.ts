@@ -23,6 +23,7 @@ const ACTIVITY_ICON_PATHS = {
   save: '<path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V3Z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
   projector: '<rect x="2" y="8" width="14" height="9" rx="2"/><circle cx="9" cy="12.5" r="2.5"/><path d="m16 11 6-3v9l-6-3"/>',
   home: '<path d="M3 21h18M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/>',
+  crosshair: '<circle cx="12" cy="12" r="6"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
 } as const;
 export type ActivityIcon = keyof typeof ACTIVITY_ICON_PATHS;
 export function activityIcon(name: ActivityIcon): string {

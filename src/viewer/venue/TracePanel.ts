@@ -1,0 +1,332 @@
+import type { Projector, VenueObject } from '../practice/project';
+import { button, label } from '../practice/controls';
+import { t, type MessageKey } from '../i18n';
+import { editable } from './ProjectorAdjuster';
+import { TraceController, CROSSHAIR_STEP, type ConfirmResult } from './TraceController';
+import { MAX_THROW_RATIO, MIN_THROW_RATIO, parseTraceDocument, pointLabel, toReconstructInput, type TraceTool } from './traceModel';
+import { reconstructVenue, type PixelPoint, type ReconstructResult } from './venueReconstruct';
+import { reconstructionToVenue, type ReconstructionToVenueResult, type VenuePartRole } from './reconstructionToVenue';
+
+/** なぞった点と形の保存先。会場の下書き (IndexedDB の venue-draft) とは別で、書き出す会場ファイルには含めない (ADR 0023)。 */
+export const TRACE_STORAGE_KEY = 'dropcaster.venue.trace.v1';
+
+export interface TraceEstimate { objects: VenueObject[]; projector: Projector }
+
+export interface TracePanelHooks {
+  /** 確定済みのプロジェクタ (id・outputId・near・far を引き継ぐ)。 */
+  projector: () => Projector | null;
+  /** 推定した会場とプロジェクタを一時表示する (保存しない)。null で確定済みの表示に戻す。 */
+  showEstimate: (estimate: TraceEstimate | null) => void;
+  /** 推定した会場とプロジェクタを 1 回の変更として書き込む。 */
+  apply: (estimate: TraceEstimate) => void;
+  undo: () => void;
+  /** 実出力の十字。null で消す。 */
+  crosshair: (pixel: PixelPoint | null) => void;
+  /** 像に重ねる印が変わったとき。 */
+  redraw: () => void;
+}
+
+const TOOLS: [TraceTool, MessageKey][] = [['roomCorner', 'calibration.traceRoomCorner'], ['boxCorner', 'calibration.traceBoxCorner'], ['rectangle', 'calibration.traceRectangle'], ['length', 'calibration.traceLength']];
+const ROLE_NAMES: Record<VenuePartRole, MessageKey> = { floor: 'practice.floor', back: 'practice.backWall', left: 'practice.leftWall', right: 'practice.rightWall', box: 'practice.box', panel: 'calibration.tracePanel' };
+const CONFIRM_MESSAGES: Partial<Record<ConfirmResult, MessageKey>> = { duplicate: 'calibration.traceDuplicate', needLength: 'calibration.traceNeedLength', idle: 'calibration.traceChoose' };
+
+function readStored(): unknown {
+  try { const raw = localStorage.getItem(TRACE_STORAGE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+/**
+ * 会場画面の「なぞる」パネル (#246)。十字を運んで点を確定し、確定のたびに会場とプロジェクタを再推定する。
+ * 十字は実出力 (壁) に、点の印・番号・残差は像の上 (観察専用) にだけ描く。
+ */
+export class TracePanel {
+  readonly element = document.createElement('div');
+  readonly controller: TraceController;
+  private readonly hooks: TracePanelHooks;
+  private active = false;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private result: ReconstructResult | null = null;
+  private venue: ReconstructionToVenueResult | null = null;
+  private elapsed = 0;
+  private message: MessageKey | null = null;
+  private drag: { id: number; element: HTMLElement } | null = null;
+  private stage: HTMLElement | null = null;
+  private image: HTMLCanvasElement | null = null;
+
+  constructor(width: number, height: number, hooks: TracePanelHooks) {
+    this.hooks = hooks;
+    this.controller = new TraceController(parseTraceDocument(readStored()), width, height, changed => this.changed(changed));
+    this.element.className = 'dc-venue-trace';
+    this.element.innerHTML = `
+      <p class="dc-practice-hint">${label('calibration.traceIntro')}</p>
+      <label class="dc-practice-field">${label('calibration.traceThrowRatio')}<input id="venue-trace-throw" type="number" min="${MIN_THROW_RATIO}" max="${MAX_THROW_RATIO}" step="0.01"></label>
+      <p class="dc-practice-hint">${label('calibration.traceThrowHint')}</p>
+      <label class="dc-practice-field">${label('calibration.traceShift')}<input id="venue-trace-shift" type="number" min="-200" max="200" step="0.1"></label>
+      <p class="dc-practice-hint">${label('calibration.traceShiftHint')}</p>
+      <div class="dc-venue-trace-tools" role="group" aria-labelledby="venue-trace-tools-label"><span id="venue-trace-tools-label">${label('calibration.traceTools')}</span>
+        ${TOOLS.map(([tool, key]) => `<button type="button" id="venue-trace-tool-${tool}" class="tool-button" aria-pressed="false" data-trace-tool="${tool}">${label(key)}</button>`).join('')}</div>
+      <label class="dc-practice-field" id="venue-trace-meters-field">${label('calibration.traceMeters')}<input id="venue-trace-meters" type="number" min="0.001" max="1000" step="0.001"></label>
+      <p id="venue-trace-step" class="dc-venue-trace-step" role="status" aria-live="polite"></p>
+      <p class="dc-practice-hint">${label('calibration.traceKeys')}</p>
+      <div class="dc-venue-trace-confirm"><span id="venue-trace-crosshair"></span>${button('venue-trace-confirm', 'calibration.traceConfirm')}</div>
+      <p id="venue-trace-message" class="dc-practice-hint is-error" role="alert"></p>
+      <section class="tool-section"><h3>${label('calibration.tracePoints')}</h3><ol id="venue-trace-points" class="dc-venue-trace-points"></ol></section>
+      <div id="venue-trace-status" class="dc-venue-trace-status" role="status" aria-live="polite"></div>
+      ${button('venue-trace-apply', 'calibration.traceApply')}${button('venue-trace-undo', 'calibration.undoProjector')}${button('venue-trace-clear', 'calibration.traceClear')}`;
+    this.wire();
+    const { throwRatio, lensShiftY } = this.controller.doc;
+    this.input('venue-trace-throw').value = throwRatio === null ? '' : String(throwRatio);
+    this.input('venue-trace-shift').value = lensShiftY === null ? '' : String(Number((lensShiftY * 100).toFixed(4)));
+    // 保存してあった点から、開いたときの推定を出しておく。
+    if (this.controller.doc.shapes.length > 0) this.timer = setTimeout(() => this.estimate(), 0);
+    this.render();
+  }
+
+  private get<T extends HTMLElement = HTMLElement>(id: string): T { return this.element.querySelector(`#${id}`)!; }
+  private input(id: string): HTMLInputElement { return this.get(id); }
+
+  private wire(): void {
+    for (const [tool] of TOOLS) this.get(`venue-trace-tool-${tool}`).addEventListener('click', () => {
+      this.controller.setTool(this.controller.tool === tool ? null : tool);
+    });
+    const lens = () => {
+      const throwRatio = this.input('venue-trace-throw').valueAsNumber, shift = this.input('venue-trace-shift').valueAsNumber;
+      this.controller.setLensInputs(
+        throwRatio >= MIN_THROW_RATIO && throwRatio <= MAX_THROW_RATIO ? throwRatio : null,
+        Number.isFinite(shift) && Math.abs(shift) <= 200 ? shift / 100 : null);
+    };
+    this.input('venue-trace-throw').addEventListener('change', lens); this.input('venue-trace-shift').addEventListener('change', lens);
+    this.get('venue-trace-confirm').addEventListener('click', () => this.confirm());
+    this.get('venue-trace-apply').addEventListener('click', () => this.apply());
+    this.get('venue-trace-undo').addEventListener('click', () => this.hooks.undo());
+    this.get('venue-trace-clear').addEventListener('click', () => { if (window.confirm(t('calibration.traceClear') + '?')) this.controller.clear(); });
+    this.get('venue-trace-points').addEventListener('click', event => {
+      const target = (event.target as Element).closest<HTMLElement>('[data-trace-action]');
+      if (!target) return;
+      const id = target.dataset.point!;
+      if (target.dataset.traceAction === 'move') this.controller.beginMove(id); else this.controller.remove(id);
+    });
+  }
+
+  /** 投影される像 (object-fit: contain で表示した出力の写し) の上で十字を動かす。 */
+  attach(stage: HTMLElement, image: HTMLCanvasElement): void {
+    this.stage = stage; this.image = image;
+    stage.addEventListener('pointerdown', this.pointerDown); stage.addEventListener('pointermove', this.pointerMove);
+    stage.addEventListener('pointerup', this.pointerUp); stage.addEventListener('pointercancel', this.pointerUp);
+    stage.addEventListener('dblclick', this.doubleClick);
+  }
+
+  get isActive(): boolean { return this.active; }
+
+  /** パネルを開いている間だけ十字を映し、推定を一時表示する。 */
+  setActive(active: boolean): void {
+    if (this.active === active) return;
+    this.active = active;
+    if (!active) { this.controller.cancel(); this.hooks.crosshair(null); this.hooks.showEstimate(null); }
+    else { this.hooks.crosshair(this.controller.crosshair); this.showEstimate(); }
+    this.hooks.redraw();
+  }
+
+  setOutput(width: number, height: number): void { this.controller.setOutput(width, height); }
+
+  /** 出力窓の上のマウス。動かすと十字が付いてきて、クリックで確定する。 */
+  outputPointer(pixel: PixelPoint, kind: 'move' | 'click'): void {
+    if (!this.active) return;
+    this.controller.moveCrosshair(pixel);
+    if (kind === 'click') this.confirm();
+  }
+
+  /** 処理したキーなら true。入力欄では横取りしない。 */
+  handleKey(event: KeyboardEvent): boolean {
+    if (!this.active || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || editable(event.target)) return false;
+    const step = event.shiftKey ? CROSSHAIR_STEP.fine : CROSSHAIR_STEP.coarse;
+    const arrows: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    if (arrows[event.key]) { this.controller.nudge(...arrows[event.key]); return true; }
+    if (event.key === 'Enter') { this.confirm(); return true; }
+    if (event.key === 'Escape') return this.controller.cancel();
+    return false;
+  }
+
+  private confirm(): void {
+    const result = this.controller.confirm(() => {
+      const meters = this.input('venue-trace-meters').valueAsNumber;
+      return meters > 0 ? meters : null;
+    });
+    this.message = CONFIRM_MESSAGES[result] ?? null;
+    this.renderMessage();
+  }
+
+  private apply(): void {
+    if (this.venue?.status !== 'ok' || this.timer) return;
+    this.hooks.apply({ objects: this.venue.objects, projector: this.venue.projector });
+    this.render();
+  }
+
+  /** 像の上の位置を出力画素へ。像は出力と同じ縦横比で、stage の中央に置かれる。 */
+  private pixel(event: { clientX: number; clientY: number }): PixelPoint | null {
+    const image = this.image; if (!image) return null;
+    const rect = image.getBoundingClientRect(), { width, height } = this.controller.doc.output;
+    if (!(rect.width > 0 && rect.height > 0)) return null;
+    return [(event.clientX - rect.left) / rect.width * width, (event.clientY - rect.top) / rect.height * height];
+  }
+
+  private pointerDown = (event: PointerEvent): void => {
+    if (!this.active || event.button !== 0) return;
+    const pixel = this.pixel(event); if (!pixel) return;
+    const element = event.currentTarget as HTMLElement;
+    this.drag = { id: event.pointerId, element };
+    element.setPointerCapture(event.pointerId); element.focus({ preventScroll: true });
+    this.controller.moveCrosshair(pixel);
+    event.preventDefault();
+  };
+  private pointerMove = (event: PointerEvent): void => {
+    if (!this.drag || event.pointerId !== this.drag.id) return;
+    const pixel = this.pixel(event); if (pixel) this.controller.moveCrosshair(pixel);
+  };
+  private pointerUp = (event: PointerEvent): void => {
+    if (!this.drag || event.pointerId !== this.drag.id) return;
+    try { this.drag.element.releasePointerCapture(this.drag.id); } catch { /* already released */ }
+    this.drag = null;
+  };
+  private doubleClick = (event: MouseEvent): void => {
+    if (!this.active) return;
+    const pixel = this.pixel(event); if (!pixel) return;
+    this.controller.moveCrosshair(pixel); this.confirm();
+  };
+
+  private changed(documentChanged: boolean): void {
+    if (this.active) this.hooks.crosshair(this.controller.crosshair);
+    if (documentChanged) {
+      this.message = null;
+      try { localStorage.setItem(TRACE_STORAGE_KEY, JSON.stringify(this.controller.doc)); } catch { /* storage unavailable: keep tracing in memory */ }
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.estimate(), 0);
+    }
+    this.render(); this.hooks.redraw();
+  }
+
+  /** 形を確定・削除し、入力を変えるたびに 1 回だけ再推定する。 */
+  private estimate(): void {
+    this.timer = undefined;
+    const doc = this.controller.doc, projector = this.hooks.projector();
+    if (doc.shapes.length === 0 || !projector) {
+      this.result = null; this.venue = null;
+    } else {
+      const started = performance.now(), input = toReconstructInput(doc);
+      try {
+        this.result = reconstructVenue(input);
+        this.venue = reconstructionToVenue(input, this.result, { projector, name: (role, index) => this.partName(role, index) });
+      } catch (error) {
+        console.warn('Trace estimate failed', error); this.result = null; this.venue = { status: 'failed', reason: 'reconstructionFailed' };
+      }
+      this.elapsed = performance.now() - started;
+    }
+    if (this.active) this.showEstimate();
+    this.render(); this.hooks.redraw();
+  }
+
+  private showEstimate(): void {
+    this.hooks.showEstimate(this.venue?.status === 'ok' ? { objects: this.venue.objects, projector: this.venue.projector } : null);
+  }
+
+  private partName(role: VenuePartRole, index: number): string {
+    const name = t(ROLE_NAMES[role]);
+    return role === 'box' || role === 'panel' ? `${name} ${index + 1}` : name;
+  }
+
+  /** 推定済みの結果 (ブラウザテストで確かめる)。 */
+  get state(): { result: ReconstructResult | null; venue: ReconstructionToVenueResult | null; elapsed: number } {
+    return { result: this.result, venue: this.venue, elapsed: this.elapsed };
+  }
+
+  private renderMessage(): void { this.get('venue-trace-message').textContent = this.message ? t(this.message) : ''; }
+
+  render(): void {
+    const c = this.controller;
+    for (const [tool] of TOOLS) this.get(`venue-trace-tool-${tool}`).setAttribute('aria-pressed', String(c.tool === tool));
+    this.get('venue-trace-meters-field').hidden = c.tool !== 'length';
+    this.get('venue-trace-step').textContent = c.moving ? t('calibration.traceMoving', { point: pointLabel(c.moving.id) })
+      : c.stepKey ? t(`calibration.${c.stepKey}` as MessageKey) : t('calibration.traceChoose');
+    this.get('venue-trace-crosshair').textContent = t('calibration.traceCrosshair', { x: String(Math.round(c.crosshair[0])), y: String(Math.round(c.crosshair[1])) });
+    this.renderMessage();
+    const residuals = this.result?.residualPixels ?? {}, outliers = new Set(this.result?.outliers ?? []);
+    const list = this.get('venue-trace-points');
+    list.replaceChildren(...c.doc.points.map(point => {
+      const item = document.createElement('li'), residual = residuals[point.id];
+      item.dataset.point = point.id; item.classList.toggle('is-outlier', outliers.has(point.id));
+      item.classList.toggle('is-pending', c.pending.includes(point.id)); item.classList.toggle('is-moving', c.moving?.id === point.id);
+      const name = document.createElement('span'); name.textContent = pointLabel(point.id);
+      const error = document.createElement('span'); error.className = 'dc-venue-trace-residual';
+      error.textContent = residual === undefined ? '' : `${residual.toFixed(1)} px${outliers.has(point.id) ? ` · ${t('calibration.traceOutlier')}` : ''}`;
+      const actions = (['move', 'remove'] as const).map(action => {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'tool-button';
+        b.dataset.traceAction = action; b.dataset.point = point.id;
+        b.textContent = t(action === 'move' ? 'calibration.traceMove' : 'calibration.traceRemove');
+        b.setAttribute('aria-label', `${b.textContent} ${pointLabel(point.id)}`);
+        return b;
+      });
+      item.append(name, error, ...actions);
+      return item;
+    }));
+    this.get('venue-trace-status').replaceChildren(...this.statusLines().map(text => { const p = document.createElement('p'); p.textContent = text; return p; }));
+    this.get<HTMLButtonElement>('venue-trace-apply').disabled = this.venue?.status !== 'ok' || !!this.timer;
+  }
+
+  private statusLines(): string[] {
+    const venue = this.venue, result = this.result;
+    if (!venue) return [t('calibration.traceEmpty')];
+    if (venue.status === 'failed') {
+      const lines = [t(venue.reason === 'nothingDetermined' ? 'calibration.traceNothing' : 'calibration.traceFailed')];
+      if (result?.underdetermined.includes('fov')) lines.push(t('calibration.traceFov'));
+      return lines;
+    }
+    const lines = [t('calibration.traceSolved', { count: String(venue.objects.length), ms: String(Math.round(this.elapsed)), rms: (result?.rmsPixels ?? 0).toFixed(1) })];
+    if (result?.underdetermined.includes('fov')) lines.push(t('calibration.traceFov'));
+    if (result?.underdetermined.includes('lensShiftY')) lines.push(t('calibration.traceShiftUnknown'));
+    if (venue.skipped.length > 0) lines.push(t('calibration.traceSkipped', { points: venue.skipped.flatMap(s => s.vertices).map(pointLabel).join(', ') }));
+    if (result && result.outliers.length > 0) lines.push(t('calibration.traceOutliers', { points: result.outliers.map(pointLabel).join(', ') }));
+    if (!venue.scaleKnown) lines.push(t('calibration.traceUnscaled'));
+    return lines;
+  }
+
+  /** 像の写しに、点の印・番号・形の線を重ねる (観察専用。実出力には入らない)。scale は出力画素 → 写しの画素。 */
+  drawOverlay(context: CanvasRenderingContext2D, scale: number, ratio: number): void {
+    if (!this.active) return;
+    const c = this.controller, pixels = new Map(c.doc.points.map(p => [p.id, p.pixel]));
+    const at = (id: string) => { const p = pixels.get(id); return p ? [p[0] * scale, p[1] * scale] as const : null; };
+    const outliers = new Set(this.result?.outliers ?? []);
+    context.save();
+    context.lineWidth = 1.5 * ratio;
+    const path = (ids: string[], close: boolean, color: string) => {
+      const points = ids.map(at).filter((p): p is readonly [number, number] => !!p);
+      if (points.length < 2) return;
+      context.strokeStyle = color; context.beginPath(); context.moveTo(points[0][0], points[0][1]);
+      for (const p of points.slice(1)) context.lineTo(p[0], p[1]);
+      if (close) context.closePath();
+      context.stroke();
+    };
+    for (const shape of c.doc.shapes) {
+      if (shape.kind === 'rectangle') path(shape.points, true, '#38bdf8');
+      else if (shape.kind === 'length') path(shape.points, false, '#a3e635');
+      else for (const edge of shape.points.slice(1)) path([shape.points[0], edge], false, shape.kind === 'roomCorner' ? '#38bdf8' : '#f59e0b');
+    }
+    context.setLineDash([4 * ratio, 3 * ratio]); path(c.pending, false, '#fde047'); context.setLineDash([]);
+    context.font = `${11 * ratio}px system-ui, sans-serif`; context.textBaseline = 'bottom';
+    for (const point of c.doc.points) {
+      const p = at(point.id); if (!p) continue;
+      const color = outliers.has(point.id) ? '#ef4444' : c.pending.includes(point.id) ? '#fde047' : '#38bdf8';
+      context.fillStyle = color; context.strokeStyle = '#000';
+      context.beginPath(); context.arc(p[0], p[1], 3.5 * ratio, 0, Math.PI * 2); context.fill(); context.stroke();
+      if (c.moving?.id === point.id) { context.strokeStyle = '#fff'; context.beginPath(); context.arc(p[0], p[1], 7 * ratio, 0, Math.PI * 2); context.stroke(); }
+      context.fillStyle = color; context.fillText(pointLabel(point.id), p[0] + 5 * ratio, p[1] - 3 * ratio);
+    }
+    context.restore();
+  }
+
+  dispose(): void {
+    clearTimeout(this.timer);
+    const stage = this.stage; if (!stage) return;
+    stage.removeEventListener('pointerdown', this.pointerDown); stage.removeEventListener('pointermove', this.pointerMove);
+    stage.removeEventListener('pointerup', this.pointerUp); stage.removeEventListener('pointercancel', this.pointerUp);
+    stage.removeEventListener('dblclick', this.doubleClick);
+  }
+}

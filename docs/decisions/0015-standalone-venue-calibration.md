@@ -3,6 +3,7 @@
 ## 状態
 
 採用。#138。0014の立体編集操作と保存形式を継承し、編集する場所を独立画面へ移す。画面配置（タブ）は [0019](0019-venue-split-view-direct-projector-adjustment.md)、マッピングからの入口は [0021](0021-mapping-activity-bar.md) で更新。
+なぞる十字と推定の輪郭を実出力の調整用の像に足した（[0023](0023-trace-corners-to-reconstruct-venue.md)）。観察用の補助は引き続き実出力に入れない。
 
 ## 文脈
 

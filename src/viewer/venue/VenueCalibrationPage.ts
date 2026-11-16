@@ -4,6 +4,7 @@ import { ProjectionPreview } from '../practice/ProjectionPreview';
 import { VenueBuilder } from '../practice/VenueBuilder';
 import { VenueEditor } from '../practice/VenueEditor';
 import { prepareVenue, prepareObjects, type PreparedVenue } from '../practice/loadVenue';
+import { TracePanel, type TraceEstimate } from './TracePanel';
 import { createProject, defaultProjector, defaultScene, encodeAsset, importVenue, parseProject, portableVenue, ProjectFormatError,
   MAX_GLB_BYTES, MAX_PACKAGE_BYTES, type Project, type Projector, type VenueScene, type Vec3 } from '../practice/project';
 import { readProject } from '../practice/projectStore';
@@ -27,8 +28,8 @@ const PRESETS: [number, number][] = [[1920, 1080], [1280, 800], [1024, 768]];
 const MIN_ASPECT = .2, MAX_ASPECT = 5;
 type SizeSource = 'preset' | 'fullscreen' | 'venue';
 /** 左端のアクティビティバーで切り替えるツール列の中身。 */
-type VenuePanel = 'objects' | 'projector' | 'output' | 'files';
-const PANEL_TITLES = { objects: 'calibration.objects', projector: 'calibration.projector', output: 'calibration.output', files: 'calibration.menu' } as const satisfies Record<VenuePanel, MessageKey>;
+type VenuePanel = 'objects' | 'trace' | 'projector' | 'output' | 'files';
+const PANEL_TITLES = { objects: 'calibration.objects', trace: 'calibration.trace', projector: 'calibration.projector', output: 'calibration.output', files: 'calibration.menu' } as const satisfies Record<VenuePanel, MessageKey>;
 
 /**
  * Standalone calibration (ADR 0015 / 0019). No sketch, WindowController or mapping-storage writer is created here.
@@ -45,6 +46,10 @@ export class VenueCalibrationPage {
   private builder?: VenueBuilder;
   private editor?: VenueEditor;
   private adjuster?: ProjectorAdjuster;
+  private trace?: TracePanel;
+  /** なぞる間に一時表示している推定 (保存していない)。 */
+  private traceShown: TraceEstimate | null = null;
+  private traceRestore = 0;
   private resizers = new ColumnResizers('dropcaster.venue.columnWidths.v1');
   private activityBar = new ActivityBar<VenuePanel>('objects', panel => PANEL_TITLES[panel]);
   private canvas = document.createElement('canvas');
@@ -72,6 +77,7 @@ export class VenueCalibrationPage {
       <div class="dc-activity-bar">
         <div class="dc-activity-tabs" role="tablist" aria-orientation="vertical" data-i18n-aria-label="control.activity.label" aria-label="${t('control.activity.label')}">
           ${activityButtonHtml('objects', 'calibration.objects', 'cube', true)}
+          ${activityButtonHtml('trace', 'calibration.trace', 'crosshair')}
           ${activityButtonHtml('projector', 'calibration.projector', 'projector')}
           ${activityButtonHtml('output', 'calibration.output', 'monitor')}
           ${activityButtonHtml('files', 'calibration.menu', 'save')}
@@ -97,6 +103,7 @@ export class VenueCalibrationPage {
             ${field('practice-unit', 'practice.unit', .00001, 10000)}${vectorFields('practice-v-position','practice.position')}${vectorFields('practice-v-rotation','practice.rotation',-360,360)}${vectorFields('practice-v-scale','practice.scale',.0001,1000)}
             <label class="dc-practice-field">${label('practice.color')}<input id="practice-color" type="color"></label></form></details>
           </div>
+          <div class="dc-tool-panel" id="dc-tool-panel-trace" role="tabpanel" aria-labelledby="dc-activity-trace" data-tool-panel="trace"></div>
           <div class="dc-tool-panel" id="dc-tool-panel-projector" role="tabpanel" aria-labelledby="dc-activity-projector" data-tool-panel="projector">
             <label class="dc-practice-field">${label('practice.output')}<select id="practice-output"></select></label>
             <div class="dc-venue-step" role="group" aria-labelledby="venue-step-label"><span id="venue-step-label">${label('calibration.step')}</span>
@@ -171,6 +178,7 @@ export class VenueCalibrationPage {
       this.get('venue-output-stage').append(this.mirror, this.projection.canvas);
       this.output = new CalibrationWindow(this.projection, () => this.updateOutput(), {
         key: event => this.keydown(event), screen: (width, height) => this.setOutputSize(width, height, 'fullscreen'),
+        pointer: (pixel, kind) => this.trace?.outputPointer(pixel, kind),
       });
       this.builder = new VenueBuilder((scene, fit) => this.editVenue(scene, fit), () => this.undo(), () => this.export(), () => this.get<HTMLInputElement>('venue-file').click());
       this.builder.element.open = true; this.get('venue-section-objects').append(this.builder.element);
@@ -186,6 +194,17 @@ export class VenueCalibrationPage {
         stepChanged: step => this.showStep(step),
       });
       this.adjuster.attach(this.get('venue-output-stage'), this.mirror);
+      this.trace = new TracePanel(this.outputSize[0], this.outputSize[1], {
+        projector: () => this.committedProjector(),
+        showEstimate: estimate => this.showTraceEstimate(estimate),
+        apply: estimate => this.applyTrace(estimate),
+        undo: () => this.undo(),
+        crosshair: pixel => this.projection?.setCrosshair(pixel),
+        redraw: () => { this.mirrored = ''; },
+      });
+      this.get('dc-tool-panel-trace').append(this.trace.element);
+      this.trace.attach(this.get('venue-output-stage'), this.mirror);
+      this.off.push(this.activityBar.onChange(panel => this.setTracing(panel === 'trace')));
       this.builder.onSelection = () => this.update(this.session.changes.get());
       this.get('venue-model-pane').querySelector('.dc-practice-viewport')!.before(this.editor.element);
       this.off.push(this.session.changes.subscribe(project => this.update(project)), this.session.storage.subscribe(() => this.storageStatus()));
@@ -268,6 +287,7 @@ export class VenueCalibrationPage {
   };
   private keydown(event: KeyboardEvent): void {
     if (this.disposed || this.failed || !this.preview) return;
+    if (this.trace?.isActive) { if (this.trace.handleKey(event)) event.preventDefault(); return; }
     if (this.adjuster?.handleKey(event)) event.preventDefault();
   }
   private committedProjector(): Projector | null {
@@ -305,7 +325,7 @@ export class VenueCalibrationPage {
     if (this.disposed || this.failed || !this.projection) return;
     if (this.outputSize[0] !== width || this.outputSize[1] !== height || this.sizeSource !== source) {
       this.outputSize = [width, height]; this.sizeSource = source;
-      this.projection.setSize(width, height); this.projection.render(); this.output?.update();
+      this.projection.setSize(width, height); this.trace?.setOutput(width, height); this.projection.render(); this.output?.update();
       this.showResolution();
     }
     if (source === 'venue') return;
@@ -337,8 +357,8 @@ export class VenueCalibrationPage {
     if(select.dataset.options!==options) { select.replaceChildren(...outputs.map((o,i)=>new Option(o.name||`Output ${i+1}`,o.id))); select.dataset.options=options; }
     select.value=this.selected;
     const projector=project.venue.projectors.find(p=>p.outputId===this.selected)!;
-    this.preview.setVenueTransform(project.venue.scene);
-    this.showProjector(this.adjuster?.pending ?? projector);
+    if (this.traceShown) this.showProjector(this.traceShown.projector);
+    else { this.preview.setVenueTransform(project.venue.scene); this.showProjector(this.adjuster?.pending ?? projector); }
     this.followAspect(projector.aspect);
     const scene=project.venue.scene; this.get('venue-model-transform').hidden=scene.kind==='objects';
     this.setVector('practice-v-position',scene.position); this.setVector('practice-v-rotation',rotation(scene.quaternion)); this.setVector('practice-v-scale',scene.scale);
@@ -352,11 +372,50 @@ export class VenueCalibrationPage {
     try {
       const next=parseProject({...project,venue:{...project.venue,revision:project.venue.revision+1}});
       this.editor?.cancel(); this.action++; this.previous=this.session.changes.get();
-      if(prepared) this.preview!.setVenue(prepared.group,prepared.dispose);
+      if(prepared) { this.traceShown=null; this.traceRestore++; this.preview!.setVenue(prepared.group,prepared.dispose); }
       this.session.update(next);
       if(fit) { this.preview!.overview(); if(next.venue.scene.objects?.length===1) this.editor?.focusSelection(); }
       this.status('calibration.updated');
     } catch(error) { prepared?.dispose(); this.error(error); }
+  }
+  /** なぞるパネルを開いている間は、像の直接操作と立体の編集を止める (十字の操作と取り合わない)。 */
+  private setTracing(active: boolean): void {
+    if (!this.trace || active === this.trace.isActive) return;
+    this.adjuster?.flush();
+    if (this.adjuster) this.adjuster.suspended = active;
+    if (active) this.editor?.setActive(false);
+    this.trace.setActive(active);
+    this.root.classList.toggle('is-tracing', active);
+  }
+  /** 推定した会場とプロジェクタを一時表示する (保存しない)。null なら確定済みの表示へ戻す。 */
+  private showTraceEstimate(estimate: TraceEstimate | null): void {
+    if (!this.preview || this.disposed || this.failed) return;
+    const token = ++this.traceRestore;
+    if (estimate) {
+      const prepared = prepareObjects(estimate.objects);
+      this.traceShown = estimate;
+      this.preview.setVenue(prepared.group, prepared.dispose);
+      this.preview.setVenueTransform({ ...defaultScene(), kind: 'objects' });
+      this.update(this.session.changes.get());
+      return;
+    }
+    if (!this.traceShown) return;
+    this.traceShown = null;
+    void prepareVenue(this.session.changes.get()).then(prepared => {
+      if (this.disposed || this.failed || token !== this.traceRestore) { prepared.dispose(); return; }
+      this.preview!.setVenue(prepared.group, prepared.dispose); this.update(this.session.changes.get());
+    }).catch(error => { if (!this.disposed && token === this.traceRestore) this.error(error); });
+  }
+  /** なぞった会場とプロジェクタを 1 回の変更 (1 revision) として書き込む。「直前の変更を戻す」1 回で戻る。 */
+  private applyTrace(estimate: TraceEstimate): void {
+    const current = this.session.changes.get();
+    try {
+      const project = parseProject({ ...current, assets: [], venue: { ...current.venue,
+        scene: { ...defaultScene(), kind: 'objects', objects: estimate.objects },
+        projectors: current.venue.projectors.map(p => p.outputId === estimate.projector.outputId ? estimate.projector : p) } });
+      this.commit(project, prepareObjects(project.venue.scene.objects!), false);
+      this.status('calibration.traceApplied');
+    } catch (error) { this.error(error); }
   }
   private editVenue(scene: VenueScene, fit: boolean): void {
     if(!this.preview || this.disposed || this.failed) return;
@@ -423,7 +482,7 @@ export class VenueCalibrationPage {
     const scale = Math.min(rect.width / source.width, rect.height / source.height);
     if (!(scale > 0)) return;
     const width = Math.max(1, Math.round(source.width * scale * ratio)), height = Math.max(1, Math.round(source.height * scale * ratio));
-    const key = `${projection.revision}/${width}x${height}`;
+    const key = `${projection.revision}/${width}x${height}/${this.trace?.isActive ? this.trace.controller.version : -1}`;
     if (key === this.mirrored) return;
     this.mirrored = key;
     if (this.mirror.width !== width || this.mirror.height !== height) {
@@ -433,6 +492,7 @@ export class VenueCalibrationPage {
     const context = this.mirror.getContext('2d'); if (!context) return;
     context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
     context.drawImage(source, 0, 0, width, height);
+    this.trace?.drawOverlay(context, width / source.width, ratio);
   }
   private status(key: MessageKey,error=false):void { this.statusKey=key;this.errorStatus=error;this.get('venue-status').textContent=t(key);this.get('venue-status').classList.toggle('is-error',error); }
   private error(error:unknown):void { this.status(error instanceof ProjectFormatError?`practice.${error.message}` as MessageKey:'practice.invalid',true); }
@@ -449,6 +509,7 @@ export class VenueCalibrationPage {
     });
     this.status(this.statusKey,this.errorStatus);this.storageStatus();this.update(this.session.changes.get());this.canvas.setAttribute('aria-label',t('practice.viewHint'));
     if (this.projection) this.showResolution();
+    this.trace?.render(); this.mirrored = '';
   }
   private graphicsLost=(event:Event):void=>{event.preventDefault();this.fail();};
   private fail():void {this.failed=true;this.setReady();this.adjuster?.cancel();this.editor?.cancel();this.output?.close();cancelAnimationFrame(this.frame);this.status('calibration.graphicsError',true);this.get<HTMLButtonElement>('venue-open-output').disabled=true;this.get('venue-reload').hidden=false;}
@@ -459,6 +520,6 @@ export class VenueCalibrationPage {
     document.removeEventListener('keydown',this.documentKeydown);
     window.removeEventListener('blur',this.settle);window.removeEventListener('pagehide',this.settle);
     this.canvas.removeEventListener('webglcontextlost',this.graphicsLost);this.projection?.canvas.removeEventListener('webglcontextlost',this.graphicsLost);
-    this.adjuster?.dispose();this.output?.dispose();this.editor?.dispose();this.projection?.dispose();this.preview?.dispose();this.session.dispose();this.root.remove();
+    this.adjuster?.dispose();this.trace?.dispose();this.output?.dispose();this.editor?.dispose();this.projection?.dispose();this.preview?.dispose();this.session.dispose();this.root.remove();
   }
 }
