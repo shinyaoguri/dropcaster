@@ -240,22 +240,26 @@ sketches/
 
 ### 3. スケッチをスキャンしてプレビュー生成
 
+`dropcaster init` で作ったギャラリーでは、次のスクリプトが使えます。
+
 ```bash
-# スケッチをスキャンし、プレビューを生成、ユーザーデータ取得用に既定ブラウザを開く
+# スケッチをスキャンして public/ にコピーし、プレビューを生成（OpenProcessing には問い合わせない）
 npm run scan
 
-# すべてのプレビューをリセットして再生成
-npm run scan:reset
+# すべてのプレビューを作り直し、OpenProcessing からタイトル・作者などのメタデータも取得
+npm run scan:full
 
-# 変更を監視して自動更新（メタデータのみ）
-npm run scan:watch
+# public/sketches と public/previews を消して作り直す（OpenProcessing には問い合わせない）
+npm run scan:reset
 ```
 
-`npm run scan` は OpenProcessing Public API (`/api/sketch/{id}`, `/api/user/{id}`) から、スケッチタイトル・ユーザー名・ユーザーURLなどを取得します。API token が必要な環境では、OpenProcessing のアカウント設定で token を作成してから `OPENPROCESSING_API_TOKEN` に設定してください。
+`npm run scan:full` は OpenProcessing Public API (`/api/sketch/{id}`, `/api/user/{id}`) から、スケッチタイトル・ユーザー名・ユーザーURLなどを取得します。取得するのは `--fetch-userdata` を付けた scan だけで、`npm run scan` と `npm run scan:reset` には付いていません（付けるなら `npm run scan -- --fetch-userdata` / `npm run scan:reset -- --fetch-userdata`）。API token が必要な環境では、OpenProcessing のアカウント設定で token を作成してから `OPENPROCESSING_API_TOKEN` に設定してください。
 
 ```bash
-OPENPROCESSING_API_TOKEN=your_token npm run scan
+OPENPROCESSING_API_TOKEN=your_token npm run scan:full
 ```
+
+変更を監視する `scan:watch` は、このリポジトリを開発するときのスクリプトで、作ったギャラリーにはありません（[DEVELOPMENT.md](DEVELOPMENT.md)）。
 
 #### タイトルと説明の決まり方
 
