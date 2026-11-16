@@ -727,6 +727,133 @@ async function history(page, base) {
   await closeEditor(page);
 }
 // プレビュー上のクリックは、押した時点で前面にある項目を選ぶ。ペン描画中は切り替えない (#112)
+/** ソース列・マッピング列の拡大・パン (#193)。表示だけで、state・履歴は変わらず、拡大中も編集の換算が合う。 */
+async function zoomPan(page, base) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await page.locator('#add-mapping-btn').click();
+  const history = () => Promise.all(['#dc-undo-btn', '#dc-redo-btn'].map(s => page.locator(s).isDisabled()));
+  const box = selector => page.locator(selector).boundingBox();
+  const near = (actual, expected, tol, msg) => assert.ok(Math.abs(actual - expected) <= tol, `${msg}: ${actual} vs ${expected}`);
+  const mapControls = '#output-stage .dc-zoom-controls', srcControls = '.source-column .dc-zoom-controls';
+  for (const controls of [mapControls, srcControls]) {
+    assert.equal(await page.locator(`${controls} .dc-zoom-level`).textContent(), '100%', `${controls} starts at fit`);
+    assert.equal(await page.locator(`${controls} .dc-zoom-btn`).nth(2).isDisabled(), true, 'fit is disabled at fit');
+    // 押せないボタンは汎用の button:disabled の塗りを付けず、アイコンを淡くする (ホバー中も)
+    const fit = page.locator(`${controls} .dc-zoom-btn`).nth(2);
+    await fit.hover();
+    assert.equal(await fit.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)', 'a disabled zoom button has no fill');
+  }
+  // 右下に置く
+  const stage = await box('#output-stage'), controls = await box(mapControls);
+  near(stage.x + stage.width - (controls.x + controls.width), 10, 1, 'controls sit at the right edge');
+  near(stage.y + stage.height - (controls.y + controls.height), 10, 1, 'controls sit at the bottom edge');
+
+  // ── マッピング列: ホイールはカーソル下の点を固定して拡大し、state も履歴も変えない
+  const before = await state(page), beforeHistory = await history();
+  const fitHost = await box('#output-stage .dc-canvas-host');
+  const handle = page.locator('#output-stage .quad-handle:not(.quad-handle-scale):not(.quad-handle-rotate)').first();
+  const fitHandle = await handle.boundingBox();
+  const cursor = { x: fitHost.x + fitHost.width * 0.3, y: fitHost.y + fitHost.height * 0.6 };
+  const fraction = h => ({ x: (cursor.x - h.x) / h.width, y: (cursor.y - h.y) / h.height });
+  const fitFraction = fraction(fitHost);
+  await page.mouse.move(cursor.x, cursor.y);
+  await page.mouse.wheel(0, -300);
+  await page.waitForFunction(() => document.querySelector('#output-stage .dc-zoom-level').textContent !== '100%');
+  await page.waitForTimeout(100);
+  const zoomedHost = await box('#output-stage .dc-canvas-host');
+  assert.ok(zoomedHost.width > fitHost.width * 1.5, 'wheel up zooms the mapping view in');
+  near(fraction(zoomedHost).x, fitFraction.x, 0.002, 'the point under the cursor stays (x)');
+  near(fraction(zoomedHost).y, fitFraction.y, 0.002, 'the point under the cursor stays (y)');
+  near((await handle.boundingBox()).width, fitHandle.width, 0.5, 'handles keep their screen size');
+  assert.deepEqual(await state(page), before, 'zooming never edits the state');
+  assert.deepEqual(await history(), beforeHistory, 'zooming adds no history');
+  await snapshot(page, `${base.name}-zoom-mapping`);
+
+  // 拡大中の四隅のドラッグは画面上の移動量を仮想キャンバス px に換算する
+  const corner = await handle.boundingBox(), canvasPerPx = before.canvas.width / zoomedHost.width;
+  const start = { x: corner.x + corner.width / 2, y: corner.y + corner.height / 2 };
+  await page.mouse.move(start.x, start.y); await page.mouse.down();
+  for (let i = 1; i <= 4; i++) await page.mouse.move(start.x + i * 10, start.y);
+  await page.mouse.up();
+  const active = s => s.mappings.find(m => m.id === s.activeId);
+  const dragged = await state(page);
+  near(active(dragged).quad.topLeft.x - active(before).quad.topLeft.x, 40 * canvasPerPx, canvasPerPx, 'a zoomed corner drag converts screen px to canvas px');
+
+  // Space + ドラッグはハンドルの上から始めてもパンになり、state を変えない
+  const dragHandle = await handle.boundingBox(), hostBeforePan = await box('#output-stage .dc-canvas-host');
+  await page.mouse.move(dragHandle.x + dragHandle.width / 2, dragHandle.y + dragHandle.height / 2);
+  await page.keyboard.down('Space');
+  await page.mouse.down();
+  for (let i = 1; i <= 5; i++) await page.mouse.move(dragHandle.x + dragHandle.width / 2 - i * 10, dragHandle.y + dragHandle.height / 2 + i * 6);
+  await page.mouse.up();
+  await page.keyboard.up('Space');
+  await page.waitForTimeout(100);
+  const hostAfterPan = await box('#output-stage .dc-canvas-host');
+  near(hostAfterPan.x - hostBeforePan.x, -50, 1, 'space-drag pans x');
+  near(hostAfterPan.y - hostBeforePan.y, 30, 1, 'space-drag pans y');
+  assert.deepEqual(await state(page), dragged, 'space-drag over a handle never moves the corner');
+  // 中ボタンのドラッグもパン
+  await page.mouse.move(cursor.x, cursor.y); await page.mouse.down({ button: 'middle' });
+  await page.mouse.move(cursor.x + 30, cursor.y + 20, { steps: 3 }); await page.mouse.up({ button: 'middle' });
+  await page.waitForTimeout(100);
+  const hostAfterMiddle = await box('#output-stage .dc-canvas-host');
+  near(hostAfterMiddle.x - hostAfterPan.x, 30, 1, 'middle-drag pans x');
+  assert.deepEqual(await state(page), dragged, 'middle-drag never edits');
+  // 右下のボタン: 縮小・拡大・全体に合わせる
+  const level = async () => page.locator('#output-stage .dc-zoom-level').textContent();
+  const zoomedLevel = await level();
+  await page.locator(`${mapControls} .dc-zoom-btn`).nth(1).click();
+  assert.ok(parseInt(await level()) > parseInt(zoomedLevel), 'the + button zooms in');
+  await page.locator(`${mapControls} .dc-zoom-btn`).nth(0).click();
+  await page.locator(`${mapControls} .dc-zoom-btn`).nth(2).click();
+  await page.waitForTimeout(100);
+  assert.equal(await level(), '100%', 'fit returns to 100%');
+  const backHost = await box('#output-stage .dc-canvas-host');
+  for (const k of ['x', 'y', 'width', 'height']) near(backHost[k], fitHost[k], 0.5, `fit restores the canvas ${k}`);
+
+  // ── ソース列: 拡大中も crop 枠のドラッグは画面上の移動量どおりに % を動かす
+  await page.locator('#reset-source-btn').click();
+  const fitFrame = await box('.source-column .canvas-frame');
+  const sourceHandle = page.locator('.source-column .handle-se');
+  const fitSourceHandle = await sourceHandle.boundingBox();
+  // 全選択の右下の角あたりを拡大する
+  await page.mouse.move(fitFrame.x + fitFrame.width * 0.9, fitFrame.y + fitFrame.height * 0.9);
+  await page.mouse.wheel(0, -300);
+  await page.waitForTimeout(100);
+  const zoomedFrame = await box('.source-column .canvas-frame');
+  assert.ok(zoomedFrame.width > fitFrame.width * 1.5, 'wheel up zooms the source view in');
+  near((await sourceHandle.boundingBox()).width, fitSourceHandle.width, 0.5, 'source handles keep their screen size');
+  const srcBefore = active(await state(page)).source;
+  const se = await sourceHandle.boundingBox(), video = await box('#source-video');
+  const sp = { x: se.x + se.width / 2, y: se.y + se.height / 2 };
+  await page.mouse.move(sp.x, sp.y); await page.mouse.down();
+  for (let i = 1; i <= 4; i++) await page.mouse.move(sp.x - i * 10, sp.y - i * 5);
+  await page.mouse.up();
+  const srcAfter = active(await state(page)).source;
+  near(srcBefore.width - srcAfter.width, (40 / video.width) * 100, 0.2, 'a zoomed crop drag converts screen px to %');
+  near(srcBefore.height - srcAfter.height, (20 / video.height) * 100, 0.2, 'a zoomed crop drag converts screen px to % (y)');
+  await snapshot(page, `${base.name}-zoom-source`);
+  await page.locator(`${srcControls} .dc-zoom-btn`).nth(2).click();
+  await page.waitForTimeout(100);
+  const backFrame = await box('.source-column .canvas-frame');
+  for (const k of ['x', 'y', 'width', 'height']) near(backFrame[k], fitFrame[k], 0.5, `fit restores the source frame ${k}`);
+
+  // ── マスクのペン描画中に Space + ドラッグしても頂点は増えない
+  await page.locator('#add-mask-btn').click();
+  const pen = () => state(page).then(s => active(s).points.length);
+  const penBefore = await pen();
+  const host = await box('#output-stage .dc-canvas-host');
+  await page.mouse.move(host.x + host.width * 0.4, host.y + host.height * 0.4);
+  await page.keyboard.down('Space');
+  await page.mouse.down(); await page.mouse.move(host.x + host.width * 0.45, host.y + host.height * 0.45, { steps: 3 }); await page.mouse.up();
+  await page.keyboard.up('Space');
+  assert.equal(await pen(), penBefore, 'space-drag never adds a pen point');
+  // Space を離せば、通常のクリックで頂点を足せる
+  await page.mouse.click(host.x + host.width * 0.4, host.y + host.height * 0.4);
+  assert.equal(await pen(), penBefore + 1, 'a plain click still adds a pen point');
+}
+
 async function maskSelect(page, base) {
   await page.locator(entryButton).click();
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
@@ -1157,7 +1284,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
