@@ -79,6 +79,9 @@ native sub-issue と blocked by を使う。独立したタスクを無理に同
 - スケッチは同一オリジン・sandbox なし iframe で実行する。`captureStream` の taint を避ける
   意図的設計 ([ADR 0001](docs/decisions/0001-same-origin-sandboxless-iframe.md))。
   変更は [#35](https://github.com/shinyaoguri/dropcaster/issues/35) の隔離方式の検討を経る。
+- 映像の中身はすべて p5.js の作品側で作り、dropcaster は作品の出力を立体・面へマッピングする部分だけを担う。
+  動画・画像素材の読み込み、複数素材の重ね合わせ、エフェクト・ブレンド合成は足さない
+  ([ADR 0024](docs/decisions/0024-content-is-made-in-p5js.md))。範囲を広げる提案はこの ADR の更新として議論する。
 - 投影出力の画質は canvas バッキングストア解像度で決め、表示ウィンドウの解像度に依存させない
   ([ADR 0002](docs/decisions/0002-canvas-backing-store-decides-quality.md))。
 - `src/viewer/` はギャラリーと `apps/web/` で共有する。Node 側の JS + JSDoc + checkJs と

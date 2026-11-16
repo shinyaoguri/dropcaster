@@ -34,3 +34,4 @@
 | [0021](0021-mapping-activity-bar.md) | マッピング画面と会場画面の左端にアクティビティバーを置き、ツール列をパネルで切り替える | 採用 |
 | [0022](0022-release-by-tags-and-changelog-fragments.md) | 版はタグ、変更履歴は PR ごとの断片で持ち、週 1 回ファイルを変えずにリリースする | 採用 |
 | [0023](0023-trace-corners-to-reconstruct-venue.md) | 壁に映した十字で実物の角を手でなぞり、会場とプロジェクタ条件を逆算する | 採用 |
+| [0024](0024-content-is-made-in-p5js.md) | 映像は p5.js の作品側で作り、dropcaster は立体へのマッピングだけを担う（素材の読み込み・合成・エフェクトは持たない） | 採用 |
