@@ -8,18 +8,21 @@ import { scan, scanReset, ScanFailedError } from './commands/scan.js';
 import { init } from './commands/init.js';
 import { doctor } from './commands/doctor.js';
 import { fetchCommand } from './commands/fetch.js';
-import { readFileSync } from 'fs';
+import { resolveBuildInfo } from '../core/build-info.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const packageJson = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8'));
+// 版の正本は git のタグ (docs/decisions/0022)。package.json の version はリリースで動かない
+const buildInfo = resolveBuildInfo(join(__dirname, '../..'));
+const versionLabel = [buildInfo.version ?? 'unreleased', buildInfo.commit && `(${buildInfo.commit})`]
+  .filter(Boolean).join(' ');
 
 program
   .name('dropcaster')
   .description('A static PWA generator for creative coding sketches')
-  .version(packageJson.version);
+  .version(versionLabel);
 
 program
   .command('init [name]')

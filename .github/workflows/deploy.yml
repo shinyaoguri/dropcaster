@@ -27,6 +27,7 @@ on:
       - 'package-lock.json'
       - 'tsconfig.json'
       - '.github/workflows/deploy.yml'
+  # release.yml がタグを打った後にも起こす (GITHUB_TOKEN のタグ push では push イベントが起きない)
   workflow_dispatch:
 
 concurrency:
@@ -40,6 +41,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          # 表示する版はタグから求める (src/core/build-info.js・docs/decisions/0022)。タグと履歴が要る
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:

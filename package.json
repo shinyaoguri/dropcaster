@@ -1,6 +1,6 @@
 {
   "name": "dropcaster",
-  "version": "0.1.0",
+  "version": "0.0.0-dev",
   "description": "A static PWA generator for creative coding sketches",
   "keywords": [
     "openprocessing",

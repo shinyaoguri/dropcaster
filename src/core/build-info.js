@@ -7,17 +7,41 @@
 //   2. npm の hidden lockfile (node_modules/.package-lock.json) に GitHub から入れた解決 SHA があればそれ
 // node_modules 配下で素朴に `git rev-parse HEAD` を呼ぶとギャラリー側リポジトリの SHA を拾ってしまうので、
 // 1 は作業ツリーのルートがパッケージのルートと一致するときだけ採る。
+//
+// version は git のタグが正本 (docs/decisions/0022)。リリースはファイルを変えずタグと GitHub Release
+// だけで版を表すので、package.json の version は UNRELEASED_VERSION のまま動かない。
+//   1. パッケージのルートが作業ツリーで `v<major>.<minor>.<patch>` のタグが辿れれば、それ (先へ進んでいれば `+<コミット数>`)
+//   2. それ以外は package.json の version。UNRELEASED_VERSION なら「版不明」として null
+// GitHub から入れたギャラリーはタグを知る手段が無いので 2 に落ち、表示はコミットだけになる。
 import { readFileSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { basename, dirname, join } from 'path';
 
 /**
  * @typedef {object} BuildInfo
- * @property {string} version package.json の version
+ * @property {string | null} version 版 (例 `0.2.0`、タグより先なら `0.2.0+3`)。分からなければ null
  * @property {string | null} commit 短縮 commit SHA。分からなければ null
  */
 
 const SHORT_SHA_LENGTH = 7;
+
+/** package.json に置く「リリースされた版ではない」印。版の正本はタグ。 */
+export const UNRELEASED_VERSION = '0.0.0-dev';
+
+/** リリースのタグ。scripts/release.js が打つ形と同じ。 */
+export const RELEASE_TAG_GLOB = 'v[0-9]*.[0-9]*.[0-9]*';
+
+/**
+ * `git describe --tags --long` の出力 (例 `v0.2.0-3-gabc1234`) から版を求める。
+ * @param {unknown} describe
+ * @returns {string | null}
+ */
+export function versionFromDescribe(describe) {
+  if (typeof describe !== 'string') return null;
+  const match = /^v(\d+\.\d+\.\d+)-(\d+)-g[0-9a-f]+$/.exec(describe.trim());
+  if (!match) return null;
+  return match[2] === '0' ? match[1] : `${match[1]}+${match[2]}`;
+}
 
 /**
  * lockfile の `resolved` (例: `git+ssh://git@github.com/o/r.git#<40 桁の sha>`) から短縮 SHA を取り出す。
@@ -53,13 +77,28 @@ function canonical(path) {
 }
 
 /**
+ * パッケージのルートがそのまま git の作業ツリーのときだけ true。
+ * @param {string} packageRoot
+ */
+function isOwnWorkTree(packageRoot) {
+  const toplevel = git(packageRoot, ['rev-parse', '--show-toplevel']);
+  return Boolean(toplevel) && canonical(toplevel) === canonical(packageRoot);
+}
+
+/**
  * @param {string} packageRoot
  * @returns {string | null}
  */
 function commitFromGit(packageRoot) {
-  const toplevel = git(packageRoot, ['rev-parse', '--show-toplevel']);
-  if (!toplevel || canonical(toplevel) !== canonical(packageRoot)) return null;
   return git(packageRoot, ['rev-parse', `--short=${SHORT_SHA_LENGTH}`, 'HEAD']);
+}
+
+/**
+ * @param {string} packageRoot
+ * @returns {string | null}
+ */
+function versionFromGit(packageRoot) {
+  return versionFromDescribe(git(packageRoot, ['describe', '--tags', '--long', '--match', RELEASE_TAG_GLOB, 'HEAD']));
 }
 
 /**
@@ -84,6 +123,10 @@ function commitFromHiddenLockfile(packageRoot, name) {
  */
 export function resolveBuildInfo(packageRoot) {
   const pkg = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf-8'));
-  const commit = commitFromGit(packageRoot) ?? commitFromHiddenLockfile(packageRoot, pkg.name);
-  return { version: String(pkg.version), commit };
+  const ownWorkTree = isOwnWorkTree(packageRoot);
+  const commit = (ownWorkTree ? commitFromGit(packageRoot) : null) ?? commitFromHiddenLockfile(packageRoot, pkg.name);
+  const declared = String(pkg.version);
+  const version = (ownWorkTree ? versionFromGit(packageRoot) : null)
+    ?? (declared === UNRELEASED_VERSION ? null : declared);
+  return { version, commit };
 }

@@ -55,6 +55,8 @@ native sub-issue と blocked by を使う。独立したタスクを無理に同
   `origin/main` を追跡している作業ブランチは先に `git branch --unset-upstream`。
 - タイトルとコミットは Conventional Commits。許可する type は
   `scripts/check-pr-title.sh` が正本。1 コミット 1 関心、1 PR は 1 つの説明で筋が通る範囲。
+- 利用者から見える変更は `changelog.d/` に断片を 1 つ置く。リリースは断片とタグから週次で自動で出る
+  ([changelog.d/README.md](changelog.d/README.md)・[ADR 0022](docs/decisions/0022-release-by-tags-and-changelog-fragments.md))。
 - 本文は [PR テンプレート](.github/pull_request_template.md) に従い、要約・人の判断事項・目的・
   変更前後の具体例・完了条件と検証結果の対応表・未確認範囲・`Closes #N` を書く。
   長い Issue / PR 本文・コメントは、先頭 3 行以内に要約と人の判断事項を置く。

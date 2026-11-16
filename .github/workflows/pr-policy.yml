@@ -3,7 +3,7 @@ name: PR policy
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, ready_for_review]
+    types: [opened, synchronize, reopened, edited, ready_for_review, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -30,3 +30,25 @@ jobs:
           PR_TITLE=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title --jq .title)
           export PR_TITLE
           bash scripts/check-pr-title.sh
+
+      # feat / fix / perf / 破壊的変更の PR に changelog.d/ の断片を求める (docs/decisions/0022)。
+      # タイトル検査と同じく、判定は既定ブランチの scripts/release.js で行い PR のコードは実行しない。
+      # ファイル一覧とラベルは API の現在値を読む (ラベルの付け外しでも走り直す)。
+      - name: 変更履歴の断片
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          # 断片の仕組みを入れる PR 自身では既定ブランチにまだ判定が無い
+          if [ ! -f scripts/release.js ]; then
+            echo "::notice::既定ブランチに scripts/release.js が無いので断片の検査を見送る"
+            exit 0
+          fi
+          pr=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title,labels)
+          PR_TITLE=$(jq -r .title <<<"$pr")
+          PR_LABELS=$(jq -r '.labels[].name' <<<"$pr")
+          # gh pr view の files は先頭 100 件で切れるので、REST をページ送りで読む
+          PR_FILES=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename')
+          export PR_TITLE PR_FILES PR_LABELS
+          node scripts/release.js check-pr
