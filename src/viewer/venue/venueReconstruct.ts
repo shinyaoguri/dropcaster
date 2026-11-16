@@ -36,6 +36,7 @@ export type ReconstructElement =
    * 直交する 3 本の辺が集まる角。edges は各辺の上の点 (別の角の頂点でもよい)。
    * shape は凹 (部屋の隅のように内側から見る) か凸 (箱の角のように外側から見る) か。
    * 1 枚の像では両者を区別できない (ネッカーの立方体と同じ) ので、分かるなら必ず指定する。
+   * 凹はプロジェクタが 3 本の辺の張る 8 分円の内側にあること、凸は内側に無いこと (2 面しか見えない配置も含む) を求める。
    */
   | { kind: 'orthogonalCorner'; corner: string; edges: [string, string, string]; shape?: 'concave' | 'convex' }
   /** 頂点が 3 頂点の張る平面の上にある (接地など)。 */
@@ -296,10 +297,13 @@ class Problem {
         const [e1, e2, e3] = edges;
         r.push(CONSTRAINT_WEIGHT * dot(e1, e2), CONSTRAINT_WEIGHT * dot(e1, e3), CONSTRAINT_WEIGHT * dot(e2, e3));
         if (e.shape) {
-          // 凹なら角から見たプロジェクタは 3 本の辺の側 (内側)、凸なら反対側 (外側)。違反した分だけ罰する。
+          // 凹なら角から見たプロジェクタは 3 本の辺の側 (内側の 8 分円)。違反した分だけ罰する。
+          // 凸なら内側の 8 分円にいなければよい (どれか 1 本の辺の反対側)。3 本すべての反対側を求めると、
+          // 箱を正面から見て 2 面しか見えない配置 (#246) を解けない。反対の解釈 (凹の隅) を除くにはこれで足りる。
           const toProjector = unit(sub(state.position, o));
-          const sign = e.shape === 'concave' ? 1 : -1;
-          for (const edge of edges) r.push(CONSTRAINT_WEIGHT * Math.max(0, -sign * dot(toProjector, edge)));
+          const along = edges.map(edge => dot(toProjector, edge));
+          if (e.shape === 'concave') for (const d of along) r.push(CONSTRAINT_WEIGHT * Math.max(0, -d));
+          else r.push(CONSTRAINT_WEIGHT * Math.max(0, Math.min(...along)));
         }
       } else if (e.kind === 'onPlane') {
         const [a, b, c] = e.plane.map(point);

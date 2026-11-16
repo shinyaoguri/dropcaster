@@ -154,3 +154,17 @@ test('長方形の消失点から画角と縦のレンズシフトを線形に�
   assert.equal(estimateIntrinsicsFromRectangles(
     { output: OUTPUT, vertices: observe(front, CONFIGS.room.ids), elements: CONFIGS.room.elements }, [0, 0], true), null);
 });
+
+test('凸の角は、プロジェクタから 2 面しか見えない配置でも正解の解に戻る (#246)', () => {
+  // 正面のプロジェクタ (x = 0.3) は箱の右の面 (x = 0.5) より内側にあり、角の 3 本の辺のすべての外側にはいない。
+  // 凸の拘束は「内側の 8 分円にいない」ことだけを求め、反対側の解釈 (凹の隅) だけを除く。
+  /** @type {import('../src/viewer/venue/venueReconstruct.ts').ReconstructElement} */
+  const boxCorner = { kind: 'orthogonalCorner', corner: 'boxTopFrontRight', edges: ['boxBottomFrontRight', 'boxTopFrontLeft', 'boxTopBackRight'], shape: 'convex' };
+  const result = solve(front, 'roomAndBox', { fovPrior: throwRatioPrior, elements: [...CONFIGS.roomAndBox.elements, boxCorner] });
+  assert.equal(result.status, 'ok', result.underdetermined.join(','));
+  assert.ok(result.rmsPixels < 1e-3, `rms ${result.rmsPixels}`);
+  assert.ok(compareUpToScale(front, result.vertices, CONFIGS.roomAndBox.ids).maxError < 1e-4);
+  // 凸と指定した角を、内側から見た凹の隅として解く解釈は罰する。
+  const oneBox = reconstructVenue({ output: OUTPUT, vertices: observe(oblique, CONFIGS.boxTwoFacesCorner.ids), elements: CONFIGS.boxTwoFacesCorner.elements });
+  assert.ok(compareUpToScale(oblique, oneBox.vertices, CONFIGS.boxTwoFacesCorner.ids).maxError < 1e-3);
+});
