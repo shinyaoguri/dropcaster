@@ -23,7 +23,7 @@ const KEYS: Record<string, [NudgeAction, number, NudgeAction?]> = {
   ArrowUp: ['tilt', 1, 'up'], ArrowDown: ['tilt', -1, 'up'],
 };
 
-function editable(target: EventTarget | null): boolean {
+export function editable(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
   if (target instanceof HTMLInputElement) return !['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'].includes(target.type);
@@ -43,6 +43,8 @@ export class ProjectorAdjuster {
   private element: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   step: NudgeStep = 'coarse';
+  /** なぞる間 (#246) は像のポインタ・ホイール・キーを取らない。 */
+  suspended = false;
 
   constructor(options: ProjectorAdjusterOptions) { this.options = options; }
 
@@ -64,7 +66,7 @@ export class ProjectorAdjuster {
 
   /** 処理したキーなら true。呼び出し側で preventDefault する。 */
   handleKey(event: KeyboardEvent): boolean {
-    if (event.defaultPrevented || event.metaKey || event.ctrlKey || editable(event.target)) return false;
+    if (this.suspended || event.defaultPrevented || event.metaKey || event.ctrlKey || editable(event.target)) return false;
     if (event.key === 'Escape') { if (!this.start) return false; this.cancel(); return true; }
     if (event.key === 'g' || event.key === 'G') { this.setStep(this.step === 'coarse' ? 'fine' : 'coarse'); return true; }
     const { degrees, meters } = NUDGE_STEPS[this.step];
@@ -134,7 +136,7 @@ export class ProjectorAdjuster {
   }
 
   private pointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || this.drag) return;
+    if (this.suspended || event.button !== 0 || this.drag) return;
     const from = this.ndc(event); if (!from) return;
     clearTimeout(this.timer); this.timer = undefined;
     if (!this.start) { this.start = this.options.current(); this.value = this.start; }
@@ -172,7 +174,7 @@ export class ProjectorAdjuster {
   };
 
   private wheel = (event: WheelEvent): void => {
-    if (this.drag || event.ctrlKey || event.metaKey) return;
+    if (this.suspended || this.drag || event.ctrlKey || event.metaKey) return;
     event.preventDefault();
     const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY, fine = this.step === 'fine' ? .1 : 1;
     if (event.altKey) {
