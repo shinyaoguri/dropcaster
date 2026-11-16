@@ -20,6 +20,8 @@ export function installPracticeStyles(): void {
     .dc-workspace-menu-items button, .dc-workspace-menu-items a { display:block; width:100%; box-sizing:border-box; border:0; background:transparent; text-align:left; color:#eee; cursor:pointer; padding:7px 11px; text-decoration:none; border-radius:5px; font:13px system-ui; white-space:normal; }
     .dc-workspace-menu-items button:hover, .dc-workspace-menu-items a:hover { background:#444; }
     .dc-activity-bar-footer .dc-workspace-actions { flex-direction:column; gap:4px; margin:0; }
+    /* プロジェクトパネル末尾の会場の入口。<a> を他の .tool-button と同じ幅・見た目のボタンにする。 */
+    .dc-venue-entry-link { display:block; box-sizing:border-box; text-align:center; text-decoration:none; }
     .dc-workspace-actions .dc-workspace-close { box-sizing:border-box; border-radius:5px; text-decoration:none; display:flex; align-items:center; justify-content:center; width:36px; height:36px; padding:0; color:#8a8a8a; }
     .dc-workspace-actions .dc-workspace-close:hover { color:#eee; }
     .dc-workspace-actions .dc-workspace-close:hover { background:#444; }

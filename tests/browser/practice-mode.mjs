@@ -822,6 +822,35 @@ async function confirmClose(page, base) {
   assert.equal(await page.locator('#dc-inline-editor').isHidden(), true, 'confirming closes the editor');
   assert.equal(await page.evaluate(() => window.confirmTrack.readyState), 'ended', 'confirming releases the stream as before');
 }
+/** 家アイコンは確認を経てホームへ移り、出力ウィンドウを閉じる。取り消せば編集に留まる (#225)。 */
+async function confirmHome(page, base) {
+  await page.locator(entryButton).click(); await page.waitForSelector('#practice-home');
+  const dialog = page.locator('#practice-home-confirm');
+  const openDialog = async () => {
+    await page.locator('#practice-home').click();
+    assert.equal(await dialog.evaluate(d => d.open && d.matches(':modal')), true, 'home opens a modal confirmation');
+    assert.equal(new URL(page.url()).pathname, '/a', 'one click on home never leaves the sketch');
+  };
+  await openDialog();
+  assert.equal(await page.locator('#practice-home-cancel').evaluate(e => e === document.activeElement), true, 'cancel has the initial focus');
+  await page.locator('#practice-home-cancel').click();
+  assert.equal(await dialog.evaluate(d => d.open), false);
+  assert.equal(await page.locator('#dc-inline-editor').isVisible(), true, 'cancel keeps the editor open');
+  await openDialog(); await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#dc-inline-editor').isVisible(), true, 'Esc keeps the editor open');
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  assert.equal(await page.locator('#practice-home').getAttribute('aria-label'), 'ホームに戻る');
+  await showPanel(page, 'outputs');
+  const popupPromise = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click(); const popup = await popupPromise;
+  await openDialog();
+  assert.equal(await page.locator('#practice-home-confirm-title').innerText(), 'ホームに戻りますか？');
+  await snapshot(page, base.name + '-home-confirm-ja');
+  await page.locator('#practice-home-confirm-btn').click();
+  await page.waitForURL(url => url.pathname === '/');
+  assert.equal(await page.locator('#dc-inline-editor').count(), 0, 'the editor is gone at home');
+  await popup.waitForEvent('close', { timeout: 5000 }).catch(() => {});
+  assert.equal(popup.isClosed(), true, 'going home closes the output windows');
+}
 /**
  * 単独作品ページでは、作品の全画面 (⛶) とマッピング編集を両立させない (#103)。
  * 全画面中はマッピングへ入る操作を、編集中は全画面へ入る操作を出さず、どの順でも黒一色にならない。
@@ -1016,17 +1045,24 @@ async function activityBar(page, base) {
   assert.equal(await visible('#add-output-btn'), false);
   assert.equal(await page.locator('.dc-tool-panel.is-active').count(), 1);
   assert.equal(loadedPanel(), false, 'outputs and check panels never load 3D');
-  // 会場の作成・調整は 3D を読み込まずに別タブで開ける入口として、閉じるの上にある (ADR 0013 / 0015)。
-  const venueLink = page.locator('.dc-activity-bar-footer #practice-venue');
-  assert.equal(await venueLink.getAttribute('target'), '_blank'); assert.match(await venueLink.getAttribute('href'), /\/venue$/);
-  assert.equal(await venueLink.getAttribute('aria-label'), 'Venue setup');
-  assert.deepEqual(await page.locator('.dc-activity-bar-footer a, .dc-activity-bar-footer button').evaluateAll(es => es.filter(e => e.checkVisibility()).map(e => e.id)), ['practice-venue', 'practice-stop']);
+  // 下端はホームへ戻る (家) と閉じる (×) だけ。会場の作成・調整は使う頻度が低いのでここには置かない (#225)。
+  const homeLink = page.locator('.dc-activity-bar-footer #practice-home');
+  assert.match(await homeLink.getAttribute('href'), /^\/$/); assert.equal(await homeLink.getAttribute('target'), null);
+  assert.equal(await homeLink.getAttribute('aria-label'), 'Back to home');
+  assert.deepEqual(await page.locator('.dc-activity-bar-footer a, .dc-activity-bar-footer button').evaluateAll(es => es.filter(e => e.checkVisibility()).map(e => e.id)), ['practice-home', 'practice-stop']);
+  assert.equal(await page.locator('#practice-venue').count(), 1, 'the venue entry exists, inside the project panel');
+  assert.equal(await page.locator('.dc-activity-bar #practice-venue').count(), 0, 'the venue entry is not on the activity bar');
   // プロジェクト: 開くと PracticePanel を読み込み、保存・読込が「設定の入出力」より先に並ぶ。
   await page.locator('#dc-activity-project').click();
   assert.equal(await title.innerText(), 'Project');
   await page.locator('#practice-project-name').waitFor();
   assert.equal(loadedPanel(), true, 'opening the project panel loads the practice panel');
-  assert.deepEqual(await page.locator('#dc-tool-panel-project > *').evaluateAll(es => es.map(e => e.querySelector('#dc-practice-project') ? 'project' : e.querySelector('#export-settings-btn') ? 'io' : '?')), ['project', 'io']);
+  // 保存・読込 → 設定の入出力 → 会場の作成・調整 (末尾、別タブ) の順 (#225)。
+  assert.deepEqual(await page.locator('#dc-tool-panel-project > *').evaluateAll(es => es.map(e => e.querySelector('#dc-practice-project') ? 'project' : e.querySelector('#export-settings-btn') ? 'io' : e.querySelector('#practice-venue') ? 'venue' : '?')), ['project', 'io', 'venue']);
+  const venueLink = page.locator('#dc-tool-panel-project #practice-venue');
+  assert.equal(await venueLink.isVisible(), true);
+  assert.equal(await venueLink.getAttribute('target'), '_blank'); assert.match(await venueLink.getAttribute('href'), /\/venue$/);
+  assert.equal(await venueLink.innerText(), 'Venue setup ↗');
   // 3D: プレビューの設定と会場校正へのリンク。
   await page.locator('#dc-activity-preview3d').click();
   assert.equal(await title.innerText(), '3D');
@@ -1103,7 +1139,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, history, maskSelect, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));

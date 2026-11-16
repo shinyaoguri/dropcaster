@@ -20,8 +20,10 @@ export class MappingWorkspace {
   private panel: PracticePanel | null = null;
   private pendingPanel: Promise<void> | null = null;
   private editor: ControlWindow | null = null;
-  /** アクティビティバーの下端に差し込む閉じるとその確認ダイアログ。 */
+  /** アクティビティバーの下端に差し込むホーム・閉じると、それぞれの確認ダイアログ。 */
   private toolbar: HTMLElement | null = null;
+  /** プロジェクトパネルの末尾に差し込む会場の作成・調整への入口。 */
+  private venueEntry: HTMLElement | null = null;
   /** ツール見出しの直下に差し込む状態文と再試行。 */
   private notice: HTMLElement | null = null;
   private scope: HTMLElement | null = null;
@@ -68,17 +70,28 @@ export class MappingWorkspace {
     this.editor = editor;
     this.scope.classList.add('dc-mapping-workspace');
     // 専用の上部バーは作業領域を削るので持たない。状態文と再試行はツールカラムの見出し直下に置き、
-    // エラー時だけ見せる。会場の作成・調整 (別タブ) と閉じる操作はアクティビティバーの下端に置く。
-    // 会場の入口は 3D を読み込まずに開ける (ADR 0013 / 0015)。3D パネルは開くと 3D を読み込むので、そこには置かない。
+    // エラー時だけ見せる。ホームへ戻る・閉じる操作はアクティビティバーの下端に置く。
+    // 会場の作成・調整 (別タブ) は使う頻度が低いので、常時見えるバーではなくプロジェクトパネルの末尾に置く (ADR 0021)。
     const toolHeader = this.scope.querySelector<HTMLElement>('.tool-column > .column-header');
     const activityFooter = this.scope.querySelector<HTMLElement>('.dc-activity-bar-footer');
-    if (!toolHeader || !activityFooter) { this.stop(); return; }
+    const projectPanel = this.scope.querySelector<HTMLElement>('#dc-tool-panel-project');
+    if (!toolHeader || !activityFooter || !projectPanel) { this.stop(); return; }
     this.notice = document.createElement('div'); this.notice.className = 'dc-workspace-notice';
     this.notice.innerHTML = `<span id="dc-practice-status" role="status" aria-live="polite"></span>
       <button type="button" id="practice-retry" class="tool-button" data-i18n="practice.retry" hidden></button>`;
     toolHeader.after(this.notice);
     this.toolbar = document.createElement('div'); this.toolbar.className = 'dc-workspace-actions';
-    this.toolbar.innerHTML = `<a id="practice-venue" class="dc-workspace-close" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer" data-i18n-title="calibration.title" data-i18n-aria-label="calibration.title"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/></svg></a>
+    // ホームへ出ると作品のページを離れ、出力ウィンドウも閉じる。× と同じく 1 クリックでは出ず確認を挟む。
+    // 確定は <a> なので、ルーターの内部遷移 (SPA) でホームへ移る。
+    this.toolbar.innerHTML = `<a id="practice-home" class="dc-workspace-close" href="${routeHref('/')}" data-i18n-title="practice.home" data-i18n-aria-label="practice.home"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/></svg></a>
+      <dialog id="practice-home-confirm" class="dc-workspace-confirm" aria-labelledby="practice-home-confirm-title" aria-describedby="practice-home-confirm-hint"><div class="dc-workspace-confirm-body">
+        <p id="practice-home-confirm-title" class="dc-workspace-confirm-title" data-i18n="practice.homeConfirm"></p>
+        <p id="practice-home-confirm-hint" class="dc-workspace-confirm-hint" data-i18n="practice.homeConfirmHint"></p>
+        <div class="dc-workspace-confirm-actions">
+          <button type="button" id="practice-home-cancel" data-i18n="practice.stopCancel" autofocus></button>
+          <a id="practice-home-confirm-btn" class="is-danger" href="${routeHref('/')}" data-i18n="practice.homeConfirmAction"></a>
+        </div>
+      </div></dialog>
       <button type="button" id="practice-stop" class="dc-workspace-close" data-i18n-title="practice.stop" data-i18n-aria-label="practice.stop"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       <dialog id="practice-stop-confirm" class="dc-workspace-confirm" aria-labelledby="practice-stop-confirm-title" aria-describedby="practice-stop-confirm-hint"><div class="dc-workspace-confirm-body">
         <p id="practice-stop-confirm-title" class="dc-workspace-confirm-title" data-i18n="practice.stopConfirm"></p>
@@ -89,8 +102,23 @@ export class MappingWorkspace {
         </div>
       </div></dialog>`;
     activityFooter.append(this.toolbar);
+    this.venueEntry = document.createElement('section');
+    this.venueEntry.id = 'practice-venue-entry'; this.venueEntry.className = 'tool-section';
+    this.venueEntry.innerHTML = `<h3 data-i18n="calibration.title"></h3><p class="section-hint" data-i18n="practice.venueEntryHint"></p>
+      <a id="practice-venue" class="tool-button dc-venue-entry-link" href="${routeHref('/venue')}" target="_blank" rel="noopener noreferrer" data-i18n="calibration.open"></a>`;
+    projectPanel.append(this.venueEntry);
     // × は 1 クリックで閉じず確認を挟む。window.confirm() はメインスレッドを止め、同一オリジン
     // iframe の作品描画と出力への captureStream まで止めるので、非ブロッキングの <dialog> を使う。
+    const home = this.toolbar.querySelector<HTMLDialogElement>('#practice-home-confirm')!;
+    this.toolbar.querySelector('#practice-home')!.addEventListener('click', event => {
+      // ルーターの document クリック捕捉より先に止め、確認を経ずに遷移させない。
+      event.preventDefault(); event.stopPropagation();
+      if (!home.open) home.showModal();
+    });
+    home.querySelector('#practice-home-cancel')!.addEventListener('click', () => home.close());
+    home.querySelector('#practice-home-confirm-btn')!.addEventListener('click', () => home.close());
+    home.addEventListener('click', event => { if (event.target === home) home.close(); });
+    home.addEventListener('keydown', event => event.stopPropagation());
     const confirm = this.toolbar.querySelector<HTMLDialogElement>('#practice-stop-confirm')!;
     this.toolbar.querySelector('#practice-stop')!.addEventListener('click', () => {
       if (!confirm.open) confirm.showModal();
@@ -181,6 +209,7 @@ export class MappingWorkspace {
   }
   private translate(): void {
     if (this.toolbar) applyControlTranslations(this.toolbar);
+    if (this.venueEntry) applyControlTranslations(this.venueEntry);
     if (this.notice) applyControlTranslations(this.notice);
     this.status(this.statusKey, this.error);
   }
@@ -191,6 +220,7 @@ export class MappingWorkspace {
     this.offToolPanel?.(); this.offToolPanel = null;
     this.panel?.dispose(); this.panel = null; this.editor = null;
     this.toolbar?.remove(); this.toolbar = null;
+    this.venueEntry?.remove(); this.venueEntry = null;
     this.notice?.remove(); this.notice = null;
     this.scope?.classList.remove('dc-mapping-workspace'); this.scope = null;
     this.options.unmountEditor();
