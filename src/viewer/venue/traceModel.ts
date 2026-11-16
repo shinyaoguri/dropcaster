@@ -15,7 +15,8 @@ export interface TracePoint {
 
 export type TraceShape =
   /** points = [角, 縦の辺の上, 残りの辺の上, 残りの辺の上]。部屋の隅は凹、箱の角は凸。 */
-  | { kind: 'roomCorner' | 'boxCorner'; points: [string, string, string, string] }
+  | { kind: 'roomCorner'; points: [string, string, string, string] }
+  | { kind: 'boxCorner'; points: [string, string, string, string] }
   /** 周に沿った 4 隅 */
   | { kind: 'rectangle'; points: [string, string, string, string] }
   | { kind: 'length'; points: [string, string]; meters: number };

@@ -336,9 +336,115 @@ async function reload(page,base){
   assert.equal(await page.inputValue('#venue-name'),'Third');
 }
 
+// #246: 壁に映した十字で実物の角をなぞり、会場とプロジェクタを推定して適用する (ADR 0023)。
+/** 実出力 canvas の 1 画素 (出力画素、左上原点)。 */
+async function outputPixel(page,[x,y]){
+  return page.evaluate(([x,y])=>{const p=window.calibrationPage.projection;p.render();const gl=p.renderer.getContext(),bytes=new Uint8Array(4);gl.readPixels(Math.round(x),p.canvas.height-1-Math.round(y),1,1,gl.RGBA,gl.UNSIGNED_BYTE,bytes);return [...bytes.slice(0,3)]},[x,y]);
+}
+async function traceState(page){return page.evaluate(()=>{const t=window.calibrationPage.trace,c=t.controller;return {crosshair:[...c.crosshair],points:c.doc.points.map(p=>[p.id,[...p.pixel]]),shapes:c.doc.shapes.length,pending:[...c.pending],venue:t.state.venue?.status??null,objects:t.state.venue?.objects?.length??0,elapsed:t.state.elapsed,status:document.querySelector('#venue-trace-status').textContent}})}
+/** 確定済みのプロジェクタで、会場の点 (m) が出力のどこに映るか (出力画素)。three.js 経由の既存の投影を使う。 */
+async function projectToOutput(page,base,points){
+  return page.evaluate(async ([modules,points])=>{
+    const {projectToNdc}=await import(`${modules}/venue/ProjectorNudge.ts`),projector=window.calibrationPage.session.changes.get().venue.projectors[0],{width,height}=window.calibrationPage.projection.canvas;
+    return points.map(point=>{const n=projectToNdc(projector,point);return [(n[0]+1)/2*width,(1-n[1])/2*height]});
+  },[base.modules,points]);
+}
+async function onTraceImage(page,[x,y]){const box=await page.locator('#venue-image').boundingBox(),{width,height}=await page.evaluate(()=>{const c=window.calibrationPage.projection.canvas;return {width:c.width,height:c.height}});return {x:box.x+x/width*box.width,y:box.y+y/height*box.height}}
+async function trace(page,base){
+  const original=await current(page);
+  await page.locator('#dc-activity-trace').click();
+  assert.equal(await page.locator('.dc-venue-page.is-tracing').count(),1);
+  // 十字は実出力 (壁) に映る: 中心の隙間は暗く、腕は赤い。
+  const start=(await traceState(page)).crosshair;
+  const arm=await outputPixel(page,[start[0]+40,start[1]]),gap=await outputPixel(page,[start[0]+4,start[1]]);
+  assert.ok(arm[0]>200&&arm[1]<80&&arm[2]<80,`crosshair arm is red ${arm}`);assert.ok(!(gap[0]>200&&gap[1]<80),`the centre is open ${gap}`);
+  // 既定の部屋 (8 × 3 × 6 m) を、既定のプロジェクタ (縦画角 43°) から正面でなぞる。投射比を仕様値として入れる。
+  await change(page,'#venue-trace-throw',(1/(2*(16/9)*Math.tan(21.5*Math.PI/180))).toFixed(4));
+  const [backLeft,leftUp,backRight,leftSide,rightUp,rightSide]=await projectToOutput(page,base,[[-4,0,-3],[-4,2,-3],[4,0,-3],[-4,0,-1],[4,2,-3],[4,0,-1]]);
+  // なぞる間は、像を押してドラッグしてもプロジェクタは動かない (十字だけが付いてくる)。
+  const dragFrom=await onTraceImage(page,[600,400]),revision=original.venue.revision;
+  await page.mouse.move(dragFrom.x,dragFrom.y);await page.mouse.down();await page.mouse.move(dragFrom.x+60,dragFrom.y+30,{steps:5});await page.mouse.up();
+  await page.waitForTimeout(650);
+  assert.equal((await current(page)).venue.revision,revision,'dragging the image does not adjust the projector while tracing');
+  assert.equal(await page.evaluate(()=>window.calibrationPage.adjuster.pending),null);
+  // 十字は押した点から、像の上で動かした分 (CSS px を出力画素へ換算) だけ動く。
+  const box=await page.locator('#venue-image').boundingBox(),dragged=(await traceState(page)).crosshair;
+  const expected=[600+60*1920/box.width,400+30*1080/box.height];
+  assert.ok(Math.hypot(dragged[0]-expected[0],dragged[1]-expected[1])<2,`the crosshair follows the drag ${dragged} ≠ ${expected}`);
+  // 矢印キー: 10 px、Shift で 1 px。
+  await page.locator('#venue-output-stage').focus();
+  const before=(await traceState(page)).crosshair;
+  await page.keyboard.press('ArrowRight');await page.keyboard.press('Shift+ArrowDown');
+  assert.deepEqual((await traceState(page)).crosshair,[before[0]+10,before[1]+1],'arrows move 10 px, Shift+arrows 1 px');
+  // 部屋の左右の隅を、像のダブルクリックでなぞる。右の隅の奥の辺は、左の隅の点に吸着して共有する。
+  await page.locator('#venue-trace-tool-roomCorner').click();
+  for(const point of [backLeft,leftUp,backRight,leftSide]){const at=await onTraceImage(page,point);await page.mouse.dblclick(at.x,at.y)}
+  assert.equal((await traceState(page)).shapes,1);
+  for(const point of [backRight,rightUp,backLeft,rightSide]){const at=await onTraceImage(page,point);await page.mouse.dblclick(at.x,at.y)}
+  await page.waitForFunction(()=>window.calibrationPage.trace.state.venue?.status==='ok');
+  const solved=await traceState(page);
+  assert.equal(solved.points.length,6,'the shared corners are one point each');
+  assert.equal(solved.shapes,2);assert.equal(solved.objects,4,`floor, back, left and right walls: ${solved.status}`);
+  assert.ok(solved.elapsed<1000,`re-estimating takes ${solved.elapsed} ms`);
+  assert.match(solved.status,/Estimated 4 parts/);assert.match(solved.status,/Scale is not set/);
+  assert.equal((await page.locator('#venue-trace-points li').count()),6);
+  // 推定は一時表示で、まだ保存しない。
+  assert.equal((await current(page)).venue.revision,revision,'estimating does not save');
+  await snapshot(page,base.name+'-venue-trace-estimated');
+  // 置き直し: 十字が点へ移り、Esc で取り消すと点も十字も元のまま。
+  const [firstId,firstPixel]=solved.points[0];
+  await page.locator(`#venue-trace-points [data-trace-action=move][data-point=${firstId}]`).click();
+  assert.deepEqual((await traceState(page)).crosshair,firstPixel);
+  await page.locator('#venue-output-stage').focus();await page.keyboard.press('ArrowLeft');await page.keyboard.press('Escape');
+  const cancelled=await traceState(page);assert.deepEqual(cancelled.crosshair,firstPixel);assert.deepEqual(cancelled.points[0][1],firstPixel);
+  // 適用: 部材とプロジェクタが 1 回の変更 (1 revision) で書き込まれ、「直前の変更を戻す」1 回で戻る。
+  await page.locator('#venue-trace-apply').click();
+  await page.waitForFunction(r=>window.calibrationPage.session.changes.get().venue.revision===r+1,revision);
+  const applied=await current(page);
+  assert.deepEqual(applied.venue.scene.objects.map(o=>o.kind),['floor','wall','wall','wall']);
+  assert.notDeepEqual(applied.venue.projectors[0],original.venue.projectors[0],'the projector is estimated too');
+  await page.waitForTimeout(700);assert.equal((await current(page)).venue.revision,revision+1,'apply is one change');
+  await page.locator('#venue-trace-undo').click();
+  await page.waitForFunction(objects=>JSON.stringify(window.calibrationPage.session.changes.get().venue.scene.objects)===objects,JSON.stringify(original.venue.scene.objects));
+  const undone=await current(page);
+  assert.deepEqual(undone.venue.scene.objects,original.venue.scene.objects);assert.deepEqual(undone.venue.projectors,original.venue.projectors);
+  // 出力窓: 窓いっぱいに引き伸ばした出力の上で、マウスの位置が出力画素へ換算される。クリックで確定。
+  const outputWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const output=await outputWait;
+  await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
+  for(const [w,h] of [[960,540],[700,500]]){
+    await output.setViewportSize({width:w,height:h});
+    await output.mouse.move(w*.25,h*.75);
+    await page.waitForFunction(([x,y])=>{const c=window.calibrationPage.trace.controller.crosshair;return Math.abs(c[0]-x)<1e-6&&Math.abs(c[1]-y)<1e-6},[1920*.25,1080*.75]);
+  }
+  await page.locator('#venue-trace-tool-rectangle').click();
+  await output.mouse.click(700*.25,500*.75);
+  const clicked=await traceState(page);assert.equal(clicked.pending.length,1,'a click in the output window confirms the point');
+  await output.keyboard.press('ArrowUp');assert.deepEqual((await traceState(page)).crosshair,[1920*.25,1080*.75-10],'keys work in the output window');
+  await output.keyboard.press('Escape');assert.equal((await traceState(page)).pending.length,0,'Esc drops the half-traced shape');
+  await output.close();
+  // パネルを離れると十字は消え、確定済みの会場の表示に戻る。
+  const last=(await traceState(page)).crosshair;
+  await page.locator('#dc-activity-objects').click();
+  assert.equal(await page.locator('.dc-venue-page.is-tracing').count(),0);
+  const away=await outputPixel(page,[last[0]+40,last[1]]);assert.ok(!(away[0]>200&&away[1]<80),'the crosshair leaves the wall');
+  await page.waitForFunction(()=>window.calibrationPage.preview.venueMeshes().length===4);
+  // なぞった点は会場の下書きと別に保存され、リロード後も残る。書き出す会場ファイルには含まれない。
+  assert.ok(await page.evaluate(()=>!!localStorage.getItem('dropcaster.venue.trace.v1')));
+  const shared=await download(page);assert.equal(JSON.stringify(shared).includes('dropcaster.venue.trace'),false);
+  assert.deepEqual(Object.keys(shared).sort(),['assets','format','name','schemaVersion','venue']);
+  assert.equal(JSON.stringify(shared).includes('"shapes"'),false,'traced points stay out of the venue file');
+  await page.reload();await reloaded(page);
+  await page.locator('#dc-activity-trace').click();
+  // リロード後はテスト用のページ参照が無いので、画面の表示で確かめる。
+  await page.waitForFunction(()=>/Estimated 4 parts/.test(document.querySelector('#venue-trace-status').textContent));
+  assert.deepEqual(await page.locator('#venue-trace-points li > span:first-child').allTextContents(),cancelled.points.map(([id])=>`P${id.slice(1)}`));
+  await snapshot(page,base.name+'-venue-trace-reloaded');
+}
+
 // #232: マッピング画面と同じ左端のアクティビティバー (ADR 0021)。パネルの並び・所属・畳み・キーボード・狭い画面。
 const VENUE_PANELS={
   objects:['#dc-practice-venue','#practice-start-objects'],
+  trace:['#venue-trace-throw','#venue-trace-tool-roomCorner','#venue-trace-confirm','#venue-trace-apply'],
   projector:['#practice-output','#venue-step-coarse','#venue-undo-projector','#practice-projector-form'],
   output:['#venue-resolution'],
   files:['#venue-name','#venue-export','#venue-load','#venue-copy-mapping','#practice-load-glb','#practice-sample','#venue-mapping','[data-lang-set=ja]'],
@@ -402,7 +508,7 @@ try{
     const server=await createServer({configFile:resolve(root,config),root:hosted?resolve(root,'apps/web'):root,server:{host:'127.0.0.1',port:0,open:false,watch:null,hmr:false},logLevel:'error'});
     try{
       await server.listen();const base={name,url:`http://127.0.0.1:${server.httpServer.address().port}`,modules:hosted?`/@fs${root.slice(0,-1)}/src/viewer`:'/src/viewer'};
-      for(const [testName,run] of Object.entries({activityBar,workflow,interaction,adjust,recovery,isolation,reload})){
+      for(const [testName,run] of Object.entries({activityBar,workflow,interaction,adjust,trace,recovery,isolation,reload})){
         if(process.env.VENUE_CASE&&process.env.VENUE_CASE!==testName)continue;
         const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'}),errors=[];
         context.on('page',page=>page.on('pageerror',error=>errors.push(error.message)));

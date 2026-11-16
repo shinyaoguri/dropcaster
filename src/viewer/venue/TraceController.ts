@@ -1,6 +1,6 @@
 import type { PixelPoint } from './venueReconstruct.ts';
 import { dropUnused, emptyTrace, movePoint, placePoint, removePoint, resizeTrace, TOOL_STEPS,
-  type TraceDocument, type TraceTool } from './traceModel.ts';
+  type TraceDocument, type TraceShape, type TraceTool } from './traceModel.ts';
 
 export type ConfirmResult = 'placed' | 'shape' | 'moved' | 'duplicate' | 'needLength' | 'idle';
 
@@ -90,7 +90,7 @@ export class TraceController {
     this.pending = [];
     this.doc = { ...this.doc, shapes: [...this.doc.shapes,
       tool === 'length' ? { kind: 'length', points: [points[0], points[1]], meters: length as number }
-        : { kind: tool, points: [points[0], points[1], points[2], points[3]] }] };
+        : { kind: tool, points: [points[0], points[1], points[2], points[3]] } as TraceShape] };
     this.notify(true);
     return 'shape';
   }

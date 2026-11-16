@@ -15,7 +15,7 @@ const pixelOf = id => observe(front, [id])[0].pixel;
 /** 正解の縦画角 50° に当たる投射比。 */
 const throwRatio = 1 / (2 * (OUTPUT.width / OUTPUT.height) * Math.tan(25 * Math.PI / 180));
 
-/** @param {import('../src/viewer/venue/TraceController.ts').TraceController} trace @param {string} tool @param {string[]} ids */
+/** @param {import("../src/viewer/venue/TraceController.ts").TraceController} trace @param {import("../src/viewer/venue/traceModel.ts").TraceTool} tool @param {string[]} ids @param {number | null} [meters] */
 function traceShape(trace, tool, ids, meters = null) {
   trace.setTool(tool);
   const results = ids.map(id => { trace.moveCrosshair(pixelOf(id)); return trace.confirm(() => meters); });
