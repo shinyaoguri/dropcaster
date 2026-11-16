@@ -11,6 +11,12 @@ import { dirname, resolve, sep } from 'path';
 const DECKARD_HOST = 'https://deckard.openprocessing.org/';
 
 /**
+ * アセットを保存するディレクトリの名前 (outDir の直下)。同じ outDir に書くファイルは、
+ * この名前 (大文字小文字違いを含む) を避ける。
+ */
+export const ASSET_DIR_NAME = 'assets';
+
+/**
  * 指定 codeTabs の中に現れる deckard 絶対 URL を抽出する (重複除去済み配列を返す)。
  * 抽出は素朴な正規表現 (シングルクオート / ダブルクオート で囲まれた絶対 URL を拾う)。
  * テンプレリテラルや動的連結には対応していない (典型的な OP コードでは出現頻度が低いため)。
@@ -82,8 +88,8 @@ export function assetPathsForUrl(absUrl) {
     names.push({ name, ref });
   }
   return {
-    filePath: `assets/${names.map((n) => n.name).join('/')}`,
-    urlPath: `assets/${names.map((n) => n.ref).join('/')}`,
+    filePath: `${ASSET_DIR_NAME}/${names.map((n) => n.name).join('/')}`,
+    urlPath: `${ASSET_DIR_NAME}/${names.map((n) => n.ref).join('/')}`,
   };
 }
 
@@ -138,7 +144,7 @@ export async function downloadAssets(urls, outDir, opts = {}) {
     const { filePath, urlPath: rel } = paths;
     const absPath = resolve(outDir, filePath);
     // 念のための最終防衛: 解決後パスが outDir/assets 配下に収まることを確認
-    if (!absPath.startsWith(resolve(outDir, 'assets') + sep)) continue;
+    if (!absPath.startsWith(resolve(outDir, ASSET_DIR_NAME) + sep)) continue;
     try {
       await mkdir(dirname(absPath), { recursive: true });
       const res = await fetch(url);

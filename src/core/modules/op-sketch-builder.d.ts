@@ -59,6 +59,8 @@ export function assembleLocalOpSketchHtml(params: {
 }): string;
 export function planHtmlModeLocalFiles(params: {
   codeTabs: OpCodeTab[];
+  /** 同じディレクトリに作るアセット用ディレクトリの名前。アセットを同梱しないときは渡さない */
+  assetDirName?: string;
 }): {
   files: Array<{ name: string; content: string }>;
   indexName: string;
