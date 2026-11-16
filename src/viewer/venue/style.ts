@@ -24,8 +24,6 @@ export function installVenueStyles(): void {
     .dc-venue-page .tool-column > .column-header h2 { flex:1;min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
     .dc-venue-page .dc-workspace-close { display:flex;align-items:center;padding:5px;border-radius:5px;color:#eee; }
     .dc-venue-page .dc-workspace-close:hover { background:#444; }
-    .dc-venue-page .dc-workspace-confirm-actions a { padding:6px 14px;border:1px solid #dc2626;border-radius:5px;background:#b91c1c;color:white;text-decoration:none;font:13px system-ui; }
-    .dc-venue-page .dc-workspace-confirm-actions a:hover { background:#dc2626; }
     .dc-venue-lang { padding:6px 11px 3px;border-top:1px solid #444;margin-top:4px; }
     .dc-venue-page .dc-venue-lang .dc-lang-toggle { background:#1a1a1a;height:28px; }
     .dc-venue-page .dc-venue-lang .dc-lang-toggle-opt { display:inline-flex;width:auto;padding:0 12px;color:#999;font:600 11px system-ui;letter-spacing:.1em; }

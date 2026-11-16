@@ -844,6 +844,8 @@ async function confirmHome(page, base) {
   const popupPromise = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click(); const popup = await popupPromise;
   await openDialog();
   assert.equal(await page.locator('#practice-home-confirm-title').innerText(), 'ホームに戻りますか？');
+  // 確定は遷移のため <a> だが、× の確認と同じ赤いボタンに見える (下線付きのリンクにしない)。
+  assert.deepEqual(await page.locator('#practice-home-confirm-btn').evaluate(e => { const c = getComputedStyle(e); return [c.backgroundColor, c.textDecorationLine]; }), ['rgb(185, 28, 28)', 'none']);
   await snapshot(page, base.name + '-home-confirm-ja');
   await page.locator('#practice-home-confirm-btn').click();
   await page.waitForURL(url => url.pathname === '/');
