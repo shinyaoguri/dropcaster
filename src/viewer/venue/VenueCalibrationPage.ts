@@ -8,7 +8,8 @@ import { createProject, defaultProjector, defaultScene, encodeAsset, importVenue
   MAX_GLB_BYTES, MAX_PACKAGE_BYTES, type Project, type Projector, type VenueScene, type Vec3 } from '../practice/project';
 import { readProject } from '../practice/projectStore';
 import { button, field, label, quaternion, rotation, vectorFields } from '../practice/controls';
-import { applyControlTranslations } from '../windows/control/ControlWindow.template';
+import { activityButtonHtml, activityIcon, applyControlTranslations } from '../windows/control/ControlWindow.template';
+import { ActivityBar } from '../windows/control/panels/ActivityBar';
 import { ColumnResizers } from '../windows/control/panels/ColumnResizers';
 import { getLang, onLangChange, t, type MessageKey } from '../i18n';
 import { langSwitcherHtml, wireLangSwitcher } from '../i18n/LanguageSwitcher';
@@ -25,12 +26,14 @@ import type { NudgeStep } from './ProjectorNudge';
 const PRESETS: [number, number][] = [[1920, 1080], [1280, 800], [1024, 768]];
 const MIN_ASPECT = .2, MAX_ASPECT = 5;
 type SizeSource = 'preset' | 'fullscreen' | 'venue';
-
-const icon = (path: string, size = 16) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="${path}"/></svg>`;
+/** 左端のアクティビティバーで切り替えるツール列の中身。 */
+type VenuePanel = 'objects' | 'projector' | 'output' | 'files';
+const PANEL_TITLES = { objects: 'calibration.objects', projector: 'calibration.projector', output: 'calibration.output', files: 'calibration.menu' } as const satisfies Record<VenuePanel, MessageKey>;
 
 /**
  * Standalone calibration (ADR 0015 / 0019). No sketch, WindowController or mapping-storage writer is created here.
- * Layout mirrors the mapping editor: tools on the left, then the projected image (2D) and the venue (3D) side by side.
+ * Layout mirrors the mapping editor (ADR 0021): the activity bar and tool panels on the left, then the projected image (2D)
+ * and the venue (3D) side by side.
  */
 export class VenueCalibrationPage {
   private root = document.createElement('section');
@@ -43,6 +46,7 @@ export class VenueCalibrationPage {
   private editor?: VenueEditor;
   private adjuster?: ProjectorAdjuster;
   private resizers = new ColumnResizers('dropcaster.venue.columnWidths.v1');
+  private activityBar = new ActivityBar<VenuePanel>('objects', panel => PANEL_TITLES[panel]);
   private canvas = document.createElement('canvas');
   /** 投影される像の縮小表示。出力 canvas をそのまま CSS で縮めると 1px の輪郭が途切れるので、高品質に縮小して写す。 */
   private mirror = document.createElement('canvas');
@@ -63,44 +67,37 @@ export class VenueCalibrationPage {
   async initialize(): Promise<void> {
     installPracticeStyles(); installVenueStyles();
     this.root.className = 'dc-control-shell dc-venue-page';
+    // マッピング画面と同じ骨格 (ADR 0021): 左端のアクティビティバーでツール列のパネルを切り替え、選択中の再押下で畳む。
     this.root.innerHTML = `<div class="control-container">
-      <div class="column tool-column">
-        <div class="column-header">
-          <details id="venue-menu" class="dc-workspace-menu"><summary data-i18n-title="calibration.menu" data-i18n-aria-label="calibration.menu">${icon('M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-6 0v6')}</summary>
-            <div class="dc-workspace-menu-items">
-              <button type="button" id="venue-load" data-i18n="calibration.load"></button>
-              <button type="button" id="venue-copy-mapping" data-i18n="calibration.copyMapping"></button>
-              <button type="button" id="practice-load-glb" data-i18n="practice.loadGlb"></button>
-              <button type="button" id="practice-sample" data-i18n="practice.sample"></button>
-              <a id="venue-mapping" href="${routeHref('/mapping')}" target="_blank" rel="noopener noreferrer" data-i18n="calibration.mapping"></a>
-              <div class="dc-venue-lang">${langSwitcherHtml()}</div>
-            </div></details>
-          <h2>${label('calibration.title')}</h2>
-          <div class="dc-workspace-actions">
-            <a id="venue-close" class="dc-workspace-close" href="${routeHref('/')}" data-i18n-title="calibration.close" data-i18n-aria-label="calibration.close">${icon('m6 6 12 12M18 6 6 18', 18)}</a>
-            <dialog id="venue-close-confirm" class="dc-workspace-confirm" aria-labelledby="venue-close-confirm-title" aria-describedby="venue-close-confirm-hint"><div class="dc-workspace-confirm-body">
-              <p id="venue-close-confirm-title" class="dc-workspace-confirm-title" data-i18n="calibration.closeConfirm"></p>
-              <p id="venue-close-confirm-hint" class="dc-workspace-confirm-hint" data-i18n="calibration.closeConfirmHint"></p>
-              <div class="dc-workspace-confirm-actions">
-                <button type="button" id="venue-close-cancel" data-i18n="practice.stopCancel" autofocus></button>
-                <a id="venue-close-confirm-btn" class="is-danger" href="${routeHref('/')}" data-i18n="calibration.closeConfirmAction"></a>
-              </div></div></dialog>
-          </div>
+      <div class="dc-activity-bar">
+        <div class="dc-activity-tabs" role="tablist" aria-orientation="vertical" data-i18n-aria-label="control.activity.label" aria-label="${t('control.activity.label')}">
+          ${activityButtonHtml('objects', 'calibration.objects', 'cube', true)}
+          ${activityButtonHtml('projector', 'calibration.projector', 'projector')}
+          ${activityButtonHtml('output', 'calibration.output', 'monitor')}
+          ${activityButtonHtml('files', 'calibration.menu', 'save')}
         </div>
+        <div class="dc-activity-bar-footer"><div class="dc-workspace-actions">
+          <a id="venue-close" class="dc-workspace-close" href="${routeHref('/')}" data-i18n-title="calibration.close" data-i18n-aria-label="calibration.close">${activityIcon('home')}</a>
+          <dialog id="venue-close-confirm" class="dc-workspace-confirm" aria-labelledby="venue-close-confirm-title" aria-describedby="venue-close-confirm-hint"><div class="dc-workspace-confirm-body">
+            <p id="venue-close-confirm-title" class="dc-workspace-confirm-title" data-i18n="calibration.closeConfirm"></p>
+            <p id="venue-close-confirm-hint" class="dc-workspace-confirm-hint" data-i18n="calibration.closeConfirmHint"></p>
+            <div class="dc-workspace-confirm-actions">
+              <button type="button" id="venue-close-cancel" data-i18n="practice.stopCancel" autofocus></button>
+              <a id="venue-close-confirm-btn" class="is-danger" href="${routeHref('/')}" data-i18n="calibration.closeConfirmAction"></a>
+            </div></div></dialog>
+        </div></div>
+      </div>
+      <div class="column tool-column">
+        <div class="column-header"><h2 data-i18n="calibration.objects">${t('calibration.objects')}</h2></div>
         <div class="dc-venue-status"><span id="venue-status" role="status" aria-live="polite"></span>${button('venue-reload', 'calibration.reload')}</div>
         <div class="tool-content dc-practice-settings">
-          <details id="venue-section-venue" class="tool-section" open><summary>${label('practice.venue')}</summary>
-            <p class="dc-practice-hint">${label('calibration.intro')}</p>
-            <label class="dc-practice-field">${label('calibration.venueName')}<input id="venue-name" maxlength="200" required></label>
-            <p id="venue-storage" class="dc-practice-hint" role="status"></p>
-            ${button('venue-export', 'practice.exportVenue')}
-            <p class="dc-practice-hint">${label('calibration.isolated')}</p>
-            <details id="venue-model-transform"><summary>${label('practice.scale')}</summary><form id="practice-venue-form">
+          <div class="dc-tool-panel is-active" id="dc-tool-panel-objects" role="tabpanel" aria-labelledby="dc-activity-objects" data-tool-panel="objects">
+            <div id="venue-section-objects"></div>
+            <details id="venue-model-transform" class="tool-section"><summary>${label('practice.scale')}</summary><form id="practice-venue-form">
             ${field('practice-unit', 'practice.unit', .00001, 10000)}${vectorFields('practice-v-position','practice.position')}${vectorFields('practice-v-rotation','practice.rotation',-360,360)}${vectorFields('practice-v-scale','practice.scale',.0001,1000)}
             <label class="dc-practice-field">${label('practice.color')}<input id="practice-color" type="color"></label></form></details>
-          </details>
-          <details id="venue-section-objects" class="tool-section" open><summary>${label('calibration.objects')}</summary></details>
-          <details id="venue-section-projector" class="tool-section" open><summary>${label('calibration.projector')}</summary>
+          </div>
+          <div class="dc-tool-panel" id="dc-tool-panel-projector" role="tabpanel" aria-labelledby="dc-activity-projector" data-tool-panel="projector">
             <label class="dc-practice-field">${label('practice.output')}<select id="practice-output"></select></label>
             <div class="dc-venue-step" role="group" aria-labelledby="venue-step-label"><span id="venue-step-label">${label('calibration.step')}</span>
               <button type="button" id="venue-step-coarse" class="tool-button" aria-pressed="true">${label('calibration.coarse')}</button>
@@ -112,12 +109,27 @@ export class VenueCalibrationPage {
             ${field('practice-fov','practice.fov',1,170)}${field('practice-aspect','practice.aspect',MIN_ASPECT,MAX_ASPECT)}<p class="dc-practice-hint">${label('calibration.aspectHint')}</p>
             ${vectorFields('practice-shift','practice.shift',-200,200,.1,['X','Y'])}
             ${field('practice-near','practice.near',.001,1000)}${field('practice-far','practice.far',.002,10000)}${button('practice-reset-projector','practice.resetProjector')}</form>
-          </details>
-          <details id="venue-section-output" class="tool-section" open><summary>${label('calibration.output')}</summary>
+          </div>
+          <div class="dc-tool-panel" id="dc-tool-panel-output" role="tabpanel" aria-labelledby="dc-activity-output" data-tool-panel="output">
             <label class="dc-practice-field">${label('calibration.resolution')}<select id="venue-resolution">${PRESETS.map(([w,h])=>`<option value="${w}x${h}">${w} × ${h}</option>`).join('')}</select></label>
             <p class="dc-practice-hint">${label('calibration.resolutionHint')}</p>
             <p class="dc-practice-hint">${label('calibration.outputHint')}</p>
-          </details>
+          </div>
+          <div class="dc-tool-panel" id="dc-tool-panel-files" role="tabpanel" aria-labelledby="dc-activity-files" data-tool-panel="files">
+            <section class="tool-section"><h3>${label('practice.venue')}</h3>
+              <p class="dc-practice-hint">${label('calibration.intro')}</p>
+              <label class="dc-practice-field">${label('calibration.venueName')}<input id="venue-name" maxlength="200" required></label>
+              <p id="venue-storage" class="dc-practice-hint" role="status"></p>
+              ${button('venue-export', 'practice.exportVenue')}
+              <p class="dc-practice-hint">${label('calibration.isolated')}</p>
+            </section>
+            <section class="tool-section">
+              ${button('venue-load', 'calibration.load')}${button('venue-copy-mapping', 'calibration.copyMapping')}
+              ${button('practice-load-glb', 'practice.loadGlb')}${button('practice-sample', 'practice.sample')}
+              <a id="venue-mapping" class="tool-button dc-venue-entry-link" href="${routeHref('/mapping')}" target="_blank" rel="noopener noreferrer" data-i18n="calibration.mapping"></a>
+            </section>
+            <section class="tool-section dc-venue-lang"><h3>${label('lang.label')}</h3>${langSwitcherHtml()}</section>
+          </div>
         </div>
         ${buildInfoHtml() ? `<footer class="dc-build-info">${buildInfoHtml()}</footer>` : ''}
       </div>
@@ -145,7 +157,7 @@ export class VenueCalibrationPage {
     this.get('venue-model-pane').querySelector('.dc-practice-viewport')!.append(this.canvas);
     document.querySelector('#app')!.replaceChildren(this.root); wireLangSwitcher(this.root);
     this.input('practice-aspect').readOnly = true;
-    this.resizers.attach(this.root, document);
+    this.resizers.attach(this.root, document); this.activityBar.attach(this.root);
     this.get('venue-reload').hidden = true; this.setInert(true);
     this.get<HTMLButtonElement>('venue-export').disabled = true;
     this.wire(); this.off.push(onLangChange(() => this.translate())); this.translate();
@@ -201,19 +213,12 @@ export class VenueCalibrationPage {
     }, true);
     document.addEventListener('keydown', this.documentKeydown);
     window.addEventListener('blur', this.settle); window.addEventListener('pagehide', this.settle);
-    const menu = this.get<HTMLDetailsElement>('venue-menu');
-    menu.addEventListener('keydown', event => {
-      if (event.key !== 'Escape' || !menu.open) return;
-      event.preventDefault(); event.stopPropagation(); menu.open = false; menu.querySelector('summary')!.focus();
-    });
-    menu.addEventListener('click', event => { if ((event.target as Element).closest('.dc-workspace-menu-items button, .dc-workspace-menu-items a')) menu.open = false; });
-    document.addEventListener('pointerdown', this.closeMenuOutside);
     // 出力が開いているときだけ確認する。下書きは自動で保存されるので、それ以外は 1 クリックで戻る。
     const confirm = this.get<HTMLDialogElement>('venue-close-confirm');
     this.get('venue-close').addEventListener('click', event => {
       if (!this.output?.isOpen) return;
       // ルーターは document でリンクを拾い、defaultPrevented を見ずに遷移するので伝播も止める。
-      event.preventDefault(); event.stopPropagation(); menu.open = false; if (!confirm.open) confirm.showModal();
+      event.preventDefault(); event.stopPropagation(); if (!confirm.open) confirm.showModal();
     });
     this.click('venue-close-cancel', () => confirm.close());
     confirm.addEventListener('click', event => { if (event.target === confirm) confirm.close(); });
@@ -256,13 +261,9 @@ export class VenueCalibrationPage {
     this.click('practice-sample',()=>{ const project=this.session.changes.get(); void this.apply({...project,assets:[],venue:{...project.venue,scene:defaultScene()}}); });
     this.click('venue-reload',()=>window.location.reload());
   }
-  private closeMenuOutside = (event: PointerEvent): void => {
-    const menu = this.root.querySelector<HTMLDetailsElement>('#venue-menu');
-    if (menu?.open && !menu.contains(event.target as Node)) menu.open = false;
-  };
   private settle = (): void => { this.adjuster?.flush(); };
   private documentKeydown = (event: KeyboardEvent): void => {
-    if (this.root.querySelector('dialog[open]') || this.get<HTMLDetailsElement>('venue-menu').open) return;
+    if (this.root.querySelector('dialog[open]')) return;
     this.keydown(event);
   };
   private keydown(event: KeyboardEvent): void {
@@ -437,7 +438,7 @@ export class VenueCalibrationPage {
   private error(error:unknown):void { this.status(error instanceof ProjectFormatError?`practice.${error.message}` as MessageKey:'practice.invalid',true); }
   private storageStatus():void { const state=this.session.storage.get(); this.get('venue-storage').textContent=t(state==='error'?'practice.storageError':state==='saving'?'practice.saving':'calibration.saved'); }
   private translate(): void {
-    applyControlTranslations(this.root);
+    applyControlTranslations(this.root); this.activityBar.render();
     this.root.querySelector('[data-lang-switcher]')?.setAttribute('aria-label',t('lang.toggle.title'));
     this.root.querySelectorAll<HTMLElement>('[data-lang-set]').forEach(button=>{
       const active=button.dataset.langSet===getLang();button.classList.toggle('is-active',active);button.setAttribute('aria-pressed',String(active));
@@ -454,8 +455,8 @@ export class VenueCalibrationPage {
   destroy():void {
     if(this.disposed)return;
     this.adjuster?.flush();
-    this.disposed=true;this.action++;cancelAnimationFrame(this.frame);this.resize?.disconnect();this.off.forEach(off=>off());this.resizers.destroy();
-    document.removeEventListener('keydown',this.documentKeydown);document.removeEventListener('pointerdown',this.closeMenuOutside);
+    this.disposed=true;this.action++;cancelAnimationFrame(this.frame);this.resize?.disconnect();this.off.forEach(off=>off());this.resizers.destroy();this.activityBar.destroy();
+    document.removeEventListener('keydown',this.documentKeydown);
     window.removeEventListener('blur',this.settle);window.removeEventListener('pagehide',this.settle);
     this.canvas.removeEventListener('webglcontextlost',this.graphicsLost);this.projection?.canvas.removeEventListener('webglcontextlost',this.graphicsLost);
     this.adjuster?.dispose();this.output?.dispose();this.editor?.dispose();this.projection?.dispose();this.preview?.dispose();this.session.dispose();this.root.remove();

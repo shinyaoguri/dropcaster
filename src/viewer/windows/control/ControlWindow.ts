@@ -3,6 +3,7 @@ import { controlPanelHtml, applyControlTranslations } from './ControlWindow.temp
 import { onLangChange, t } from '../../i18n/index.js';
 import { CONTROL_PANEL_CSS } from './ControlWindow.styles';
 import { ColumnResizers } from './panels/ColumnResizers';
+import { ActivityBar } from './panels/ActivityBar';
 import { OutputVizPanel } from './panels/OutputVizPanel';
 import { InactivePreviewPool } from './panels/InactivePreviewPool';
 import { KeyboardNudge } from './panels/KeyboardNudge';
@@ -70,13 +71,11 @@ export class ControlWindow extends BaseWindow {
   onTabChange(listener: (tab: ControlTab) => void): () => void {
     this.tabListeners.add(listener); return () => this.tabListeners.delete(listener);
   }
-  /** ツールカラムに表示中のパネルと、ツールカラムを畳んでいるか。 */
-  private activeToolPanel: ToolPanel = 'mappings';
-  private toolCollapsed = false;
-  private toolPanelListeners = new Set<(panel: ToolPanel) => void>();
+  /** 左端のアクティビティバー。ツールカラムに表示中のパネルと、ツールカラムを畳んでいるかを持つ。 */
+  private activityBar = new ActivityBar<ToolPanel>('mappings', panel => `control.panel.${panel}` as const);
   /** パネルが選ばれるたびに呼ぶ (畳んだ状態から同じパネルを開き直したときも含む)。 */
   onToolPanelChange(listener: (panel: ToolPanel) => void): () => void {
-    this.toolPanelListeners.add(listener); return () => this.toolPanelListeners.delete(listener);
+    return this.activityBar.onChange(listener);
   }
   // canonical state（および active alias）は MappingsController が所有する。
   // ローカル mutation 後の broadcast 経路（commit）だけ親側から差し込む。
@@ -319,7 +318,7 @@ export class ControlWindow extends BaseWindow {
     this.layoutPanel.destroy();
     this.outputSettings.destroy();
     this.tabListeners.clear(); this.activeTab = 'mapping';
-    this.toolPanelListeners.clear(); this.activeToolPanel = 'mappings'; this.toolCollapsed = false;
+    this.activityBar.destroy();
   }
 
   /** inline 経路で mount された ControlWindow を外側から片付けるための public API。 */
@@ -480,7 +479,7 @@ ${CONTROL_PANEL_CSS}
 
     // タブ切替（マッピング ↔ 出力レイアウト）
     this.setupTabs();
-    this.setupToolPanels();
+    this.activityBar.attach(this.scopeEl!);
 
     // カラム間のドラッグリサイザ（前回保存幅の復元含む）
     if (this.scopeEl && this.hostDoc) {
@@ -580,73 +579,11 @@ ${CONTROL_PANEL_CSS}
     });
   }
 
-  /**
-   * 左端のアクティビティバー。クリックでツールカラムのパネルを切り替え、選択中のボタンを
-   * もう一度押すとツールカラムを畳む (VSCode のサイドバーと同じ)。上下矢印・Home・End で
-   * 隣のボタンへ移り、そのパネルを選ぶ (右側のタブストリップと同じく「移動 = 選択」)。
-   */
-  private setupToolPanels(): void {
-    const buttons = [...this.scopeEl!.querySelectorAll<HTMLButtonElement>('.dc-activity-btn')];
-    buttons.forEach((button, index) => {
-      const panel = button.dataset.toolPanel as ToolPanel;
-      button.addEventListener('click', () => {
-        if (panel === this.activeToolPanel) this.setToolCollapsed(!this.toolCollapsed);
-        else this.selectToolPanel(panel);
-      });
-      button.addEventListener('keydown', event => {
-        const next = event.key === 'ArrowDown' ? (index + 1) % buttons.length
-          : event.key === 'ArrowUp' ? (index + buttons.length - 1) % buttons.length
-          : event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : -1;
-        if (next < 0) return;
-        event.preventDefault(); event.stopPropagation();
-        this.selectToolPanel(buttons[next].dataset.toolPanel as ToolPanel); buttons[next].focus();
-      });
-    });
-    this.renderToolPanels();
-  }
-
   /** ツールカラムに `name` のパネルを出す。畳んでいれば開く。 */
-  selectToolPanel(name: ToolPanel): void {
-    if (!this.scopeEl) return;
-    const changed = name !== this.activeToolPanel;
-    this.activeToolPanel = name;
-    // 畳んでいれば開く (開いたことの通知は setToolCollapsed が出す)。
-    if (this.toolCollapsed) { this.setToolCollapsed(false); return; }
-    if (!changed) return;
-    this.renderToolPanels();
-    this.toolPanelListeners.forEach(listener => listener(name));
-  }
+  selectToolPanel(name: ToolPanel): void { this.activityBar.select(name); }
 
-  /** ツールカラムを畳む / 開く。列幅 (ColumnResizers が書いた inline width) は触らないので、開くと元の幅に戻る。 */
-  setToolCollapsed(collapsed: boolean): void {
-    if (!this.scopeEl || collapsed === this.toolCollapsed) return;
-    this.toolCollapsed = collapsed;
-    this.renderToolPanels();
-    if (!collapsed) this.toolPanelListeners.forEach(listener => listener(this.activeToolPanel));
-    // 列幅が変わったステージは、各パネルの ResizeObserver が新しい寸法で描き直す。
-  }
-
-  private renderToolPanels(): void {
-    const scope = this.scopeEl;
-    if (!scope) return;
-    const name = this.activeToolPanel;
-    scope.querySelector('.control-container')?.classList.toggle('is-tool-collapsed', this.toolCollapsed);
-    scope.querySelectorAll<HTMLButtonElement>('.dc-activity-btn').forEach(button => {
-      const active = button.dataset.toolPanel === name;
-      button.classList.toggle('is-active', active);
-      button.setAttribute('aria-selected', String(active));
-      button.tabIndex = active ? 0 : -1;
-      // 選択中のボタンだけが「ツールカラムを開閉する」状態を持つ。
-      if (active) button.setAttribute('aria-expanded', String(!this.toolCollapsed));
-      else button.removeAttribute('aria-expanded');
-    });
-    scope.querySelectorAll<HTMLElement>('.dc-tool-panel').forEach(panel => panel.classList.toggle('is-active', panel.dataset.toolPanel === name));
-    const title = scope.querySelector<HTMLElement>('#dc-tool-panel-title');
-    if (title) {
-      const key = `control.panel.${name}` as const;
-      title.setAttribute('data-i18n', key); title.textContent = t(key);
-    }
-  }
+  /** ツールカラムを畳む / 開く。開くと元の列幅に戻る。 */
+  setToolCollapsed(collapsed: boolean): void { this.activityBar.setCollapsed(collapsed); }
 
   /** 開発モードトグルの ON/OFF 表示を切り替える（state は host が持っている）。 */
   private updateDevModeUI(enabled: boolean): void {

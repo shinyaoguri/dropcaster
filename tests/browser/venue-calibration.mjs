@@ -26,9 +26,16 @@ async function ready(page){
   await page.evaluate(()=>{window.practicePreview=window.calibrationPage.preview;window.venueEditor=window.calibrationPage.editor});
 }
 async function current(page){return page.evaluate(()=>structuredClone(window.calibrationPage.session.changes.get()))}
-async function change(page,id,value){await page.locator(id).fill(String(value));await page.locator(id).press('Tab')}
+// ツール列は左端のアクティビティバーで切り替えるパネル (ADR 0021)。要素が別のパネルにあれば、そのパネルを開く。
+async function reveal(page,selector){
+  const panel=await page.locator(selector).first().evaluate(element=>element.closest('.dc-tool-panel')?.dataset.toolPanel??null);
+  if(!panel)return;
+  const shown=await page.locator(`#dc-tool-panel-${panel}`).evaluate(element=>element.classList.contains('is-active')&&!element.closest('.is-tool-collapsed'));
+  if(!shown)await page.locator(`#dc-activity-${panel}`).click();
+}
+async function change(page,id,value){await reveal(page,id);await page.locator(id).fill(String(value));await page.locator(id).press('Tab')}
 async function download(page,id='#venue-export'){
-  const wait=page.waitForEvent('download');await page.locator(id).click();const chunks=[];for await(const chunk of await(await wait).createReadStream())chunks.push(chunk);
+  await reveal(page,id);const wait=page.waitForEvent('download');await page.locator(id).click();const chunks=[];for await(const chunk of await(await wait).createReadStream())chunks.push(chunk);
   return JSON.parse(Buffer.concat(chunks).toString());
 }
 async function load(page,value){
@@ -63,11 +70,11 @@ async function workflow(page,base){
   // The full grid, not a crop, reaches the projector through the existing output UI.
   await output.waitForFunction(()=>{const v=document.querySelector('video'),c=document.createElement('canvas');c.width=1920;c.height=1080;const x=c.getContext('2d');x.drawImage(v,0,0);const center=x.getImageData(960,540,1,1).data,cell=x.getImageData(1056,594,1,1).data;return center[0]>200&&center[1]<150&&cell[0]<10});
   await output.setViewportSize({width:700,height:500});assert.equal((await pixels(page)).width,1920);
-  await page.locator('#venue-resolution').selectOption('1280x800');await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1280);
+  await reveal(page,'#venue-resolution');await page.locator('#venue-resolution').selectOption('1280x800');await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1280);
   assert.equal((await current(page)).venue.projectors[0].aspect,1.6,'choosing output pixels sets the projector aspect ratio');
   await output.close();await page.waitForFunction(()=>window.outputTrack.readyState==='ended');
   await page.locator('#venue-pattern').selectOption('outline');await page.locator('#venue-edit').click();
-  await page.locator('#practice-start-objects').click();await page.locator('#venue-kind').selectOption('tetrahedron');await page.locator('#venue-add').click();
+  await reveal(page,'#practice-start-objects');await page.locator('#practice-start-objects').click();await page.locator('#venue-kind').selectOption('tetrahedron');await page.locator('#venue-add').click();
   await change(page,'#practice-object-position-0',2);await page.locator('#venue-kind').selectOption('prism');await page.locator('#venue-add').click();await change(page,'#practice-object-position-0',-2);
   const shared=await download(page);assert.equal(shared.format,'dropcaster-venue');assert.equal(shared.schemaVersion,2);assert.deepEqual(shared.venue.scene.objects.map(o=>o.kind),['box','tetrahedron','prism']);assert.equal('content' in shared,false);
   await change(page,'#venue-name','Measured stage');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
@@ -75,7 +82,7 @@ async function workflow(page,base){
   await page.locator('#venue-close').click();assert.equal(await page.locator('#venue-canvas').count(),0);
   assert.equal(await page.evaluate(()=>window.practicePreview.diagnostics().disposed),true);
   await page.locator('a[href="/venue"]').click();await ready(page);assert.deepEqual((await current(page)).venue,saved.venue);assert.equal((await current(page)).name,'Measured stage');
-  await page.locator('#venue-menu > summary').click();await page.locator('[data-lang-set=ja]').click();assert.equal(await page.locator('[data-lang-set=ja]').getAttribute('aria-pressed'),'true');
+  await reveal(page,'[data-lang-set=ja]');await page.locator('[data-lang-set=ja]').click();assert.equal(await page.locator('[data-lang-set=ja]').getAttribute('aria-pressed'),'true');
   {
     // #185: 日本語で開いた校正ウィンドウは、会場の窓向けの日本語の案内を出す。
     const popupWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const ja=await popupWait;
@@ -114,7 +121,7 @@ async function venueDrag(page, mode, axis='X', finish=true) {
 }
 
 async function interaction(page,base){
-  await page.locator('#practice-start-objects').click();await page.locator('#venue-focus').click();
+  await reveal(page,'#practice-start-objects');await page.locator('#practice-start-objects').click();await page.locator('#venue-focus').click();
   const original=(await current(page)).venue.scene.objects;
   await venueDrag(page,'translate','X',false);
   assert.deepEqual((await current(page)).venue.scene.objects,original,'drag only previews until release');
@@ -165,11 +172,11 @@ async function adjust(page,base){
   await page.waitForFunction(r=>window.calibrationPage.session.changes.get().venue.revision===r+1,revision);
   const turned=await projector(page);assert.notDeepEqual(turned.quaternion,original.quaternion);assert.deepEqual(turned.position,original.position);
   await page.waitForTimeout(700);assert.equal((await current(page)).venue.revision,revision+1,'five presses are one change');
-  await page.locator('#venue-undo-projector').click();
+  await reveal(page,'#venue-undo-projector');await page.locator('#venue-undo-projector').click();
   await page.waitForFunction(q=>JSON.stringify(window.calibrationPage.session.changes.get().venue.projectors[0].quaternion)===JSON.stringify(q),original.quaternion);
   assert.equal((await pixels(page)).hash,before.hash,'one undo restores the whole adjustment');
   // 入力欄では矢印キーを横取りしない
-  await page.locator('#venue-name').focus();await page.keyboard.press('ArrowRight');
+  await reveal(page,'#venue-name');await page.locator('#venue-name').focus();await page.keyboard.press('ArrowRight');
   assert.equal(await page.evaluate(()=>window.calibrationPage.adjuster.pending),null,'typing keys stay in the field');
   // 刻みの切替: G で細かくなり、矢印 1 回が 0.1°
   await page.locator('#venue-output-stage').focus();await page.keyboard.press('g');
@@ -213,7 +220,7 @@ async function recovery(page){
   }
   await page.evaluate(()=>{const text=File.prototype.text;File.prototype.text=function(){File.prototype.text=text;const result=text.call(this);return new Promise(resolve=>{window.finishVenueRead=async()=>resolve(await result)})}});
   await page.locator('#venue-file').setInputFiles({name:'delayed.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(baseline))});
-  await page.locator('#practice-start-objects').click();await page.evaluate(()=>window.finishVenueRead());assert.equal((await current(page)).venue.scene.objects.length,1,'stale import cannot overwrite a newer edit');
+  await reveal(page,'#practice-start-objects');await page.locator('#practice-start-objects').click();await page.evaluate(()=>window.finishVenueRead());assert.equal((await current(page)).venue.scene.objects.length,1,'stale import cannot overwrite a newer edit');
   await page.locator('#venue-glb-file').setInputFiles({name:'wall.glb',mimeType:'model/gltf-binary',buffer:venueFixture()});
   await page.waitForFunction(()=>window.calibrationPage.session.changes.get().venue.scene.kind==='glb');assert.equal((await current(page)).assets.length,1);
   const glb=await download(page);await page.locator('#venue-glb-file').setInputFiles({name:'bad.glb',mimeType:'model/gltf-binary',buffer:venueFixture(d=>{d.scenes[0].nodes=[]})});
@@ -261,9 +268,9 @@ async function isolation(page,base){
   await venue.waitForSelector('#venue-canvas');await venue.waitForFunction(()=>!document.querySelector('#venue-model-pane').inert);
   assert.equal(await page.locator('#dc-practice-canvas').count(),previews,'opening venue setup adds nothing to the mapping preview');
   assert.equal(await venue.locator('iframe,#source-video').count(),0);
-  await venue.locator('#venue-menu > summary').click();await venue.locator('#venue-copy-mapping').click();
+  await reveal(venue,'#venue-copy-mapping');await venue.locator('#venue-copy-mapping').click();
   await venue.waitForFunction(()=>document.querySelector('#venue-status').textContent==='Venue loaded');
-  await venue.locator('#practice-start-objects').click();
+  await reveal(venue,'#practice-start-objects');await venue.locator('#practice-start-objects').click();
   await change(venue,'#venue-name','Independent room');
   await venue.waitForFunction(()=>document.querySelector('#venue-storage').textContent==='Venue draft saved in this browser');
   const shared=await download(venue);assert.equal('content' in shared,false);assert.deepEqual(shared.venue.layout,{...baseline.draft.venue.layout,activeOutputId:baseline.draft.venue.layout.activeOutputId??baseline.layout.outputs[0].id});
@@ -310,7 +317,7 @@ async function reload(page,base){
   assert.equal(await page.inputValue('#venue-name'),'Second','a committed name survives a reload 100 ms later');
   assert.deepEqual(dialogs,[],'a finished save does not ask before leaving');
   // 確定と同じタスクで離脱すると保存中なので確認を出す。キャンセルすれば変更は残り、待てば保存済みになる。
-  answer='dismiss';await page.locator('#venue-name').click();
+  answer='dismiss';await reveal(page,'#venue-name');await page.locator('#venue-name').click();
   try{await page.evaluate(()=>{const name=document.querySelector('#venue-name');name.value='Third';name.dispatchEvent(new Event('change',{bubbles:true}));location.reload()})}catch{/* the page navigated away */}
   assert.deepEqual(dialogs,['beforeunload'],'leaving in the same task as the commit asks first');
   assert.equal(await page.inputValue('#venue-name'),'Third','cancelling keeps the edit');
@@ -323,10 +330,70 @@ async function reload(page,base){
   await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
   assert.notDeepEqual((await draft(page,base)).venue.projectors[0].quaternion,before.quaternion,'the pending nudge is committed and saved');
   // 保存済みなら新たな確認を出さない。
-  answer='accept';await page.locator('#venue-name').click();
+  answer='accept';await reveal(page,'#venue-name');await page.locator('#venue-name').click();
   await page.reload();await reloaded(page);
   assert.deepEqual(dialogs,['beforeunload','beforeunload'],'a saved draft reloads without asking');
   assert.equal(await page.inputValue('#venue-name'),'Third');
+}
+
+// #232: マッピング画面と同じ左端のアクティビティバー (ADR 0021)。パネルの並び・所属・畳み・キーボード・狭い画面。
+const VENUE_PANELS={
+  objects:['#dc-practice-venue','#practice-start-objects'],
+  projector:['#practice-output','#venue-step-coarse','#venue-undo-projector','#practice-projector-form'],
+  output:['#venue-resolution'],
+  files:['#venue-name','#venue-export','#venue-load','#venue-copy-mapping','#practice-load-glb','#practice-sample','#venue-mapping','[data-lang-set=ja]'],
+};
+async function selectedPanel(page){return page.locator('.dc-activity-btn[aria-selected=true]').getAttribute('data-tool-panel')}
+async function activityBar(page,base){
+  assert.deepEqual(await page.locator('.dc-activity-btn').evaluateAll(buttons=>buttons.map(b=>b.dataset.toolPanel)),Object.keys(VENUE_PANELS));
+  assert.equal(await selectedPanel(page),'objects','opens on the solids panel');
+  assert.equal(await page.locator('.tool-column > .column-header h2').textContent(),'Solids');
+  assert.equal(await page.locator('#venue-menu').count(),0,'the header menu is gone');
+  assert.equal(await page.locator('.dc-activity-bar-footer #venue-close').count(),1,'home sits at the bottom of the bar');
+  for(const panel of Object.keys(VENUE_PANELS)){
+    // 選択中のアイコンを押すと畳むので、選ばれていないときだけ押す。
+    if(await selectedPanel(page)!==panel)await page.locator(`#dc-activity-${panel}`).click();
+    assert.equal(await selectedPanel(page),panel);
+    for(const [owner,selectors] of Object.entries(VENUE_PANELS))for(const selector of selectors)
+      assert.equal(await page.locator(selector).first().isVisible(),owner===panel,`${selector} belongs to the ${owner} panel (showing ${panel})`);
+    for(const selector of ['#venue-pattern','#venue-open-output','#venue-image','#venue-canvas'])assert.equal(await page.locator(selector).isVisible(),true,`${selector} stays visible`);
+  }
+  await page.locator('#dc-activity-projector').click();
+  // 選択中の再押下で畳み、像と 3D が幅を使う。開き直すと元の列幅に戻る。
+  const width=(await page.locator('.tool-column').boundingBox()).width,image=(await page.locator('#venue-image-pane').boundingBox()).width;
+  await page.locator('#dc-activity-projector').click();
+  assert.equal(await page.locator('#dc-activity-projector').getAttribute('aria-expanded'),'false');
+  assert.equal(await page.locator('.tool-column').isVisible(),false);
+  assert.ok((await page.locator('#venue-image-pane').boundingBox()).width>image,'collapsing gives the width to the panes');
+  await page.locator('#dc-activity-output').click();
+  assert.equal(await selectedPanel(page),'output');assert.equal(await page.locator('#dc-activity-output').getAttribute('aria-expanded'),'true');
+  assert.equal((await page.locator('.tool-column').boundingBox()).width,width,'reopening restores the column width');
+  // キーボード: 上下・Home・End で巡回し、プロジェクタの微調整には届かない。
+  const before=await current(page);
+  await page.locator('#dc-activity-output').focus();
+  for(const [key,panel] of [['ArrowDown','files'],['ArrowDown','objects'],['ArrowUp','files'],['Home','objects'],['End','files']]){
+    await page.keyboard.press(key);assert.equal(await selectedPanel(page),panel,`${key} selects ${panel}`);
+    assert.equal(await page.evaluate(()=>document.activeElement?.dataset.toolPanel),panel,`${key} moves focus`);
+  }
+  assert.equal(await page.evaluate(()=>window.calibrationPage.adjuster.pending),null,'activity keys do not nudge the projector');
+  await page.waitForTimeout(700);assert.deepEqual((await current(page)).venue.projectors,before.venue.projectors);
+  await page.keyboard.press('Enter');assert.equal(await page.locator('.tool-column').isVisible(),false,'Enter on the selected icon collapses');
+  await page.keyboard.press('Space');assert.equal(await page.locator('.tool-column').isVisible(),true,'Space reopens');
+  // 言語を切り替えると見出しも切り替わる。
+  await page.locator('[data-lang-set=ja]').click();
+  assert.equal(await page.locator('.tool-column > .column-header h2').textContent(),'ファイル・設定');
+  assert.equal(await page.locator('#venue-close').getAttribute('aria-label'),'ホームに戻る');
+  for(const panel of Object.keys(VENUE_PANELS)){if(await selectedPanel(page)!==panel)await page.locator(`#dc-activity-${panel}`).click();await snapshot(page,`${base.name}-venue-panel-${panel}-ja`)}
+  // 狭い画面: バー・ツール列・ペインが横にはみ出さず、畳むとペインが広がる。
+  await page.setViewportSize({width:900,height:800});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  assert.equal(await page.locator('.dc-activity-bar').isVisible(),true);await snapshot(page,`${base.name}-venue-narrow-panel-ja`);
+  const narrow=(await page.locator('#venue-model-pane').boundingBox()).width;
+  await page.locator('#dc-activity-files').click();
+  assert.ok((await page.locator('#venue-model-pane').boundingBox()).width>narrow,'collapsing widens the panes on a narrow screen');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await snapshot(page,`${base.name}-venue-narrow-collapsed-ja`);
+  await page.locator('[data-lang-set=en]').evaluate(button=>button.click());
 }
 
 try{
@@ -335,7 +402,7 @@ try{
     const server=await createServer({configFile:resolve(root,config),root:hosted?resolve(root,'apps/web'):root,server:{host:'127.0.0.1',port:0,open:false,watch:null,hmr:false},logLevel:'error'});
     try{
       await server.listen();const base={name,url:`http://127.0.0.1:${server.httpServer.address().port}`,modules:hosted?`/@fs${root.slice(0,-1)}/src/viewer`:'/src/viewer'};
-      for(const [testName,run] of Object.entries({workflow,interaction,adjust,recovery,isolation,reload})){
+      for(const [testName,run] of Object.entries({activityBar,workflow,interaction,adjust,recovery,isolation,reload})){
         if(process.env.VENUE_CASE&&process.env.VENUE_CASE!==testName)continue;
         const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'}),errors=[];
         context.on('page',page=>page.on('pageerror',error=>errors.push(error.message)));

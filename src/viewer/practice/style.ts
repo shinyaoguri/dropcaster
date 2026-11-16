@@ -4,21 +4,12 @@ export function installPracticeStyles(): void {
   style.textContent = `
     .dc-control-shell.dc-mapping-workspace { display:flex; flex-direction:column; min-height:0; }
     .dc-inline-editor .dc-mapping-workspace > .control-container { flex:1; height:auto; min-height:0; }
-    /* 上部バーは持たず、ツールカラムの見出し行に「設定・共有」(見出しの左、アイコンのみ) と閉じる (右端) を置く。
-       見出しは狭い画面で全体が縦スクロールしても流れないよう固定し、メニューの包含ブロックにもする。 */
+    /* 上部バーは持たない。ホームへ戻る・閉じるはアクティビティバーの下端に置く (ADR 0021)。
+       ツールカラムの見出し (パネル名) は狭い画面で全体が縦スクロールしても流れないよう固定する。 */
     .dc-mapping-workspace .tool-column > .column-header { position:sticky; top:0; z-index:20; gap:6px; padding:0 8px; }
     .dc-workspace-actions { display:flex; align-items:center; gap:2px; margin-left:auto; color:#eee; font:12px system-ui; }
     .dc-workspace-actions button { border:1px solid transparent; border-radius:5px; color:#eee; background:transparent; cursor:pointer; white-space:nowrap; }
     .dc-workspace-actions button:focus-visible { outline:2px solid #3b82f6; outline-offset:2px; }
-    .dc-workspace-menu { flex-shrink:0; }
-    .dc-workspace-menu > summary { display:flex; align-items:center; padding:5px; border:1px solid transparent; border-radius:5px; color:#eee; cursor:pointer; list-style:none; }
-    .dc-workspace-menu[open] > summary { background:#444; }
-    .dc-workspace-menu > summary::-webkit-details-marker { display:none; }
-    .dc-workspace-menu > summary:hover { background:#444; }
-    .dc-workspace-menu > summary:focus-visible { outline:2px solid #3b82f6; outline-offset:2px; }
-    .dc-workspace-menu-items { position:absolute; left:8px; right:8px; top:calc(100% + 4px); z-index:100; padding:5px; background:#292929; border:1px solid #555; border-radius:6px; box-shadow:0 8px 24px #0008; }
-    .dc-workspace-menu-items button, .dc-workspace-menu-items a { display:block; width:100%; box-sizing:border-box; border:0; background:transparent; text-align:left; color:#eee; cursor:pointer; padding:7px 11px; text-decoration:none; border-radius:5px; font:13px system-ui; white-space:normal; }
-    .dc-workspace-menu-items button:hover, .dc-workspace-menu-items a:hover { background:#444; }
     .dc-activity-bar-footer .dc-workspace-actions { flex-direction:column; gap:4px; margin:0; }
     /* プロジェクトパネル末尾の会場の入口。<a> を他の .tool-button と同じ幅・見た目のボタンにする。 */
     .dc-venue-entry-link { display:block; box-sizing:border-box; text-align:center; text-decoration:none; }

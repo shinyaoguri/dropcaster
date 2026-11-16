@@ -19,12 +19,11 @@ export function installVenueStyles(): void {
     .dc-venue-page button:disabled { opacity:.45;cursor:not-allowed; }
     .dc-venue-page select { border:1px solid #555;border-radius:4px;background:#191919;color:#eee;padding:5px;font:12px system-ui; }
 
-    /* ツール列: 見出し (メニュー・タイトル・閉じる) は流れないよう固定し、メニューの包含ブロックにもする */
-    .dc-venue-page .tool-column > .column-header { position:sticky;top:0;z-index:20;gap:6px;padding:0 8px; }
-    .dc-venue-page .tool-column > .column-header h2 { flex:1;min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-    .dc-venue-page .dc-workspace-close { display:flex;align-items:center;padding:5px;border-radius:5px;color:#eee; }
-    .dc-venue-page .dc-workspace-close:hover { background:#444; }
-    .dc-venue-lang { padding:6px 11px 3px;border-top:1px solid #444;margin-top:4px; }
+    /* 左端のアクティビティバー・ツール列の見出し (パネル名) はマッピング画面と同じ (CONTROL_PANEL_CSS / practice/style.ts)。
+       見出しは狭い画面で全体が縦スクロールしても流れないよう固定する。 */
+    .dc-venue-page .tool-column > .column-header { position:sticky;top:0;z-index:20; }
+    /* マッピングを開く ↗ は <a> だが、ほかの .tool-button と同じ見た目にする (リンク色を当てない) */
+    .dc-venue-page a.tool-button { color:#fff;margin:4px 0; }
     .dc-venue-page .dc-venue-lang .dc-lang-toggle { background:#1a1a1a;height:28px; }
     .dc-venue-page .dc-venue-lang .dc-lang-toggle-opt { display:inline-flex;width:auto;padding:0 12px;color:#999;font:600 11px system-ui;letter-spacing:.1em; }
     .dc-venue-page .dc-venue-lang .dc-lang-toggle-opt.is-active { background:#444;color:#fff;box-shadow:none; }
@@ -35,6 +34,8 @@ export function installVenueStyles(): void {
     .dc-venue-page .tool-content { padding:10px 14px; }
     .dc-venue-page .tool-section > summary { margin:0 0 8px;font-size:13px;font-weight:600;color:#ddd;cursor:pointer; }
     .dc-venue-page .tool-section { margin-bottom:14px;padding-bottom:12px; }
+    .dc-venue-page .tool-section h3 { margin:0 0 8px;font-size:13px;font-weight:600;color:#ddd; }
+    .dc-venue-page .tool-section:last-child { border-bottom:0; }
     .dc-venue-page .tool-content .tool-button { width:100%; }
     .dc-venue-page #dc-practice-venue { margin:0;padding:0;border:0; }
     .dc-venue-page #dc-practice-venue > summary { display:none; }
@@ -60,13 +61,17 @@ export function installVenueStyles(): void {
     .dc-venue-page .dc-venue-editor { max-height:40%; }
     #venue-canvas { position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none; }
 
-    /* 狭い画面: ツール列の右で、像を上・3D を下に積む */
+    /* 狭い画面: バーとツール列の右で、像を上・3D を下に積む。ツール列を畳むと像と 3D がその幅を使う */
     @media(max-width:900px) {
-      .dc-venue-page .control-container { display:grid;grid-template-columns:220px minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr); }
-      .dc-venue-page .tool-column { grid-row:1 / span 2;width:auto!important;min-width:0;max-width:none; }
+      .dc-venue-page .control-container { display:grid;grid-template-columns:44px 220px minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr); }
+      .dc-venue-page .control-container.is-tool-collapsed { grid-template-columns:44px minmax(0,1fr); }
+      .dc-venue-page .dc-activity-bar { grid-column:1;grid-row:1 / span 2; }
+      .dc-venue-page .tool-column { grid-column:2;grid-row:1 / span 2;width:auto!important;min-width:0;max-width:none; }
       .dc-venue-page .dc-column-resizer { display:none; }
-      .dc-venue-page .dc-venue-pane { min-width:0;width:auto!important;flex:none!important;border-right:0; }
-      .dc-venue-page #venue-image-pane { border-bottom:1px solid #333; }
+      .dc-venue-page .dc-venue-pane { grid-column:3;min-width:0;width:auto!important;flex:none!important;border-right:0; }
+      .dc-venue-page .is-tool-collapsed .dc-venue-pane { grid-column:2; }
+      .dc-venue-page #venue-image-pane { grid-row:1;border-bottom:1px solid #333; }
+      .dc-venue-page #venue-model-pane { grid-row:2; }
     }
   `;
   document.head.append(shell,style);
