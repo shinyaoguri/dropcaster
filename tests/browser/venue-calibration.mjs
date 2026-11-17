@@ -472,7 +472,6 @@ async function displayedPixel(page,base,world){
   },[base.modules,world]);
 }
 async function match(page,base){
-  await page.locator('[data-lang-set=en]').evaluate(button=>button.click());
   // 実測で組んだ会場: 既定の部屋に、奥行きの違う箱を 2 つ置く (奥の壁の隅だけでは同一平面で決まらない)。
   await page.evaluate(async modules=>{
     const {venueObject}=await import(`${modules}/practice/venueObjects.ts`),page=window.calibrationPage,project=page.session.changes.get();
