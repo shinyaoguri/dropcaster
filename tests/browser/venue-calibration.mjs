@@ -300,6 +300,19 @@ async function isolation(page,base){
   const received=await page.evaluate(async modules=>(await import(`${modules}/practice/projectStore.ts`)).readProject(),base.modules);
   assert.deepEqual(JSON.parse(JSON.stringify(received.venue)),shared.venue);assert.deepEqual(received.content,baseline.draft.content);assert.deepEqual(received.show,baseline.draft.show);
   assert.equal(await page.evaluate(()=>window.originalTrack.readyState),'live');assert.equal(live.isClosed(),false);
+  // #262: なぞって作った会場のファイル (trace で書き出したもの) も、マッピング側で同じように読み込める。
+  const traced=tracedVenues.get(base.name);
+  if(!traced)console.log(`${base.name}/isolation: the traced venue is not loaded (run the trace case first)`);
+  else{
+    const choose=page.waitForEvent('filechooser');await page.locator('#practice-load-venue').click();await choose;
+    await page.locator('#practice-project-file').setInputFiles({name:'traced.venue.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(traced))});
+    const deadline=Date.now()+10000;let loaded;
+    do{loaded=await page.evaluate(async modules=>(await import(`${modules}/practice/projectStore.ts`)).readProject(),base.modules);if(JSON.stringify(loaded.venue)===JSON.stringify(traced.venue))break;await page.waitForTimeout(100)}while(Date.now()<deadline);
+    assert.deepEqual(JSON.parse(JSON.stringify(loaded.venue)),traced.venue,'the traced venue replaces the mapping venue');
+    assert.deepEqual(loaded.content,baseline.draft.content);assert.deepEqual(loaded.show,baseline.draft.show);
+    await page.waitForFunction(()=>document.querySelector('#dc-practice-status').textContent.includes('Venue loaded'));
+    await snapshot(page,base.name+'-venue-trace-mapping');
+  }
   assert.deepEqual(await page.evaluate(async modules=>(await import(`${modules}/practice/projectStore.ts`)).listProjects(),base.modules),[],'venue draft is absent from named mapping projects');
   await live.close();
 }
@@ -337,6 +350,8 @@ async function reload(page,base){
 }
 
 // #246: 壁に映した十字で実物の角をなぞり、会場とプロジェクタを推定して適用する (ADR 0023)。
+/** trace で書き出した「なぞって作った会場」のファイル (gallery / hosted ごと)。isolation がマッピング側で読み込む (#262)。 */
+const tracedVenues=new Map();
 /** 実出力 canvas の 1 画素 (出力画素、左上原点)。 */
 async function outputPixel(page,[x,y]){
   return page.evaluate(([x,y])=>{const p=window.calibrationPage.projection;p.render();const gl=p.renderer.getContext(),bytes=new Uint8Array(4);gl.readPixels(Math.round(x),p.canvas.height-1-Math.round(y),1,1,gl.RGBA,gl.UNSIGNED_BYTE,bytes);return [...bytes.slice(0,3)]},[x,y]);
@@ -470,6 +485,13 @@ async function trace(page,base){
   assert.deepEqual(applied.venue.scene.objects.map(o=>o.kind),['floor','wall','wall','wall']);
   assert.notDeepEqual(applied.venue.projectors[0],original.venue.projectors[0],'the projector is estimated too');
   await page.waitForTimeout(700);assert.equal((await current(page)).venue.revision,revision+1,'apply is one change');
+  // #262: 縮尺が未設定のまま適用した会場も、そのまま会場ファイル (v2) で書き出せる。なぞった点は含まない。
+  assert.match((await traceState(page)).status,/Scale is not set/,'the applied venue is still unscaled');
+  const unscaled=await download(page);
+  assert.deepEqual([unscaled.format,unscaled.schemaVersion],['dropcaster-venue',2]);
+  assert.deepEqual(unscaled.venue.scene.objects,applied.venue.scene.objects);assert.deepEqual(unscaled.venue.projectors,applied.venue.projectors);
+  assert.equal(JSON.stringify(unscaled).includes('"shapes"'),false,'traced points stay out of the venue file');
+  await page.locator('#dc-activity-trace').click();assert.equal((await stepState(page)).step,'Check and apply');
   await page.locator('#venue-trace-undo').click();
   await page.waitForFunction(objects=>JSON.stringify(window.calibrationPage.session.changes.get().venue.scene.objects)===objects,JSON.stringify(original.venue.scene.objects));
   const undone=await current(page);
@@ -488,6 +510,24 @@ async function trace(page,base){
   const clicked=await traceState(page);assert.equal(clicked.pending.length,1,'a click in the output window confirms the point');
   await output.keyboard.press('ArrowUp');assert.deepEqual((await traceState(page)).crosshair,[1920*.25,1080*.75-10],'keys work in the output window');
   await output.keyboard.press('Escape');assert.equal((await traceState(page)).pending.length,0,'Esc drops the half-traced shape');
+  // #262: 実寸の Step で、奥の左右の隅 (既定の部屋では 8 m 離れている) を長さ 8 m として入れると、メートル単位に確定する。
+  await page.locator('#venue-trace-next').click();
+  assert.equal((await stepState(page)).step,'Real size (optional)');
+  await change(page,'#venue-trace-meters',8);
+  for(const point of [backLeft,backRight]){const at=await onTraceImage(page,point);await page.mouse.dblclick(at.x,at.y)}
+  await page.waitForFunction(()=>window.calibrationPage.trace.state.venue?.status==='ok'&&window.calibrationPage.trace.state.venue.scaleKnown);
+  const scaled=await traceState(page);
+  assert.equal(scaled.points.length,6,'the length snaps to the traced corners');assert.equal(scaled.shapes,3);
+  assert.doesNotMatch(scaled.status,/Scale is not set/);assert.match(scaled.status,/Estimated 4 parts/);
+  await page.locator('#venue-trace-next').click();assert.equal((await stepState(page)).step,'Check and apply');
+  const beforeScale=(await current(page)).venue.revision;
+  await page.locator('#venue-trace-apply').click();
+  await page.waitForFunction(r=>window.calibrationPage.session.changes.get().venue.revision===r+1,beforeScale);
+  // 奥の壁は、内側の面どうしの幅が隅の間の長さになり、両端に壁の厚み (0.15 m) が付く。
+  const backWidth=objects=>Math.max(...objects.filter(o=>o.kind==='wall').map(o=>o.size[0]))-.3;
+  const metres=(await current(page)).venue.scene.objects;
+  assert.ok(Math.abs(backWidth(metres)-8)<.05,`the back wall is 8 m wide after the length: ${backWidth(metres)}`);
+  assert.ok(Math.abs(backWidth(applied.venue.scene.objects)-8)>.1,`the unscaled width differs from metres: ${backWidth(applied.venue.scene.objects)}`);
   await output.close();
   // パネルを離れると十字は消え、確定済みの会場の表示に戻る。
   const last=(await traceState(page)).crosshair;
@@ -501,6 +541,11 @@ async function trace(page,base){
   const shared=await download(page);assert.equal(JSON.stringify(shared).includes('dropcaster.venue.trace'),false);
   assert.deepEqual(Object.keys(shared).sort(),['assets','format','name','schemaVersion','venue']);
   assert.equal(JSON.stringify(shared).includes('"shapes"'),false,'traced points stay out of the venue file');
+  // 書き出したのは、実寸で確定して適用した (なぞって作った) 会場。マッピング側での読み込みは isolation で確かめる。
+  const exported=await current(page);
+  assert.deepEqual(shared.venue.scene.objects,exported.venue.scene.objects);assert.deepEqual(shared.venue.projectors,exported.venue.projectors);
+  assert.deepEqual(shared.venue.scene.objects,metres);
+  tracedVenues.set(base.name,shared);
   await page.reload();await reloaded(page);
   await page.locator('#dc-activity-trace').click();
   // リロード後はテスト用のページ参照が無いので、画面の表示で確かめる。部屋の隅が 2 つあれば確認の Step から再開する。
