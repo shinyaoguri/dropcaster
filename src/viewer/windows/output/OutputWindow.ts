@@ -250,7 +250,9 @@ export class OutputWindow extends BaseWindow {
       (e.currentTarget as HTMLElement).blur();
     });
     const stage = doc.getElementById('dc-output-stage');
-    stage?.addEventListener('dblclick', () => this.toggleFullscreen());
+    // ダブルクリックは全画面に入るだけ。投影中に作品や会場を触ったはずみで抜けないよう、
+    // 解除は Esc・全画面ボタン・F (キーを作品へ渡さない出力) に限る (#258)。
+    stage?.addEventListener('dblclick', () => this.enterFullscreen());
     stage?.addEventListener('mousemove', this.boundMouseMove);
     // dev mode 中はマウスがウィンドウ外に出たら操作ウィンドウ側のクロスヘアも消したい
     this.window.addEventListener('mouseout', this.boundMouseOut);
@@ -282,7 +284,7 @@ export class OutputWindow extends BaseWindow {
   }
 
   private onKeydown(e: KeyboardEvent): void {
-    // 作品へキーを渡す出力では F も作品のもの。全画面はダブルクリックかボタンで切り替える。
+    // 作品へキーを渡す出力では F も作品のもの。全画面にはダブルクリックかボタンで入り、Esc かボタンで抜ける。
     if (this.onSketchKey) return;
     // Ctrl/Cmd+F (ブラウザの検索) など修飾キー付きと、他が処理済みのキーでは切り替えない。
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -571,14 +573,23 @@ export class OutputWindow extends BaseWindow {
 
   private toggleFullscreen(): void {
     if (!this.window) return;
-    const doc = this.window.document;
-    if (!doc.fullscreenElement) {
-      doc.documentElement.requestFullscreen().catch(() => { /* gesture 等で失敗 — F11 で代替可 */ });
-    } else {
-      doc.exitFullscreen().catch(() => { /* ignore */ });
+    if (!this.window.document.fullscreenElement) {
+      this.enterFullscreen();
+      return;
     }
-    // 全画面の出入りでサイズが変わるので少し後に transform を再計算
-    this.window.setTimeout(() => this.reapplyTransforms(), 300);
+    this.window.document.exitFullscreen().catch(() => { /* ignore */ });
+    this.scheduleReapplyTransforms();
+  }
+
+  private enterFullscreen(): void {
+    if (!this.window || this.window.document.fullscreenElement) return;
+    this.window.document.documentElement.requestFullscreen().catch(() => { /* gesture 等で失敗 — F11 で代替可 */ });
+    this.scheduleReapplyTransforms();
+  }
+
+  // 全画面の出入りでサイズが変わるので少し後に transform を再計算
+  private scheduleReapplyTransforms(): void {
+    this.window?.setTimeout(() => this.reapplyTransforms(), 300);
   }
 
   // --- 開発モード（mapping 枠線 ＋ マウス追従クロスヘア） ---

@@ -256,13 +256,13 @@ async function keysCase(page) {
   const take = (name = 'source') => page.evaluate(n => window.runtimeRegression[n].contentWindow.keyLog.splice(0), name);
   const downUp = log => log.filter(k => k.type !== 'keypress').map(k => [k.type, k.key, k.code, k.which]);
   await popup.evaluate(() => {
-    // 全画面の切り替え (開始・解除) を数える。CI の Chrome は実際に全画面へ入るので、
-    // 2 回目の切り替えは exitFullscreen になる。
+    // 全画面の開始・解除の呼び出しを数え、順に記録する。CI の Chrome は実際に全画面へ入る。
     window.fullscreenCalls = 0;
+    window.fullscreenLog = [];
     const request = Element.prototype.requestFullscreen;
-    Element.prototype.requestFullscreen = function () { window.fullscreenCalls++; return request.call(this); };
+    Element.prototype.requestFullscreen = function () { window.fullscreenCalls++; window.fullscreenLog.push('request'); return request.call(this); };
     const exit = Document.prototype.exitFullscreen;
-    Document.prototype.exitFullscreen = function () { window.fullscreenCalls++; return exit.call(this); };
+    Document.prototype.exitFullscreen = function () { window.fullscreenCalls++; window.fullscreenLog.push('exit'); return exit.call(this); };
     // 出力ウィンドウ側の転送 listener より後に登録し、元のイベントの defaultPrevented を見る。
     window.prevented = [];
     addEventListener('keydown', e => window.prevented.push([e.key, e.defaultPrevented]));
@@ -324,11 +324,22 @@ async function keysCase(page) {
   await second.keyboard.press('4');
   assert.deepEqual(downUp(await take('nextSource')), [['keydown', '4', 'Digit4', 52], ['keyup', '4', 'Digit4', 52]], 'second output forwards keys');
 
-  // 全画面はダブルクリックで引き続き切り替えられる。
-  // （上の全画面ボタンでの Enter でも 1 回呼ばれているので、差分で見る）
-  const before = await popup.evaluate(() => window.fullscreenCalls);
+  // 全画面にはダブルクリックで入れる。全画面中のダブルクリックでは抜けない (#258)。
+  // （上の全画面ボタンでの Enter で全画面に入っているので、いったん抜けてから数える）
+  await popup.evaluate(() => document.fullscreenElement ? document.exitFullscreen() : undefined);
+  await popup.waitForFunction(() => !document.fullscreenElement);
+  await popup.evaluate(() => { window.fullscreenLog = []; });
   await popup.locator('#dc-output-stage').dblclick();
-  assert.equal(await popup.evaluate(() => window.fullscreenCalls), before + 1, 'double-click still toggles output fullscreen');
+  await popup.waitForFunction(() => !!document.fullscreenElement);
+  await popup.locator('#dc-output-stage').dblclick();
+  // 解除が走るなら fullscreenchange を待つ間に起きるので、少し待ってから見る。
+  await popup.waitForTimeout(300);
+  assert.deepEqual(await popup.evaluate(() => window.fullscreenLog), ['request'], 'double-click enters fullscreen but never exits it');
+  assert.ok(await popup.evaluate(() => !!document.fullscreenElement), 'output stays fullscreen after double-click');
+  // 作品へキーを渡す出力で手で抜ける手段は Esc と全画面ボタン。ボタンで抜けられる。
+  await popup.locator('#dc-output-fs').click();
+  await popup.waitForFunction(() => !document.fullscreenElement);
+  assert.deepEqual(await popup.evaluate(() => window.fullscreenLog), ['request', 'exit'], 'fullscreen button exits fullscreen');
 }
 
 async function recoveryCase(page, base) {
