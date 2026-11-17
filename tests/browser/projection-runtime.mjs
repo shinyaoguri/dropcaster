@@ -256,8 +256,7 @@ async function keysCase(page) {
   const take = (name = 'source') => page.evaluate(n => window.runtimeRegression[n].contentWindow.keyLog.splice(0), name);
   const downUp = log => log.filter(k => k.type !== 'keypress').map(k => [k.type, k.key, k.code, k.which]);
   await popup.evaluate(() => {
-    // 全画面の切り替え (開始・解除) を数える。CI の Chrome は実際に全画面へ入るので、
-    // 2 回目の切り替えは exitFullscreen になる。
+    // 全画面の開始・解除の呼び出しを数え、順に記録する。CI の Chrome は実際に全画面へ入る。
     window.fullscreenCalls = 0;
     window.fullscreenLog = [];
     const request = Element.prototype.requestFullscreen;
@@ -337,7 +336,10 @@ async function keysCase(page) {
   await popup.waitForTimeout(300);
   assert.deepEqual(await popup.evaluate(() => window.fullscreenLog), ['request'], 'double-click enters fullscreen but never exits it');
   assert.ok(await popup.evaluate(() => !!document.fullscreenElement), 'output stays fullscreen after double-click');
-  await popup.evaluate(() => document.exitFullscreen());
+  // 作品へキーを渡す出力で手で抜ける手段は Esc と全画面ボタン。ボタンで抜けられる。
+  await popup.locator('#dc-output-fs').click();
+  await popup.waitForFunction(() => !document.fullscreenElement);
+  assert.deepEqual(await popup.evaluate(() => window.fullscreenLog), ['request', 'exit'], 'fullscreen button exits fullscreen');
 }
 
 async function recoveryCase(page, base) {
