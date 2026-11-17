@@ -91,7 +91,7 @@ function assertIdle(m, marker, label) {
 
 /** hold に渡した作品 (path 経路) の応答は、テストが release() を呼ぶまで返さない。 */
 async function setup(browser, base, { hold = null, query = '' } = {}) {
-  const context = await browser.newContext({ serviceWorkers: 'block' });
+  const context = await browser.newContext({ serviceWorkers: 'block', locale: 'en-US' });
   context.setDefaultTimeout(15_000);
   const errors = [];
   context.on('page', (p) => p.on('pageerror', (e) => errors.push(e.message)));

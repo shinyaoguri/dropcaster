@@ -84,7 +84,7 @@ async function runCase(browser, base) {
   const root = await prepareRoot(base);
   const server = await startServer(root, base);
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const context = await browser.newContext();
+  const context = await browser.newContext({ locale: 'en-US' });
   context.setDefaultTimeout(TIMEOUT_MS);
   let serverStopped = false;
   try {

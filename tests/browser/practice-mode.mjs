@@ -316,7 +316,7 @@ async function projects(page, base) {
   assert.equal((await exportProject(page)).name, 'Unsaved but exportable');
   await page.evaluate(() => { IDBDatabase.prototype.transaction = window.realTransaction; });
   // A second browser context receives all geometry/images/optics via one package.
-  const second = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+  const second = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
   try {
     const other = await setup(second, base); await start(other); await importProject(other, saved);
     assert.equal((await exportProject(other)).assets[0].data, saved.assets[0].data);
@@ -1316,7 +1316,7 @@ try {
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
       for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
-        const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+        const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
         try {
           const page = await setup(context, base, testName.toLowerCase().includes('slideshow') ? '/slideshow' : testName === 'recovery' ? '/w' : '/a', !testName.startsWith('workspace'));

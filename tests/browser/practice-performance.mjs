@@ -10,7 +10,7 @@ const server = await createServer({ configFile: resolve(root, 'apps/web/vite.con
 await server.listen();
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--enable-unsafe-swiftshader'] });
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
   page.setDefaultTimeout(20000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}`);
