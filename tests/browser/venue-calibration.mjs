@@ -472,7 +472,6 @@ async function displayedPixel(page,base,world){
   },[base.modules,world]);
 }
 async function match(page,base){
-  await page.locator('[data-lang-set=en]').evaluate(button=>button.click());
   // 実測で組んだ会場: 既定の部屋に、奥行きの違う箱を 2 つ置く (奥の壁の隅だけでは同一平面で決まらない)。
   await page.evaluate(async modules=>{
     const {venueObject}=await import(`${modules}/practice/venueObjects.ts`),page=window.calibrationPage,project=page.session.changes.get();
@@ -625,7 +624,7 @@ try{
       await server.listen();const base={name,url:`http://127.0.0.1:${server.httpServer.address().port}`,modules:hosted?`/@fs${root.slice(0,-1)}/src/viewer`:'/src/viewer'};
       for(const [testName,run] of Object.entries({activityBar,workflow,interaction,adjust,trace,match,recovery,isolation,reload})){
         if(process.env.VENUE_CASE&&process.env.VENUE_CASE!==testName)continue;
-        const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'}),errors=[];
+        const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block',locale:'en-US'}),errors=[];
         context.on('page',page=>page.on('pageerror',error=>errors.push(error.message)));
         try{const page=await setup(context,base);await run(page,base);assert.deepEqual(errors,[],`${name}/${testName} browser errors`);console.log(`${name}/${testName}: PASS`)}finally{await context.close()}
       }

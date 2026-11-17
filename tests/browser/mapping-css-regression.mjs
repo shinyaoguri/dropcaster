@@ -37,7 +37,7 @@ try {
       server: { host: '127.0.0.1', port: 0, strictPort: false, open: false },
       logLevel: 'error',
     });
-    const context = await browser.newContext({ viewport: { width: 640, height: 480 }, serviceWorkers: 'block' });
+    const context = await browser.newContext({ viewport: { width: 640, height: 480 }, serviceWorkers: 'block', locale: 'en-US' });
     try {
       await server.listen();
       const address = server.httpServer.address();

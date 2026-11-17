@@ -95,7 +95,7 @@ function holdRoutes(context, pattern) {
 }
 
 async function setup(browser, base) {
-  const context = await browser.newContext({ serviceWorkers: 'block' });
+  const context = await browser.newContext({ serviceWorkers: 'block', locale: 'en-US' });
   context.setDefaultTimeout(15_000);
   const errors = [];
   context.on('page', (p) => p.on('pageerror', (e) => errors.push(e.message)));
@@ -293,7 +293,7 @@ const insecureRoutes = [
 async function insecureOrigin(browser, base) {
   const url = base.url.replace('127.0.0.1', INSECURE_HOST);
   for (const [path, open, ready] of insecureRoutes) {
-    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const context = await browser.newContext({ serviceWorkers: 'block', locale: 'en-US' });
     context.setDefaultTimeout(15_000);
     try {
       const errors = [];
