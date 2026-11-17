@@ -133,21 +133,29 @@ test('縮尺が未設定でも、部材とプロジェクタが実寸のとき�
   assert.ok(angleBetween(unknown.projector.quaternion, known.projector.quaternion) < .01);
 });
 
-test('変換した部材とプロジェクタは既存の parseProject と会場ファイル (Venue package v2) をそのまま通る', () => {
-  const project = createProject();
-  const { input, result } = convert(front, 'roomAndBox', { fovPrior: throwRatioPrior, elements: [backWidth] });
-  const venue = ok(reconstructionToVenue(input, result, { projector: project.venue.projectors[0], name }));
-  project.venue.scene = { ...defaultScene(), kind: 'objects', objects: venue.objects };
-  project.venue.projectors = [venue.projector];
-  const parsed = parseProject(JSON.parse(JSON.stringify(project)));
-  assert.deepEqual(parsed.venue.scene.objects, venue.objects);
-  assert.deepEqual(parsed.venue.projectors, [venue.projector]);
-  const shared = portableVenue(parsed);
-  assert.deepEqual([shared.format, shared.schemaVersion], ['dropcaster-venue', 2]);
-  assert.deepEqual(Object.keys(shared.venue).sort(), Object.keys(createProject().venue).sort(), 'no new fields in the venue file');
-  const imported = importVenue(JSON.parse(JSON.stringify(shared)), createProject());
-  assert.deepEqual(imported.venue.scene.objects, venue.objects);
-});
+for (const [label, elements] of /** @type {const} */ ([['実寸あり', [backWidth]], ['縮尺未設定', []]])) {
+  test(`変換した部材とプロジェクタは既存の parseProject と会場ファイル (Venue package v2) をそのまま通り、マッピング側で同じものを読む (${label})`, () => {
+    const project = createProject();
+    const { input, result } = convert(front, 'roomAndBox', { fovPrior: throwRatioPrior, elements: [...elements] });
+    const venue = ok(reconstructionToVenue(input, result, { projector: project.venue.projectors[0], name }));
+    assert.equal(venue.scaleKnown, elements.length > 0);
+    assert.notDeepEqual(venue.projector.lensShift, [0, 0], 'the estimated lens shift travels with the file');
+    project.venue.scene = { ...defaultScene(), kind: 'objects', objects: venue.objects };
+    project.venue.projectors = [venue.projector];
+    const parsed = parseProject(JSON.parse(JSON.stringify(project)));
+    assert.deepEqual(parsed.venue.scene.objects, venue.objects);
+    assert.deepEqual(parsed.venue.projectors, [venue.projector]);
+    const shared = portableVenue(parsed);
+    assert.deepEqual([shared.format, shared.schemaVersion], ['dropcaster-venue', 2]);
+    assert.deepEqual(Object.keys(shared.venue).sort(), Object.keys(createProject().venue).sort(), 'no new fields in the venue file');
+    // マッピング側 (PracticePanel) は、受け取る側の作品・再生設定を残したまま importVenue で会場だけを差し替える。
+    const receiving = createProject();
+    const imported = importVenue(JSON.parse(JSON.stringify(shared)), receiving);
+    assert.deepEqual(imported.venue.scene.objects, venue.objects);
+    assert.deepEqual(imported.venue.projectors, [venue.projector]);
+    assert.deepEqual([imported.content, imported.show], [receiving.content, receiving.show]);
+  });
+}
 
 test('決まらない頂点を含む部品は作らず、理由を返す', () => {
   // 画角とシフトを与えても、どこともつながらないポスターは距離が決まらない。
