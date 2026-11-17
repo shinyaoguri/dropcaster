@@ -350,16 +350,64 @@ async function projectToOutput(page,base,points){
   },[base.modules,points]);
 }
 async function onTraceImage(page,[x,y]){const box=await page.locator('#venue-image').boundingBox(),{width,height}=await page.evaluate(()=>{const c=window.calibrationPage.projection.canvas;return {width:c.width,height:c.height}});return {x:box.x+x/width*box.width,y:box.y+y/height*box.height}}
+/** 今の Step (手順の一覧で選ばれている項目) と、案内・次へ進めない理由。リロード後も画面の表示だけで読める。 */
+async function stepState(page){return page.evaluate(()=>({step:document.querySelector('#venue-trace-steps li.is-current')?.textContent??null,entry:!document.querySelector('#venue-trace-entry').hidden,
+  guide:document.querySelector('#venue-trace-step').textContent,tip:document.querySelector('#venue-trace-tip').textContent,where:document.querySelector('#venue-trace-where').textContent,
+  diagram:!document.querySelector('#venue-trace-diagram').hidden&&!!document.querySelector('#venue-trace-diagram svg'),
+  next:document.querySelector('#venue-trace-next').disabled?null:document.querySelector('#venue-trace-next').textContent,blocked:document.querySelector('#venue-trace-blocked').textContent}))}
+/** 像に重ねる点の番号 (fillText) の数。確認の Step でだけ描く。 */
+async function overlayLabels(page){return page.evaluate(()=>{const labels=[];const context=new Proxy({},{get:(_,key)=>key==='fillText'?text=>labels.push(text):()=>{},set:()=>true});window.calibrationPage.trace.drawOverlay(context,1,1);return labels.length})}
+/** 準備: 台形補正のチェック → プロジェクタ出力を開く → (投射比)。出力窓を返す。 */
+async function prepareTrace(page,throwRatio){
+  let state=await stepState(page);
+  assert.equal(state.step,'Prepare');assert.equal(state.next,null);assert.match(state.blocked,/Turn off keystone/);
+  assert.match(state.where,/On the projector/);
+  await page.locator('#venue-trace-keystone').check();
+  assert.match((await stepState(page)).blocked,/Open the projector output first/);
+  assert.equal(await page.locator('#venue-trace-output-state').textContent(),'Not open yet');
+  const outputWait=page.waitForEvent('popup');await page.locator('#venue-trace-open-output').click();const output=await outputWait;
+  await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
+  await page.waitForFunction(()=>document.querySelector('#venue-trace-output-state').textContent==='Open');
+  if(throwRatio!==null){
+    assert.match((await stepState(page)).blocked,/Enter the throw ratio/);
+    await change(page,'#venue-trace-throw',throwRatio);
+  }
+  // 入力を変えると 1 回だけ再推定し、その間は進めない。
+  await page.waitForFunction(()=>!document.querySelector('#venue-trace-next').disabled);
+  state=await stepState(page);assert.equal(state.next,'Next');assert.equal(state.blocked,'');
+  await page.locator('#venue-trace-next').click();
+  return output;
+}
 async function trace(page,base){
   const original=await current(page);
   await page.locator('#dc-activity-trace').click();
   assert.equal(await page.locator('.dc-venue-page.is-tracing').count(),1);
+  // 入口: 作る / 合わせるの問いだけが出て、道具は並ばない。
+  let state=await stepState(page);
+  assert.equal(state.entry,true);assert.equal(state.step,null);assert.match(state.guide,/Choose how to start/);
+  assert.equal(await page.locator('#venue-trace-tool-boxCorner').isVisible(),false,'no tools before choosing');
+  assert.equal(await page.locator('#venue-trace-guide').isVisible(),true,'the guide sits above the projected image');
+  assert.equal(await page.locator('#venue-pattern').isVisible(),false,'the alignment image moves into the prepare step');
   // 十字は実出力 (壁) に映る: 中心の隙間は暗く、腕は赤い。
   const start=(await traceState(page)).crosshair;
   const arm=await outputPixel(page,[start[0]+40,start[1]]),gap=await outputPixel(page,[start[0]+4,start[1]]);
   assert.ok(arm[0]>200&&arm[1]<80&&arm[2]<80,`crosshair arm is red ${arm}`);assert.ok(!(gap[0]>200&&gap[1]<80),`the centre is open ${gap}`);
+  await page.locator('#venue-trace-mode-build').click();
+  // 準備: 調整用の像は準備の Step で選べ、見出しの選択と同じものを指す。
+  await page.locator('#venue-trace-pattern').selectOption('white');
+  assert.equal(await page.inputValue('#venue-pattern'),'white');
+  await page.locator('#venue-trace-pattern').selectOption('outline');
+  await snapshot(page,base.name+'-venue-trace-prepare');
+  // 投射比が分からないときは、明示すれば進める。
+  await page.locator('#venue-trace-throw-unknown').check();assert.equal((await stepState(page)).next,null,'the output is not open yet');
+  await page.locator('#venue-trace-throw-unknown').uncheck();
   // 既定の部屋 (8 × 3 × 6 m) を、既定のプロジェクタ (縦画角 43°) から正面でなぞる。投射比を仕様値として入れる。
-  await change(page,'#venue-trace-throw',(1/(2*(16/9)*Math.tan(21.5*Math.PI/180))).toFixed(4));
+  const output=await prepareTrace(page,(1/(2*(16/9)*Math.tan(21.5*Math.PI/180))).toFixed(4));
+  state=await stepState(page);
+  assert.equal(state.step,'Room corner');assert.match(state.guide,/Room corner 1\/4/);assert.match(state.where,/Watching the wall/);assert.equal(state.diagram,true);
+  assert.match(await page.locator('#venue-trace-decides').textContent(),/floor and two walls/);
+  assert.match(await page.locator('#venue-trace-progress').textContent(),/0 \/ 4 points/);
+  await snapshot(page,base.name+'-venue-trace-room');
   const [backLeft,leftUp,backRight,leftSide,rightUp,rightSide]=await projectToOutput(page,base,[[-4,0,-3],[-4,2,-3],[4,0,-3],[-4,0,-1],[4,2,-3],[4,0,-1]]);
   // なぞる間は、像を押してドラッグしてもプロジェクタは動かない (十字だけが付いてくる)。
   const dragFrom=await onTraceImage(page,[600,400]),revision=original.venue.revision;
@@ -376,21 +424,39 @@ async function trace(page,base){
   const before=(await traceState(page)).crosshair;
   await page.keyboard.press('ArrowRight');await page.keyboard.press('Shift+ArrowDown');
   assert.deepEqual((await traceState(page)).crosshair,[before[0]+10,before[1]+1],'arrows move 10 px, Shift+arrows 1 px');
-  // 部屋の左右の隅を、像のダブルクリックでなぞる。右の隅の奥の辺は、左の隅の点に吸着して共有する。
-  await page.locator('#venue-trace-tool-roomCorner').click();
+  // 部屋の左の隅を、像のダブルクリックでなぞる。なぞり終えると反対側の隅の Step へ進む。
   for(const point of [backLeft,leftUp,backRight,leftSide]){const at=await onTraceImage(page,point);await page.mouse.dblclick(at.x,at.y)}
   assert.equal((await traceState(page)).shapes,1);
-  for(const point of [backRight,rightUp,backLeft,rightSide]){const at=await onTraceImage(page,point);await page.mouse.dblclick(at.x,at.y)}
+  state=await stepState(page);
+  assert.equal(state.step,'Opposite room corner');assert.equal(state.next,null);assert.match(state.blocked,/Trace the opposite corner too/);
+  assert.equal(await overlayLabels(page),0,'point numbers stay off the image until the check step');
+  // 右の隅の奥の辺は、左の隅の点に吸着して共有する。その手順では共有の案内が出る。
+  for(const [i,point] of [backRight,rightUp,backLeft,rightSide].entries()){
+    if(i===2)assert.match((await stepState(page)).tip,/first corner you traced/);
+    const at=await onTraceImage(page,point);await page.mouse.dblclick(at.x,at.y);
+  }
   await page.waitForFunction(()=>window.calibrationPage.trace.state.venue?.status==='ok');
   const solved=await traceState(page);
   assert.equal(solved.points.length,6,'the shared corners are one point each');
   assert.equal(solved.shapes,2);assert.equal(solved.objects,4,`floor, back, left and right walls: ${solved.status}`);
   assert.ok(solved.elapsed<1000,`re-estimating takes ${solved.elapsed} ms`);
   assert.match(solved.status,/Estimated 4 parts/);assert.match(solved.status,/Scale is not set/);
-  assert.equal((await page.locator('#venue-trace-points li').count()),6);
+  state=await stepState(page);
+  assert.match(state.guide,/Both corners are traced/);assert.equal(state.next,'Next');
+  assert.match(await page.locator('#venue-trace-guide-status').textContent(),/Estimated 4 parts/);
   // 推定は一時表示で、まだ保存しない。
   assert.equal((await current(page)).venue.revision,revision,'estimating does not save');
   await snapshot(page,base.name+'-venue-trace-estimated');
+  // 箱と実寸は任意なのでスキップでき、確認の Step へ着く。先の Step へは一覧から飛べない。
+  await page.locator('#venue-trace-next').click();
+  assert.equal((await stepState(page)).step,'Boxes (optional)');assert.equal((await stepState(page)).next,'Skip');
+  assert.equal(await page.locator('#venue-trace-steps [data-trace-step=review]').isDisabled(),true);
+  await page.locator('#venue-trace-next').click();
+  assert.equal((await stepState(page)).step,'Real size (optional)');
+  await page.locator('#venue-trace-next').click();
+  state=await stepState(page);assert.equal(state.step,'Check and apply');assert.match(state.guide,/Check the outline on the wall/);
+  assert.equal(await overlayLabels(page),6,'the check step numbers the points');
+  assert.equal((await page.locator('#venue-trace-points li').count()),6);
   // 置き直し: 十字が点へ移り、Esc で取り消すと点も十字も元のまま。
   const [firstId,firstPixel]=solved.points[0];
   await page.locator(`#venue-trace-points [data-trace-action=move][data-point=${firstId}]`).click();
@@ -409,13 +475,14 @@ async function trace(page,base){
   const undone=await current(page);
   assert.deepEqual(undone.venue.scene.objects,original.venue.scene.objects);assert.deepEqual(undone.venue.projectors,original.venue.projectors);
   // 出力窓: 窓いっぱいに引き伸ばした出力の上で、マウスの位置が出力画素へ換算される。クリックで確定。
-  const outputWait=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const output=await outputWait;
-  await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
   for(const [w,h] of [[960,540],[700,500]]){
     await output.setViewportSize({width:w,height:h});
     await output.mouse.move(w*.25,h*.75);
     await page.waitForFunction(([x,y])=>{const c=window.calibrationPage.trace.controller.crosshair;return Math.abs(c[0]-x)<1e-6&&Math.abs(c[1]-y)<1e-6},[1920*.25,1080*.75]);
   }
+  // 追加でなぞる: 箱の Step へ戻り、長方形を選べる。
+  await page.locator('#venue-trace-more').click();
+  assert.equal((await stepState(page)).step,'Boxes (optional)');
   await page.locator('#venue-trace-tool-rectangle').click();
   await output.mouse.click(700*.25,500*.75);
   const clicked=await traceState(page);assert.equal(clicked.pending.length,1,'a click in the output window confirms the point');
@@ -426,6 +493,7 @@ async function trace(page,base){
   const last=(await traceState(page)).crosshair;
   await page.locator('#dc-activity-objects').click();
   assert.equal(await page.locator('.dc-venue-page.is-tracing').count(),0);
+  assert.equal(await page.locator('#venue-trace-guide').isVisible(),false);assert.equal(await page.locator('#venue-pattern').isVisible(),true);
   const away=await outputPixel(page,[last[0]+40,last[1]]);assert.ok(!(away[0]>200&&away[1]<80),'the crosshair leaves the wall');
   await page.waitForFunction(()=>window.calibrationPage.preview.venueMeshes().length===4);
   // なぞった点は会場の下書きと別に保存され、リロード後も残る。書き出す会場ファイルには含まれない。
@@ -435,8 +503,9 @@ async function trace(page,base){
   assert.equal(JSON.stringify(shared).includes('"shapes"'),false,'traced points stay out of the venue file');
   await page.reload();await reloaded(page);
   await page.locator('#dc-activity-trace').click();
-  // リロード後はテスト用のページ参照が無いので、画面の表示で確かめる。
+  // リロード後はテスト用のページ参照が無いので、画面の表示で確かめる。部屋の隅が 2 つあれば確認の Step から再開する。
   await page.waitForFunction(()=>/Estimated 4 parts/.test(document.querySelector('#venue-trace-status').textContent));
+  assert.equal((await stepState(page)).step,'Check and apply');
   assert.deepEqual(await page.locator('#venue-trace-points li > span:first-child').allTextContents(),cancelled.points.map(([id])=>`P${id.slice(1)}`));
   await snapshot(page,base.name+'-venue-trace-reloaded');
 }
@@ -483,7 +552,15 @@ async function match(page,base){
   await page.locator('#dc-activity-trace').click();
   await page.locator('#venue-trace-mode-match').click();
   assert.equal((await matchState(page)).mode,'match');
-  assert.equal(await page.locator('#venue-trace-tool-roomCorner').isVisible(),false,'the shape tools are for building');
+  assert.equal(await page.locator('#venue-trace-throw-unknown').isVisible(),false,'the throw ratio is optional when matching');
+  // 合わせるモードの準備は、台形補正のチェックと出力窓だけ (投射比は任意)。
+  const output=await prepareTrace(page,null);
+  const step=await stepState(page);
+  assert.equal(step.step,'Match corners');assert.match(step.guide,/Vertex 1\/2/);assert.equal(step.diagram,true);
+  assert.equal(await page.locator('#venue-trace-tool-boxCorner').isVisible(),false,'the shape tools are for building');
+  // 固定する量は「詳細」に畳んである。
+  assert.equal(await page.locator('#venue-trace-lock-position').isVisible(),false);
+  await page.locator('#venue-trace-match > summary').click();
   assert.equal(await page.locator('#venue-trace-lock-lensShiftX').isChecked(),true,'the horizontal shift is fixed by default');
   assert.equal(await page.locator('#venue-trace-lock-position').isChecked(),false);
   assert.equal(await page.locator('#venue-trace-apply').textContent(),'Apply to projector');
@@ -519,6 +596,11 @@ async function match(page,base){
   const error=Math.hypot(...solved.result.projector.position.map((v,i)=>v-truth.position[i]));
   assert.ok(error<.1,`position error ${error} m`);
   assert.ok(Math.abs(solved.result.projector.verticalFovDegrees-truth.verticalFovDegrees)<.5,`fov ${solved.result.projector.verticalFovDegrees} vs ${truth.verticalFovDegrees}`);
+  assert.equal((await stepState(page)).next,'Next');
+  assert.equal(await overlayLabels(page),0,'numbers and residual lines wait for the check step');
+  await page.locator('#venue-trace-next').click();
+  assert.equal((await stepState(page)).step,'Check and apply');
+  assert.equal(await overlayLabels(page),8);
   assert.equal((await page.locator('#venue-trace-points li').count()),8);
   // 一時表示: 壁の輪郭は推定したプロジェクタで描くが、まだ保存しない。
   assert.equal((await current(page)).venue.revision,revision,'estimating does not save');
@@ -536,29 +618,33 @@ async function match(page,base){
   await page.waitForTimeout(700);assert.equal((await current(page)).venue.revision,revision+1,'apply is one change');
   await page.locator('#venue-trace-undo').click();
   await page.waitForFunction(projector=>JSON.stringify(window.calibrationPage.session.changes.get().venue.projectors[0])===projector,JSON.stringify(committed));
-  // 頂点の選択は、壁に映っている輪郭 (戻した後は確定済み) で行う。
+  // 頂点の選択は、壁に映っている輪郭 (戻した後は確定済み) で行う。追加で合わせるときは点の Step へ戻る。
+  await page.locator('#venue-trace-more').click();assert.equal((await stepState(page)).step,'Match corners');
   const again=await onTraceImage(page,await displayedPixel(page,base,targets[0].world));await page.mouse.dblclick(again.x,again.y);
   assert.equal((await matchState(page)).crosshair.join(),solved.anchors[0].pixel.join(),'picking a matched vertex re-places that point');
   await page.locator('#venue-output-stage').focus();await page.keyboard.press('Escape');
-  // 「会場を作る」に戻っても対応点は残り、対応点は下書きにだけ保存されて会場ファイルには入らない。
+  await output.close();
+  // 始め方を選び直して「なぞって作る」に移っても対応点は残り、対応点は下書きにだけ保存されて会場ファイルには入らない。
+  await page.locator('#venue-trace-change-mode').click();assert.equal((await stepState(page)).entry,true);
   await page.locator('#venue-trace-mode-build').click();
-  assert.equal(await page.locator('#venue-trace-tool-roomCorner').isVisible(),true);
+  assert.equal((await stepState(page)).step,'Prepare','building starts from the prepare step');
   assert.equal((await matchState(page)).anchors.length,8);
   const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('dropcaster.venue.trace.v1')));
   assert.equal(saved.anchors.length,8);assert.equal(saved.mode,'build');
   const shared=await download(page);assert.equal(JSON.stringify(shared).includes('"anchors"'),false,'matched vertices stay out of the venue file');
-  await page.locator('#dc-activity-trace').click();await page.locator('#venue-trace-mode-match').click();
+  await page.locator('#dc-activity-trace').click();await page.locator('#venue-trace-change-mode').click();await page.locator('#venue-trace-mode-match').click();
+  assert.equal((await stepState(page)).step,'Check and apply','matching resumes from its points');
   await page.reload();await reloaded(page);
   await page.locator('#dc-activity-trace').click();
   await page.waitForFunction(()=>/Matched the projector to 8 vertices/.test(document.querySelector('#venue-trace-status').textContent));
-  assert.equal(await page.locator('#venue-trace-mode-match').getAttribute('aria-pressed'),'true');
+  assert.equal((await stepState(page)).step,'Check and apply');
   await snapshot(page,base.name+'-venue-match-reloaded');
 }
 
 // #232: マッピング画面と同じ左端のアクティビティバー (ADR 0021)。パネルの並び・所属・畳み・キーボード・狭い画面。
 const VENUE_PANELS={
   objects:['#dc-practice-venue','#practice-start-objects'],
-  trace:['#venue-trace-throw','#venue-trace-tool-roomCorner','#venue-trace-confirm','#venue-trace-apply'],
+  trace:['#venue-trace-mode-build','#venue-trace-mode-match','#venue-trace-guide'],
   projector:['#practice-output','#venue-step-coarse','#venue-undo-projector','#practice-projector-form'],
   output:['#venue-resolution'],
   files:['#venue-name','#venue-export','#venue-load','#venue-copy-mapping','#practice-load-glb','#practice-sample','#venue-mapping','[data-lang-set=ja]'],
@@ -576,7 +662,9 @@ async function activityBar(page,base){
     assert.equal(await selectedPanel(page),panel);
     for(const [owner,selectors] of Object.entries(VENUE_PANELS))for(const selector of selectors)
       assert.equal(await page.locator(selector).first().isVisible(),owner===panel,`${selector} belongs to the ${owner} panel (showing ${panel})`);
-    for(const selector of ['#venue-pattern','#venue-open-output','#venue-image','#venue-canvas'])assert.equal(await page.locator(selector).isVisible(),true,`${selector} stays visible`);
+    for(const selector of ['#venue-open-output','#venue-image','#venue-canvas'])assert.equal(await page.locator(selector).isVisible(),true,`${selector} stays visible`);
+    // なぞる間は、調整用の像の選択は準備の Step に移る。
+    assert.equal(await page.locator('#venue-pattern').isVisible(),panel!=='trace','#venue-pattern is visible outside tracing');
   }
   await page.locator('#dc-activity-projector').click();
   // 選択中の再押下で畳み、像と 3D が幅を使う。開き直すと元の列幅に戻る。

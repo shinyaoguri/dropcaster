@@ -208,8 +208,14 @@ export class VenueCalibrationPage {
         undo: () => this.undo(),
         crosshair: pixel => this.projection?.setCrosshair(pixel),
         redraw: () => { this.mirrored = ''; },
+        outputOpen: () => !!this.output?.isOpen,
+        openOutput: () => this.openOutput(),
+        pattern: () => this.get<HTMLSelectElement>('venue-pattern').value as CalibrationPattern,
+        setPattern: pattern => { this.get<HTMLSelectElement>('venue-pattern').value = pattern; this.projection?.setPattern(pattern); },
       });
       this.get('dc-tool-panel-trace').append(this.trace.element);
+      // 今やることの案内は、投影される像 (なぞる間は十字の操作盤) の上に置く。
+      this.get('venue-output-stage').before(this.trace.guide);
       this.trace.attach(this.get('venue-output-stage'), this.mirror);
       this.off.push(this.activityBar.onChange(panel => this.setTracing(panel === 'trace')));
       this.builder.onSelection = () => this.update(this.session.changes.get());
@@ -254,9 +260,9 @@ export class VenueCalibrationPage {
     this.click('venue-edit',()=>this.editor?.setActive(true));
     this.click('practice-overview',()=>this.preview?.overview()); this.click('practice-audience',()=>this.preview?.audienceView()); this.click('practice-projector-view',()=>this.preview?.projectorView());
     this.get('practice-guides').addEventListener('change',()=>this.preview?.setGuidesVisible(this.input('practice-guides').checked));
-    this.click('venue-open-output',()=>{ this.editor?.cancel(); if (!this.output?.open()) this.status('calibration.blocked',true); });
+    this.click('venue-open-output',()=>this.openOutput());
     this.click('venue-close-output',()=>this.output?.close());
-    this.get('venue-pattern').addEventListener('change',()=>this.projection?.setPattern(this.get<HTMLSelectElement>('venue-pattern').value as CalibrationPattern));
+    this.get('venue-pattern').addEventListener('change',()=>{ this.projection?.setPattern(this.get<HTMLSelectElement>('venue-pattern').value as CalibrationPattern); this.trace?.render(); });
     this.get('venue-resolution').addEventListener('change',()=>{
       const [width,height] = this.get<HTMLSelectElement>('venue-resolution').value.split('x').map(Number);
       this.setOutputSize(width,height,'preset');
@@ -488,7 +494,8 @@ export class VenueCalibrationPage {
     for (const selector of ['.tool-content', '#venue-image-pane', '#venue-model-pane']) (this.root.querySelector(selector) as HTMLElement).inert = inert;
   }
   private setReady(): void { this.setInert(false); this.get<HTMLButtonElement>('venue-export').disabled = false; }
-  private updateOutput(): void { this.get<HTMLButtonElement>('venue-close-output').disabled=!this.output?.isOpen; }
+  private updateOutput(): void { this.get<HTMLButtonElement>('venue-close-output').disabled=!this.output?.isOpen; this.trace?.render(); }
+  private openOutput(): void { this.editor?.cancel(); if (!this.output?.open()) this.status('calibration.blocked',true); }
   private resizePreview(): void {
     const rect=this.canvas.parentElement?.getBoundingClientRect(); if(rect?.width && rect.height) this.preview?.resize(Math.round(rect.width),Math.round(rect.height));
   }

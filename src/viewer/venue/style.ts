@@ -67,6 +67,49 @@ export function installVenueStyles(): void {
     .dc-venue-trace-status { font-size:12px;color:#ccc;line-height:1.5;margin:8px 0; }
     .dc-venue-trace-status p { margin:0 0 4px; }
     .dc-venue-page.is-tracing #venue-output-stage { cursor:crosshair; }
+    /* 手順 (#259)。左に手順の一覧と今の Step の入力、投影される像の上に今やることの案内を置き、像は十字の操作盤として小さくする。 */
+    .dc-venue-trace-steps { margin:0;padding:0;list-style:none;counter-reset:trace-step; }
+    .dc-venue-trace-steps li { counter-increment:trace-step;margin:2px 0; }
+    .dc-venue-page .dc-venue-trace-steps .tool-button { display:flex;gap:8px;align-items:center;width:100%;margin:0;padding:6px 8px;text-align:left;font-size:12px;background:transparent;border-color:transparent;color:#bbb; }
+    .dc-venue-page .dc-venue-trace-steps .tool-button::before { content:counter(trace-step);display:inline-flex;align-items:center;justify-content:center;flex:none;width:20px;height:20px;border:1px solid #555;border-radius:50%;font-size:11px; }
+    .dc-venue-page .dc-venue-trace-steps li.is-done .tool-button { color:#86efac; }
+    .dc-venue-page .dc-venue-trace-steps li.is-done .tool-button::before { content:'✓';border-color:#22c55e;color:#22c55e; }
+    .dc-venue-page .dc-venue-trace-steps li.is-current .tool-button { background:#3f1d1d;border-color:#ef4444;color:#fff;font-weight:600; }
+    .dc-venue-page .dc-venue-trace-steps li.is-current .tool-button::before { border-color:#ef4444;background:#ef4444;color:#fff; }
+    .dc-venue-page .dc-venue-trace-steps .tool-button:disabled { opacity:.5; }
+    .dc-venue-trace-question { margin:4px 0 10px;font-size:14px;font-weight:600;color:#eee;line-height:1.4; }
+    .dc-venue-page .dc-venue-trace-choice { display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin:0 0 8px;padding:10px 12px;text-align:left;font-size:13px;font-weight:600; }
+    .dc-venue-trace-choice small { font-size:11px;font-weight:400;color:#bbb;line-height:1.4; }
+    .dc-venue-trace-checklist { margin:0 0 8px;padding:0;list-style:none; }
+    .dc-venue-trace-checklist > li { margin:0 0 10px;padding:8px;border:1px solid #333;border-radius:4px; }
+    .dc-venue-trace-check { display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#eee; }
+    .dc-venue-trace-checklist .dc-practice-hint { margin:4px 0 0; }
+    .dc-venue-page .dc-venue-trace-checklist .tool-button { margin:6px 0 0; }
+    .dc-venue-trace-state { flex:none;padding:1px 6px;border-radius:3px;background:#3f1d1d;color:#fca5a5;font-size:11px;font-weight:400; }
+    .dc-venue-trace-state.is-ok { background:#14321f;color:#86efac; }
+    .dc-venue-trace-where { display:inline-block;margin:4px 6px 0 0;padding:1px 6px;border-radius:3px;background:#262626;color:#ddd;font-size:11px;font-weight:400; }
+    .dc-venue-trace-where.is-wall { background:#3f1d1d;color:#fecaca; }
+    .dc-venue-trace-where.is-projector { background:#1e293b;color:#bfdbfe; }
+    .dc-venue-trace-details { margin:8px 0;font-size:12px;color:#ddd; }
+    .dc-venue-trace-details > summary { cursor:pointer;color:#bbb; }
+    .dc-venue-trace-nav { margin:12px 0 8px; }
+    .dc-venue-trace-nav .dc-practice-hint:empty { display:none; }
+    .dc-venue-page #venue-trace-next:not(:disabled) { background:#dc2626;border-color:#f87171;color:white; }
+    .dc-venue-page #venue-trace-clear,.dc-venue-page #venue-trace-change-mode { margin-top:8px;font-size:11px;color:#bbb; }
+    .dc-venue-page #venue-trace-clear { margin-top:16px; }
+    .dc-venue-trace-guide { display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid #333;background:#141414; }
+    .dc-venue-trace-guide-text { flex:1;min-width:0; }
+    .dc-venue-trace-meta { display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0;font-size:11px;color:#aaa; }
+    .dc-venue-trace-meta .dc-venue-trace-where { margin:0; }
+    .dc-venue-trace-guide .dc-venue-trace-step { margin:6px 0 4px;padding:0;border:0;background:none;font-size:16px;font-weight:600;line-height:1.4;color:#fff; }
+    .dc-venue-trace-tip { margin:0 0 4px;font-size:12px;color:#ddd;line-height:1.5; }
+    .dc-venue-trace-decides { margin:0 0 6px;font-size:12px;color:#86efac;line-height:1.5; }
+    .dc-venue-trace-tip:empty,.dc-venue-trace-decides:empty,#venue-trace-message:empty { display:none; }
+    .dc-venue-trace-guide .dc-venue-trace-status { margin:4px 0; }
+    .dc-venue-trace-figure { flex:none;width:clamp(140px,32%,240px);color:#888; }
+    .dc-venue-trace-diagram { display:block;width:100%;height:auto; }
+    .dc-venue-page.is-tracing #venue-output-stage { min-height:140px; }
+    .dc-venue-page.is-tracing #venue-pattern,.dc-venue-page.is-tracing .dc-venue-header-field { display:none; }
     .dc-venue-page #practice-aspect[readonly] { opacity:.7; }
 
     /* 2 ペイン: 投影される像 (= 出力窓と同じ canvas) と 3D 会場を同時に見る */

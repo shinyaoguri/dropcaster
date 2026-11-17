@@ -45,11 +45,14 @@ export class TraceController {
   get stepKey(): string | null { return this.tool ? TOOL_STEPS[this.tool][this.step] ?? null : null; }
   get mode(): TraceMode { return this.doc.mode; }
 
+  /** 道具を選ぶ。match の道具は anchor だけ、build では anchor を選べない。null は確定しない手順 (準備・確認) 用。 */
   setTool(tool: TraceTool | null): void {
-    if (this.doc.mode === 'match') return;
+    if (tool !== null && (tool === 'anchor') !== (this.doc.mode === 'match')) return;
+    // 道具を替えるだけなら点と形は変わらないので、保存・再推定しない (なぞりかけを捨てたときだけ)。
+    const before = this.doc;
     this.abandon();
-    this.tool = tool === 'anchor' ? null : tool;
-    this.notify(true);
+    this.tool = tool;
+    this.notify(this.doc !== before);
   }
 
   /** モードを切り替える。どちらのモードの点も残し、なぞりかけと置き直しは捨てる。match の道具は常に anchor。 */
