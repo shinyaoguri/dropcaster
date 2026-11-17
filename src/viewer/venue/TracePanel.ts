@@ -127,10 +127,10 @@ export class TracePanel {
       <section id="venue-trace-prepare">
         <ol class="dc-venue-trace-checklist">
           <li><label class="dc-venue-trace-check"><input type="checkbox" id="venue-trace-keystone">${label('calibration.traceCheckKeystone')}</label>
-            <span class="dc-venue-trace-where">${label('calibration.traceWhereProjector')}</span>
+            <span class="dc-venue-trace-where is-projector">${label('calibration.traceWhereProjector')}</span>
             <p class="dc-practice-hint">${label('calibration.traceCheckKeystoneWhy')}</p></li>
           <li><div class="dc-venue-trace-check"><span id="venue-trace-output-state" class="dc-venue-trace-state"></span>${label('calibration.traceCheckOutput')}</div>
-            <span class="dc-venue-trace-where">${label('calibration.traceWhereScreen')}</span>
+            <span class="dc-venue-trace-where is-screen">${label('calibration.traceWhereScreen')}</span>
             ${button('venue-trace-open-output', 'calibration.openOutput')}
             <p class="dc-practice-hint">${label('calibration.traceCheckOutputWhy')}</p></li>
           <li><label class="dc-practice-field">${label('calibration.traceThrowRatio')}<input id="venue-trace-throw" type="number" min="${MIN_THROW_RATIO}" max="${MAX_THROW_RATIO}" step="0.01"></label>
