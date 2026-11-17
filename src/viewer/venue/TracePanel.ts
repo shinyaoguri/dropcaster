@@ -1,24 +1,36 @@
-import type { Projector, VenueObject } from '../practice/project';
+import type { Projector, Vec3, VenueObject } from '../practice/project';
 import { button, label } from '../practice/controls';
 import { t, type MessageKey } from '../i18n';
 import { editable } from './ProjectorAdjuster';
 import { TraceController, CROSSHAIR_STEP, type ConfirmResult } from './TraceController';
-import { MAX_THROW_RATIO, MIN_THROW_RATIO, parseTraceDocument, pointLabel, toReconstructInput, type TraceTool } from './traceModel';
-import { reconstructVenue, type PixelPoint, type ReconstructResult } from './venueReconstruct';
+import { MAX_THROW_RATIO, MIN_THROW_RATIO, PROJECTOR_PARAMETERS, parseTraceDocument, pointLabel, requiredAnchors, toMatchInput, toReconstructInput,
+  type ShapeTool, type TraceMode } from './traceModel';
+import { reconstructVenue, type PixelPoint, type ProjectorParameter, type ReconstructResult } from './venueReconstruct';
+import { nearestProjectedVertex, projectToPixel } from './venueVertices';
 import { reconstructionToVenue, type ReconstructionToVenueResult, type VenuePartRole } from './reconstructionToVenue';
 
 /** なぞった点と形の保存先。会場の下書き (IndexedDB の venue-draft) とは別で、書き出す会場ファイルには含めない (ADR 0023)。 */
 export const TRACE_STORAGE_KEY = 'dropcaster.venue.trace.v1';
 
 export interface TraceEstimate { objects: VenueObject[]; projector: Projector }
+/** 一時表示する推定。objects が null なら会場は確定済みのまま、プロジェクタだけを差し替える (測った会場に合わせる)。 */
+export interface TracePreview { objects: VenueObject[] | null; projector: Projector }
 
 export interface TracePanelHooks {
   /** 確定済みのプロジェクタ (id・outputId・near・far を引き継ぐ)。 */
   projector: () => Projector | null;
   /** 推定した会場とプロジェクタを一時表示する (保存しない)。null で確定済みの表示に戻す。 */
-  showEstimate: (estimate: TraceEstimate | null) => void;
+  showEstimate: (estimate: TracePreview | null) => void;
   /** 推定した会場とプロジェクタを 1 回の変更として書き込む。 */
   apply: (estimate: TraceEstimate) => void;
+  /** 推定したプロジェクタだけを 1 回の変更として書き込む (測った会場に合わせる)。 */
+  applyProjector: (projector: Projector) => void;
+  /** 確定済みの会場の、壁に輪郭として映る頂点 (世界座標)。 */
+  vertices: () => Vec3[];
+  /** 頂点がプロジェクタから見えるか (会場の面に隠れていないか)。 */
+  vertexVisible: (world: Vec3, projector: Projector) => boolean;
+  /** いま壁に輪郭を映しているプロジェクタ (推定の一時表示中ならそれ)。 */
+  displayedProjector: () => Projector | null;
   undo: () => void;
   /** 実出力の十字。null で消す。 */
   crosshair: (pixel: PixelPoint | null) => void;
@@ -26,9 +38,14 @@ export interface TracePanelHooks {
   redraw: () => void;
 }
 
-const TOOLS: [TraceTool, MessageKey][] = [['roomCorner', 'calibration.traceRoomCorner'], ['boxCorner', 'calibration.traceBoxCorner'], ['rectangle', 'calibration.traceRectangle'], ['length', 'calibration.traceLength']];
+const TOOLS: [ShapeTool, MessageKey][] = [['roomCorner', 'calibration.traceRoomCorner'], ['boxCorner', 'calibration.traceBoxCorner'], ['rectangle', 'calibration.traceRectangle'], ['length', 'calibration.traceLength']];
 const ROLE_NAMES: Record<VenuePartRole, MessageKey> = { floor: 'practice.floor', back: 'practice.backWall', left: 'practice.leftWall', right: 'practice.rightWall', box: 'practice.box', panel: 'calibration.tracePanel' };
-const CONFIRM_MESSAGES: Partial<Record<ConfirmResult, MessageKey>> = { duplicate: 'calibration.traceDuplicate', needLength: 'calibration.traceNeedLength', idle: 'calibration.traceChoose' };
+const CONFIRM_MESSAGES: Partial<Record<ConfirmResult, MessageKey>> = { duplicate: 'calibration.traceDuplicate', needLength: 'calibration.traceNeedLength', idle: 'calibration.traceChoose', noVertex: 'calibration.traceNoVertex' };
+const MODES: [TraceMode, MessageKey][] = [['build', 'calibration.traceModeBuild'], ['match', 'calibration.traceModeMatch']];
+const PARAMETER_NAMES: Record<ProjectorParameter, MessageKey> = {
+  position: 'calibration.traceLockPosition', rotation: 'calibration.traceLockRotation', fov: 'calibration.traceLockFov',
+  lensShiftY: 'calibration.traceLockShiftY', lensShiftX: 'calibration.traceLockShiftX',
+};
 
 function readStored(): unknown {
   try { const raw = localStorage.getItem(TRACE_STORAGE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
@@ -57,19 +74,28 @@ export class TracePanel {
     this.controller = new TraceController(parseTraceDocument(readStored()), width, height, changed => this.changed(changed));
     this.element.className = 'dc-venue-trace';
     this.element.innerHTML = `
-      <p class="dc-practice-hint">${label('calibration.traceIntro')}</p>
+      <div class="dc-venue-trace-tools" role="group" aria-labelledby="venue-trace-mode-label"><span id="venue-trace-mode-label">${label('calibration.traceMode')}</span>
+        ${MODES.map(([mode, key]) => `<button type="button" id="venue-trace-mode-${mode}" class="tool-button" aria-pressed="false">${label(key)}</button>`).join('')}</div>
+      <p class="dc-practice-hint" id="venue-trace-intro-build">${label('calibration.traceIntro')}</p>
+      <p class="dc-practice-hint" id="venue-trace-intro-match">${label('calibration.traceMatchIntro')}</p>
       <label class="dc-practice-field">${label('calibration.traceThrowRatio')}<input id="venue-trace-throw" type="number" min="${MIN_THROW_RATIO}" max="${MAX_THROW_RATIO}" step="0.01"></label>
       <p class="dc-practice-hint">${label('calibration.traceThrowHint')}</p>
-      <label class="dc-practice-field">${label('calibration.traceShift')}<input id="venue-trace-shift" type="number" min="-200" max="200" step="0.1"></label>
-      <p class="dc-practice-hint">${label('calibration.traceShiftHint')}</p>
-      <div class="dc-venue-trace-tools" role="group" aria-labelledby="venue-trace-tools-label"><span id="venue-trace-tools-label">${label('calibration.traceTools')}</span>
-        ${TOOLS.map(([tool, key]) => `<button type="button" id="venue-trace-tool-${tool}" class="tool-button" aria-pressed="false" data-trace-tool="${tool}">${label(key)}</button>`).join('')}</div>
-      <label class="dc-practice-field" id="venue-trace-meters-field">${label('calibration.traceMeters')}<input id="venue-trace-meters" type="number" min="0.001" max="1000" step="0.001"></label>
+      <div id="venue-trace-build">
+        <label class="dc-practice-field">${label('calibration.traceShift')}<input id="venue-trace-shift" type="number" min="-200" max="200" step="0.1"></label>
+        <p class="dc-practice-hint">${label('calibration.traceShiftHint')}</p>
+        <div class="dc-venue-trace-tools" role="group" aria-labelledby="venue-trace-tools-label"><span id="venue-trace-tools-label">${label('calibration.traceTools')}</span>
+          ${TOOLS.map(([tool, key]) => `<button type="button" id="venue-trace-tool-${tool}" class="tool-button" aria-pressed="false" data-trace-tool="${tool}">${label(key)}</button>`).join('')}</div>
+        <label class="dc-practice-field" id="venue-trace-meters-field">${label('calibration.traceMeters')}<input id="venue-trace-meters" type="number" min="0.001" max="1000" step="0.001"></label>
+      </div>
+      <fieldset id="venue-trace-match" class="dc-venue-trace-locks"><legend>${label('calibration.traceLocks')}</legend>
+        ${PROJECTOR_PARAMETERS.map(parameter => `<label><input type="checkbox" id="venue-trace-lock-${parameter}" data-trace-lock="${parameter}">${label(PARAMETER_NAMES[parameter])}</label>`).join('')}
+        <p class="dc-practice-hint">${label('calibration.traceLocksHint')}</p>
+      </fieldset>
       <p id="venue-trace-step" class="dc-venue-trace-step" role="status" aria-live="polite"></p>
       <p class="dc-practice-hint">${label('calibration.traceKeys')}</p>
       <div class="dc-venue-trace-confirm"><span id="venue-trace-crosshair"></span>${button('venue-trace-confirm', 'calibration.traceConfirm')}</div>
       <p id="venue-trace-message" class="dc-practice-hint is-error" role="alert"></p>
-      <section class="tool-section"><h3>${label('calibration.tracePoints')}</h3><ol id="venue-trace-points" class="dc-venue-trace-points"></ol></section>
+      <section class="tool-section"><h3 id="venue-trace-points-title">${label('calibration.tracePoints')}</h3><ol id="venue-trace-points" class="dc-venue-trace-points"></ol></section>
       <div id="venue-trace-status" class="dc-venue-trace-status" role="status" aria-live="polite"></div>
       ${button('venue-trace-apply', 'calibration.traceApply')}${button('venue-trace-undo', 'calibration.undoProjector')}${button('venue-trace-clear', 'calibration.traceClear')}`;
     this.wire();
@@ -77,7 +103,8 @@ export class TracePanel {
     this.input('venue-trace-throw').value = throwRatio === null ? '' : String(throwRatio);
     this.input('venue-trace-shift').value = lensShiftY === null ? '' : String(Number((lensShiftY * 100).toFixed(4)));
     // 保存してあった点から、開いたときの推定を出しておく。
-    if (this.controller.doc.shapes.length > 0) this.timer = setTimeout(() => this.estimate(), 0);
+    const { shapes, anchors } = this.controller.doc;
+    if (shapes.length > 0 || anchors.length > 0) this.timer = setTimeout(() => this.estimate(), 0);
     this.render();
   }
 
@@ -87,6 +114,11 @@ export class TracePanel {
   private wire(): void {
     for (const [tool] of TOOLS) this.get(`venue-trace-tool-${tool}`).addEventListener('click', () => {
       this.controller.setTool(this.controller.tool === tool ? null : tool);
+    });
+    for (const [mode] of MODES) this.get(`venue-trace-mode-${mode}`).addEventListener('click', () => this.controller.setMode(mode));
+    this.get('venue-trace-match').addEventListener('change', event => {
+      const input = event.target as HTMLInputElement, parameter = input.dataset.traceLock as ProjectorParameter | undefined;
+      if (parameter) this.controller.setLocked(parameter, input.checked);
     });
     const lens = () => {
       const throwRatio = this.input('venue-trace-throw').valueAsNumber, shift = this.input('venue-trace-shift').valueAsNumber;
@@ -147,19 +179,39 @@ export class TracePanel {
   }
 
   private confirm(): void {
-    const result = this.controller.confirm(() => {
-      const meters = this.input('venue-trace-meters').valueAsNumber;
-      return meters > 0 ? meters : null;
+    const result = this.controller.confirm({
+      meters: () => { const meters = this.input('venue-trace-meters').valueAsNumber; return meters > 0 ? meters : null; },
+      pickVertex: pixel => {
+        const projector = this.shownProjector();
+        return projector ? nearestProjectedVertex(this.hooks.vertices(), projector, this.controller.doc.output, pixel,
+          { visible: world => this.hooks.vertexVisible(world, projector) }) : null;
+      },
     });
     this.message = CONFIRM_MESSAGES[result] ?? null;
     this.renderMessage();
   }
 
   private apply(): void {
-    if (this.venue?.status !== 'ok' || this.timer) return;
-    this.hooks.apply({ objects: this.venue.objects, projector: this.venue.projector });
+    if (this.timer) return;
+    if (this.controller.mode === 'match') {
+      const projector = this.matchedProjector();
+      if (projector) this.hooks.applyProjector(projector);
+    } else {
+      if (this.venue?.status !== 'ok') return;
+      this.hooks.apply({ objects: this.venue.objects, projector: this.venue.projector });
+    }
     this.render();
   }
+
+  /** 測った会場に合わせた結果のプロジェクタ (id・outputId・near・far は確定済みから引き継ぐ)。決まっていなければ null。 */
+  private matchedProjector(): Projector | null {
+    const committed = this.hooks.projector(), result = this.result;
+    if (!committed || this.controller.mode !== 'match' || result?.status !== 'ok') return null;
+    return { ...committed, ...result.projector, aspect: committed.aspect };
+  }
+
+  /** 壁に映っている輪郭のプロジェクタ。頂点を選ぶ・残差の線を描くのに使う。 */
+  private shownProjector(): Projector | null { return this.hooks.displayedProjector(); }
 
   /** 像の上の位置を出力画素へ。像は出力と同じ縦横比で、stage の中央に置かれる。 */
   private pixel(event: { clientX: number; clientY: number }): PixelPoint | null {
@@ -208,7 +260,15 @@ export class TracePanel {
   private estimate(): void {
     this.timer = undefined;
     const doc = this.controller.doc, projector = this.hooks.projector();
-    if (doc.shapes.length === 0 || !projector) {
+    if (doc.mode === 'match') {
+      this.venue = null; this.result = null;
+      if (projector && requiredAnchors(doc.locked) > 0 && doc.anchors.length >= requiredAnchors(doc.locked)) {
+        const started = performance.now();
+        try { this.result = reconstructVenue(toMatchInput(doc, projector)); }
+        catch (error) { console.warn('Trace match failed', error); }
+        this.elapsed = performance.now() - started;
+      }
+    } else if (doc.shapes.length === 0 || !projector) {
       this.result = null; this.venue = null;
     } else {
       const started = performance.now(), input = toReconstructInput(doc);
@@ -225,6 +285,11 @@ export class TracePanel {
   }
 
   private showEstimate(): void {
+    if (this.controller.mode === 'match') {
+      const projector = this.matchedProjector();
+      this.hooks.showEstimate(projector ? { objects: null, projector } : null);
+      return;
+    }
     this.hooks.showEstimate(this.venue?.status === 'ok' ? { objects: this.venue.objects, projector: this.venue.projector } : null);
   }
 
@@ -238,10 +303,22 @@ export class TracePanel {
     return { result: this.result, venue: this.venue, elapsed: this.elapsed };
   }
 
+  /** data-i18n の付いた文言を差し替える (言語の切り替えでも保たれる)。 */
+  private setLabel(id: string, key: MessageKey): void {
+    const span = this.get(id).querySelector<HTMLElement>('[data-i18n]');
+    if (span && span.dataset.i18n !== key) { span.dataset.i18n = key; span.textContent = t(key); }
+  }
+
   private renderMessage(): void { this.get('venue-trace-message').textContent = this.message ? t(this.message) : ''; }
 
   render(): void {
-    const c = this.controller;
+    const c = this.controller, match = c.mode === 'match';
+    for (const [mode] of MODES) this.get(`venue-trace-mode-${mode}`).setAttribute('aria-pressed', String(c.mode === mode));
+    this.get('venue-trace-build').hidden = match; this.get('venue-trace-intro-build').hidden = match;
+    this.get('venue-trace-match').hidden = !match; this.get('venue-trace-intro-match').hidden = !match;
+    for (const parameter of PROJECTOR_PARAMETERS) this.input(`venue-trace-lock-${parameter}`).checked = c.doc.locked.includes(parameter);
+    this.setLabel('venue-trace-points-title', match ? 'calibration.traceAnchors' : 'calibration.tracePoints');
+    this.setLabel('venue-trace-apply', match ? 'calibration.traceMatchApply' : 'calibration.traceApply');
     for (const [tool] of TOOLS) this.get(`venue-trace-tool-${tool}`).setAttribute('aria-pressed', String(c.tool === tool));
     this.get('venue-trace-meters-field').hidden = c.tool !== 'length';
     this.get('venue-trace-step').textContent = c.moving ? t('calibration.traceMoving', { point: pointLabel(c.moving.id) })
@@ -250,7 +327,7 @@ export class TracePanel {
     this.renderMessage();
     const residuals = this.result?.residualPixels ?? {}, outliers = new Set(this.result?.outliers ?? []);
     const list = this.get('venue-trace-points');
-    list.replaceChildren(...c.doc.points.map(point => {
+    list.replaceChildren(...(match ? c.doc.anchors : c.doc.points).map(point => {
       const item = document.createElement('li'), residual = residuals[point.id];
       item.dataset.point = point.id; item.classList.toggle('is-outlier', outliers.has(point.id));
       item.classList.toggle('is-pending', c.pending.includes(point.id)); item.classList.toggle('is-moving', c.moving?.id === point.id);
@@ -268,10 +345,23 @@ export class TracePanel {
       return item;
     }));
     this.get('venue-trace-status').replaceChildren(...this.statusLines().map(text => { const p = document.createElement('p'); p.textContent = text; return p; }));
-    this.get<HTMLButtonElement>('venue-trace-apply').disabled = this.venue?.status !== 'ok' || !!this.timer;
+    this.get<HTMLButtonElement>('venue-trace-apply').disabled = !!this.timer || (match ? !this.matchedProjector() : this.venue?.status !== 'ok');
+  }
+
+  private matchStatusLines(): string[] {
+    const doc = this.controller.doc, result = this.result, needed = requiredAnchors(doc.locked);
+    if (needed === 0) return [t('calibration.traceMatchAllLocked')];
+    if (doc.anchors.length < needed) return [t('calibration.traceMatchNeed', { count: String(needed - doc.anchors.length) })];
+    if (!result || result.status === 'failed') return [t('calibration.traceFailed')];
+    const lines = [t('calibration.traceMatchSolved', { count: String(Object.keys(result.residualPixels).length), ms: String(Math.round(this.elapsed)), rms: result.rmsPixels.toFixed(1) })];
+    const unknown = result.underdetermined.filter((u): u is ProjectorParameter => PROJECTOR_PARAMETERS.includes(u as ProjectorParameter));
+    if (unknown.length > 0) lines.push(t('calibration.traceMatchUnknown', { parameters: unknown.map(u => t(PARAMETER_NAMES[u])).join(', ') }));
+    if (result.outliers.length > 0) lines.push(t('calibration.traceOutliers', { points: result.outliers.map(pointLabel).join(', ') }));
+    return lines;
   }
 
   private statusLines(): string[] {
+    if (this.controller.mode === 'match') return this.matchStatusLines();
     const venue = this.venue, result = this.result;
     if (!venue) return [t('calibration.traceEmpty')];
     if (venue.status === 'failed') {
@@ -304,6 +394,7 @@ export class TracePanel {
       if (close) context.closePath();
       context.stroke();
     };
+    if (c.mode === 'match') { this.drawAnchors(context, scale, ratio, outliers); context.restore(); return; }
     for (const shape of c.doc.shapes) {
       if (shape.kind === 'rectangle') path(shape.points, true, '#38bdf8');
       else if (shape.kind === 'length') path(shape.points, false, '#a3e635');
@@ -320,6 +411,33 @@ export class TracePanel {
       context.fillStyle = color; context.fillText(pointLabel(point.id), p[0] + 5 * ratio, p[1] - 3 * ratio);
     }
     context.restore();
+  }
+
+  /** 対応点ごとに、推定 (無ければ確定済み) のプロジェクタで頂点が映る位置 → 確定した点の線と、点の印を描く。 */
+  private drawAnchors(context: CanvasRenderingContext2D, scale: number, ratio: number, outliers: Set<string>): void {
+    const c = this.controller, projector = this.shownProjector(), output = c.doc.output;
+    const dot = (p: PixelPoint, color: string, radius: number) => {
+      context.fillStyle = color; context.strokeStyle = '#000';
+      context.beginPath(); context.arc(p[0] * scale, p[1] * scale, radius * ratio, 0, Math.PI * 2); context.fill(); context.stroke();
+    };
+    context.font = `${11 * ratio}px system-ui, sans-serif`; context.textBaseline = 'bottom';
+    for (const anchor of c.doc.anchors) {
+      const color = outliers.has(anchor.id) ? '#ef4444' : '#38bdf8';
+      const virtual = projector ? projectToPixel(projector, output, anchor.world) : null;
+      if (virtual) {
+        context.strokeStyle = color; context.setLineDash([4 * ratio, 3 * ratio]);
+        context.beginPath(); context.moveTo(virtual[0] * scale, virtual[1] * scale); context.lineTo(anchor.pixel[0] * scale, anchor.pixel[1] * scale); context.stroke();
+        context.setLineDash([]); dot(virtual, '#a3e635', 2.5);
+      }
+      dot(anchor.pixel, color, 3.5);
+      if (c.moving?.id === anchor.id) { context.strokeStyle = '#fff'; context.beginPath(); context.arc(anchor.pixel[0] * scale, anchor.pixel[1] * scale, 7 * ratio, 0, Math.PI * 2); context.stroke(); }
+      context.fillStyle = color; context.fillText(pointLabel(anchor.id), anchor.pixel[0] * scale + 5 * ratio, anchor.pixel[1] * scale - 3 * ratio);
+    }
+    if (c.pendingVertex) {
+      const p = c.pendingVertex.pixel;
+      context.strokeStyle = '#fde047'; context.lineWidth = 2 * ratio;
+      context.beginPath(); context.arc(p[0] * scale, p[1] * scale, 7 * ratio, 0, Math.PI * 2); context.stroke();
+    }
   }
 
   dispose(): void {

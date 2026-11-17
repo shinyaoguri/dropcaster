@@ -1,8 +1,15 @@
-import type { PixelPoint } from './venueReconstruct.ts';
-import { dropUnused, emptyTrace, movePoint, placePoint, removePoint, resizeTrace, TOOL_STEPS,
-  type TraceDocument, type TraceShape, type TraceTool } from './traceModel.ts';
+import type { Vec3 } from '../practice/project.ts';
+import type { PixelPoint, ProjectorParameter } from './venueReconstruct.ts';
+import { addAnchor, anchorAt, dropUnused, emptyTrace, movePoint, placePoint, removePoint, resizeTrace, TOOL_STEPS,
+  type TraceDocument, type TraceMode, type TraceShape, type TraceTool } from './traceModel.ts';
 
-export type ConfirmResult = 'placed' | 'shape' | 'moved' | 'duplicate' | 'needLength' | 'idle';
+export type ConfirmResult = 'placed' | 'shape' | 'moved' | 'duplicate' | 'needLength' | 'idle' | 'noVertex';
+
+/** 確定に要る外の情報。長さの道具の m と、match モードで十字の近くに映る会場の頂点。 */
+export interface ConfirmContext {
+  meters?: () => number | null;
+  pickVertex?: (pixel: PixelPoint) => { world: Vec3; pixel: PixelPoint } | null;
+}
 
 /** 矢印キー 1 回で十字が動く量 (出力画素)。Shift で細かくする。 */
 export const CROSSHAIR_STEP = { coarse: 10, fine: 1 } as const;
@@ -20,6 +27,8 @@ export class TraceController {
   crosshair: PixelPoint;
   /** 置き直し中の点と、元の位置。 */
   moving: { id: string; from: PixelPoint } | null = null;
+  /** match モードで選んだ会場の頂点 (次の確定で実物の角と対応付ける)。 */
+  pendingVertex: { world: Vec3; pixel: PixelPoint } | null = null;
   /** 変更のたびに増える。表示の描き直しの判定に使う。 */
   version = 0;
   private readonly changed: (documentChanged: boolean) => void;
@@ -27,16 +36,34 @@ export class TraceController {
   constructor(doc: TraceDocument | null, width: number, height: number, changed: (documentChanged: boolean) => void) {
     this.doc = doc ? resizeTrace(doc, width, height) : emptyTrace(width, height);
     this.crosshair = [width / 2, height / 2];
+    if (this.doc.mode === 'match') this.tool = 'anchor';
     this.changed = changed;
   }
 
   /** 選んでいる道具の、次に確定する手順 (0 始まり)。道具が無ければ -1。 */
-  get step(): number { return this.tool ? this.pending.length : -1; }
-  get stepKey(): string | null { return this.tool ? TOOL_STEPS[this.tool][this.pending.length] ?? null : null; }
+  get step(): number { return !this.tool ? -1 : this.tool === 'anchor' ? (this.pendingVertex ? 1 : 0) : this.pending.length; }
+  get stepKey(): string | null { return this.tool ? TOOL_STEPS[this.tool][this.step] ?? null : null; }
+  get mode(): TraceMode { return this.doc.mode; }
 
   setTool(tool: TraceTool | null): void {
+    if (this.doc.mode === 'match') return;
     this.abandon();
-    this.tool = tool;
+    this.tool = tool === 'anchor' ? null : tool;
+    this.notify(true);
+  }
+
+  /** モードを切り替える。どちらのモードの点も残し、なぞりかけと置き直しは捨てる。match の道具は常に anchor。 */
+  setMode(mode: TraceMode): void {
+    if (this.doc.mode === mode) return;
+    this.abandon();
+    this.doc = { ...this.doc, mode };
+    this.tool = mode === 'match' ? 'anchor' : null;
+    this.notify(true);
+  }
+
+  setLocked(parameter: ProjectorParameter, locked: boolean): void {
+    if (this.doc.locked.includes(parameter) === locked) return;
+    this.doc = { ...this.doc, locked: locked ? [...this.doc.locked, parameter] : this.doc.locked.filter(p => p !== parameter) };
     this.notify(true);
   }
 
@@ -46,6 +73,7 @@ export class TraceController {
     this.doc = resizeTrace(this.doc, width, height);
     this.crosshair = [this.crosshair[0] * width / w, this.crosshair[1] * height / h];
     if (this.moving) this.moving.from = [this.moving.from[0] * width / w, this.moving.from[1] * height / h];
+    this.pendingVertex = null;
     this.notify(true);
   }
 
@@ -68,8 +96,9 @@ export class TraceController {
   /**
    * 十字の位置で確定する。長さの道具は 2 点目の前に meters を確かめる (無ければ点を置かない)。
    * 同じ形の中で同じ点を 2 回使うことはできない。
+   * match モードは 2 手順: 十字の近くに映る会場の頂点を選び (十字はその投影位置へ跳ぶ)、実物の角で確定する。
    */
-  confirm(meters: () => number | null): ConfirmResult {
+  confirm(context: ConfirmContext = {}): ConfirmResult {
     if (this.moving) {
       this.doc = movePoint(this.doc, this.moving.id, this.crosshair);
       this.moving = null;
@@ -78,8 +107,9 @@ export class TraceController {
     }
     const tool = this.tool;
     if (!tool) return 'idle';
+    if (tool === 'anchor') return this.confirmAnchor(context);
     const steps = TOOL_STEPS[tool].length;
-    const length = tool === 'length' && this.pending.length === steps - 1 ? meters() : null;
+    const length = tool === 'length' && this.pending.length === steps - 1 ? context.meters?.() ?? null : null;
     if (tool === 'length' && this.pending.length === steps - 1 && !(length !== null && length > 0)) return 'needLength';
     const placed = placePoint(this.doc, this.crosshair);
     if (this.pending.includes(placed.id)) return 'duplicate';
@@ -95,19 +125,40 @@ export class TraceController {
     return 'shape';
   }
 
+  private confirmAnchor(context: ConfirmContext): ConfirmResult {
+    if (!this.pendingVertex) {
+      const vertex = context.pickVertex?.(this.crosshair) ?? null;
+      if (!vertex) return 'noVertex';
+      const existing = anchorAt(this.doc, vertex.world);
+      // 対応付け済みの頂点を選んだら、その点の置き直しにする。
+      if (existing) { this.beginMove(existing.id); return 'placed'; }
+      this.pendingVertex = { world: [...vertex.world] as Vec3, pixel: [...vertex.pixel] as PixelPoint };
+      this.crosshair = [...vertex.pixel] as PixelPoint;
+      this.notify(false);
+      return 'placed';
+    }
+    const added = addAnchor(this.doc, this.crosshair, this.pendingVertex.world);
+    this.doc = added.doc;
+    this.pendingVertex = null;
+    this.notify(true);
+    return 'shape';
+  }
+
   /** 点を置き直す: 十字をその点へ運び、次の確定でその位置へ動かす。 */
   beginMove(id: string): void {
-    const point = this.doc.points.find(p => p.id === id);
+    const point = this.doc.points.find(p => p.id === id) ?? this.doc.anchors.find(a => a.id === id);
     if (!point) return;
     if (this.moving) this.cancelMove();
+    this.pendingVertex = null;
     this.moving = { id, from: [...point.pixel] };
     this.crosshair = [...point.pixel];
     this.notify(false);
   }
 
-  /** Esc: 置き直しをやめて十字を点へ戻す。置き直していなければ、なぞりかけの形を捨てる。処理したら true。 */
+  /** Esc: 置き直しをやめて十字を点へ戻す。置き直していなければ、なぞりかけの形 (選んだ頂点) を捨てる。処理したら true。 */
   cancel(): boolean {
     if (this.moving) { this.cancelMove(); this.notify(false); return true; }
+    if (this.pendingVertex) { this.crosshair = [...this.pendingVertex.pixel] as PixelPoint; this.pendingVertex = null; this.notify(false); return true; }
     if (this.pending.length > 0) { this.abandon(); this.notify(true); return true; }
     return false;
   }
@@ -119,9 +170,11 @@ export class TraceController {
     this.notify(true);
   }
 
+  /** 今のモードの点だけを消す (もう一方のモードの点と入力は残す)。 */
   clear(): void {
-    this.doc = { ...emptyTrace(this.doc.output.width, this.doc.output.height), throwRatio: this.doc.throwRatio, lensShiftY: this.doc.lensShiftY };
-    this.pending = []; this.moving = null;
+    this.doc = this.doc.mode === 'match' ? { ...this.doc, anchors: [] }
+      : { ...this.doc, points: [], shapes: [] };
+    this.pending = []; this.moving = null; this.pendingVertex = null;
     this.notify(true);
   }
 
@@ -134,7 +187,7 @@ export class TraceController {
   /** なぞりかけの形の点のうち、他の形が使っていないものを捨てる。 */
   private abandon(): void {
     if (this.pending.length > 0) this.doc = dropUnused(this.doc);
-    this.pending = [];
+    this.pending = []; this.pendingVertex = null;
     if (this.moving) this.cancelMove();
   }
 

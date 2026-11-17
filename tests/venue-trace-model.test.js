@@ -18,7 +18,7 @@ const throwRatio = 1 / (2 * (OUTPUT.width / OUTPUT.height) * Math.tan(25 * Math.
 /** @param {import("../src/viewer/venue/TraceController.ts").TraceController} trace @param {import("../src/viewer/venue/traceModel.ts").TraceTool} tool @param {string[]} ids @param {number | null} [meters] */
 function traceShape(trace, tool, ids, meters = null) {
   trace.setTool(tool);
-  const results = ids.map(id => { trace.moveCrosshair(pixelOf(id)); return trace.confirm(() => meters); });
+  const results = ids.map(id => { trace.moveCrosshair(pixelOf(id)); return trace.confirm({ meters: () => meters }); });
   assert.equal(results.at(-1), 'shape', `${tool}: ${results.join(',')}`);
 }
 
@@ -49,14 +49,14 @@ test('既存の点の近くで確定すると、その点を共有する (共有
 test('同じ形の中で同じ点を 2 回確定できず、長さは m を入れるまで 2 点目を置かない', () => {
   const trace = new TraceController(null, 1920, 1080, () => {});
   trace.setTool('rectangle'); trace.moveCrosshair([100, 100]);
-  assert.equal(trace.confirm(() => null), 'placed');
-  assert.equal(trace.confirm(() => null), 'duplicate');
+  assert.equal(trace.confirm({ meters: () => null }), 'placed');
+  assert.equal(trace.confirm({ meters: () => null }), 'duplicate');
   trace.setTool('length');
   assert.equal(trace.doc.points.length, 0, 'switching tools drops the half-traced shape');
-  trace.moveCrosshair([100, 100]); trace.confirm(() => null); trace.moveCrosshair([500, 100]);
-  assert.equal(trace.confirm(() => null), 'needLength');
+  trace.moveCrosshair([100, 100]); trace.confirm({ meters: () => null }); trace.moveCrosshair([500, 100]);
+  assert.equal(trace.confirm({ meters: () => null }), 'needLength');
   assert.equal(trace.doc.points.length, 1);
-  assert.equal(trace.confirm(() => 8), 'shape');
+  assert.equal(trace.confirm({ meters: () => 8 }), 'shape');
   assert.deepEqual(trace.doc.shapes, [{ kind: 'length', points: ['p1', 'p2'], meters: 8 }]);
 });
 
@@ -118,14 +118,14 @@ test('点を消すとその点を使う形も消え、置き直しは確定で�
   assert.equal(trace.cancel(), true);
   assert.deepEqual(trace.doc.points[0].pixel, from); assert.deepEqual(trace.crosshair, from);
   trace.beginMove(id); trace.nudge(10, -1);
-  assert.equal(trace.confirm(() => null), 'moved');
+  assert.equal(trace.confirm({ meters: () => null }), 'moved');
   assert.deepEqual(trace.doc.points[0].pixel, [from[0] + 10, from[1] - 1]);
   assert.deepEqual(removePoint(trace.doc, 'p999'), trace.doc);
 });
 
 test('出力解像度が変わると点は比例して移り、十字は出力の範囲に収まる', () => {
   const trace = new TraceController(null, 1920, 1080, () => {});
-  trace.setTool('rectangle'); trace.moveCrosshair([960, 540]); trace.confirm(() => null);
+  trace.setTool('rectangle'); trace.moveCrosshair([960, 540]); trace.confirm({ meters: () => null });
   trace.setOutput(1280, 800);
   assert.deepEqual(trace.doc.points[0].pixel, [640, 400]);
   assert.deepEqual(trace.crosshair, [640, 400]);
@@ -138,7 +138,7 @@ test('出力解像度が変わると点は比例して移り、十字は出力�
 test('保存値を検証し、壊れていれば捨てる', () => {
   const trace = traceRoomAndBox();
   trace.setLensInputs(1.2, .05);
-  trace.setTool('length'); trace.moveCrosshair([10, 10]); trace.confirm(() => null); trace.moveCrosshair([900, 10]); trace.confirm(() => 3.5);
+  trace.setTool('length'); trace.moveCrosshair([10, 10]); trace.confirm({ meters: () => null }); trace.moveCrosshair([900, 10]); trace.confirm({ meters: () => 3.5 });
   const saved = JSON.parse(JSON.stringify(trace.doc));
   assert.deepEqual(parseTraceDocument(saved), trace.doc);
   for (const broken of [

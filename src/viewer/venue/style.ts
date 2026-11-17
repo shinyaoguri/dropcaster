@@ -48,6 +48,10 @@ export function installVenueStyles(): void {
     .dc-venue-trace-tools span { grid-column:1 / -1; }
     .dc-venue-page .dc-venue-trace-tools .tool-button { width:auto;margin:0;padding:6px;font-size:12px; }
     .dc-venue-page .dc-venue-trace-tools .tool-button[aria-pressed=true] { background:#dc2626;border-color:#f87171;color:white; }
+    .dc-venue-trace-locks { margin:8px 0;padding:6px 8px;border:1px solid #333;border-radius:4px;font-size:12px;color:#ddd; }
+    .dc-venue-trace-locks legend { padding:0 4px;color:#bbb; }
+    .dc-venue-trace-locks label { display:flex;align-items:center;gap:6px;padding:2px 0; }
+    .dc-venue-trace-locks[hidden], #venue-trace-build[hidden] { display:none; }
     .dc-venue-trace-step { margin:6px 0;padding:6px 8px;border-left:3px solid #ef4444;background:#1f1f1f;font-size:12px;color:#eee;line-height:1.4; }
     .dc-venue-trace-confirm { display:flex;align-items:center;gap:8px;font-size:12px;color:#bbb; }
     .dc-venue-trace-confirm span { flex:1;font-variant-numeric:tabular-nums; }
