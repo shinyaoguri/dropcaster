@@ -441,6 +441,121 @@ async function trace(page,base){
   await snapshot(page,base.name+'-venue-trace-reloaded');
 }
 
+// #158: 測った会場の頂点に合わせて、プロジェクタ条件だけを求める。会場の部材は変えない。
+async function matchState(page){return page.evaluate(()=>{const t=window.calibrationPage.trace,c=t.controller,r=t.state.result;return {mode:c.mode,crosshair:[...c.crosshair],anchors:c.doc.anchors.map(a=>({id:a.id,pixel:[...a.pixel],world:[...a.world]})),pending:c.pendingVertex?[...c.pendingVertex.world]:null,result:r?{status:r.status,rms:r.rmsPixels,projector:r.projector}:null,status:document.querySelector('#venue-trace-status').textContent,apply:document.querySelector('#venue-trace-apply').disabled}})}
+/**
+ * 現場のプロジェクタ (正解) を、確定済みから位置・向き・画角をずらして作り、両方の像に映って見える会場の頂点を、
+ * 像の上で互いに離れた順に count 個選ぶ。各頂点の、確定済みでの投影 (輪郭の角) と正解での投影 (実物の角) を返す。
+ */
+async function matchTargets(page,base,count){
+  return page.evaluate(async ([modules,count])=>{
+    const {nudge,projectToNdc}=await import(`${modules}/venue/ProjectorNudge.ts`),{isVertexVisible}=await import(`${modules}/venue/venueVertices.ts`);
+    const page=window.calibrationPage,committed=page.session.changes.get().venue.projectors[0],{width,height}=page.projection.canvas;
+    let truth=nudge(nudge(nudge(nudge(committed,'pan',1.5),'tilt',-1),'right',.25),'up',-.15);truth=nudge(nudge(truth,'forward',.3),'zoom',-2.5);
+    const pixel=(projector,world)=>{const n=projectToNdc(projector,world);return n&&Math.abs(n[0])<.95&&Math.abs(n[1])<.95?[(n[0]+1)/2*width,(1-n[1])/2*height]:null};
+    const meshes=page.preview.venueMeshes();
+    const candidates=page.venueVertices().map(world=>({world,outline:pixel(committed,world),real:pixel(truth,world)}))
+      .filter(v=>v.outline&&v.real&&isVertexVisible(meshes,committed,v.world)&&isVertexVisible(meshes,truth,v.world));
+    const chosen=[candidates.reduce((a,b)=>a.outline[1]>b.outline[1]?a:b)];
+    while(chosen.length<count&&chosen.length<candidates.length){
+      const far=c=>Math.min(...chosen.map(s=>Math.hypot(s.outline[0]-c.outline[0],s.outline[1]-c.outline[1])));
+      chosen.push(candidates.filter(c=>!chosen.includes(c)).reduce((a,b)=>far(a)>=far(b)?a:b));
+    }
+    return {truth,targets:chosen};
+  },[base.modules,count]);
+}
+/** いま壁に映っている輪郭 (推定の一時表示中なら推定したプロジェクタ) で、会場の点が映る出力画素。 */
+async function displayedPixel(page,base,world){
+  return page.evaluate(async ([modules,world])=>{
+    const {projectToPixel}=await import(`${modules}/venue/venueVertices.ts`),page=window.calibrationPage;
+    return projectToPixel(page.trace.hooks.displayedProjector(),page.projection.canvas,world);
+  },[base.modules,world]);
+}
+async function match(page,base){
+  await page.locator('[data-lang-set=en]').evaluate(button=>button.click());
+  // 実測で組んだ会場: 既定の部屋に、奥行きの違う箱を 2 つ置く (奥の壁の隅だけでは同一平面で決まらない)。
+  await page.evaluate(async modules=>{
+    const {venueObject}=await import(`${modules}/practice/venueObjects.ts`),page=window.calibrationPage,project=page.session.changes.get();
+    const low=venueObject('box','Low'),tall=venueObject('box','Tall');low.position=[1.4,.5,-.8];tall.size=[.8,1.8,.8];tall.position=[-1.6,.9,.6];
+    await page.apply({...project,venue:{...project.venue,scene:{...project.venue.scene,objects:[...project.venue.scene.objects,low,tall]}}});
+  },base.modules);
+  await page.waitForFunction(()=>window.calibrationPage.preview.venueMeshes().length===6);
+  const original=await current(page),revision=original.venue.revision,committed=original.venue.projectors[0];
+  await page.locator('#dc-activity-trace').click();
+  await page.locator('#venue-trace-mode-match').click();
+  assert.equal((await matchState(page)).mode,'match');
+  assert.equal(await page.locator('#venue-trace-tool-roomCorner').isVisible(),false,'the shape tools are for building');
+  assert.equal(await page.locator('#venue-trace-lock-lensShiftX').isChecked(),true,'the horizontal shift is fixed by default');
+  assert.equal(await page.locator('#venue-trace-lock-position').isChecked(),false);
+  assert.equal(await page.locator('#venue-trace-apply').textContent(),'Apply to projector');
+  const {truth,targets}=await matchTargets(page,base,8);
+  assert.equal(targets.length,8,'eight lit vertices of the default room');
+  // 輪郭から遠いところで確定しても、頂点は選ばれない。
+  const empty=await onTraceImage(page,[960,40]);await page.mouse.dblclick(empty.x,empty.y);
+  assert.match(await page.locator('#venue-trace-message').textContent(),/No venue vertex near the crosshair/);
+  for(const [i,target] of targets.entries()){
+    // 輪郭の角の近くで確定 → その頂点が選ばれ、十字が頂点の投影位置へ跳ぶ。4 点目からは推定した輪郭が映っている。
+    const outline=await displayedPixel(page,base,target.world);
+    const near=await onTraceImage(page,[outline[0]+4,outline[1]-3]);await page.mouse.dblclick(near.x,near.y);
+    const picked=await matchState(page);
+    assert.deepEqual(picked.pending,target.world,`vertex ${i} is picked`);
+    assert.ok(Math.hypot(picked.crosshair[0]-outline[0],picked.crosshair[1]-outline[1])<1e-6,'the crosshair jumps to the vertex');
+    // 十字を実物の角へ運んで確定する。
+    const real=await onTraceImage(page,target.real);await page.mouse.dblclick(real.x,real.y);
+    if(i===2){
+      const waiting=await matchState(page);
+      assert.match(waiting.status,/Confirm 1 more vertices/);assert.equal(waiting.apply,true,'cannot apply before estimating');assert.equal(waiting.result,null);
+      // 位置を固定すると必要な点が減り、3 点で推定する。外すとまた待つ。
+      await page.locator('#venue-trace-lock-position').check();
+      await page.waitForFunction(()=>window.calibrationPage.trace.state.result!==null);
+      await page.locator('#venue-trace-lock-position').uncheck();
+      await page.waitForFunction(()=>window.calibrationPage.trace.state.result===null);
+    }
+  }
+  await page.waitForFunction(()=>{const r=window.calibrationPage.trace.state.result;return r?.status==='ok'&&Object.keys(r.residualPixels).length===8});
+  const solved=await matchState(page);
+  assert.equal(solved.anchors.length,8);
+  assert.match(solved.status,/Matched the projector to 8 vertices/);
+  assert.ok(solved.result.rms<2,`rms ${solved.result.rms}`);
+  const error=Math.hypot(...solved.result.projector.position.map((v,i)=>v-truth.position[i]));
+  assert.ok(error<.1,`position error ${error} m`);
+  assert.ok(Math.abs(solved.result.projector.verticalFovDegrees-truth.verticalFovDegrees)<.5,`fov ${solved.result.projector.verticalFovDegrees} vs ${truth.verticalFovDegrees}`);
+  assert.equal((await page.locator('#venue-trace-points li').count()),8);
+  // 一時表示: 壁の輪郭は推定したプロジェクタで描くが、まだ保存しない。
+  assert.equal((await current(page)).venue.revision,revision,'estimating does not save');
+  await snapshot(page,base.name+'-venue-match-estimated');
+  // 適用: プロジェクタだけが 1 revision で書き込まれ、会場の部材は変わらない。「直前の変更を戻す」1 回で戻る。
+  await page.locator('#venue-trace-apply').click();
+  await page.waitForFunction(r=>window.calibrationPage.session.changes.get().venue.revision===r+1,revision);
+  const applied=await current(page);
+  assert.deepEqual(applied.venue.scene,original.venue.scene,'the venue is kept as measured');
+  const p=applied.venue.projectors[0];
+  assert.deepEqual([p.id,p.outputId,p.near,p.far,p.aspect],[committed.id,committed.outputId,committed.near,committed.far,committed.aspect]);
+  assert.deepEqual(p.position,solved.result.projector.position);assert.equal(p.verticalFovDegrees,solved.result.projector.verticalFovDegrees);
+  assert.equal(p.lensShift[0],committed.lensShift[0],'the fixed horizontal shift is kept');
+  assert.match(await page.locator('#venue-status').textContent(),/Applied the matched projector/);
+  await page.waitForTimeout(700);assert.equal((await current(page)).venue.revision,revision+1,'apply is one change');
+  await page.locator('#venue-trace-undo').click();
+  await page.waitForFunction(projector=>JSON.stringify(window.calibrationPage.session.changes.get().venue.projectors[0])===projector,JSON.stringify(committed));
+  // 頂点の選択は、壁に映っている輪郭 (戻した後は確定済み) で行う。
+  const again=await onTraceImage(page,await displayedPixel(page,base,targets[0].world));await page.mouse.dblclick(again.x,again.y);
+  assert.equal((await matchState(page)).crosshair.join(),solved.anchors[0].pixel.join(),'picking a matched vertex re-places that point');
+  await page.locator('#venue-output-stage').focus();await page.keyboard.press('Escape');
+  // 「会場を作る」に戻っても対応点は残り、対応点は下書きにだけ保存されて会場ファイルには入らない。
+  await page.locator('#venue-trace-mode-build').click();
+  assert.equal(await page.locator('#venue-trace-tool-roomCorner').isVisible(),true);
+  assert.equal((await matchState(page)).anchors.length,8);
+  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('dropcaster.venue.trace.v1')));
+  assert.equal(saved.anchors.length,8);assert.equal(saved.mode,'build');
+  const shared=await download(page);assert.equal(JSON.stringify(shared).includes('"anchors"'),false,'matched vertices stay out of the venue file');
+  await page.locator('#dc-activity-trace').click();await page.locator('#venue-trace-mode-match').click();
+  await page.reload();await reloaded(page);
+  await page.locator('#dc-activity-trace').click();
+  await page.waitForFunction(()=>/Matched the projector to 8 vertices/.test(document.querySelector('#venue-trace-status').textContent));
+  assert.equal(await page.locator('#venue-trace-mode-match').getAttribute('aria-pressed'),'true');
+  await snapshot(page,base.name+'-venue-match-reloaded');
+}
+
 // #232: マッピング画面と同じ左端のアクティビティバー (ADR 0021)。パネルの並び・所属・畳み・キーボード・狭い画面。
 const VENUE_PANELS={
   objects:['#dc-practice-venue','#practice-start-objects'],
@@ -508,7 +623,7 @@ try{
     const server=await createServer({configFile:resolve(root,config),root:hosted?resolve(root,'apps/web'):root,server:{host:'127.0.0.1',port:0,open:false,watch:null,hmr:false},logLevel:'error'});
     try{
       await server.listen();const base={name,url:`http://127.0.0.1:${server.httpServer.address().port}`,modules:hosted?`/@fs${root.slice(0,-1)}/src/viewer`:'/src/viewer'};
-      for(const [testName,run] of Object.entries({activityBar,workflow,interaction,adjust,trace,recovery,isolation,reload})){
+      for(const [testName,run] of Object.entries({activityBar,workflow,interaction,adjust,trace,match,recovery,isolation,reload})){
         if(process.env.VENUE_CASE&&process.env.VENUE_CASE!==testName)continue;
         const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'}),errors=[];
         context.on('page',page=>page.on('pageerror',error=>errors.push(error.message)));

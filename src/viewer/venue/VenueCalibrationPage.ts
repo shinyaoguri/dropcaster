@@ -4,7 +4,8 @@ import { ProjectionPreview } from '../practice/ProjectionPreview';
 import { VenueBuilder } from '../practice/VenueBuilder';
 import { VenueEditor } from '../practice/VenueEditor';
 import { prepareVenue, prepareObjects, type PreparedVenue } from '../practice/loadVenue';
-import { TracePanel, type TraceEstimate } from './TracePanel';
+import { TracePanel, type TraceEstimate, type TracePreview } from './TracePanel';
+import { collectVertices, isVertexVisible } from './venueVertices';
 import { createProject, defaultProjector, defaultScene, encodeAsset, importVenue, parseProject, portableVenue, ProjectFormatError,
   MAX_GLB_BYTES, MAX_PACKAGE_BYTES, type Project, type Projector, type VenueScene, type Vec3 } from '../practice/project';
 import { readProject } from '../practice/projectStore';
@@ -48,7 +49,9 @@ export class VenueCalibrationPage {
   private adjuster?: ProjectorAdjuster;
   private trace?: TracePanel;
   /** なぞる間に一時表示している推定 (保存していない)。 */
-  private traceShown: TraceEstimate | null = null;
+  private traceShown: TracePreview | null = null;
+  /** 頂点の候補のキャッシュ (部材と姿勢が変わらない限り使い回す)。 */
+  private vertexCache: { key: string; meshes: THREE.Mesh[]; vertices: Vec3[] } | null = null;
   private traceRestore = 0;
   private resizers = new ColumnResizers('dropcaster.venue.columnWidths.v1');
   private activityBar = new ActivityBar<VenuePanel>('objects', panel => PANEL_TITLES[panel]);
@@ -198,6 +201,10 @@ export class VenueCalibrationPage {
         projector: () => this.committedProjector(),
         showEstimate: estimate => this.showTraceEstimate(estimate),
         apply: estimate => this.applyTrace(estimate),
+        applyProjector: projector => { this.commitProjector(projector); this.status('calibration.traceMatchApplied'); },
+        vertices: () => this.venueVertices(),
+        vertexVisible: (world, projector) => !!this.preview && isVertexVisible(this.preview.venueMeshes(), projector, world),
+        displayedProjector: () => this.traceShown?.projector ?? this.adjuster?.pending ?? this.committedProjector(),
         undo: () => this.undo(),
         crosshair: pixel => this.projection?.setCrosshair(pixel),
         redraw: () => { this.mirrored = ''; },
@@ -357,8 +364,8 @@ export class VenueCalibrationPage {
     if(select.dataset.options!==options) { select.replaceChildren(...outputs.map((o,i)=>new Option(o.name||`Output ${i+1}`,o.id))); select.dataset.options=options; }
     select.value=this.selected;
     const projector=project.venue.projectors.find(p=>p.outputId===this.selected)!;
-    if (this.traceShown) this.showProjector(this.traceShown.projector);
-    else { this.preview.setVenueTransform(project.venue.scene); this.showProjector(this.adjuster?.pending ?? projector); }
+    if (this.traceShown?.objects) this.showProjector(this.traceShown.projector);
+    else { this.preview.setVenueTransform(project.venue.scene); this.showProjector(this.traceShown?.projector ?? this.adjuster?.pending ?? projector); }
     this.followAspect(projector.aspect);
     const scene=project.venue.scene; this.get('venue-model-transform').hidden=scene.kind==='objects';
     this.setVector('practice-v-position',scene.position); this.setVector('practice-v-rotation',rotation(scene.quaternion)); this.setVector('practice-v-scale',scene.scale);
@@ -388,10 +395,10 @@ export class VenueCalibrationPage {
     this.root.classList.toggle('is-tracing', active);
   }
   /** 推定した会場とプロジェクタを一時表示する (保存しない)。null なら確定済みの表示へ戻す。 */
-  private showTraceEstimate(estimate: TraceEstimate | null): void {
+  private showTraceEstimate(estimate: TracePreview | null): void {
     if (!this.preview || this.disposed || this.failed) return;
     const token = ++this.traceRestore;
-    if (estimate) {
+    if (estimate?.objects) {
       const prepared = prepareObjects(estimate.objects);
       this.traceShown = estimate;
       this.preview.setVenue(prepared.group, prepared.dispose);
@@ -399,14 +406,28 @@ export class VenueCalibrationPage {
       this.update(this.session.changes.get());
       return;
     }
-    if (!this.traceShown) return;
-    this.traceShown = null;
+    const replacedVenue = !!this.traceShown?.objects;
+    // プロジェクタだけの推定 (測った会場に合わせる) は、確定済みの会場のまま投影を差し替える。
+    this.traceShown = estimate;
+    if (!replacedVenue) { this.update(this.session.changes.get()); return; }
     void prepareVenue(this.session.changes.get()).then(prepared => {
       if (this.disposed || this.failed || token !== this.traceRestore) { prepared.dispose(); return; }
       this.preview!.setVenue(prepared.group, prepared.dispose); this.update(this.session.changes.get());
     }).catch(error => { if (!this.disposed && token === this.traceRestore) this.error(error); });
   }
   /** なぞった会場とプロジェクタを 1 回の変更 (1 revision) として書き込む。「直前の変更を戻す」1 回で戻る。 */
+  /** 確定済みの会場の、壁に輪郭として映る頂点。なぞって作った会場を一時表示している間は候補にしない。 */
+  private venueVertices(): Vec3[] {
+    if (!this.preview || this.traceShown?.objects) return [];
+    const meshes = this.preview.venueMeshes();
+    meshes.forEach(mesh => mesh.updateWorldMatrix(true, false));
+    const key = JSON.stringify(meshes.map(mesh => mesh.matrixWorld.elements));
+    const cache = this.vertexCache;
+    if (cache && cache.key === key && cache.meshes.length === meshes.length && cache.meshes.every((mesh, i) => mesh === meshes[i])) return cache.vertices;
+    const vertices = collectVertices(meshes);
+    this.vertexCache = { key, meshes, vertices };
+    return vertices;
+  }
   private applyTrace(estimate: TraceEstimate): void {
     const current = this.session.changes.get();
     try {
