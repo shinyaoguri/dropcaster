@@ -25,12 +25,17 @@ async function loadWorker(scope) {
   /** @type {Record<string, (event: any) => void>} */
   const listeners = {};
   const urlOf = (req) => (typeof req === 'string' ? req : req.url);
+  /** put を失敗させる (バケット名 + 空白 + URL) */
+  const failingPuts = new Set();
   const open = async (name) => {
     if (!stores.has(name)) stores.set(name, new Map());
     const store = stores.get(name);
     return {
       match: async (req) => store.get(urlOf(req))?.clone(),
-      put: async (req, res) => { store.set(urlOf(req), res); },
+      put: async (req, res) => {
+        if (failingPuts.has(`${name} ${urlOf(req)}`)) throw new Error('QuotaExceededError');
+        store.set(urlOf(req), res);
+      },
       keys: async () => [...store.keys()].map(url => ({ url })),
       delete: async (req) => store.delete(urlOf(req)),
     };
@@ -59,6 +64,8 @@ async function loadWorker(scope) {
     bucket,
     holding,
     seed: async (name, url, body) => (await open(name)).put(url, new Response(body)),
+    /** name のバケットへ url を入れる put を失敗させる (容量の超過など) */
+    failPut: (name, url) => { failingPuts.add(`${name} ${url}`); },
     text: async (name, url) => (await (await open(name)).match(url))?.text(),
     /** navigate でない GET を 1 件流し、入ったバケット名を返す */
     get: async (url) => {
@@ -178,9 +185,20 @@ for (const scope of ['https://gallery.example/', 'https://gallery.example/sub/']
       'sketches/a/sketch.js': local,
       'sketches/a/data/points.json': local,
       'sketches.json': local,
+      // 作品の中にある、shell と同じ名前のファイルも作品のもの
+      'sketches/a/manifest.json': local,
+      'sketches/a/icon.svg': local,
       'assets/index-abc123.js': shell,
       'manifest.json': shell,
+      'icon.svg': shell,
+      'favicon.ico': shell,
       'previews/a.gif': runtime,
+      // shell に入れるのは scope 直下の manifest とアイコンだけ。同じ名前でも別の場所のものは入れない
+      'docs/manifest.json': runtime,
+      'previews/icon.svg': runtime,
+      'assets.json': runtime,
+      // 作品カタログは scope 直下の 1 つだけ
+      'data/sketches.json': runtime,
       // 名前が似ているだけのものは作品ではない
       'sketches-old/a/sketch.js': runtime,
       'docs/sketches/a/sketch.js': runtime,
@@ -202,6 +220,9 @@ test('the service worker keeps other origins and out-of-scope paths out of the l
     'https://gallery.example/sketches/a/sketch.js',
     'https://gallery.example/sketches.json',
     'https://gallery.example/other/sketches/a/sketch.js',
+    // scope の外の assets/ と manifest も、この SW の shell には入れない
+    'https://gallery.example/assets/index-abc123.js',
+    'https://gallery.example/manifest.json',
   ]) {
     assert.deepEqual(await worker.get(url), [runtime], `${url} の入ったバケット`);
   }
@@ -233,6 +254,71 @@ test('activating moves local sketch files that an older version left in the runt
   assert.deepEqual(worker.holding(both), [local]);
   assert.equal(await worker.text(local, both), 'from local', 'LOCAL に既にあるものを上書きした');
   for (const url of kept) assert.deepEqual(worker.holding(url), [runtime], `${url} は runtime に残す`);
+});
+
+test('activating moves sketch files out of an older shell before deleting it (#179)', async () => {
+  // サブパス配信の以前の版は、作品の中の manifest.json・icon.svg などを shell (版ごとに消える) に入れていた。
+  // いまは LOCAL から引くので、古い shell を消す前に移す。移さないと、更新後にオフラインで引けない
+  const scope = 'https://gallery.example/sub/';
+  const worker = await loadWorker(scope);
+  const local = worker.bucket('LOCAL_CACHE');
+  const runtime = worker.bucket('RUNTIME_CACHE');
+  const oldShell = `${worker.bucket('SHELL_PREFIX')}old`;
+  const inSketch = `${scope}sketches/a/manifest.json`;
+  const inBoth = `${scope}sketches/a/icon.svg`;
+  const shellOnly = [`${scope}manifest.json`, `${scope}assets/index-old.js`];
+  await worker.seed(oldShell, inSketch, 'from shell');
+  // 開くたびに取り直される runtime のほうが新しいので、そちらを残す
+  await worker.seed(oldShell, inBoth, 'from shell');
+  await worker.seed(runtime, inBoth, 'from runtime');
+  for (const url of shellOnly) await worker.seed(oldShell, url, 'shell');
+
+  await worker.activate();
+
+  assert.deepEqual(worker.holding(inSketch), [local]);
+  assert.equal(await worker.text(local, inSketch), 'from shell');
+  assert.deepEqual(worker.holding(inBoth), [local]);
+  assert.equal(await worker.text(local, inBoth), 'from runtime');
+  // アプリ本体のファイルは古い shell と一緒に消える (新しい版が自分の shell を入れ直す)
+  for (const url of shellOnly) assert.deepEqual(worker.holding(url), [], `${url} は古い shell と一緒に消す`);
+});
+
+test('activating moves files that are no longer local sketch files out of the local bucket (#179)', async () => {
+  // 以前の版は、scope の外の /sketches/ や、作品の外にある **/sketches.json も LOCAL に入れていた。
+  // いまは runtime から引くので移す。移さないと、更新後にオフラインで引けず、LOCAL に読まれないまま残る
+  const scope = 'https://gallery.example/sub/';
+  const worker = await loadWorker(scope);
+  const local = worker.bucket('LOCAL_CACHE');
+  const runtime = worker.bucket('RUNTIME_CACHE');
+  const strays = ['https://gallery.example/sketches/shared.js', `${scope}data/sketches.json`];
+  const kept = [`${scope}sketches/a/index.html`, `${scope}sketches.json`];
+  for (const url of strays) await worker.seed(local, url, 'stray');
+  for (const url of kept) await worker.seed(local, url, 'kept');
+
+  await worker.activate();
+
+  for (const url of strays) {
+    assert.deepEqual(worker.holding(url), [runtime], `${url} は runtime へ移す`);
+    assert.equal(await worker.text(runtime, url), 'stray');
+  }
+  for (const url of kept) assert.deepEqual(worker.holding(url), [local], `${url} は LOCAL に残す`);
+});
+
+test('activating keeps moving the remaining files when one of them cannot be stored (#179)', async () => {
+  const scope = 'https://gallery.example/sub/';
+  const worker = await loadWorker(scope);
+  const local = worker.bucket('LOCAL_CACHE');
+  const runtime = worker.bucket('RUNTIME_CACHE');
+  const failing = `${scope}sketches/a/big.bin`;
+  const after = `${scope}sketches/a/sketch.js`;
+  await worker.seed(runtime, failing, 'big');
+  await worker.seed(runtime, after, 'after');
+  worker.failPut(local, failing);
+
+  await worker.activate();
+
+  assert.deepEqual(worker.holding(failing), [runtime], '入れられなかったものは runtime に残す');
+  assert.deepEqual(worker.holding(after), [local], '後ろのものは移す');
 });
 
 test('the service worker leaves the hosted proxies on their own buckets (#179)', async () => {
