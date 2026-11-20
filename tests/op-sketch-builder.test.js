@@ -146,6 +146,155 @@ test('html-mode local plan: duplicate tab names are deduped case-insensitively, 
   assert.ok(index.content.includes('src="sketch.js"'), 'ambiguous reference left untouched');
 });
 
+// --- #220: アセット用ディレクトリ (assets/) と同じ名前のタブ ---
+// fetch はアセットを同梱するとき、その保存先の名前を assetDirName で渡す。
+
+test('html-mode local plan: a tab named like the asset directory is renamed, references to it follow', () => {
+  const codeTabs = [
+    {
+      title: 'index.html', orderID: 0, code: [
+        '<script src="assets"></script>',
+        "<link rel=\"stylesheet\" href='./assets'>",
+        '<script src="main.js"></script>',
+      ].join('\n'),
+    },
+    { title: 'assets', orderID: 1, code: 'window.palette = ["#000"];' },
+    {
+      title: 'main.js', orderID: 2, code: [
+        "loadStrings('assets', done);",
+        'fetch("./assets").then(done);',
+        "loadShader('vert.glsl', `assets`);",
+        "xhr.open('GET', 'assets');",
+        "img.src = 'assets';",
+      ].join('\n'),
+    },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs, assetDirName: 'assets' });
+
+  assert.deepEqual(plan.files.map(f => f.name), ['index.html', 'assets_2', 'main.js']);
+  assert.deepEqual(plan.renames, [{ from: 'assets', to: 'assets_2' }]);
+  assert.equal(plan.files[0].content, [
+    '<script src="assets_2"></script>',
+    "<link rel=\"stylesheet\" href='./assets_2'>",
+    '<script src="main.js"></script>',
+  ].join('\n'));
+  assert.equal(plan.files[1].content, 'window.palette = ["#000"];');
+  assert.equal(plan.files[2].content, [
+    "loadStrings('assets_2', done);",
+    'fetch("./assets_2").then(done);',
+    "loadShader('vert.glsl', `assets_2`);",
+    "xhr.open('GET', 'assets_2');",
+    "img.src = 'assets_2';",
+  ].join('\n'));
+});
+
+test('html-mode local plan: renaming the "assets" tab leaves every other "assets" in the code as written', () => {
+  // どれもタブへの参照ではない: アセットのパス・deckard の URL・識別子・コメント・id / class・データのキー
+  const index = [
+    '<script src="main.js"></script>',
+    '<div id="assets" class="assets" data-kind=\'assets\'>assets</div>',
+    '<a href="assets/readme.txt">assets</a>',
+  ].join('\n');
+  const main = [
+    '// assets: textures are loaded below',
+    'const assets = { list: [] };',
+    "assets.list.push(loadImage('https://deckard.openprocessing.org/user1/visual2/habc/assets/tex.png'));",
+    "loadImage('https://deckard.openprocessing.org/user1/visual2/habc/assets');",
+    "loadImage('assets/local.png');",
+    "fetch('assets' + '/data.json');",
+    "fetch('my-assets');",
+    "fetch(base + 'assets');",
+    "if (img.src === 'assets') skip();",
+    "const kind = config['assets'] === 'assets' ? \"assets\" : `assets`;",
+    'function loadAssets() { return window.assets; }',
+    "console.log('assets', myassets, assets_count);",
+    // open( の最初の引数は URL ではない (キャッシュ・データベース・ダイアログの名前)
+    "caches.open('assets'); indexedDB.open(\"assets\", 1); dialog.open('assets');",
+  ].join('\n');
+  const data = '{ "assets": ["a.png"], "kind": "assets" }';
+  const codeTabs = [
+    { title: 'index.html', orderID: 0, code: index },
+    { title: 'assets', orderID: 1, code: 'x' },
+    { title: 'main.js', orderID: 2, code: main },
+    { title: 'data.json', orderID: 3, code: data },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs, assetDirName: 'assets' });
+
+  assert.deepEqual(plan.files.map(f => f.name), ['index.html', 'assets_2', 'main.js', 'data.json']);
+  assert.equal(plan.files[0].content, index);
+  assert.equal(plan.files[2].content, main);
+  assert.equal(plan.files[3].content, data);
+});
+
+test('html-mode local plan: the renamed "assets" tab does not take the name of another tab', () => {
+  // 連番が後ろのタブの名前 (assets_2) を先に取ると、<script src="assets_2"> まで付け替えたタブを指す
+  const index = '<script src="assets"></script><script src="assets_2"></script>';
+  for (const order of [['assets', 'assets_2'], ['assets_2', 'assets']]) {
+    const codeTabs = [
+      { title: 'index.html', orderID: 0, code: index },
+      ...order.map((title, i) => ({ title, orderID: i + 1, code: `// ${title}` })),
+    ];
+    const plan = planHtmlModeLocalFiles({ codeTabs, assetDirName: 'assets' });
+    const saved = Object.fromEntries(plan.files.map(f => [f.name, f.content]));
+
+    assert.deepEqual(plan.renames, [{ from: 'assets', to: 'assets_3' }], order.join(' → '));
+    assert.equal(saved['index.html'], '<script src="assets_3"></script><script src="assets_2"></script>');
+    assert.equal(saved.assets_3, '// assets');
+    assert.equal(saved.assets_2, '// assets_2');
+  }
+});
+
+test('html-mode local plan: attribute names in upper case are followed too', () => {
+  const codeTabs = [
+    { title: 'index.html', orderID: 0, code: '<SCRIPT SRC="assets"></SCRIPT><LINK REL="stylesheet" HREF=\'./assets\'>' },
+    { title: 'assets', orderID: 1, code: 'x' },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs, assetDirName: 'assets' });
+
+  assert.equal(plan.files[0].content, '<SCRIPT SRC="assets_2"></SCRIPT><LINK REL="stylesheet" HREF=\'./assets_2\'>');
+});
+
+test('html-mode local plan: the asset directory name is matched case-insensitively', () => {
+  for (const [tabName, savedName] of [['Assets', 'Assets_2'], ['ASSETS', 'ASSETS_2']]) {
+    const codeTabs = [
+      { title: 'index.html', orderID: 0, code: `<script src="${tabName}"></script>` },
+      { title: tabName, orderID: 1, code: 'x' },
+    ];
+    const plan = planHtmlModeLocalFiles({ codeTabs, assetDirName: 'assets' });
+
+    assert.deepEqual(plan.files.map(f => f.name), ['index.html', savedName]);
+    assert.deepEqual(plan.renames, [{ from: tabName, to: savedName }]);
+    assert.equal(plan.files[0].content, `<script src="${savedName}"></script>`);
+  }
+});
+
+test('html-mode local plan: "Assets" and "assets" tabs both move away from the asset directory', () => {
+  const codeTabs = [
+    { title: 'index.html', orderID: 0, code: '<script src="Assets"></script><script src="assets"></script>' },
+    { title: 'Assets', orderID: 1, code: 'a' },
+    { title: 'assets', orderID: 2, code: 'b' },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs, assetDirName: 'assets' });
+
+  // 2 つ目は assets_2 だと 1 つ目の Assets_2 と大文字小文字違いで重なるので、次の番号になる
+  assert.deepEqual(plan.files.map(f => f.name), ['index.html', 'Assets_2', 'assets_3']);
+  assert.equal(plan.files[0].content, '<script src="Assets_2"></script><script src="assets_3"></script>');
+});
+
+test('html-mode local plan: without an asset directory, a tab named "assets" is kept as it is', () => {
+  const codeTabs = [
+    { title: 'index.html', orderID: 0, code: '<script src="assets"></script>' },
+    { title: 'assets', orderID: 1, code: "fetch('assets');" },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs });
+
+  assert.deepEqual(plan.files, [
+    { name: 'index.html', content: '<script src="assets"></script>' },
+    { name: 'assets', content: "fetch('assets');" },
+  ]);
+  assert.deepEqual(plan.renames, []);
+});
+
 test('p5js mode: assembleOpSketchHtml is unchanged by the html-mode addition', () => {
   const html = assembleOpSketchHtml({
     meta: { mode: 'p5js', engineURL: 'https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.js', fileBase: FILE_BASE, libraries: [] },

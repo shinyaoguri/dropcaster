@@ -155,14 +155,19 @@ export function assembleHtmlModeOpSketchHtml({ meta, codeTabs, options = {} }) {
  *   - 付け替えが起きたら全タブ内容中の旧名参照を新名に置換し、renames で返す。
  *     ただし旧名が最終的なファイル名集合にも残っている場合（同名タブの重複など）
  *     は参照先が曖昧なので書き換えない
+ *   - assetDirName（呼び出し側がアセットを同梱するディレクトリの名前。例: `assets`）を
+ *     渡すと、その名前のタブ（大文字小文字無視）も付け替える (#220)。この名前は
+ *     ふつうの単語でもあるので、参照の置換は URL を書く位置にある値に限る
+ *     （rewriteUrlPositionReferences）。アセットを同梱しないときは渡さない
  *
  * @param {object} params
  * @param {Array} params.codeTabs   /api/sketch/{id}/code のレスポンス
+ * @param {string} [params.assetDirName]  同じディレクトリに作るアセット用ディレクトリの名前
  * @returns {{ files: Array<{name: string, content: string}>, indexName: string,
  *            renames: Array<{from: string, to: string}> }}
  * @throws {Error} index.html 相当のタブが見つからない場合
  */
-export function planHtmlModeLocalFiles({ codeTabs }) {
+export function planHtmlModeLocalFiles({ codeTabs, assetDirName }) {
   const tabs = [];
   const namesForIndexLookup = new Map();
   for (const tab of Array.isArray(codeTabs) ? codeTabs : []) {
@@ -179,6 +184,11 @@ export function planHtmlModeLocalFiles({ codeTabs }) {
 
   // 生成物と衝突する名前は付け替える (index.html は index タブが確保する)
   const usedLower = new Set(['index.html', '_op-meta.json']);
+  const assetDirLower = assetDirName ? assetDirName.toLowerCase() : null;
+  if (assetDirLower) usedLower.add(assetDirLower);
+  // 付け替え先の連番は、ほかのタブの元の名前も避ける。まだ処理していないタブの名前 (例: assets_2) を
+  // 先に取ると、そのタブへの参照まで付け替えたタブを指してしまう (#220)
+  const originalLower = new Set(tabs.map(tab => safeLocalTabName(tab.name).toLowerCase()));
   const renames = [];
   const files = [];
   let indexAssigned = false;
@@ -195,7 +205,7 @@ export function planHtmlModeLocalFiles({ codeTabs }) {
         do {
           outName = `${stem}_${suffix}${ext}`;
           suffix++;
-        } while (usedLower.has(outName.toLowerCase()));
+        } while (usedLower.has(outName.toLowerCase()) || originalLower.has(outName.toLowerCase()));
       }
       usedLower.add(outName.toLowerCase());
     }
@@ -210,15 +220,64 @@ export function planHtmlModeLocalFiles({ codeTabs }) {
   const rewritable = renames
     .filter(r => !finalNamesLower.has(r.from.toLowerCase()))
     .sort((a, b) => b.from.length - a.from.length);
-  if (rewritable.length > 0) {
-    const toByFrom = new Map(rewritable.map(r => [r.from, r.to]));
-    const pattern = new RegExp(rewritable.map(r => escapeRegExp(r.from)).join('|'), 'g');
+  // アセット用ディレクトリと同じ名前 (assets) はコード中のふつうの単語でもあるので、
+  // 全文の置換には乗せず、URL を書く位置にある値だけを書き換える。
+  // 全文の置換より先に、元の内容に対して行う
+  const isAssetDirName = (/** @type {string} */ name) => name.toLowerCase() === assetDirLower;
+  const anywhere = rewritable.filter(r => !isAssetDirName(r.from));
+  const urlPositionOnly = rewritable.filter(r => isAssetDirName(r.from));
+  if (urlPositionOnly.length > 0) {
+    const toByFrom = new Map(urlPositionOnly.map(r => [r.from, r.to]));
+    for (const file of files) {
+      file.content = rewriteUrlPositionReferences(file.content, toByFrom);
+    }
+  }
+  if (anywhere.length > 0) {
+    const toByFrom = new Map(anywhere.map(r => [r.from, r.to]));
+    const pattern = new RegExp(anywhere.map(r => escapeRegExp(r.from)).join('|'), 'g');
     for (const file of files) {
       file.content = file.content.replace(pattern, m => toByFrom.get(m));
     }
   }
 
   return { files, indexName, renames };
+}
+
+/** 引用符で囲んだ文字列 1 つ (呼び出しの、前にある引数を読み飛ばすのに使う)。\x60 はバッククオート */
+const QUOTED_STRING = String.raw`(?:'[^'\n]*'|"[^"\n]*"|\x60[^\x60]*\x60)`;
+
+/**
+ * URL を書く位置の直前までの並び。html-doc-builder (viewer) がタブへの参照として解決するものに揃える:
+ *   - `src=` / `href=`: `<script src>` `<link href>` などの属性と、`img.src = …` のような代入。
+ *     HTML の属性名は大文字でも書けるので、大文字小文字を区別しない
+ *   - `fetch(` / `load…(` (p5.js の loadStrings・loadShader など) の引数。
+ *     前にある引数は、引用符で囲んだ文字列だけを読み飛ばす
+ *   - `open(` は、前に文字列の引数が 1 つ以上あるものだけ (XMLHttpRequest の `open('GET', url)`)。
+ *     最初の引数が名前の `caches.open('assets')` や `indexedDB.open('assets')` は URL ではない
+ */
+const URL_POSITION = String.raw`\b(?:[sS][rR][cC]|[hH][rR][eE][fF])\s*=\s*`
+  + String.raw`|\b(?:fetch|load[A-Z]\w*)\s*\(\s*(?:${QUOTED_STRING}\s*,\s*)*`
+  + String.raw`|\bopen\s*\(\s*(?:${QUOTED_STRING}\s*,\s*)+`;
+
+/**
+ * URL を書く位置にあり、値の全体がタブ名 (前に `./` が付いてもよい) の文字列だけを新名に書き換える。
+ * 単語としての出現 (識別子・コメント・`assets/...` のパス・id や class・データのキー) と、
+ * 文字列の連結 (`'assets' + path`) は、タブへの参照と言い切れないので書かれたまま残す。
+ * @param {string} content
+ * @param {Map<string, string>} toByFrom 旧名 → 新名
+ * @returns {string}
+ */
+function rewriteUrlPositionReferences(content, toByFrom) {
+  const names = [...toByFrom.keys()].map(escapeRegExp).join('|');
+  // 値の全体がタブ名の文字列を先に探し、見つけた位置でだけ手前の並びを確かめる
+  // (手前の並びを全ての位置で確かめると、文字列が長く並ぶ行で遅くなる)
+  const literal = new RegExp(String.raw`(["'\x60])(\./)?(${names})\1(?!\s*\+)`, 'g');
+  const atUrlPosition = new RegExp(`(?<=${URL_POSITION})`, 'y');
+  return content.replace(literal, (whole, quote, dotSlash, name, offset) => {
+    atUrlPosition.lastIndex = offset;
+    if (!atUrlPosition.test(content)) return whole;
+    return `${quote}${dotSlash ?? ''}${toByFrom.get(name)}${quote}`;
+  });
 }
 
 /**
