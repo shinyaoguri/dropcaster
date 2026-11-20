@@ -171,7 +171,9 @@ wrangler は `devDependencies` に置いて lockfile で版を固定する。`@c
 操作と測定方法は [PoC README](poc/projection-3d/README.md) を参照。
 
 `npm run test:sw` は生成した Service Worker を実 Chromium で動かし、作品 iframe を開いた後も
-オフラインのホームにシェルが、各作品に自分の HTML が返ることをルート配信とサブパス配信で確かめる
+オフラインのホームにシェルが、各作品に自分の HTML が返ること、作品のサブリソースと作品カタログが
+local のバケットだけに入ること（以前の版が runtime に入れたものは有効化のときに移ること）を
+ルート配信とサブパス配信で確かめる
 （viewer のビルドは不要。`CHROMIUM_PATH` も同じく使える）。SW テンプレートを変えたら実行する。
 続けて `tests/browser/service-worker-update.mjs` が両 viewer エントリと、利用者の `dropcaster build --base /sub/`
 （terser・manualChunks・サブパス配信）を OS の一時ディレクトリへビルドし、出力ウィンドウを開いたまま新しい版の
