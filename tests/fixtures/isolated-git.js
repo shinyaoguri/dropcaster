@@ -8,6 +8,9 @@ import { devNull } from 'os';
 // 設定ファイルを通らない既定の探索先は切り離していない: $XDG_CONFIG_HOME/git/ の ignore と attributes、
 // git の導入先にある既定のテンプレート。
 // 呼び出しごとに `-c` を並べる形は、付け忘れた呼び出しだけが設定の影響を受けるので採らない。
+// 切り離すのは、テストがリポジトリを作る側の git だけ。テスト対象 (src/core/build-info.js・scripts/release.js) が
+// 自分で呼ぶ git は親の環境と設定のまま動く。GIT_DIR が立った環境 (linked worktree の git hook の中など) で
+// テストを走らせると、そちらが外側のリポジトリを読んで落ちる (#253)。
 
 /** @returns {NodeJS.ProcessEnv} */
 function isolatedEnv() {
