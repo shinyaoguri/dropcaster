@@ -186,6 +186,9 @@ export function planHtmlModeLocalFiles({ codeTabs, assetDirName }) {
   const usedLower = new Set(['index.html', '_op-meta.json']);
   const assetDirLower = assetDirName ? assetDirName.toLowerCase() : null;
   if (assetDirLower) usedLower.add(assetDirLower);
+  // 付け替え先の連番は、ほかのタブの元の名前も避ける。まだ処理していないタブの名前 (例: assets_2) を
+  // 先に取ると、そのタブへの参照まで付け替えたタブを指してしまう (#220)
+  const originalLower = new Set(tabs.map(tab => safeLocalTabName(tab.name).toLowerCase()));
   const renames = [];
   const files = [];
   let indexAssigned = false;
@@ -202,7 +205,7 @@ export function planHtmlModeLocalFiles({ codeTabs, assetDirName }) {
         do {
           outName = `${stem}_${suffix}${ext}`;
           suffix++;
-        } while (usedLower.has(outName.toLowerCase()));
+        } while (usedLower.has(outName.toLowerCase()) || originalLower.has(outName.toLowerCase()));
       }
       usedLower.add(outName.toLowerCase());
     }
@@ -245,12 +248,16 @@ const QUOTED_STRING = String.raw`(?:'[^'\n]*'|"[^"\n]*"|\x60[^\x60]*\x60)`;
 
 /**
  * URL を書く位置の直前までの並び。html-doc-builder (viewer) がタブへの参照として解決するものに揃える:
- *   - `src=` / `href=`: `<script src>` `<link href>` などの属性と、`img.src = …` のような代入
- *   - `fetch(` / `open(` (XMLHttpRequest) / `load…(` (p5.js の loadStrings・loadShader など) の引数。
+ *   - `src=` / `href=`: `<script src>` `<link href>` などの属性と、`img.src = …` のような代入。
+ *     HTML の属性名は大文字でも書けるので、大文字小文字を区別しない
+ *   - `fetch(` / `load…(` (p5.js の loadStrings・loadShader など) の引数。
  *     前にある引数は、引用符で囲んだ文字列だけを読み飛ばす
+ *   - `open(` は、前に文字列の引数が 1 つ以上あるものだけ (XMLHttpRequest の `open('GET', url)`)。
+ *     最初の引数が名前の `caches.open('assets')` や `indexedDB.open('assets')` は URL ではない
  */
-const URL_POSITION = String.raw`\b(?:src|href)\s*=\s*`
-  + String.raw`|\b(?:fetch|open|load[A-Z]\w*)\s*\(\s*(?:${QUOTED_STRING}\s*,\s*)*`;
+const URL_POSITION = String.raw`\b(?:[sS][rR][cC]|[hH][rR][eE][fF])\s*=\s*`
+  + String.raw`|\b(?:fetch|load[A-Z]\w*)\s*\(\s*(?:${QUOTED_STRING}\s*,\s*)*`
+  + String.raw`|\bopen\s*\(\s*(?:${QUOTED_STRING}\s*,\s*)+`;
 
 /**
  * URL を書く位置にあり、値の全体がタブ名 (前に `./` が付いてもよい) の文字列だけを新名に書き換える。

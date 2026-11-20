@@ -208,6 +208,8 @@ test('html-mode local plan: renaming the "assets" tab leaves every other "assets
     "const kind = config['assets'] === 'assets' ? \"assets\" : `assets`;",
     'function loadAssets() { return window.assets; }',
     "console.log('assets', myassets, assets_count);",
+    // open( の最初の引数は URL ではない (キャッシュ・データベース・ダイアログの名前)
+    "caches.open('assets'); indexedDB.open(\"assets\", 1); dialog.open('assets');",
   ].join('\n');
   const data = '{ "assets": ["a.png"], "kind": "assets" }';
   const codeTabs = [
@@ -222,6 +224,34 @@ test('html-mode local plan: renaming the "assets" tab leaves every other "assets
   assert.equal(plan.files[0].content, index);
   assert.equal(plan.files[2].content, main);
   assert.equal(plan.files[3].content, data);
+});
+
+test('html-mode local plan: the renamed "assets" tab does not take the name of another tab', () => {
+  // 連番が後ろのタブの名前 (assets_2) を先に取ると、<script src="assets_2"> まで付け替えたタブを指す
+  const index = '<script src="assets"></script><script src="assets_2"></script>';
+  for (const order of [['assets', 'assets_2'], ['assets_2', 'assets']]) {
+    const codeTabs = [
+      { title: 'index.html', orderID: 0, code: index },
+      ...order.map((title, i) => ({ title, orderID: i + 1, code: `// ${title}` })),
+    ];
+    const plan = planHtmlModeLocalFiles({ codeTabs, assetDirName: 'assets' });
+    const saved = Object.fromEntries(plan.files.map(f => [f.name, f.content]));
+
+    assert.deepEqual(plan.renames, [{ from: 'assets', to: 'assets_3' }], order.join(' → '));
+    assert.equal(saved['index.html'], '<script src="assets_3"></script><script src="assets_2"></script>');
+    assert.equal(saved.assets_3, '// assets');
+    assert.equal(saved.assets_2, '// assets_2');
+  }
+});
+
+test('html-mode local plan: attribute names in upper case are followed too', () => {
+  const codeTabs = [
+    { title: 'index.html', orderID: 0, code: '<SCRIPT SRC="assets"></SCRIPT><LINK REL="stylesheet" HREF=\'./assets\'>' },
+    { title: 'assets', orderID: 1, code: 'x' },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs, assetDirName: 'assets' });
+
+  assert.equal(plan.files[0].content, '<SCRIPT SRC="assets_2"></SCRIPT><LINK REL="stylesheet" HREF=\'./assets_2\'>');
 });
 
 test('html-mode local plan: the asset directory name is matched case-insensitively', () => {
