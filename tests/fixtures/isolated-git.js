@@ -2,7 +2,11 @@ import { execFileSync } from 'child_process';
 import { devNull } from 'os';
 
 // テストが一時ディレクトリに作るリポジトリで git を呼ぶ入口。
-// 実行する人の git 設定 (署名・hook・テンプレートなど) で結果が変わらないよう、環境ごと切り離す (#223)。
+// 実行する人の git 設定で結果が変わらないよう、次の 2 つを切り離す (#223):
+//   - グローバル・システムの設定ファイル (署名、core.hooksPath の hook、init.templateDir など)
+//   - 親プロセスから渡る GIT_* の環境変数
+// 設定ファイルを通らない既定の探索先は切り離していない: $XDG_CONFIG_HOME/git/ の ignore と attributes、
+// git の導入先にある既定のテンプレート。
 // 呼び出しごとに `-c` を並べる形は、付け忘れた呼び出しだけが設定の影響を受けるので採らない。
 
 /** @returns {NodeJS.ProcessEnv} */

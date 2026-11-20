@@ -15,21 +15,27 @@ const BROKEN_SIGNING = [
 ];
 
 /**
- * 環境変数を差し替えて fn を実行し、元に戻す。
+ * @param {string} key
+ * @param {string | undefined} value undefined は変数を消す
+ */
+function setEnv(key, value) {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
+
+/**
+ * 環境変数を差し替えて fn を実行し、元に戻す。値が undefined の変数は、その間だけ消す。
  * @template T
- * @param {Record<string, string>} vars
+ * @param {Record<string, string | undefined>} vars
  * @param {() => T} fn
  */
 function withEnv(vars, fn) {
   const saved = Object.keys(vars).map((key) => /** @type {const} */ ([key, process.env[key]]));
-  Object.assign(process.env, vars);
+  for (const [key, value] of Object.entries(vars)) setEnv(key, value);
   try {
     return fn();
   } finally {
-    for (const [key, value] of saved) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+    for (const [key, value] of saved) setEnv(key, value);
   }
 }
 
@@ -62,18 +68,40 @@ test('isolatedGit commits when the environment injects a broken signing setup', 
   });
 });
 
-test('isolatedGit commits when the global config has a broken signing setup and a failing hook', async () => {
+/**
+ * home の .gitconfig に settings を書き、そこをホームにした状態で空のリポジトリへコミットする。
+ * @param {string} home
+ * @param {string[][]} settings
+ */
+async function commitWithGlobalConfig(home, settings) {
+  const repo = join(home, 'repo');
+  await mkdir(repo);
+  for (const [key, value] of settings) {
+    isolatedGit(home, 'config', '--file', join(home, '.gitconfig'), key, value);
+  }
+  return withEnv({
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: join(home, 'xdg'),
+    // 親がこれらを持っていると、入口が何もしなくても home の .gitconfig が読まれず、検査にならない
+    GIT_CONFIG_GLOBAL: undefined,
+    GIT_CONFIG_NOSYSTEM: undefined,
+  }, () => commitInFreshRepo(repo));
+}
+
+test('isolatedGit commits when the global config has a broken signing setup', async () => {
+  await withTempDir(async (home) => {
+    assert.match(await commitWithGlobalConfig(home, BROKEN_SIGNING), /^[0-9a-f]{7}$/);
+  });
+});
+
+// 署名とは別に確かめる。署名の設定も壊すと先に署名で落ち、hook の切り離しだけが外れても気付けない
+test('isolatedGit commits when the global config points core.hooksPath at a failing hook', async () => {
   await withTempDir(async (home) => {
     const hooks = join(home, 'hooks');
-    const repo = join(home, 'repo');
     await mkdir(hooks);
-    await mkdir(repo);
     await writeFile(join(hooks, 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-    for (const [key, value] of [...BROKEN_SIGNING, ['core.hooksPath', hooks]]) {
-      isolatedGit(home, 'config', '--file', join(home, '.gitconfig'), key, value);
-    }
-    const env = { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, 'xdg') };
-    assert.match(withEnv(env, () => commitInFreshRepo(repo)), /^[0-9a-f]{7}$/);
+    assert.match(await commitWithGlobalConfig(home, [['core.hooksPath', hooks]]), /^[0-9a-f]{7}$/);
   });
 });
 
