@@ -113,6 +113,39 @@ async function assertRapidSwitchEndsOnD({ page, held, release }, label, steps, s
   assertRunning(await measure(page), 'd', label);
 }
 
+/**
+ * b を表示したあと steps ([b を表示してからの ms, 同時に押すボタン...]) を押し、最後に b を表示して終える。
+ * その間、フェードアウト中 (400ms) の frame が先読みの c に差し替わらないことを確かめる。
+ * 測るのは、frame が非表示になってから、そこへ c (srcdoc) が載るまでの時間。
+ */
+async function assertPrefetchWaitsForFade(page, label, steps) {
+  await waitForPair(page, 'a', 'b');
+  const gap = await page.evaluate((list) => new Promise((done) => {
+    const stage = document.querySelector('#slideshow-stage');
+    const hiddenAt = new Map();
+    new MutationObserver((records) => {
+      for (const r of records) {
+        if (r.attributeName === 'class') {
+          if (!r.target.classList.contains('dc-visible')) hiddenAt.set(r.target, performance.now());
+        } else if (r.target.hasAttribute('srcdoc')) { // 先読みの c (srcdoc) が載った
+          done(performance.now() - hiddenAt.get(r.target));
+        }
+      }
+    }).observe(stage, { subtree: true, attributes: true, attributeFilter: ['class', 'srcdoc'] });
+    document.querySelector('#next-btn').click();
+    for (const [at, ...ids] of list) setTimeout(() => { for (const id of ids) document.querySelector(id).click(); }, at);
+    setTimeout(() => done(null), 5000);
+  }), steps);
+  assert.notEqual(gap, null, `${label}: c の先読みが始まらない`);
+  assert.ok(gap >= 400, `${label}: フェードアウトの途中 (${Math.round(gap)}ms) で frame が先読みに使われた`);
+  await waitForPair(page, 'b', 'c');
+  await page.waitForTimeout(FADE_SETTLE_MS);
+  assert.equal(await current(page), '2');
+  const m = await measure(page);
+  assertRunning(m, 'b', label);
+  assertIdle(m, 'c', label);
+}
+
 function assertRunning(m, marker, label) {
   assert.ok(m[marker], `${label}: ${marker} が見つからない (${JSON.stringify(m)})`);
   assert.equal(m[marker].visible, true, `${label}: ${marker} が表示されていない (${JSON.stringify(m)})`);
@@ -295,32 +328,56 @@ const cases = {
   // a → b → a → b と戻って進むと、a の frame は 2 度フェードアウトする。1 度目のフェード完了のタイマーが
   // 2 度目のフェードの途中で frame を idle に戻すと、まだ見えている a が先読みの c に差し替わる
   async refadeKeepsFadingSketch({ page }) {
+    await assertPrefetchWaitsForFade(page, '戻って進む', [[50, '#prev-btn'], [350, '#next-btn']]);
+  },
+
+  // 同じタスクの中で戻って進む (a を取り直した show が、すぐ後ろの show に取り消される)。
+  // 取り消された show がフェード中の a の frame を idle に戻すと、まだ見えている a が先読みの c に差し替わる
+  async sameTaskSwitchKeepsFadingSketch({ page }) {
+    await assertPrefetchWaitsForFade(page, '同じタスクで戻って進む', [[50, '#prev-btn', '#next-btn']]);
+  },
+
+  // 表示待ちの d が取り消されたあと、d が読み込みを終えた frame は先読みに戻る。
+  // 戻すときに保留中の先読みを流さないと、次の作品 (b) が読み込まれないまま残る
+  async cancelledShowStillPrefetchesNext({ page, held, release }) {
     await waitForPair(page, 'a', 'b');
-    const gap = await page.evaluate(() => new Promise((done) => {
-      const stage = document.querySelector('#slideshow-stage');
-      const hiddenAt = new Map();
-      new MutationObserver((records) => {
-        for (const r of records) {
-          if (r.attributeName === 'class') {
-            if (!r.target.classList.contains('dc-visible')) hiddenAt.set(r.target, performance.now());
-          } else if (r.target.hasAttribute('srcdoc')) { // 先読みの c (srcdoc) が載った
-            done(performance.now() - hiddenAt.get(r.target));
-          }
-        }
-      }).observe(stage, { subtree: true, attributes: true, attributeFilter: ['class', 'srcdoc'] });
-      document.querySelector('#next-btn').click();
-      setTimeout(() => document.querySelector('#prev-btn').click(), 50);
-      setTimeout(() => document.querySelector('#next-btn').click(), 350);
-      setTimeout(() => done(null), 5000);
-    }));
-    assert.notEqual(gap, null, '戻って進む: c の先読みが始まらない');
-    assert.ok(gap >= 400, `戻って進む: フェードアウトの途中 (${Math.round(gap)}ms) で frame が先読みに使われた`);
-    await waitForPair(page, 'b', 'c');
+    await page.evaluate(() => {
+      const click = (id) => document.querySelector(id).click();
+      click('#next-btn');                              // b
+      setTimeout(() => click('#prev-btn'), 50);        // a
+      setTimeout(() => click('#prev-btn'), 100);       // d (応答は保留)
+      setTimeout(() => click('#next-btn'), 150);       // a (d の表示は取り消される)
+    });
+    await held;
     await page.waitForTimeout(FADE_SETTLE_MS);
-    assert.equal(await current(page), '2');
+    assert.equal(await current(page), '1');
+    assert.deepEqual(await visibleMarkers(page), ['a']);
+    release();
+    await waitForPair(page, 'a', 'b').catch(() => {});
+    const seen = await frames(page);
+    assert.deepEqual(seen.map(f => f.marker).sort(), ['a', 'b'], `取り消しのあとの先読み: 次の作品 b が先読みされていない (${JSON.stringify(seen)})`);
     const m = await measure(page);
-    assertRunning(m, 'b', '戻って進む');
-    assertIdle(m, 'c', '戻って進む');
+    assertRunning(m, 'a', '取り消しのあとの先読み');
+    assertIdle(m, 'b', '取り消しのあとの先読み');
+  },
+
+  // a → b → a → d と戻る。b を表示したときに保留した c の先読みは、a に戻った時点で古い。
+  // 残っていると、d を表示したあとのフェード完了で流れて、先読み済みの次の作品 (a) を追い出す
+  async stalePendingPrefetchIsDropped({ page }) {
+    await waitForPair(page, 'a', 'b');
+    await page.evaluate(() => {
+      const click = (id) => document.querySelector(id).click();
+      click('#next-btn');                              // b
+      setTimeout(() => click('#prev-btn'), 350);       // a
+      setTimeout(() => click('#prev-btn'), 700);       // d
+    });
+    await waitForPair(page, 'd', 'a');
+    // d を表示したあとのフェード完了 (700 + 450ms) をまたいで見る
+    await page.waitForTimeout(450 + FADE_SETTLE_MS);
+    assert.equal(await current(page), '4');
+    const seen = await frames(page);
+    assert.deepEqual(seen.map(f => f.marker).sort(), ['a', 'd'], `古い先読み: 次の作品 a が追い出された (${JSON.stringify(seen)})`);
+    assert.deepEqual(await visibleMarkers(page), ['d']);
   },
 
   // 切替を連続で押しても、最後に表示した作品だけが進み、残りは止まる
@@ -337,7 +394,7 @@ const cases = {
   },
 
   // 未読み込みの作品 (d) へ切り替え、その読み込み中に表示中の作品 (a) へ戻ると d の表示は取り消される。
-  // 取り消された d は読み込み後も非表示のままなので、描画を止めて待つ
+  // d が読み込みを終えた frame は先読みに戻り、a の次の作品 (b) が載って、描画を止めて待つ (#208)
   async supersededShow({ page, held, release }) {
     await waitForPair(page, 'a', 'b');
     await page.locator('#prev-btn').click();
@@ -345,11 +402,33 @@ const cases = {
     await page.locator('#next-btn').click();
     assert.equal(await current(page), '1');
     release();
-    await waitForPair(page, 'a', 'd');
+    await waitForPair(page, 'a', 'b');
     await page.waitForTimeout(FADE_SETTLE_MS);
     const m = await measure(page);
     assertRunning(m, 'a', '取り消された切替');
-    assertIdle(m, 'd', '取り消された切替');
+    assertIdle(m, 'b', '取り消された切替');
+  },
+
+  // 取り消された作品が次の作品でもあるとき (c から d へ進み、読み込み中に c へ戻る) は、d がそのまま先読みとして残る。
+  // show が読み込んだ d は表示されないままなので、描画を止めて待つ (#172)
+  async supersededShowPausesKeptSketch({ page, held, release }) {
+    await waitForPair(page, 'b', 'c');
+    await page.evaluate(() => {
+      const click = (id) => document.querySelector(id).click();
+      click('#next-btn');                              // c (先読み済み)
+      setTimeout(() => click('#next-btn'), 50);        // d (応答は保留)
+      setTimeout(() => click('#prev-btn'), 100);       // c (d の表示は取り消される)
+    });
+    await held;
+    await page.waitForTimeout(FADE_SETTLE_MS);
+    assert.equal(await current(page), '3');
+    assert.deepEqual(await visibleMarkers(page), ['c']);
+    release();
+    await waitForPair(page, 'c', 'd');
+    await page.waitForTimeout(FADE_SETTLE_MS);
+    const m = await measure(page);
+    assertRunning(m, 'c', '取り消されて残る作品');
+    assertIdle(m, 'd', '取り消されて残る作品');
   },
 };
 
@@ -367,8 +446,9 @@ try {
         if (process.env.SLIDESHOW_CASE && process.env.SLIDESHOW_CASE !== caseName) continue;
         const env = await setup(browser, base, {
           hold: { nextBeforePrefetchCompletes: 'b', supersededShow: 'd', previewRaceKeepsVisibleRunning: 'd',
-            rapidNextShowsNumberedSketch: 'd', rapidFourSwitchesShowNumberedSketch: 'd', rapidPrevShowsNumberedSketch: 'd' }[caseName] ?? null,
-          query: caseName === 'srcdocPrefetchResumes' ? '?index=1' : '',
+            rapidNextShowsNumberedSketch: 'd', rapidFourSwitchesShowNumberedSketch: 'd', rapidPrevShowsNumberedSketch: 'd',
+            cancelledShowStillPrefetchesNext: 'd', supersededShowPausesKeptSketch: 'd' }[caseName] ?? null,
+          query: ['srcdocPrefetchResumes', 'supersededShowPausesKeptSketch'].includes(caseName) ? '?index=1' : '',
         });
         try {
           await run({ ...env, base });

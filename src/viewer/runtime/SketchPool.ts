@@ -60,7 +60,10 @@ export class SketchPool {
   private idleOrder: SketchFrame[];
   /** 表示待ちの show が読み込み先に取っている frame。その show が表示するか、後続の show が来るまで保つ。 */
   private claimedFrame: SketchFrame | null = null;
-  /** フェードアウト中の frame と、フェード完了後にそれを idle へ戻すタイマー。 */
+  /**
+   * フェードアウト中の frame と、フェード完了後にそれを idle へ戻すタイマー。
+   * 項目がある間、その frame はまだ見えている。表示待ちの show が取っても、フェードが終わるまでは残す。
+   */
   private readonly fadeTimers = new Map<SketchFrame, number>();
   private destroyed = false;
   /** クロスフェード中に呼ばれた preload を保留しておき、遷移完了後にまとめて実行する。 */
@@ -92,6 +95,9 @@ export class SketchPool {
     const generation = ++this.showGeneration;
     // 先行する表示待ちはここで取り消される。その frame は、読み込みを終えた時点で idle に戻る（下の分岐）
     this.claimedFrame = null;
+    // 保留中の先読みは、前の位置から見た「次の作品」。表示する作品が変わるので捨てる。
+    // 残すと、後のフェード完了で流れて、正しく先読みした作品を追い出す。呼び出し側は表示のあとで preload し直す
+    this.pendingPreloadUrl = null;
 
     let target = this.frames.find(f => matches(f, url)) ?? null;
 
@@ -113,12 +119,17 @@ export class SketchPool {
       // 先読みと同じく止めて待つ（#172）。同じ作品を待つ後続の show があれば、そちらが resume する。
       if (target !== this.visibleFrame && matches(target, url)) {
         target.pause();
-        // 後続の show が取り直していなければ、先読み済みの frame として idle に戻す
-        if (target !== this.claimedFrame && !this.fadeTimers.has(target)) this.markIdle(target);
+        // 後続の show が取り直しておらず、フェードアウト中でもなければ、先読み済みの frame として idle に戻し、
+        // 空きを待っていた先読みを流す。フェードアウト中なら、フェード完了のタイマーが同じことをする
+        if (target !== this.claimedFrame && !this.fadeTimers.has(target)) {
+          this.markIdle(target);
+          this.flushPendingPreload();
+        }
       }
       return target;
     }
     this.claimedFrame = null;
+    this.clearFade(target); // 表示するので、もうフェードアウト中ではない
 
     const previous = this.visibleFrame;
     target.setVisible(true);
@@ -131,9 +142,13 @@ export class SketchPool {
       // previous の iframe.src が書き換わり、まだ opacity が残っているフレームのコンテンツが
       // 切り替わって一瞬チラつくため（next 方向で目立つ）。遷移完了後に idle 化・pause し、
       // この間に保留されていた preload があればここでまとめて実行する。
-      // フェード中に show がこの frame を取り直したら、claim がこのタイマーを取り消す。
+      this.clearFade(previous);
       this.fadeTimers.set(previous, window.setTimeout(() => {
         this.fadeTimers.delete(previous);
+        // 表示待ちの show が読み込み先に取っている間は idle に戻さない。戻すと、保留していた先読みが
+        // 待っている作品とは別の作品をそこへ読み込み、それが表示される（#208）。
+        // その show が表示するか、取り消されて読み込みを終えた時点で扱う
+        if (previous === this.claimedFrame) return;
         this.markIdle(previous);
         previous.pause();
         this.flushPendingPreload();
@@ -148,7 +163,11 @@ export class SketchPool {
    */
   preload(url: PoolSource): void {
     if (this.destroyed) return;
-    if (this.frames.some(f => matches(f, url))) return;
+    if (this.frames.some(f => matches(f, url))) {
+      // 頼まれた作品はもう読み込んである。それより前に保留した先読みは古いので捨てる
+      this.pendingPreloadUrl = null;
+      return;
+    }
     const idle = this.idleOrder.find(f => f !== this.visibleFrame) ?? null;
     if (!idle) {
       // クロスフェード中で idle 扱いの frame が無い。遷移完了後に show() が flush する。
@@ -200,17 +219,19 @@ export class SketchPool {
   }
 
   /**
-   * frame を表示待ちの show の読み込み先として確保する。確保した frame は、フェード完了のタイマーにも
-   * 先読みにも渡さない。渡すと、待っている作品とは別の作品がそこへ読み込まれて表示される（#208）。
+   * frame を表示待ちの show の読み込み先として確保する。確保した frame は先読みに渡さず、
+   * フェード完了のタイマーも idle に戻さない（#208）。
    */
   private claim(frame: SketchFrame): void {
     this.markBusy(frame);
-    const fadeTimer = this.fadeTimers.get(frame);
-    if (fadeTimer !== undefined) {
-      clearTimeout(fadeTimer);
-      this.fadeTimers.delete(frame);
-    }
     this.claimedFrame = frame;
+  }
+
+  private clearFade(frame: SketchFrame): void {
+    const timer = this.fadeTimers.get(frame);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.fadeTimers.delete(frame);
   }
 
   private markBusy(frame: SketchFrame): void {
