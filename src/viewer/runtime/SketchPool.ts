@@ -53,8 +53,15 @@ const load = (frame: SketchFrame, source: PoolSource) => typeof source === 'stri
 export class SketchPool {
   private readonly frames: SketchFrame[];
   private visibleFrame: SketchFrame | null = null;
-  /** 非表示になった順の並び（先頭ほど古い ＝ 再利用候補）。 */
+  /**
+   * 先読みの読み込み先にしてよい frame。非表示になった順の並び（先頭ほど古い ＝ 再利用候補）。
+   * 表示中・フェードアウト中・show が読み込み先に取った frame は入れない（#208）。
+   */
   private idleOrder: SketchFrame[];
+  /** 表示待ちの show が読み込み先に取っている frame。その show が表示するか、後続の show が来るまで保つ。 */
+  private claimedFrame: SketchFrame | null = null;
+  /** フェードアウト中の frame と、フェード完了後にそれを idle へ戻すタイマー。 */
+  private readonly fadeTimers = new Map<SketchFrame, number>();
   private destroyed = false;
   /** クロスフェード中に呼ばれた preload を保留しておき、遷移完了後にまとめて実行する。 */
   private pendingPreloadUrl: PoolSource | null = null;
@@ -83,6 +90,8 @@ export class SketchPool {
   async show(url: PoolSource): Promise<SketchFrame> {
     if (this.destroyed) throw new Error('SketchPool is destroyed');
     const generation = ++this.showGeneration;
+    // 先行する表示待ちはここで取り消される。その frame は、読み込みを終えた時点で idle に戻る（下の分岐）
+    this.claimedFrame = null;
 
     let target = this.frames.find(f => matches(f, url)) ?? null;
 
@@ -92,18 +101,24 @@ export class SketchPool {
 
     if (!target) {
       target = this.takeIdleFrame();
+      this.claim(target);
       await load(target, url);
     } else {
+      this.claim(target);
       await target.ready; // 先読み中ならその完了を待つ
     }
     if (this.destroyed) return target;
     if (generation !== this.showGeneration) {
       // 待つ間に後続の show が来て、この表示は取り消された。表示されないまま読み込みを終えた frame は
       // 先読みと同じく止めて待つ（#172）。同じ作品を待つ後続の show があれば、そちらが resume する。
-      if (target !== this.visibleFrame && matches(target, url)) target.pause();
+      if (target !== this.visibleFrame && matches(target, url)) {
+        target.pause();
+        // 後続の show が取り直していなければ、先読み済みの frame として idle に戻す
+        if (target !== this.claimedFrame && !this.fadeTimers.has(target)) this.markIdle(target);
+      }
       return target;
     }
-    this.markBusy(target);
+    this.claimedFrame = null;
 
     const previous = this.visibleFrame;
     target.setVisible(true);
@@ -116,12 +131,13 @@ export class SketchPool {
       // previous の iframe.src が書き換わり、まだ opacity が残っているフレームのコンテンツが
       // 切り替わって一瞬チラつくため（next 方向で目立つ）。遷移完了後に idle 化・pause し、
       // この間に保留されていた preload があればここでまとめて実行する。
-      window.setTimeout(() => {
-        if (this.destroyed || this.visibleFrame === previous) return;
+      // フェード中に show がこの frame を取り直したら、claim がこのタイマーを取り消す。
+      this.fadeTimers.set(previous, window.setTimeout(() => {
+        this.fadeTimers.delete(previous);
         this.markIdle(previous);
         previous.pause();
         this.flushPendingPreload();
-      }, TRANSITION_MS + 50);
+      }, TRANSITION_MS + 50));
     }
     return target;
   }
@@ -160,22 +176,41 @@ export class SketchPool {
     if (this.destroyed) return;
     this.destroyed = true;
     this.pendingPreloadUrl = null;
+    for (const timer of this.fadeTimers.values()) clearTimeout(timer);
+    this.fadeTimers.clear();
     for (const frame of this.frames) frame.dispose();
     this.frames.length = 0;
     this.idleOrder.length = 0;
     this.visibleFrame = null;
+    this.claimedFrame = null;
   }
 
   // --- idle frame（非表示の frame）の LRU 管理 ---
 
-  /** 表示中でない frame のうち、いちばん長く非表示だったものを取り出す。 */
+  /**
+   * show の読み込み先を選ぶ。いちばん長く非表示だった idle frame。無ければ、表示中でない frame
+   * （フェードアウト中、または取り消された show が読み込み中のもの）を使う。
+   */
   private takeIdleFrame(): SketchFrame {
     const idle =
       this.idleOrder.find(f => f !== this.visibleFrame) ??
       this.frames.find(f => f !== this.visibleFrame);
     if (!idle) throw new Error('SketchPool: no idle frame available'); // size>=2 のため通常起こらない
-    this.markBusy(idle);
     return idle;
+  }
+
+  /**
+   * frame を表示待ちの show の読み込み先として確保する。確保した frame は、フェード完了のタイマーにも
+   * 先読みにも渡さない。渡すと、待っている作品とは別の作品がそこへ読み込まれて表示される（#208）。
+   */
+  private claim(frame: SketchFrame): void {
+    this.markBusy(frame);
+    const fadeTimer = this.fadeTimers.get(frame);
+    if (fadeTimer !== undefined) {
+      clearTimeout(fadeTimer);
+      this.fadeTimers.delete(frame);
+    }
+    this.claimedFrame = frame;
   }
 
   private markBusy(frame: SketchFrame): void {

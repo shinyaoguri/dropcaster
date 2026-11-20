@@ -77,6 +77,42 @@ async function current(page) {
   return page.locator('#current-sketch-number').textContent();
 }
 
+/** 表示中の iframe に載っている作品の marker (読み込み前の iframe は null)。 */
+async function visibleMarkers(page) {
+  return (await frames(page)).filter(f => f.visible).map(f => f.marker);
+}
+
+/**
+ * B を表示した直後、クロスフェードが終わる前に切替を重ねる (最後は d で、その応答は保留)。
+ * steps は [B を表示してからの ms, 同時に押すボタン...] の並び。保留中は shownWhileHeld が表示されたままで、
+ * 応答を返すと番号表示 (4) どおり d が表示されて動く (#208)。
+ * ページ内のタイマーで押すので、テスト側の待ちが延びても間隔は変わらない。
+ */
+async function assertRapidSwitchEndsOnD({ page, held, release }, label, steps, shownWhileHeld) {
+  await waitForPair(page, 'a', 'b');
+  await page.evaluate((list) => {
+    document.querySelector('#next-btn').click(); // b は先読み済みなので、ここで表示されてフェードが始まる
+    for (const [at, ...ids] of list) setTimeout(() => { for (const id of ids) document.querySelector(id).click(); }, at);
+  }, steps);
+  await held; // d の読み込み要求が届いて保留されている
+  // フェード完了 (400ms) と、その後の idle 化 (+50ms) をまたいで見る
+  const deadline = Date.now() + FADE_SETTLE_MS;
+  while (Date.now() < deadline) {
+    const seen = await frames(page);
+    assert.deepEqual(seen.filter(f => f.visible).map(f => f.marker), [shownWhileHeld],
+      `${label}: d の応答を保留中に、表示中の作品が ${shownWhileHeld} から変わった (${JSON.stringify(seen)})`);
+    await page.waitForTimeout(50);
+  }
+  assert.equal(await current(page), '4', `${label}: 保留中の番号表示`);
+  release();
+  await page.waitForFunction(() => [...document.querySelectorAll('#slideshow-stage iframe.dc-sketch-frame.dc-visible')]
+    .some(f => f.contentWindow?.document.getElementById('marker')?.textContent === 'd'), null, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(FADE_SETTLE_MS);
+  assert.deepEqual(await visibleMarkers(page), ['d'], `${label}: 応答を返した後に表示中の作品 (${JSON.stringify(await frames(page))})`);
+  assert.equal(await current(page), '4', `${label}: 応答を返した後の番号表示`);
+  assertRunning(await measure(page), 'd', label);
+}
+
 function assertRunning(m, marker, label) {
   assert.ok(m[marker], `${label}: ${marker} が見つからない (${JSON.stringify(m)})`);
   assert.equal(m[marker].visible, true, `${label}: ${marker} が表示されていない (${JSON.stringify(m)})`);
@@ -239,6 +275,54 @@ const cases = {
     }
   },
 
+  // 上と同じ手順で、表示される作品が番号表示と一致する。フェード完了のタイマーが、表示待ちの d が
+  // 読み込み先に取った frame を idle に戻すと、保留していた c の先読みがそこへ載って表示されてしまう (#208)
+  async rapidNextShowsNumberedSketch(env) {
+    await assertRapidSwitchEndsOnD(env, 'Next を 2 回', [[50, '#next-btn', '#next-btn']], 'b');
+  },
+
+  // 続けて 4 回 (c → d → c → d)。同じ frame を取り直し続けても、最後の d が表示される
+  async rapidFourSwitchesShowNumberedSketch(env) {
+    await assertRapidSwitchEndsOnD(env, '続けて 4 回', [[50, '#next-btn', '#next-btn', '#prev-btn', '#next-btn']], 'b');
+  },
+
+  // Previous 方向。a へ戻った直後 (a は読み込み済みなのですぐ表示される) に d へ進むと、
+  // d はフェード中の b の frame を読み込み先に取る
+  async rapidPrevShowsNumberedSketch(env) {
+    await assertRapidSwitchEndsOnD(env, 'Previous を 2 回', [[50, '#prev-btn'], [100, '#prev-btn']], 'a');
+  },
+
+  // a → b → a → b と戻って進むと、a の frame は 2 度フェードアウトする。1 度目のフェード完了のタイマーが
+  // 2 度目のフェードの途中で frame を idle に戻すと、まだ見えている a が先読みの c に差し替わる
+  async refadeKeepsFadingSketch({ page }) {
+    await waitForPair(page, 'a', 'b');
+    const gap = await page.evaluate(() => new Promise((done) => {
+      const stage = document.querySelector('#slideshow-stage');
+      const hiddenAt = new Map();
+      new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.attributeName === 'class') {
+            if (!r.target.classList.contains('dc-visible')) hiddenAt.set(r.target, performance.now());
+          } else if (r.target.hasAttribute('srcdoc')) { // 先読みの c (srcdoc) が載った
+            done(performance.now() - hiddenAt.get(r.target));
+          }
+        }
+      }).observe(stage, { subtree: true, attributes: true, attributeFilter: ['class', 'srcdoc'] });
+      document.querySelector('#next-btn').click();
+      setTimeout(() => document.querySelector('#prev-btn').click(), 50);
+      setTimeout(() => document.querySelector('#next-btn').click(), 350);
+      setTimeout(() => done(null), 5000);
+    }));
+    assert.notEqual(gap, null, '戻って進む: c の先読みが始まらない');
+    assert.ok(gap >= 400, `戻って進む: フェードアウトの途中 (${Math.round(gap)}ms) で frame が先読みに使われた`);
+    await waitForPair(page, 'b', 'c');
+    await page.waitForTimeout(FADE_SETTLE_MS);
+    assert.equal(await current(page), '2');
+    const m = await measure(page);
+    assertRunning(m, 'b', '戻って進む');
+    assertIdle(m, 'c', '戻って進む');
+  },
+
   // 切替を連続で押しても、最後に表示した作品だけが進み、残りは止まる
   async rapidSwitch({ page }) {
     await waitForPair(page, 'a', 'b');
@@ -282,7 +366,8 @@ try {
       for (const [caseName, run] of Object.entries(cases)) {
         if (process.env.SLIDESHOW_CASE && process.env.SLIDESHOW_CASE !== caseName) continue;
         const env = await setup(browser, base, {
-          hold: { nextBeforePrefetchCompletes: 'b', supersededShow: 'd', previewRaceKeepsVisibleRunning: 'd' }[caseName] ?? null,
+          hold: { nextBeforePrefetchCompletes: 'b', supersededShow: 'd', previewRaceKeepsVisibleRunning: 'd',
+            rapidNextShowsNumberedSketch: 'd', rapidFourSwitchesShowNumberedSketch: 'd', rapidPrevShowsNumberedSketch: 'd' }[caseName] ?? null,
           query: caseName === 'srcdocPrefetchResumes' ? '?index=1' : '',
         });
         try {
