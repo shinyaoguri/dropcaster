@@ -242,12 +242,19 @@ export function planHtmlModeLocalFiles({ codeTabs, assetDirName }) {
       file.content = rewriteUrlPositionReferences(file.content, toByFrom);
     }
   }
-  if (anywhere.length > 0) {
+  // 名前を変えないタブでも、配信サーバが `%XX` から戻さない文字 (`+` `&` `@` など) を含むものは、
+  // `%XX` で書いた参照 (`a%2Bb.js`) を名前そのまま (`a+b.js`) に書き直す。viewer は decodeURIComponent で
+  // `a+b.js` を埋め込むが、Vite (sirv) は decodeURI なので `%2B` を戻さず、参照が 404 になる (#211)
+  const servedAsWritten = files
+    .filter(f => SERVER_KEPT_ESCAPES.test(f.name) && !renames.some(r => r.to === f.name))
+    .map(f => ({ from: f.name, to: f.name }));
+  const replaced = [...anywhere, ...servedAsWritten.filter(s => !anywhere.some(r => r.from === s.from))];
+  if (replaced.length > 0) {
     // 旧名は、書かれたままの形と、パーセントエンコードして書いた形の両方を探す。
     // 見つけた参照がどのタブを指すかは viewer (html-doc-builder の resolveFileRef) と同じ順序で決める:
     // 書かれたままの名前のタブが先、無ければデコードした名前のタブ (#211)
-    const toByFrom = new Map(anywhere.map(r => [r.from, r.to]));
-    const pattern = new RegExp(anywhere.map(r => encodedOrLiteralPattern(r.from)).join('|'), 'g');
+    const toByFrom = new Map(replaced.map(r => [r.from, r.to]));
+    const pattern = new RegExp(replaced.map(r => encodedOrLiteralPattern(r.from)).join('|'), 'g');
     for (const file of files) {
       file.content = file.content.replace(pattern, m => toByFrom.get(m) ?? toByFrom.get(percentDecoded(m)) ?? m);
     }
@@ -255,6 +262,12 @@ export function planHtmlModeLocalFiles({ codeTabs, assetDirName }) {
 
   return { files, indexName, renames };
 }
+
+/**
+ * decodeURI が `%XX` から戻さない文字のうち、ファイル名に残るもの (`/` `?` `:` `#` は保存名に残らない)。
+ * decodeURIComponent はこれらも戻すので、`%XX` で書いた参照の指す先がサーバと viewer で割れる。
+ */
+const SERVER_KEPT_ESCAPES = /[;@&=+$,]/;
 
 /** 引用符で囲んだ文字列 1 つ (呼び出しの、前にある引数を読み飛ばすのに使う)。\x60 はバッククオート */
 const QUOTED_STRING = String.raw`(?:'[^'\n]*'|"[^"\n]*"|\x60[^\x60]*\x60)`;

@@ -28,6 +28,11 @@ const LOADED = [
   { tag: '<script src="my%20lib.js"></script>', body: 'window.percentTab = 1;' },
   { tag: '<script src="enc%23oded.js"></script>', body: 'window.encodedReference = 1;' },
   { tag: '<script src="plain.js?v=2"></script>', body: 'window.plainTab = 1;' },
+  // 名前は変えないタブ。`%XX` で書いた参照は viewer が埋め込むので、配信でも読めなければならない
+  // (Vite は `%2B` `%40` を戻さない)
+  { tag: '<script src="plus%2Btab.js"></script>', body: 'window.plusTab = 1;' },
+  { tag: '<script src="icon%402x.js"></script>', body: 'window.atTab = 1;' },
+  { tag: '<script src="written+plain.js"></script>', body: 'window.writtenPlain = 1;' },
   { tag: '<link rel="stylesheet" href="50%.css">', body: 'body { margin: 0; }' },
 ];
 
@@ -42,6 +47,9 @@ const TABS = [
   { title: 'enc#oded.js', code: 'window.encodedReference = 1;' },
   { title: 'plain.js', code: 'window.plainTab = 1;' },
   { title: '50%.css', code: 'body { margin: 0; }' },
+  { title: 'plus+tab.js', code: 'window.plusTab = 1;' },
+  { title: 'icon@2x.js', code: 'window.atTab = 1;' },
+  { title: 'written+plain.js', code: 'window.writtenPlain = 1;' },
 ].map((tab, orderID) => ({ orderID, ...tab }));
 
 /**
