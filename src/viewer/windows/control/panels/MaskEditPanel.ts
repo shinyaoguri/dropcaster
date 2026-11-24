@@ -507,6 +507,10 @@ export class MaskEditPanel {
       const state = ctrl.getState();
       const mask = state.mappings.find(m => m.id === state.activeId);
       if (!mask || !isMaskEntry(mask) || !mask.drafting) return;
+      // 入力欄で押したキーはその欄の操作 (確定・取消・文字の削除)。描画中のマスクには効かせない。
+      // 欄は Backspace / Delete を preventDefault しないので、defaultPrevented ではなく対象の要素で見分ける。
+      const target = e.target as HTMLElement | null;
+      if (target?.isContentEditable || target?.closest?.('input, textarea, select, [contenteditable]')) return;
       if (e.key === 'Enter') {
         e.preventDefault();
         if (mask.points.length >= 3) this.commitDrafting(mask.id);
@@ -526,7 +530,7 @@ export class MaskEditPanel {
     host.addEventListener('click', onClick);
     host.addEventListener('mousemove', onMove);
     host.addEventListener('mouseleave', onLeave);
-    // keydown は host に focus が無くても拾えるよう document に張る
+    // keydown は host に focus が無くても拾えるよう document に張る (入力欄からのキーは onKey が除く)
     doc.addEventListener('keydown', onKey);
     this.penDisposes.push(
       () => host.removeEventListener('click', onClick),

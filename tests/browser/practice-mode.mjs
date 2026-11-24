@@ -938,6 +938,85 @@ async function maskSelect(page, base) {
   await page.keyboard.press('Escape');
   assert.equal((await state(page)).mappings.some(m => m.drafting), false);
 }
+/** マスクの描画中、入力欄で押したキーはその欄だけに効き、描画中のマスクを変えない (#206)。 */
+async function maskDraftKeys(page) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  const host = await page.locator('#output-stage .dc-canvas-host').boundingBox();
+  const at = (fx, fy) => page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
+  const masks = async () => (await state(page)).mappings.filter(m => m.kind === 'mask');
+  const focusedTag = () => page.evaluate(() => document.activeElement?.tagName);
+  await page.locator('#add-mask-btn').click();
+  for (const [fx, fy] of [[.3, .3], [.6, .3], [.45, .6]]) await at(fx, fy);
+  const [drawn] = await masks();
+  assert.equal(drawn.drafting, true); assert.equal(drawn.points.length, 3);
+  /** 描画中のまま、頂点が描いたときと同じである。 */
+  const draftKept = async label => {
+    const now = await masks();
+    assert.deepEqual(now.map(m => ({ id: m.id, drafting: m.drafting, points: m.points })), [{ id: drawn.id, drafting: true, points: drawn.points }], label);
+  };
+
+  // 出力設定の数値欄: Backspace / Delete は欄の文字を消し、Escape は欄の取消、Enter は欄の確定
+  await showPanel(page, 'outputs');
+  const x = page.locator('#output-x-input');
+  const outputX = async () => (await state(page)).outputs[0].position.x;
+  const committedX = await outputX(), shownX = await x.inputValue();
+  await x.fill('123'); await x.press('Backspace');
+  assert.equal(await x.inputValue(), '12', 'Backspace in the output field deletes its last digit');
+  await draftKept('Backspace in the output field keeps the mask being drawn');
+  await x.press('Home'); await x.press('Delete');
+  assert.equal(await x.inputValue(), '2', 'Delete in the output field deletes its first digit');
+  await draftKept('Delete in the output field keeps the mask being drawn');
+  await x.press('Escape');
+  assert.equal(await x.inputValue(), shownX, 'Escape in the output field restores the committed value');
+  assert.equal(await outputX(), committedX, 'Escape in the output field commits nothing');
+  await draftKept('Escape in the output field keeps the mask being drawn');
+  await x.fill('40'); await x.press('Enter');
+  assert.equal(await outputX(), 40, 'Enter in the output field commits the value');
+  await draftKept('Enter in the output field keeps the mask being drawn');
+
+  // マッピング名の rename 欄: 同じく欄だけに効く
+  await showPanel(page, 'mappings');
+  const name = page.locator(`.mapping-list-item[data-id="${drawn.id}"] .name`);
+  const input = page.locator('.mapping-list-item .name-input');
+  const original = await name.innerText();
+  assert.ok(original.length >= 3, 'the mask has a name long enough to edit');
+  await name.dblclick();
+  await input.press('End'); await input.press('Backspace');
+  assert.equal(await input.inputValue(), original.slice(0, -1), 'Backspace in the rename field deletes its last character');
+  await draftKept('Backspace in the rename field keeps the mask being drawn');
+  await input.press('Home'); await input.press('Delete');
+  assert.equal(await input.inputValue(), original.slice(1, -1), 'Delete in the rename field deletes its first character');
+  await draftKept('Delete in the rename field keeps the mask being drawn');
+  await input.press('Escape');
+  assert.equal(await input.count(), 0, 'Escape closes the rename field');
+  assert.equal(await name.innerText(), original, 'Escape in the rename field keeps the name');
+  await draftKept('Escape in the rename field keeps the mask being drawn');
+  await name.dblclick(); await input.fill('pen'); await input.press('Enter');
+  assert.equal(await input.count(), 0, 'Enter closes the rename field');
+  assert.equal((await masks())[0].name, 'pen', 'Enter in the rename field commits the name');
+  await draftKept('Enter in the rename field keeps the mask being drawn');
+
+  // 入力欄の外 (プレビュー上) では従来どおり: Backspace / Delete で頂点を 1 つ消し、Enter で確定、Escape で破棄
+  const points = async () => (await masks())[0].points;
+  await at(.6, .6);
+  assert.equal((await points()).length, 4);
+  assert.notEqual(await focusedTag(), 'INPUT');
+  await page.keyboard.press('Backspace');
+  assert.deepEqual(await points(), drawn.points, 'Backspace on the preview removes the last vertex');
+  await page.keyboard.press('Delete');
+  assert.deepEqual(await points(), drawn.points.slice(0, 2), 'Delete on the preview removes the last vertex');
+  await page.keyboard.press('Enter');
+  assert.equal((await masks())[0].drafting, true, 'Enter with two vertices keeps drawing');
+  await at(.45, .6); await page.keyboard.press('Enter');
+  const [closed] = await masks();
+  assert.ok(!closed.drafting, 'Enter on the preview closes the mask'); assert.equal(closed.points.length, 3);
+  await page.locator('#add-mask-btn').click();
+  await at(.2, .7); await at(.3, .8);
+  assert.equal((await masks()).length, 2);
+  await page.keyboard.press('Escape');
+  assert.deepEqual((await masks()).map(m => m.id), [drawn.id], 'Escape on the preview discards the mask being drawn');
+}
 async function confirmClose(page, base) {
   await start(page);
   await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click();
@@ -1314,7 +1393,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
