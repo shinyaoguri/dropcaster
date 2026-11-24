@@ -98,11 +98,20 @@ export function createProject(layout = defaultMappingsState()): Project {
     content: [], show: { contentIds: [], intervalSeconds: 30, currentIndex: 0 }, assets: [] };
 }
 
-/** 2D output compaction must never move the physical projector. */
-export function reconcileProjectLayout(project: Project, layout: MappingsState): Project {
+/**
+ * 2D output compaction must never move the physical projector.
+ * `removed` は呼び出し側が持つ覚え書き。配置から消えた出力のプロジェクタをここへ書き、同じ出力 ID が配置へ
+ * 戻ったとき (削除の Undo、以前書き出した 2D 設定の読込) にその校正値を返す。渡し忘れると戻った出力が
+ * 黙って既定値になるので、省略できない引数にしてある (#165)。
+ */
+export function reconcileProjectLayout(project: Project, layout: MappingsState, removed: Map<string, Projector>): Project {
+  for (const projector of project.venue.projectors) {
+    if (!layout.outputs.some(output => output.id === projector.outputId)) removed.set(projector.outputId, projector);
+  }
   return { ...project, updatedAt: new Date().toISOString(), venue: { ...project.venue, layout,
     revision: project.venue.revision + (project.venue.layout === layout ? 0 : 1),
-    projectors: layout.outputs.map(output => project.venue.projectors.find(p => p.outputId === output.id) ?? defaultProjector(output.id)) } };
+    projectors: layout.outputs.map(output => project.venue.projectors.find(p => p.outputId === output.id)
+      ?? removed.get(output.id) ?? defaultProjector(output.id)) } };
 }
 
 /** Self-contained static GLB only: parsing must never fetch remote/local companion files. */
@@ -172,8 +181,12 @@ export function encodeAsset(bytes: Uint8Array): string {
   return btoa(raw);
 }
 
-/** Validate everything before mutating the live controller; legacy v2 uses the existing parser. */
-export function parseProject(value: unknown): Project {
+/**
+ * Validate everything before mutating the live controller; legacy v2 uses the existing parser.
+ * `verified` are assets this session has already validated: one with the same id and the same data is not
+ * decoded again, so re-validating an edit does not cost a GLB decode. Leave it empty for anything read from outside.
+ */
+export function parseProject(value: unknown, verified: Project['assets'] = []): Project {
   const root = record(value);
   if (root.version === 2 && root.format === undefined) {
     return createProject(parseLayout(root));
@@ -197,7 +210,7 @@ export function parseProject(value: unknown): Project {
     const a = record(value);
     if (a.mimeType !== 'model/gltf-binary') fail('asset');
     const data = str(a.data, Math.ceil(MAX_GLB_BYTES / 3) * 4);
-    validateGlb(decodeAsset(data));
+    if (!verified.some(v => v.id === a.id && v.data === data)) validateGlb(decodeAsset(data));
     return { id: str(a.id), name: str(a.name), mimeType: 'model/gltf-binary' as const, data };
   });
   unique(assets.map(a => a.id));
