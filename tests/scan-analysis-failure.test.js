@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, chmod, readdir, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, chmod, readdir, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -16,6 +16,9 @@ const cliEntry = join(repoRoot, 'src/cli/index.js');
 // 読めない index.html で解析を失敗させる。root は権限を無視するので確かめられない。
 const cannotUsePermissions = process.platform === 'win32' || process.getuid?.() === 0;
 const permissionSkip = cannotUsePermissions ? 'file permissions are not enforced for this user / platform' : false;
+// 権限に依らない失敗: 自分自身を指す symlink の index.html は、root でも stat が ELOOP で失敗する。
+// コンテナなど root で走る環境で、上の権限のテストが全部 skip になっても回帰を見落とさないため。
+const symlinkSkip = process.platform === 'win32' ? 'creating a symlink needs extra privileges on Windows' : false;
 
 /**
  * @param {string} projectRoot
@@ -270,6 +273,32 @@ test('--sketch: a new sketch whose analysis fails is not merged into the catalog
     assert.equal(result.code, 1, `scan must fail with exit code 1${describe(result.stderr)}`);
     assert.match(result.stderr, analysisSummary);
     assert.deepEqual(await readCatalog(root), before);
+  });
+});
+
+// 完了条件 1〜3 を、権限を使わない失敗でも確かめる (root でも skip にならない)
+test('an index.html that cannot be resolved (symlink loop) fails the scan and keeps the previous entry, with and without --sketch', { skip: symlinkSkip }, async () => {
+  await withTempProject(async (root) => {
+    await writeSketch(root, 'good', 'good');
+    const bad = await writeSketch(root, 'bad', 'bad-v1');
+    const first = await run(root, []);
+    assert.equal(first.code, 0, `initial scan failed${describe(first.stderr)}`);
+    const before = await readCatalog(root);
+    const byId = (list) => [...list].sort((a, b) => a.id.localeCompare(b.id));
+    assert.deepEqual(byId(before).map((s) => s.id), ['bad', 'good']);
+
+    await rm(join(bad, 'index.html'));
+    await symlink('index.html', join(bad, 'index.html'));
+    for (const args of [[], ['--sketch', 'bad']]) {
+      const label = args.length > 0 ? args.join(' ') : 'full scan';
+      const result = await run(root, args);
+      assert.equal(result.code, 1, `${label}: scan must fail with exit code 1${describe(result.stderr)}`);
+      assert.match(result.stderr, /Failed to analyze bad: ELOOP/, label);
+      assert.match(result.stderr, /Keeping the previously published copy and catalog entry of bad/, label);
+      assert.match(result.stderr, analysisSummary, label);
+      assert.deepEqual(byId(await readCatalog(root)), byId(before), `${label}: both entries stay as they were`);
+      assert.equal(await readFile(join(root, 'public', 'sketches', 'bad', 'index.html'), 'utf-8'), htmlOf('bad-v1'), label);
+    }
   });
 });
 
