@@ -81,9 +81,9 @@ async function inProjectPanel(page, run) {
   await projectControls(page);
   try { return await run(); } finally { await showPanel(page, previous); }
 }
-async function exportProject(page) {
+async function exportProject(page, selector = '#practice-export') {
   return inProjectPanel(page, async () => {
-    const promise = page.waitForEvent('download'); await page.locator('#practice-export').click();
+    const promise = page.waitForEvent('download'); await page.locator(selector).click();
     const stream = await (await promise).createReadStream(); const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
     return JSON.parse(Buffer.concat(chunks).toString());
@@ -92,7 +92,9 @@ async function exportProject(page) {
 async function importProject(page, value) {
   await inProjectPanel(page, async () => {
     await page.locator('#practice-project-file').setInputFiles({ name: 'project.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)) });
-    await page.waitForFunction(() => !document.querySelector('#dc-practice-status').textContent.includes('Loading venue'));
+    // 取り込みは検証だけで確定する。3D を読み込み済みなら、会場の作り直しが終わるまで待つ (#169)。
+    await page.waitForFunction(() => !document.querySelector('#dc-practice-status').textContent.includes('Loading venue')
+      && !document.querySelector('.dc-practice-panel[aria-busy="true"]'));
   });
 }
 async function snapshot(page, name) { if (artifactDir) await page.screenshot({ path: resolve(artifactDir, name + '.png') }); }
@@ -283,10 +285,23 @@ async function projects(page, base) {
     assert.equal(await page.locator('#dc-practice-status').evaluate(e => e.classList.contains('is-error')), true);
     assert.deepEqual(await exportProject(page), baseline, 'failed import cannot mutate project');
   }
-  // GPU/scene parse failures after JSON validation must also be transactional.
+  // 検証を通った GLB は取り込みを確定する。3D で会場を作れなくても取り消さず、3D の失敗として理由を知らせる (#169、ADR 0010)。
   const emptyModel = structuredClone(baseline); emptyModel.assets[0].data = Buffer.from(venueFixture(d => { d.scenes[0].nodes = []; })).toString('base64'); await importProject(page, emptyModel);
-  await page.waitForFunction(() => document.querySelector('#dc-practice-status').classList.contains('is-error'));
-  assert.deepEqual(await exportProject(page), baseline);
+  const unbuildable = async () => {
+    await page.waitForSelector('#practice-retry:not([hidden])');
+    assert.match(await page.locator('#dc-practice-status').textContent(), /300,000 triangles/);
+    assert.equal(await page.locator('#dc-practice-status').evaluate(e => e.classList.contains('is-error')), true);
+  };
+  await unbuildable();
+  assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true', '2D editing continues');
+  assert.equal((await exportProject(page)).assets[0].data, emptyModel.assets[0].data, 'a validated import is kept when only the 3D build fails');
+  await page.locator('#practice-retry').click(); await unbuildable(); // 再試行しても同じ会場は作れない
+  // 取り込み前に戻すと、再試行で 3D も元の会場に戻る。
+  await projectControls(page); await page.locator('#practice-undo-import').click();
+  const restored = await exportProject(page);
+  assert.deepEqual(restored.assets, baseline.assets); assert.deepEqual(restored.venue.scene, baseline.venue.scene);
+  await page.locator('#practice-retry').click(); await page.waitForSelector('#dc-practice-canvas');
+  await page.waitForFunction(() => document.querySelector('#practice-dimensions')?.textContent === 'Venue size: 12.00 × 4.00 × 0.00 m');
   const legacy = baseline.venue.layout; legacy.mappings[0].name = 'Legacy loaded';
   await importProject(page, legacy); assert.equal((await state(page)).mappings[0].name, 'Legacy loaded');
   await page.locator('#practice-undo-import').click(); await page.waitForFunction(() => document.querySelector('#practice-project-name').value === 'Tour wall');
@@ -522,6 +537,84 @@ async function unavailable(page) {
   assert.equal((await state(page)).mappings.length, 2);
   await closeEditor(page);
   assert.equal(await page.locator('#dc-inline-editor').isHidden(), true);
+}
+// #169: WebGL が使えなくても、プロジェクトの節 (名前・保存・複製・開く・書き出し・取り込み・会場の書き出し・取り込み前に戻す) を
+// すべて使える。3D を開くまでは Three.js を読み込まず、WebGL も初期化しない。
+async function projectWithoutWebgl(page, base) {
+  await page.evaluate(() => {
+    window.webglAttempts = 0; window.originalGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+      if (/webgl/.test(type)) { window.webglAttempts++; return null; }
+      return window.originalGetContext.call(this, type, ...args);
+    };
+  });
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await projectControls(page);
+  const status = page.locator('#dc-practice-status'), failed = () => status.evaluate(e => e.classList.contains('is-error'));
+  const name = () => page.locator('#practice-project-name').inputValue();
+  await change(page, '#practice-project-name', 'No GPU show');
+  const first = await exportProject(page);
+  assert.equal(first.format, 'dropcaster-project'); assert.equal(first.name, 'No GPU show'); assert.equal(first.venue.scene.kind, 'sample');
+  // 会場 (GLB) とプロジェクタ付きのプロジェクトを取り込み、書き出し直しても会場・プロジェクタ・資産が保たれる。
+  const withVenue = structuredClone(first);
+  withVenue.assets = [{ id: 'wall-glb', name: 'wall.glb', mimeType: 'model/gltf-binary', data: Buffer.from(venueFixture()).toString('base64') }];
+  withVenue.venue.scene = { ...withVenue.venue.scene, kind: 'glb', assetId: 'wall-glb' };
+  Object.assign(withVenue.venue.projectors[0], { verticalFovDegrees: 50, lensShift: [0, -.07], position: [1.25, 2, 4] });
+  await importProject(page, withVenue);
+  assert.match(await status.textContent(), /Project loaded/); assert.equal(await failed(), false);
+  const round = await exportProject(page);
+  assert.deepEqual(round.assets, withVenue.assets); assert.deepEqual(round.venue.scene, withVenue.venue.scene);
+  assert.deepEqual(round.venue.projectors, withVenue.venue.projectors);
+  // 壊れた GLB は WebGL が無くても拒否し、作業中のプロジェクトを変えない。
+  await importProject(page, { ...round, assets: [{ ...round.assets[0], data: Buffer.from('broken').toString('base64') }] });
+  assert.match(await status.textContent(), /missing or damaged/); assert.equal(await failed(), true);
+  assert.deepEqual(await exportProject(page), round, 'a rejected import does not change the project');
+  // 名前を付けて保存・複製して保存・保存済み一覧から開く。
+  const saved = page.locator('#practice-saved-projects');
+  await page.locator('#practice-save').click(); await page.waitForFunction(() => document.querySelector('#practice-saved-projects').options.length === 1);
+  await change(page, '#practice-project-name', 'No GPU copy');
+  await page.locator('#practice-duplicate').click(); await page.waitForFunction(() => document.querySelector('#practice-saved-projects').options.length === 2);
+  assert.deepEqual((await saved.locator('option').allTextContents()).sort(), ['No GPU copy', 'No GPU show']);
+  await saved.selectOption({ label: 'No GPU show' }); await page.locator('#practice-open-project').click();
+  await page.waitForFunction(() => document.querySelector('#practice-project-name').value === 'No GPU show');
+  const reopened = await exportProject(page);
+  assert.equal(reopened.id, round.id); assert.deepEqual(reopened.assets, withVenue.assets); assert.deepEqual(reopened.venue.projectors, withVenue.venue.projectors);
+  // 会場だけを書き出し、会場ファイルを取り込み、取り込み前に戻す。
+  const venueFile = await exportProject(page, '#practice-export-venue');
+  assert.equal(venueFile.format, 'dropcaster-venue'); assert.deepEqual(venueFile.assets, withVenue.assets);
+  assert.deepEqual(venueFile.venue.projectors, withVenue.venue.projectors); assert.equal('content' in venueFile, false);
+  venueFile.venue.projectors[0].position[0] = 2.5;
+  await importProject(page, venueFile);
+  assert.match(await status.textContent(), /Venue loaded/); assert.equal(await failed(), false);
+  const received = await exportProject(page);
+  assert.equal(received.venue.projectors[0].position[0], 2.5); assert.equal(received.name, 'No GPU show'); assert.deepEqual(received.assets, withVenue.assets);
+  assert.equal(await page.locator('#practice-undo-import').isEnabled(), true);
+  await page.locator('#practice-undo-import').click();
+  assert.equal((await exportProject(page)).venue.projectors[0].position[0], 1.25, 'undo restores the project before the import');
+  assert.equal(await page.evaluate(() => window.webglAttempts), 0, 'project operations do not initialize WebGL');
+  assert.ok(!observedRequests.get(page).some(url => /three(?:\.js|\.module|_addons)|PracticePanel|ProjectionPreview|loadVenue/.test(url)), 'project operations do not load Three');
+  assert.equal(await page.locator('#practice-retry').isHidden(), true, 'no 3D failure is reported before 3D is opened');
+  // 3D を開くと失敗を知らせるが、プロジェクトの節はそのまま残る。
+  await page.locator('#preview-tab').click(); await page.waitForSelector('#practice-retry:not([hidden])');
+  assert.match(await status.innerText(), /3D is unavailable/);
+  assert.equal(await page.locator('#practice-export').count(), 1); assert.equal(await page.locator('#practice-export').isVisible(), true);
+  assert.equal(await name(), 'No GPU show');
+  await change(page, '#practice-project-name', 'Still editable');
+  assert.equal((await exportProject(page)).name, 'Still editable');
+  // 「保存した作品を開く」(/project) も、3D の失敗を知らせるだけでプロジェクトの節を残す。
+  await page.locator('#practice-open-content').click(); await page.waitForURL('**/project');
+  await page.waitForSelector('#practice-retry:not([hidden])'); await projectControls(page);
+  assert.equal(await name(), 'Still editable');
+  assert.deepEqual((await exportProject(page)).assets, withVenue.assets);
+  // WebGL が使えるようになったら、再試行で取り込み済みの会場が 3D に出る。
+  await page.evaluate(() => { HTMLCanvasElement.prototype.getContext = window.originalGetContext; });
+  await observeControllers(page, base);
+  await page.locator('#practice-retry').click(); await page.waitForSelector('#dc-practice-canvas');
+  await page.waitForFunction(() => document.querySelector('#practice-dimensions')?.textContent === 'Venue size: 6.00 × 4.00 × 0.00 m');
+  assert.equal(await page.evaluate(() => window.practicePreview.diagnostics().venueTriangles), 2);
+  assert.equal(await page.evaluate(() => window.practicePreview.projector.fov), 50);
+  await closeEditor(page);
 }
 async function cancellation(page) {
   let release;
@@ -1224,11 +1317,11 @@ async function activityBar(page, base) {
   assert.deepEqual(await page.locator('.dc-activity-bar-footer a, .dc-activity-bar-footer button').evaluateAll(es => es.filter(e => e.checkVisibility()).map(e => e.id)), ['practice-home', 'practice-stop']);
   assert.equal(await page.locator('#practice-venue').count(), 1, 'the venue entry exists, inside the project panel');
   assert.equal(await page.locator('.dc-activity-bar #practice-venue').count(), 0, 'the venue entry is not on the activity bar');
-  // プロジェクト: 開くと PracticePanel を読み込み、保存・読込が「設定の入出力」より先に並ぶ。
+  // プロジェクト: 開いても 3D (PracticePanel) は読み込まない (#169)。保存・読込が「設定の入出力」より先に並ぶ。
   await page.locator('#dc-activity-project').click();
   assert.equal(await title.innerText(), 'Project');
   await page.locator('#practice-project-name').waitFor();
-  assert.equal(loadedPanel(), true, 'opening the project panel loads the practice panel');
+  assert.equal(loadedPanel(), false, 'opening the project panel does not load 3D');
   // 保存・読込 → 設定の入出力 → 会場の作成・調整 (末尾、別タブ) の順 (#225)。
   assert.deepEqual(await page.locator('#dc-tool-panel-project > *').evaluateAll(es => es.map(e => e.querySelector('#dc-practice-project') ? 'project' : e.querySelector('#export-settings-btn') ? 'io' : e.querySelector('#practice-venue') ? 'venue' : '?')), ['project', 'io', 'venue']);
   const venueLink = page.locator('#dc-tool-panel-project #practice-venue');
@@ -1239,6 +1332,7 @@ async function activityBar(page, base) {
   await page.locator('#dc-activity-preview3d').click();
   assert.equal(await title.innerText(), '3D');
   await page.locator('#practice-output').waitFor();
+  assert.equal(loadedPanel(), true, 'opening the 3D panel loads the practice panel');
   assert.equal(await visible('#dc-tool-panel-preview3d a[href$="/venue"]'), true);
   assert.equal(await visible('#practice-project-name'), false);
   await snapshot(page, base.name + '-activity-3d');
@@ -1314,12 +1408,12 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, projectWithoutWebgl, cancellation, loading, confirmClose, confirmHome, history, maskSelect, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
         try {
-          const page = await setup(context, base, testName.toLowerCase().includes('slideshow') ? '/slideshow' : testName === 'recovery' ? '/w' : '/a', !testName.startsWith('workspace'));
+          const page = await setup(context, base, testName.toLowerCase().includes('slideshow') ? '/slideshow' : testName === 'recovery' ? '/w' : '/a', !testName.startsWith('workspace') && testName !== 'projectWithoutWebgl');
           await run(page, base); assert.deepEqual(errors, [], `${name}/${testName}: browser errors`);
           console.log(`${name}/${testName}: PASS`);
         } finally { await context.close(); }

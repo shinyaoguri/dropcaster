@@ -3,6 +3,7 @@
 編集可能な実寸部材、Project v2、会場のみの配布は[ADR 0011](0011-measured-venue-authoring.md)で拡張する。
 
 UI配置・入口・3Dの読み込み時期は[ADR 0012](0012-unified-mapping-workspace.md)で更新する。
+取り込みを確定する時点は 2026-11-24 に改訂した（「保存・取込」。[#169](https://github.com/shinyaoguri/dropcaster/issues/169)）。
 
 ## 状態
 
@@ -55,12 +56,17 @@ builtin/checkerboard は配布物に内蔵した調整用映像。順序・間�
   容量不足でもメモリ内編集と export を維持する。
 - 2D の作業状態は従来の `dropcaster.mappings.v2` を継続する。通常再開時は最新の
   WindowController の 2D 状態を優先し、古い IndexedDB の非同期読込で巻き戻さない。
-- 明示 import は schema・有限値・一意 ID・参照・GLB を検証し、3D scene 構築の成功後に
-  全体を適用する。モデルだけの変更は、読込中に進んだ 2D 編集を維持する。
+- 明示 import は schema・有限値・一意 ID・参照・GLB を検証し、検証に成功した時点で全体を適用する。
+  検証は WebGL / Three.js を使わない。3D scene は 3D を読み込んでいるときに、適用後の変更を見て
+  構築する。構築の失敗（三角形が 0・30 万超、loader の失敗）では取り込みを取り消さず、3D の失敗として
+  理由と再試行を出す。2D 編集とプロジェクトの操作は続けられ、取り込み前に戻せる。会場だけの取り込みは、
+  受け取る側の作品参照・再生設定を維持する（2026-11-24 改訂。#169。当初は 3D scene 構築の成功後に
+  適用していたため、WebGL が無い環境ではプロジェクトも会場も取り込めなかった）。
 - 元の v2 JSON は既存 parser を使って取り込み、安全な数値・件数を追加検証する。
   import 前の Project に戻す操作を同じ練習セッション内に用意する。
 - GLB は 20 MiB、package は 30 MiB、会場は 30 万三角形まで。静的・非圧縮の GLB を対象にし、
   skin/animation、未対応必須拡張、外部 URI、循環 node、範囲外 buffer を拒否する。
+  三角形数は 3D scene の構築時に数えるので、取り込みでは拒否せず 3D の失敗になる。それ以外は取り込みの検証で拒否する。
   基本色と埋込 base-color texture を表示する。PBR の光学的再現は行わない。
 - 書込失敗時に保存成功とは表示しない。離散的な確定は即時に保存を始め、保存待ちや書込中が
   残っているときは離脱前に確認を出して知らせる。黙って失わない。再読み込みでは離脱時に始めた
@@ -78,7 +84,7 @@ builtin/checkerboard は配布物に内蔵した調整用映像。順序・間�
 WindowController が stream を所有し、実出力と token で登録した練習消費者が共有する。
 最後の消費者終了で capture を停止する。preview は借用した track を止めない。
 終了・ルート離脱は購読、OrbitControls、video、GPU resources、rAF を解放する。
-初期化失敗・context loss 時は 2D と実出力を残して再試行を提供する。遅延 import / GLB load
+初期化失敗・context loss 時は 2D・実出力・プロジェクトの操作を残して再試行を提供する。遅延 import / GLB load
 の完了には世代確認を入れ、終了後や後発操作の後に古い scene を復活させない。
 
 ## 影響
