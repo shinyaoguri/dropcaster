@@ -1041,6 +1041,22 @@ async function nudgeSelectKeys(page) {
   await quality.evaluate(element => element.blur());
   await page.keyboard.press('ArrowRight');
   assert.notDeepEqual((await state(page)).mappings, before.mappings, 'ArrowRight outside a field nudges the selected corner');
+  // 逆の順。欄にフォーカスがあるまま隅を押すと (ハンドルは既定のフォーカス移動を止める)、矢印キーは押した隅に届く。
+  const corner = page.locator('#output-stage [data-corner]').first();
+  const picked = await quality.inputValue();
+  await quality.focus(); await corner.click();
+  let moved = await state(page);
+  await page.keyboard.press('ArrowRight');
+  assert.notDeepEqual((await state(page)).mappings, moved.mappings, 'pressing a corner while a select has focus hands the arrow keys to the corner');
+  assert.equal(await quality.inputValue(), picked, 'the select keeps its value once a corner is picked');
+  await showPanel(page, 'outputs');
+  const x = page.locator('#output-x-input'); const xValue = await x.inputValue();
+  await x.focus(); await corner.click();
+  moved = await state(page);
+  await page.keyboard.press('ArrowUp');
+  assert.notDeepEqual((await state(page)).mappings, moved.mappings, 'pressing a corner while a number field has focus hands the arrow keys to the corner');
+  assert.equal(await x.inputValue(), xValue, 'the number field keeps its value once a corner is picked');
+  assert.equal((await state(page)).outputs[0].position.x, moved.outputs[0].position.x, 'the output does not move');
 }
 async function confirmClose(page, base) {
   await start(page);

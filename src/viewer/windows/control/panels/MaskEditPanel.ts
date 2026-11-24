@@ -26,6 +26,9 @@ import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
 import { t } from '../../../i18n/index.js';
 
+/** 文字を入れない input。Enter / Escape / Backspace / Delete に自分の動作が無い (venue の editable() と同じ分け方)。 */
+const NON_TEXT_INPUT_TYPES = ['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'];
+
 export interface MaskEditPanelAttachOptions {
   /** active mask の頂点が変わったあと、preview pool に再描画させるためのフック。 */
   onMaskChanged: () => void;
@@ -509,8 +512,10 @@ export class MaskEditPanel {
       if (!mask || !isMaskEntry(mask) || !mask.drafting) return;
       // 入力欄で押したキーはその欄の操作 (確定・取消・文字の削除)。描画中のマスクには効かせない。
       // 欄は Backspace / Delete を preventDefault しないので、defaultPrevented ではなく対象の要素で見分ける。
+      // チェックボックスやスライダーはこれらのキーで何もしないので、欄に数えない (触った直後もマスクに効く)。
       const target = e.target as HTMLElement | null;
-      if (target?.isContentEditable || target?.closest?.('input, textarea, select, [contenteditable]')) return;
+      const field = target?.closest?.('input, textarea, select, [contenteditable]');
+      if (target?.isContentEditable || (field && !(field.tagName === 'INPUT' && NON_TEXT_INPUT_TYPES.includes((field as HTMLInputElement).type)))) return;
       if (e.key === 'Enter') {
         e.preventDefault();
         if (mask.points.length >= 3) this.commitDrafting(mask.id);
