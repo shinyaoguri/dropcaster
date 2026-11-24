@@ -28,60 +28,75 @@ import { t } from '../../cli/i18n/index.js';
  */
 
 /**
+ * 作品のディレクトリを解析する。
+ * index.html が無い (ファイルでない) ディレクトリは作品ではないので、警告して null を返す。
+ * index.html があるのに読めない・解析できないときは例外を投げる。呼び出し側 (scan) が作品ごとの
+ * 失敗として集計し、終了コードに反映する (#213)。
  * @param {string} dirName
  * @param {string} sketchPath
- * @returns {Promise<SketchInfo | null>}
+ * @returns {Promise<SketchInfo | null>} index.html が無ければ null
  */
 export async function analyzeSketch(dirName, sketchPath) {
-  try {
-    const indexPath = join(sketchPath, 'index.html');
-    const stats = await stat(indexPath);
+  const indexPath = join(sketchPath, 'index.html');
+  const stats = await statSketchEntry(indexPath);
 
-    if (!stats.isFile()) {
-      console.warn(`Warning: ${dirName} has no index.html, skipping...`);
-      return null;
-    }
-
-    // index.htmlを解析してメタデータを抽出
-    const htmlContent = await readFile(indexPath, 'utf-8');
-    const metadata = extractMetadata(htmlContent, dirName);
-    const manualMetadata = await loadManualMetadata(sketchPath, dirName);
-    const opMetadata = await loadOpMetadata(sketchPath, dirName);
-
-    // インタラクティブ要素を検出
-    const detectedInteractiveElements = await detectInteractiveElements(sketchPath, htmlContent);
-    const interactiveElements = manualMetadata.interactiveElements || detectedInteractiveElements;
-
-    // タイトル・説明の優先順位: 手動メタデータ > _op-meta.json > HTML の明示値 > 既定値。
-    // 既存カタログの値はこれらのどれにも値が無いときだけ scan-sketches.js が戻す (#115)
-    const sketchInfo = {
-      id: dirName,
-      title: manualMetadata.title || opMetadata.title || metadata.title || dirName,
-      description: manualMetadata.description || opMetadata.description || metadata.description || `${dirName}${DEFAULT_DESCRIPTION_SUFFIX}`,
-      path: `${DEFAULT_PATH_PREFIX}${dirName}/`,
-      type: manualMetadata.type || metadata.type || detectSketchType(htmlContent, sketchPath),
-      tags: manualMetadata.tags || metadata.tags || [],
-      interactiveElements,
-      lastModified: stats.mtime.toISOString(),
-      ...(manualMetadata.sketchUrl ? { sketchUrl: manualMetadata.sketchUrl } : {}),
-      ...(manualMetadata.previewGif ? { previewGif: manualMetadata.previewGif } : {}),
-      ...(manualMetadata.userData ? { userData: manualMetadata.userData } : {})
-    };
-    Object.defineProperty(sketchInfo, '__manualMetadataFields', {
-      value: new Set(Object.keys(manualMetadata)),
-      enumerable: false
-    });
-    Object.defineProperty(sketchInfo, '__explicitMetadataFields', {
-      value: new Set(
-        /** @type {const} */ (['title', 'description'])
-          .filter(field => manualMetadata[field] || opMetadata[field] || metadata[field])
-      ),
-      enumerable: false
-    });
-    return sketchInfo;
-  } catch (error) {
-    console.warn(`Warning: Error analyzing ${dirName}:`, error.message);
+  if (!stats) {
+    console.warn(`Warning: ${dirName} has no index.html, skipping...`);
     return null;
+  }
+
+  // index.htmlを解析してメタデータを抽出
+  const htmlContent = await readFile(indexPath, 'utf-8');
+  const metadata = extractMetadata(htmlContent, dirName);
+  const manualMetadata = await loadManualMetadata(sketchPath, dirName);
+  const opMetadata = await loadOpMetadata(sketchPath, dirName);
+
+  // インタラクティブ要素を検出
+  const detectedInteractiveElements = await detectInteractiveElements(sketchPath, htmlContent);
+  const interactiveElements = manualMetadata.interactiveElements || detectedInteractiveElements;
+
+  // タイトル・説明の優先順位: 手動メタデータ > _op-meta.json > HTML の明示値 > 既定値。
+  // 既存カタログの値はこれらのどれにも値が無いときだけ scan-sketches.js が戻す (#115)
+  const sketchInfo = {
+    id: dirName,
+    title: manualMetadata.title || opMetadata.title || metadata.title || dirName,
+    description: manualMetadata.description || opMetadata.description || metadata.description || `${dirName}${DEFAULT_DESCRIPTION_SUFFIX}`,
+    path: `${DEFAULT_PATH_PREFIX}${dirName}/`,
+    type: manualMetadata.type || metadata.type || detectSketchType(htmlContent, sketchPath),
+    tags: manualMetadata.tags || metadata.tags || [],
+    interactiveElements,
+    lastModified: stats.mtime.toISOString(),
+    ...(manualMetadata.sketchUrl ? { sketchUrl: manualMetadata.sketchUrl } : {}),
+    ...(manualMetadata.previewGif ? { previewGif: manualMetadata.previewGif } : {}),
+    ...(manualMetadata.userData ? { userData: manualMetadata.userData } : {})
+  };
+  Object.defineProperty(sketchInfo, '__manualMetadataFields', {
+    value: new Set(Object.keys(manualMetadata)),
+    enumerable: false
+  });
+  Object.defineProperty(sketchInfo, '__explicitMetadataFields', {
+    value: new Set(
+      /** @type {const} */ (['title', 'description'])
+        .filter(field => manualMetadata[field] || opMetadata[field] || metadata[field])
+    ),
+    enumerable: false
+  });
+  return sketchInfo;
+}
+
+/**
+ * 作品の入口 (index.html) の stat。無い (ENOENT)・ファイルでないときは null。
+ * それ以外の失敗 (権限が無くて確かめられないなど) は「無い」と区別できるよう例外のまま返す。
+ * @param {string} indexPath
+ * @returns {Promise<import('fs').Stats | null>}
+ */
+async function statSketchEntry(indexPath) {
+  try {
+    const stats = await stat(indexPath);
+    return stats.isFile() ? stats : null;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
   }
 }
 

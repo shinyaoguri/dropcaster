@@ -111,10 +111,29 @@ async function scanSketches(options = {}) {
     /** @type {string[]} sketchIds に載せた作品のディレクトリ名 */
     const fetchTargetNames = [];
     const newSketches = [];
+    /** @type {string[]} index.html を読めない・解析できない作品 */
+    const analysisFailures = [];
     /** @type {string[]} public へのコピーに失敗した作品 */
     const copyFailures = [];
-    /** @type {Set<string>} コピーに失敗し、前回のカタログ項目も残せない作品 */
+    /** @type {Set<string>} 解析かコピーに失敗し、前回のカタログ項目も残せない作品 */
     const droppedSketchIds = new Set();
+
+    /**
+     * 解析かコピーに失敗した作品は、今回の内容でカタログに載せない（配信できる内容を確かめられないため）。
+     * 前回配信できていた作品は、public に残っている前回のコピーと前回のカタログ項目を残す。
+     * @param {string} name
+     */
+    const keepPreviousEntryOrDrop = async (name) => {
+      const previous = existingSketchList.find(s => s.id === name);
+      const keepPrevious = Boolean(previous) && await isServableSketchCopy(resolve(publicSketchesDir, name));
+      if (keepPrevious) {
+        sketches.push(previous);
+        console.error(t('scan.failedKeptPrevious', { name }));
+      } else {
+        droppedSketchIds.add(name);
+        console.error(t('scan.failedNotCataloged', { name }));
+      }
+    };
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
@@ -125,7 +144,18 @@ async function scanSketches(options = {}) {
 
       currentSketchNames.add(entry.name);
       const sketchPath = resolve(sketchesDir, entry.name);
-      const sketchInfo = await analyzeSketch(entry.name, sketchPath);
+      // index.html があるのに読めない・解析できない作品は、失敗として数える（黙って飛ばすと、
+      // 前回の項目がカタログから消えたまま成功終了する）。index.html が無いディレクトリ (null) は
+      // 作品ではないので、analyzeSketch の警告だけで飛ばす
+      let sketchInfo;
+      try {
+        sketchInfo = await analyzeSketch(entry.name, sketchPath);
+      } catch (error) {
+        console.error(t('scan.analyzeFailed', { name: entry.name, error: error.message }));
+        await keepPreviousEntryOrDrop(entry.name);
+        analysisFailures.push(entry.name);
+        continue;
+      }
       if (!sketchInfo) continue;
 
       // 既存の情報を復元（手動メタデータで明示指定されていないフィールドのみ）。
@@ -146,21 +176,12 @@ async function scanSketches(options = {}) {
         console.error(t('scan.newSketchDetected', { name: entry.name }));
       }
 
-      // コピーできなかった作品は今回の内容でカタログに載せない（配信できないため）。
-      // 前回配信できていた作品は、public に残っている前回のコピーと前回のカタログ項目を残す。
+      // コピーできなかった作品も、解析の失敗と同じ扱いにする（今回の内容では載せず、前回のものを残す）
       try {
         await copySketchToPublic(entry.name, sketchPath, publicSketchesDir, forceRegenerate);
       } catch (error) {
         console.error(t('scan.copyFailed', { name: entry.name, error: error.message }));
-        const previous = existingSketchList.find(s => s.id === entry.name);
-        const keepPrevious = Boolean(previous) && await isServableSketchCopy(resolve(publicSketchesDir, entry.name));
-        if (keepPrevious) {
-          sketches.push(previous);
-          console.error(t('scan.copyFailedKeptPrevious', { name: entry.name }));
-        } else {
-          droppedSketchIds.add(entry.name);
-          console.error(t('scan.copyFailedNotCataloged', { name: entry.name }));
-        }
+        await keepPreviousEntryOrDrop(entry.name);
         copyFailures.push(entry.name);
         continue;
       }
@@ -288,6 +309,10 @@ async function scanSketches(options = {}) {
       console.log(JSON.stringify(outputSketches, null, 2));
     }
 
+    if (analysisFailures.length > 0) {
+      console.error(t('scan.analyzeFailedSummary', { count: analysisFailures.length, names: analysisFailures.join(', ') }));
+      process.exitCode = 1;
+    }
     if (copyFailures.length > 0) {
       console.error(t('scan.copyFailedSummary', { count: copyFailures.length, names: copyFailures.join(', ') }));
       process.exitCode = 1;
