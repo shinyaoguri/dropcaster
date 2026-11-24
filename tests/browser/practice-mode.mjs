@@ -95,6 +95,24 @@ async function importProject(page, value) {
     await page.waitForFunction(() => !document.querySelector('#dc-practice-status').textContent.includes('Loading venue'));
   });
 }
+// #198: 固定文言に置き換えた失敗でも、元の例外が console に残ることを確かめる。context ごとに全ページの出力を集める。
+const consoleLines = new WeakMap();
+async function logged(page, pattern, count = 1) {
+  const lines = consoleLines.get(page.context()), hits = () => lines.filter(line => pattern.test(line)).length;
+  for (let i = 0; i < 50 && hits() < count; i++) await page.waitForTimeout(100);
+  assert.ok(hits() >= count, `console keeps the original error ${pattern} (${hits()}/${count})\n${lines.join('\n')}`);
+}
+function observeConsole(context) {
+  const lines = []; consoleLines.set(context, lines);
+  context.on('page', page => page.on('console', message => lines.push(message.text())));
+}
+/** 状態欄は平常時は読み上げ専用で、1px に畳んだ親に切り取られている。文字の中央がその要素に当たることで、画面に出ていることを確かめる。 */
+async function statusShown(page) {
+  return page.evaluate(() => {
+    const status = document.querySelector('#dc-practice-status'), box = status.getBoundingClientRect();
+    return box.width > 0 && document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === status;
+  });
+}
 async function snapshot(page, name) { if (artifactDir) await page.screenshot({ path: resolve(artifactDir, name + '.png') }); }
 async function state(page) { return page.evaluate(() => structuredClone(window.practiceWC.events.state.get())); }
 async function workspace(page, base) {
@@ -308,11 +326,25 @@ async function projects(page, base) {
   await page.locator('#practice-open-content').click();
   await page.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.includes('unavailable here'));
   assert.equal(await page.evaluate(() => window.practiceWC === window.previousWC), true, 'unavailable content keeps the working view');
+  assert.equal(await statusShown(page), true, 'the unavailable-content notice is on screen, not only announced');
+  await logged(page, /Missing local sketch/);
   await importProject(page, saved);
+  // #198: 下書きを読み出せないときは、作品を取得できないときとは別の案内にし、作業中の画面を保つ。
+  await page.evaluate(() => { window.realTransaction = IDBDatabase.prototype.transaction; IDBDatabase.prototype.transaction = function (...args) { if (args[1] !== 'readwrite') throw new DOMException('test draft read', 'InvalidStateError'); return window.realTransaction.apply(this, args); }; });
+  await page.locator('#practice-open-content').click();
+  await page.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.includes('could not be read'));
+  assert.doesNotMatch(await page.locator('#dc-practice-status').textContent(), /unavailable here/, 'an unreadable draft is not reported as a missing sketch');
+  assert.equal(await page.evaluate(() => window.practiceWC === window.previousWC), true, 'an unreadable draft keeps the working view');
+  assert.equal(await statusShown(page), true, 'the unreadable-draft notice is on screen, not only announced');
+  await logged(page, /test draft read/);
+  await snapshot(page, base.name + '-project-draft-unreadable');
+  await page.evaluate(() => { IDBDatabase.prototype.transaction = window.realTransaction; });
   // Browser-storage failure keeps edits/export available and reports the failure.
   await page.evaluate(() => { window.realTransaction = IDBDatabase.prototype.transaction; IDBDatabase.prototype.transaction = function (...args) { if (args[1] === 'readwrite') throw new DOMException('test quota', 'QuotaExceededError'); return window.realTransaction.apply(this, args); }; });
   await change(page, '#practice-project-name', 'Unsaved but exportable');
+  await logged(page, /test quota/); // 作業中の下書きの書き込み
   await page.locator('#practice-save').click(); await page.waitForFunction(() => document.querySelector('#practice-storage').textContent.includes('Could not save'));
+  await logged(page, /test quota/, 2); // 名前を付けて保存も、握った例外を残す
   assert.equal((await exportProject(page)).name, 'Unsaved but exportable');
   await page.evaluate(() => { IDBDatabase.prototype.transaction = window.realTransaction; });
   // A second browser context receives all geometry/images/optics via one package.
@@ -322,6 +354,48 @@ async function projects(page, base) {
     assert.equal((await exportProject(other)).assets[0].data, saved.assets[0].data);
     assert.equal(await other.locator('#practice-dimensions').textContent(), 'Venue size: 12.00 × 4.00 × 0.00 m');
   } finally { await second.close(); }
+  // #198: /project を直接開いたときの案内。下書きが無い・壊れている・作品を取得できない、を分ける。
+  const direct = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
+  try {
+    observeConsole(direct);
+    const other = await setup(direct, base);
+    const openDirect = async draft => {
+      if (draft) await other.evaluate(async ({ modules, draft }) => (await import(`${modules}/practice/projectStore.ts`)).writeProject(draft), { modules: base.modules, draft });
+      await other.goto(base.url + '/project'); await other.waitForSelector('.sketch-error');
+      return other.locator('.sketch-error').innerText();
+    };
+    const none = await openDirect();
+    assert.match(none, /Could not open the saved project/); assert.match(none, /No working project is saved/);
+    assert.doesNotMatch(none, /unavailable here|Could not load sketch/, 'a missing draft is not reported as a missing sketch');
+    assert.equal(await other.locator('.sketch-error [data-reload]').count(), 0, 'reloading cannot create a draft');
+    const broken = await openDirect({ ...saved, schemaVersion: 99 });
+    assert.match(broken, /could not be read/); assert.doesNotMatch(broken, /unavailable here|Could not load sketch/, 'an invalid draft is not reported as a missing sketch');
+    assert.equal(await other.locator('.sketch-error [data-reload]').count(), 1);
+    await logged(other, /ProjectFormatError: version/);
+    await snapshot(other, base.name + '-project-open-error');
+    const gone = structuredClone(saved); gone.content[0].ref = 'missing-local-sketch';
+    assert.match(await openDirect(gone), /unavailable here/, 'a missing sketch is still reported as one');
+    await logged(other, /Missing local sketch/);
+  } finally { await direct.close(); }
+  // #198: 下書きを読み出せないときも 3D は開く。読み出し (下書きの復元・保存済み一覧) の例外を両方残す。
+  // 状態欄の表示は続く書き込みが成功すると保存済みに戻るので、ここでは待たない。
+  const unreadable = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
+  try {
+    observeConsole(unreadable);
+    await unreadable.addInitScript(() => { const real = IDBDatabase.prototype.transaction; IDBDatabase.prototype.transaction = function (...args) { if (args[1] !== 'readwrite') throw new DOMException('test restore read', 'InvalidStateError'); return real.apply(this, args); }; });
+    const other = await setup(unreadable, base); await start(other);
+    await logged(other, /test restore read/, 2);
+  } finally { await unreadable.close(); }
+  // #198: 作品を取得できた後、開く途中の失敗も黙って捨てず、案内と元の例外を残す。この後 page の作業画面は使わない。
+  await page.evaluate(async modules => {
+    const { SketchPageController } = await import(`${modules}/components/SketchPageController.ts`);
+    SketchPageController.prototype.openProject = async () => { throw new Error('test open failure'); };
+  }, base.modules);
+  await page.locator('#practice-open-content').click(); await page.waitForSelector('.sketch-error');
+  const opening = await page.locator('.sketch-error').innerText();
+  assert.match(opening, /Could not open the saved project/); assert.match(opening, /could not be opened/);
+  assert.equal(await page.locator('.sketch-error [data-reload]').count(), 1);
+  await logged(page, /test open failure/);
 }
 // #168: 確定した変更は保存待ちのまま再読み込みで失われない (スライドショーと単独作品ページのマッピング)。
 async function draftProject(page, base) { return page.evaluate(async modules => (await import(`${modules}/practice/projectStore.ts`)).readProject(), base.modules); }
@@ -1317,7 +1391,7 @@ try {
       for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
-        const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
+        const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);
         try {
           const page = await setup(context, base, testName.toLowerCase().includes('slideshow') ? '/slideshow' : testName === 'recovery' ? '/w' : '/a', !testName.startsWith('workspace'));
           await run(page, base); assert.deepEqual(errors, [], `${name}/${testName}: browser errors`);

@@ -55,6 +55,11 @@ const labels = {
   storageError: ['Could not save in this browser. Export a package to keep your work.', 'ブラウザに保存できません。パッケージを書き出して作業を保存してください。'],
   content: ['Saved sketch references', '保存する作品参照'], referencesOnly: ['References only; sketch versions are not pinned.', '作品は参照で保存します。内容の版は固定されません。'],
   openContent: ['Open saved sketches', '保存した作品を開く'], contentMissing: ['A saved sketch is unavailable here. The venue remains saved; choose another sketch.', '保存した作品をここでは取得できません。会場設定は保持されています。別の作品を選んでください。'],
+  // /project を開けなかったときの案内 (#198)。失敗した段階ごとに分ける。
+  openErrorTitle: ['Could not open the saved project', '保存したプロジェクトを開けませんでした'],
+  draftMissing: ['No working project is saved in this browser. Open a sketch and start mapping, or import a package.', 'このブラウザに作業中のプロジェクトが保存されていません。作品を開いてマッピングを始めるか、パッケージを読み込んでください。'],
+  draftUnreadable: ['The project saved in this browser could not be read. Reload to try again, or import an exported package.', 'このブラウザに保存したプロジェクトを読み出せませんでした。再読み込みしてもう一度試すか、書き出したパッケージを読み込んでください。'],
+  openError: ['The saved project could not be opened. Reload to try again.', '保存したプロジェクトを開く途中で失敗しました。再読み込みしてもう一度お試しください。'],
   imported: ['Project loaded. Open saved sketches or continue with the current sketch.', 'プロジェクトを読み込みました。保存した作品を開くか、現在の作品で続けられます。'],
   modelLoaded: ['Venue loaded. Check its size, orientation and position.', '会場を読み込みました。寸法・向き・位置を確認してください。'],
   invalid: ['Invalid settings. The current project has been kept.', '設定が正しくありません。現在のプロジェクトは保持しています。'],

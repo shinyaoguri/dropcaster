@@ -44,7 +44,7 @@ export class ProjectSession {
       if (this.disposed) return;
       // The latest v2 working layout wins; an older async draft cannot roll it back.
       if (stored) this.changes.set(reconcileProjectLayout(parseProject(stored), this.wc.events.state.get()));
-    } catch { if (!this.disposed) this.storage.set('error'); }
+    } catch (error) { console.warn('Project draft could not be restored', error); if (!this.disposed) this.storage.set('error'); }
     if (this.disposed) return;
     this.initialized = true;
     this.updateContent();
@@ -76,7 +76,7 @@ export class ProjectSession {
         await writeProject(project);
         if (named) await writeProject(project, project.id);
       });
-    } catch (error) { if (named) throw error; }
+    } catch (error) { if (named) throw error; console.warn('Project draft could not be saved', error); }
   }
   dispose(): void {
     this.disposed = true; this.off(); this.saver.dispose();

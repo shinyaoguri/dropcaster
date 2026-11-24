@@ -204,6 +204,8 @@ export class PracticePanel {
   }
   private error(error: unknown): void {
     const codes = ['invalid', 'version', 'asset', 'reference', 'externalAsset', 'unsupportedAsset', 'size'];
+    // 形式の検証で分かった原因はその文言を出す。それ以外は汎用の文言になるので、元の例外を残す (#198)。
+    if (!(error instanceof ProjectFormatError)) console.warn('Project change failed', error);
     this.status(error instanceof ProjectFormatError && codes.includes(error.message) ? `practice.${error.message}` as MessageKey : 'practice.invalid', true);
   }
   private async readFile(): Promise<void> {
@@ -239,13 +241,13 @@ export class PracticePanel {
       const projects = await listProjects(); if (this.disposed) return;
       this.get<HTMLSelectElement>('practice-saved-projects').replaceChildren(...projects.map(p => new Option(p.name, p.id)));
       this.get<HTMLButtonElement>('practice-open-project').disabled = projects.length === 0;
-    } catch { if (!this.disposed) this.session.storage.set('error'); }
+    } catch (error) { console.warn('Saved projects could not be listed', error); if (!this.disposed) this.session.storage.set('error'); }
   }
   private async saveNamed(copy: boolean): Promise<void> {
     try {
       if (copy) this.session.update({ ...this.session.changes.get(), id: randomId(), createdAt: new Date().toISOString() });
       await this.session.save(true); await this.refreshSaved();
-    } catch { this.status('practice.storageError', true); }
+    } catch (error) { console.warn('Named project could not be saved', error); this.status('practice.storageError', true); }
   }
   private async openSaved(): Promise<void> {
     const action = ++this.action;

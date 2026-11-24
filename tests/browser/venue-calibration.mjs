@@ -25,6 +25,13 @@ async function ready(page){
   await page.waitForSelector('#venue-canvas');await page.waitForFunction(()=>window.calibrationPage?.editor && !document.querySelector('#venue-model-pane').inert);
   await page.evaluate(()=>{window.practicePreview=window.calibrationPage.preview;window.venueEditor=window.calibrationPage.editor});
 }
+// #198: 固定文言に置き換えた失敗でも、元の例外が console に残ることを確かめる。context ごとに全ページの出力を集める。
+const consoleLines=new WeakMap();
+async function logged(page,pattern,count=1){
+  const lines=consoleLines.get(page.context()),hits=()=>lines.filter(line=>pattern.test(line)).length;
+  for(let i=0;i<50&&hits()<count;i++)await page.waitForTimeout(100);
+  assert.ok(hits()>=count,`console keeps the original error ${pattern} (${hits()}/${count})\n${lines.join('\n')}`);
+}
 async function current(page){return page.evaluate(()=>structuredClone(window.calibrationPage.session.changes.get()))}
 // ツール列は左端のアクティビティバーで切り替えるパネル (ADR 0021)。要素が別のパネルにあれば、そのパネルを開く。
 async function reveal(page,selector){
@@ -213,7 +220,7 @@ async function adjust(page,base){
   await snapshot(page,base.name+'-venue-adjust');
   await output.close();
 }
-async function recovery(page){
+async function recovery(page,base){
   const baseline=await download(page);
   for(const bad of [{...baseline,schemaVersion:99},{...baseline,venue:{...baseline.venue,scene:{...baseline.venue.scene,objects:[]}}}]){
     await load(page,bad);assert.equal(await page.locator('#venue-status').evaluate(e=>e.classList.contains('is-error')),true);assert.deepEqual(await download(page),baseline);
@@ -227,7 +234,7 @@ async function recovery(page){
   await page.waitForFunction(()=>document.querySelector('#venue-status').classList.contains('is-error'));assert.deepEqual(await download(page),glb);
   await page.evaluate(()=>{window.realTransaction=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(...args){if(args[1]==='readwrite')throw new DOMException('quota','QuotaExceededError');return window.realTransaction.apply(this,args)}});
   await change(page,'#venue-name','Exportable venue');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('Could not save'));
-  assert.equal((await download(page)).name,'Exportable venue');await page.evaluate(()=>{IDBDatabase.prototype.transaction=window.realTransaction});
+  assert.equal((await download(page)).name,'Exportable venue');await logged(page,/quota/);await page.evaluate(()=>{IDBDatabase.prototype.transaction=window.realTransaction});
   await change(page,'#venue-name','Recovered venue');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
   const outputPromise=page.waitForEvent('popup');await page.locator('#venue-open-output').click();const output=await outputPromise;await output.waitForFunction(()=>document.querySelector('video')?.videoWidth===1920);
   await page.evaluate(()=>{window.track=window.calibrationPage.projection.stream.getVideoTracks()[0];window.calibrationPage.projection.renderer.getContext().getExtension('WEBGL_lose_context').loseContext()});
@@ -236,9 +243,41 @@ async function recovery(page){
   await page.locator('#venue-close').click();
   await page.evaluate(()=>{window.getContext=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){if(/webgl/.test(type))return null;return window.getContext.call(this,type,...args)}});
   await page.locator('a[href="/venue"]').click();await page.waitForSelector('#venue-reload');
+  assert.match(await page.locator('#venue-status').textContent(),/3D graphics stopped/,'WebGL が使えないときは 3D 描画の停止を案内する');
   assert.equal(await page.locator('#venue-open-output').isDisabled(),true);assert.equal((await download(page)).name,'Recovered venue','initial WebGL failure preserves saved document and export');
   await page.locator('#venue-close').click();assert.equal(await page.locator('#venue-canvas').count(),0);
   await page.evaluate(()=>{HTMLCanvasElement.prototype.getContext=window.getContext});
+  // #198: レンダラーを作れた後の失敗は、3D 描画の停止とは別の案内にし、元の例外を残す。
+  await page.evaluate(async modules=>{
+    const {ProjectorAdjuster}=await import(`${modules}/venue/ProjectorAdjuster.ts`);window.adjusterAttach=ProjectorAdjuster.prototype.attach;
+    ProjectorAdjuster.prototype.attach=function(){ProjectorAdjuster.prototype.attach=window.adjusterAttach;throw new Error('test venue setup failure')};
+  },base.modules);
+  await page.locator('a[href="/venue"]').click();await page.waitForFunction(()=>document.querySelector('#venue-reload')?.hidden===false);
+  const setupStatus=await page.locator('#venue-status').textContent();
+  assert.match(setupStatus,/Venue setup could not start/);assert.doesNotMatch(setupStatus,/3D graphics/,'a non-WebGL failure is not reported as a graphics failure');
+  await logged(page,/test venue setup failure/);
+  assert.equal((await download(page)).name,'Recovered venue','a setup failure preserves the saved document and export');
+  await snapshot(page,base.name+'-venue-setup-error');
+  await page.locator('#venue-close').click();
+  // #198: 画面のコードを取得できないとき (配信を差し替えた直後の古いタブ・通信の途切れ) は、開けなかったことと再読み込みを案内する。
+  const offline=await page.context().newPage();offline.setDefaultTimeout(20000);
+  await offline.route('**/venue/VenueCalibrationPage.ts*',route=>route.abort());
+  await offline.goto(base.url);await offline.locator('a[href="/venue"]').click();await offline.waitForSelector('.sketch-error');
+  const failed=await offline.locator('.sketch-error').innerText();
+  assert.match(failed,/Could not open venue setup/);assert.match(failed,/Venue setup could not start/);
+  assert.doesNotMatch(failed,/3D graphics|Could not load sketch/,'a failed chunk is not reported as a graphics or sketch failure');
+  await logged(offline,/Failed to fetch dynamically imported module/);
+  await snapshot(offline,base.name+'-venue-open-error');
+  await offline.unroute('**/venue/VenueCalibrationPage.ts*');await offline.locator('.sketch-error [data-reload]').click();
+  await offline.waitForSelector('#venue-canvas');await offline.waitForFunction(()=>document.querySelector('#venue-name')?.value==='Recovered venue');
+  await offline.close();
+  // #198: 会場の下書きを読み出せないときも画面は開き、保存できないことを示して、元の例外を残す。
+  const unreadable=await page.context().newPage();unreadable.setDefaultTimeout(20000);
+  await unreadable.addInitScript(()=>{const real=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(...args){if(args[1]!=='readwrite')throw new DOMException('test venue read','InvalidStateError');return real.apply(this,args)}});
+  await unreadable.goto(base.url);await unreadable.locator('a[href="/venue"]').click();
+  await unreadable.waitForFunction(()=>document.querySelector('#venue-storage')?.textContent.includes('Could not save'));
+  await logged(unreadable,/test venue read/);
+  await unreadable.close();
 }
 
 async function isolation(page,base){
@@ -758,7 +797,8 @@ try{
       for(const [testName,run] of Object.entries({activityBar,workflow,interaction,adjust,trace,match,recovery,isolation,reload})){
         if(process.env.VENUE_CASE&&process.env.VENUE_CASE!==testName)continue;
         const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block',locale:'en-US'}),errors=[];
-        context.on('page',page=>page.on('pageerror',error=>errors.push(error.message)));
+        const lines=[];consoleLines.set(context,lines);
+        context.on('page',page=>{page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>lines.push(message.text()))});
         try{const page=await setup(context,base);await run(page,base);assert.deepEqual(errors,[],`${name}/${testName} browser errors`);console.log(`${name}/${testName}: PASS`)}finally{await context.close()}
       }
     }finally{await server.close()}

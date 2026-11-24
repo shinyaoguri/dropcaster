@@ -181,8 +181,9 @@ export class MappingWorkspace {
       if (!this.active || generation !== this.generation || this.panel !== panel) { panel.dispose(); return; }
       panel.setVisible(this.editor.selectedTab === 'preview');
       this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting');
-    } catch {
+    } catch (error) {
       if (!this.active || this.disposed || generation !== this.generation) return;
+      console.warn('3D preview unavailable', error);
       this.status('practice.error', true); this.previewFailed();
     }
   }
