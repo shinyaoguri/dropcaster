@@ -8,6 +8,7 @@ import {
   addedFragments, bumpFor, checkPullRequest, latestTag, lintAll, lintFragment, nextRelease, renderNotes,
 } from '../scripts/release.js';
 import { isolatedGit as git } from './fixtures/isolated-git.js';
+import { makeOuterRepo, outerRepoEnvCases, runNode, runNodeInWorktreeHook } from './fixtures/outer-git-env.js';
 
 // 版とノートはタグと changelog.d/ の断片から決める (docs/decisions/0022)。
 
@@ -76,6 +77,55 @@ test('nextRelease only reads fragments and titles after the latest tag', async (
     await writeFile(join(repo, 'changelog.d', 'first.feature.md'), '書き直し。\n');
     git(repo, 'commit', '-q', '-am', 'docs: 断片の書き直し (#3)');
     assert.deepEqual(nextRelease(repo), { tag: 'v0.2.1', previous: 'v0.2.0', fragments: ['changelog.d/second.fix.md'] });
+  });
+});
+
+// release.js が呼ぶ git は、親の環境がどのリポジトリを指していても cwd のリポジトリを読む (#253)。
+
+const RELEASE_SCRIPT = join(import.meta.dirname, '..', 'scripts', 'release.js');
+
+/** @param {string} repo @param {Record<string, string>} [env] */
+function nextVersion(repo, env) {
+  return runNode([RELEASE_SCRIPT, 'next-version'], { cwd: repo, env });
+}
+
+test('release.js reads the tags and history of its cwd when the parent git environment points at another repository', async () => {
+  await withRepo(async (tagged) => {
+    await commit(tagged, 'feat: 最初 (#1)', 'first.feature.md');
+    git(tagged, 'tag', 'v0.2.0');
+    await commit(tagged, 'fix(core): 直す (#2)', 'second.fix.md');
+    // タグが無いと断片は index から数える (ls-files) ので、別の経路として確かめる
+    await withRepo(async (untagged) => {
+      await commit(untagged, 'feat: 最初 (#1)', 'first.feature.md');
+      const outer = await makeOuterRepo();
+      try {
+        assert.equal(nextVersion(tagged), 'v0.2.1', 'tagged, no git environment');
+        assert.equal(nextVersion(untagged), 'v0.2.0', 'untagged, no git environment');
+        for (const [name, env] of outerRepoEnvCases(outer)) {
+          assert.equal(nextVersion(tagged, env), 'v0.2.1', `tagged, ${name}`);
+          assert.equal(nextVersion(untagged, env), 'v0.2.0', `untagged, ${name}`);
+        }
+      } finally {
+        await rm(outer.dir, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
+test('release.js reads the tags and history of its cwd inside a pre-commit hook of a linked worktree', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    await commit(repo, 'fix(core): 直す (#2)', 'second.fix.md');
+    const outer = await makeOuterRepo();
+    try {
+      const { stdout, gitDir } = await runNodeInWorktreeHook(outer, [RELEASE_SCRIPT, 'next-version'], { cwd: repo });
+      // この前提が崩れると下の比較が空振りする: git は linked worktree の hook に外側の GIT_DIR を渡す
+      assert.match(gitDir, /worktrees/);
+      assert.equal(stdout, 'v0.2.1');
+    } finally {
+      await rm(outer.dir, { recursive: true, force: true });
+    }
   });
 });
 

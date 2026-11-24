@@ -19,6 +19,7 @@ import { execFileSync } from 'child_process';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
+import { envWithoutRepositoryLocation } from '../src/core/git-env.js';
 
 export const FRAGMENT_DIR = 'changelog.d';
 
@@ -54,7 +55,9 @@ const REFERENCE_LINK_PATTERN = /\[[^\]]*\]\[[^\]]*\]/;
  * @param {string[]} args
  */
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+  // 親の GIT_DIR などを引き継ぐと、cwd ではなく外側のリポジトリのタグと履歴を読む (#253)
+  const env = envWithoutRepositoryLocation();
+  return execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
 }
 
 /**

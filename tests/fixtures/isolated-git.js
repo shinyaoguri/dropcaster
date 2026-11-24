@@ -9,11 +9,15 @@ import { devNull } from 'os';
 // git の導入先にある既定のテンプレート。
 // 呼び出しごとに `-c` を並べる形は、付け忘れた呼び出しだけが設定の影響を受けるので採らない。
 // 切り離すのは、テストがリポジトリを作る側の git だけ。テスト対象 (src/core/build-info.js・scripts/release.js) が
-// 自分で呼ぶ git は親の環境と設定のまま動く。GIT_DIR が立った環境 (linked worktree の git hook の中など) で
-// テストを走らせると、そちらが外側のリポジトリを読んで落ちる (#253)。
+// 自分で呼ぶ git は、リポジトリの場所を差し替える変数 (GIT_DIR など) だけを自分で落とし (#253)、
+// 設定は実行する人のものを読む。テスト対象を決まった設定で動かすときは、この環境を渡した子プロセスで走らせる
+// (fixtures/outer-git-env.js)。
 
-/** @returns {NodeJS.ProcessEnv} */
-function isolatedEnv() {
+/**
+ * 実行する人の git 設定と GIT_* を切り離した環境。
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function isolatedEnv() {
   // 親から渡った GIT_* を落とす: GIT_CONFIG_COUNT / GIT_CONFIG_PARAMETERS による設定の注入、
   // GIT_DIR / GIT_INDEX_FILE (git hook の中から走らせたとき)、GIT_TEMPLATE_DIR など
   const inherited = Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'));
