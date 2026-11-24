@@ -98,11 +98,20 @@ export function createProject(layout = defaultMappingsState()): Project {
     content: [], show: { contentIds: [], intervalSeconds: 30, currentIndex: 0 }, assets: [] };
 }
 
-/** 2D output compaction must never move the physical projector. */
-export function reconcileProjectLayout(project: Project, layout: MappingsState): Project {
+/**
+ * 2D output compaction must never move the physical projector.
+ * `removed` は呼び出し側が持つ覚え書き。配置から消えた出力のプロジェクタをここへ書き、同じ出力 ID が配置へ
+ * 戻ったとき (削除の Undo、以前書き出した 2D 設定の読込) にその校正値を返す。渡し忘れると戻った出力が
+ * 黙って既定値になるので、省略できない引数にしてある (#165)。
+ */
+export function reconcileProjectLayout(project: Project, layout: MappingsState, removed: Map<string, Projector>): Project {
+  for (const projector of project.venue.projectors) {
+    if (!layout.outputs.some(output => output.id === projector.outputId)) removed.set(projector.outputId, projector);
+  }
   return { ...project, updatedAt: new Date().toISOString(), venue: { ...project.venue, layout,
     revision: project.venue.revision + (project.venue.layout === layout ? 0 : 1),
-    projectors: layout.outputs.map(output => project.venue.projectors.find(p => p.outputId === output.id) ?? defaultProjector(output.id)) } };
+    projectors: layout.outputs.map(output => project.venue.projectors.find(p => p.outputId === output.id)
+      ?? removed.get(output.id) ?? defaultProjector(output.id)) } };
 }
 
 /** Self-contained static GLB only: parsing must never fetch remote/local companion files. */
