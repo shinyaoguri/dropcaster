@@ -42,6 +42,39 @@ test('removing a 2D output does not compact physical projector coordinates', () 
   assert.equal(p.venue.layout.outputs[0].position.x, 0);
   assert.equal(p.venue.projectors[0].outputId, id); assert.deepEqual(p.venue.projectors[0].position, [3,4,5]);
 });
+test('an output that returns to the layout (Undo of a delete) gets its projector calibration back (#165)', () => {
+  const removed = new Map();
+  let p = createProject(); p = reconcileProjectLayout(p, withAddedOutput(p.venue.layout), removed);
+  const [keptId, id] = p.venue.layout.outputs.map(o => o.id);
+  const calibrate = (project, outputId, values) => ({ ...project, venue: { ...project.venue,
+    projectors: project.venue.projectors.map(q => q.outputId === outputId ? { ...q, ...values } : q) } });
+  const first = { position: [7.5, 1.25, -3], quaternion: [0, 0.6, 0, 0.8], verticalFovDegrees: 31, aspect: 1.6, lensShift: [0.2, -0.4], near: 0.5, far: 80 };
+  p = calibrate(calibrate(p, id, first), keptId, { position: [-2, 3, 6], lensShift: [0, 0.3] });
+  const both = structuredClone(p.venue.layout), onlyKept = withRemovedOutput(both, id);
+  const projector = (project, outputId) => project.venue.projectors.find(q => q.outputId === outputId);
+  const expectKept = project => {
+    assert.deepEqual(projector(project, keptId).position, [-2, 3, 6]); assert.deepEqual(projector(project, keptId).lensShift, [0, 0.3]);
+  };
+
+  p = reconcileProjectLayout(p, onlyKept, removed);
+  assert.deepEqual(p.venue.projectors.map(q => q.outputId), [keptId]); expectKept(p);
+  p = reconcileProjectLayout(p, structuredClone(both), removed); // Undo
+  assert.deepEqual(p.venue.projectors.map(q => q.outputId), [keptId, id]);
+  assert.deepEqual(projector(p, id), { id: `projector-${id}`, outputId: id, ...first }); expectKept(p);
+
+  // Redo → Undo: 戻した後に校正し直した値が、最初に消したときの値より優先される。
+  const second = { ...first, position: [1, 2, 3], verticalFovDegrees: 55 };
+  p = calibrate(p, id, second);
+  p = reconcileProjectLayout(p, structuredClone(onlyKept), removed);
+  p = reconcileProjectLayout(p, structuredClone(both), removed);
+  assert.deepEqual(projector(p, id), { id: `projector-${id}`, outputId: id, ...second }); expectKept(p);
+
+  // 一度も消していない新しい出力は既定値から始まる。今のプロジェクトにある値は覚えた値で上書きしない。
+  const added = reconcileProjectLayout(p, withAddedOutput(p.venue.layout), removed);
+  assert.deepEqual(added.venue.projectors[2].position, [0, 2.5, 4.5]);
+  removed.set(id, { ...projector(p, id), position: [9, 9, 9] });
+  assert.deepEqual(projector(reconcileProjectLayout(p, structuredClone(both), removed), id).position, [1, 2, 3]);
+});
 test('GLB rejects external images/buffers, cycles, unsupported extensions and out-of-bounds data', () => {
   validateGlb(venueFixture());
   for (const mutate of [
