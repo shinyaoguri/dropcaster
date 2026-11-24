@@ -36,9 +36,9 @@ test('legacy v2 remains accepted, while malformed or partial layouts are rejecte
   assert.equal(p.venue.layout.outputs.length, 1);
 });
 test('removing a 2D output does not compact physical projector coordinates', () => {
-  let p = createProject(); p = reconcileProjectLayout(p, withAddedOutput(p.venue.layout));
+  let p = createProject(); const removed = new Map(); p = reconcileProjectLayout(p, withAddedOutput(p.venue.layout), removed);
   const id = p.venue.layout.outputs[1].id; p.venue.projectors[1].position = [3,4,5];
-  p = reconcileProjectLayout(p, withRemovedOutput(p.venue.layout, p.venue.layout.outputs[0].id));
+  p = reconcileProjectLayout(p, withRemovedOutput(p.venue.layout, p.venue.layout.outputs[0].id), removed);
   assert.equal(p.venue.layout.outputs[0].position.x, 0);
   assert.equal(p.venue.projectors[0].outputId, id); assert.deepEqual(p.venue.projectors[0].position, [3,4,5]);
 });

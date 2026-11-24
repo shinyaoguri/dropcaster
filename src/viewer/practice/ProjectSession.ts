@@ -26,8 +26,9 @@ export class ProjectSession {
   private followContext = true;
   private getContext: () => ShowContext;
   /**
-   * 配置から消えた出力のプロジェクタ。Undo で出力が戻ったときに校正値を返すため、出力 ID ごとに覚える (#165)。
-   * 保存はしない。プロジェクトを配置ごと差し替えると編集の履歴も空になるので、そこで捨てる。
+   * 配置から消えた出力のプロジェクタ。同じ出力 ID が配置へ戻ったとき (削除の Undo、以前書き出した 2D 設定の
+   * 読込) に校正値を返すため、出力 ID ごとに覚える (#165)。保存はしない。プロジェクトを配置ごと差し替えると
+   * 捨てる (そのとき編集の履歴も空になる)。編集画面を閉じて履歴だけが消えた場合は、このセッションが残る間は残る。
    */
   private removedProjectors = new Map<string, Projector>();
 
