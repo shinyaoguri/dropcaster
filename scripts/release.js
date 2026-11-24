@@ -126,11 +126,15 @@ function isFragmentPath(path) {
  * @returns {string[]}
  */
 export function addedFragments(cwd, since) {
+  // core.quotePath: パスの書き出し方を git の既定の形に固定する。実行する人が false にしていると、
+  // 既定では引用符付きで出て断片に数えない名前 (ASCII 以外を含む名前) を、その人だけ数える
   const out = since === null
-    ? git(cwd, 'ls-files', '--', FRAGMENT_DIR)
+    ? git(cwd, '-c', 'core.quotePath=true', 'ls-files', '--', FRAGMENT_DIR)
     // --find-renames: 改名の検出を git の既定の形に固定する。実行する人の diff.renames が copies だと
-    // 書き直した断片に似た新しい断片がコピー (C) に、false だと改名した断片が追加 (A) に数え直される
-    : git(cwd, 'diff', '--name-only', '--diff-filter=A', '--find-renames', `${since}..HEAD`, '--', FRAGMENT_DIR);
+    // 書き直した断片に似た新しい断片がコピー (C) に、false だと改名した断片が追加 (A) に数え直される。
+    // -l0: 検出の上限も固定する。diff.renameLimit が小さいと、中身を変えた改名が追加 (A) に数え直される
+    : git(cwd, '-c', 'core.quotePath=true', 'diff', '--name-only', '--diff-filter=A', '--find-renames', '-l0',
+      `${since}..HEAD`, '--', FRAGMENT_DIR);
   return out.split('\n').filter(isFragmentPath).sort();
 }
 

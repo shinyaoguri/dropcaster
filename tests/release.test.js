@@ -169,6 +169,40 @@ test('release.js does not count a renamed fragment as new when diff.renames is f
   });
 });
 
+test('release.js does not release for a fragment with a non-ASCII name when core.quotePath is false', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    // lint が通さない名前。既定の設定では断片に数えず、出すものが無い (終了コード 2)
+    await commit(repo, 'docs: 名前の違う断片 (#2)', '日本語.fix.md');
+    for (const config of ['', '[core]\n\tquotePath = false\n']) {
+      await assert.rejects(nextVersionWithGlobalConfig(repo, config), (error) => error.status === 2, JSON.stringify(config));
+    }
+  });
+});
+
+test('release.js does not count renamed and edited fragments as new when diff.renameLimit is small', async () => {
+  await withRepo(async (repo) => {
+    await mkdir(join(repo, 'changelog.d'), { recursive: true });
+    const body = (n) => `機能 ${n} の説明。ある程度の長さを持つ文。\n二行目 ${n}。\n三行目 ${n}。\n四行目 ${n}。\n`;
+    for (const n of [1, 2, 3]) await writeFile(join(repo, 'changelog.d', `old-${n}.feature.md`), body(n));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'feat: 最初 (#1)');
+    git(repo, 'tag', 'v0.2.0');
+    // 改名して 1 行足す (完全一致ではないので、上限つきの検出に頼る)
+    for (const n of [1, 2, 3]) {
+      git(repo, 'mv', `changelog.d/old-${n}.feature.md`, `changelog.d/new-${n}.feature.md`);
+      await writeFile(join(repo, 'changelog.d', `new-${n}.feature.md`), `${body(n)}追記 ${n}。\n`);
+    }
+    await writeFile(join(repo, 'changelog.d', 'second.fix.md'), '直した内容。まったく別の一文を書く。\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'fix(core): 直す (#2)');
+    // 改名した feature の断片を数え直すと minor が上がる
+    assert.equal(await nextVersionWithGlobalConfig(repo, ''), 'v0.2.1');
+    assert.equal(await nextVersionWithGlobalConfig(repo, '[diff]\n\trenameLimit = 1\n'), 'v0.2.1');
+  });
+});
+
 test('release.js finds the latest tag when column.ui is always', async () => {
   await withRepo(async (repo) => {
     await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
