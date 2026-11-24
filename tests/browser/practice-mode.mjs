@@ -1017,6 +1017,31 @@ async function maskDraftKeys(page) {
   await page.keyboard.press('Escape');
   assert.deepEqual((await masks()).map(m => m.id), [drawn.id], 'Escape on the preview discards the mask being drawn');
 }
+/** 隅を選んだまま <select> で押した矢印キーは、その欄のもので、選んだ隅を動かさない (#206 と同じ約束)。 */
+async function nudgeSelectKeys(page) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await page.locator('#output-stage [data-corner]').first().click();
+  assert.equal(await page.locator('#output-stage .quad-handle.kbd-selected').count(), 1, 'a corner is selected for the arrow keys');
+  await showPanel(page, 'preview3d');
+  const quality = page.locator('#practice-quality'); await quality.waitFor();
+  assert.equal(await page.locator('#output-stage .quad-handle.kbd-selected').count(), 1, 'the corner stays selected in the 3D panel');
+  // window は document の後に呼ばれるので、document のキー処理が既定の動作を止めたかをここで見られる。
+  await page.evaluate(() => addEventListener('keydown', event => { window.lastKeyPrevented = event.defaultPrevented; }));
+  const before = await state(page);
+  await quality.focus();
+  assert.equal(await quality.inputValue(), '640');
+  await page.keyboard.press('ArrowDown');
+  assert.deepEqual((await state(page)).mappings, before.mappings, 'ArrowDown in a select keeps the selected corner in place');
+  assert.equal(await page.evaluate(() => window.lastKeyPrevented), false, 'ArrowDown in a select is left to the browser');
+  // macOS の Chromium は閉じた select の矢印キーで一覧を開く (値は変えない) ので、値はそれ以外で確かめる。
+  if (process.platform === 'darwin') await page.keyboard.press('Escape');
+  else assert.equal(await quality.inputValue(), '960', 'ArrowDown in a select picks its next option');
+  // 欄の外では従来どおり、矢印キーが選んだ隅を動かす
+  await quality.evaluate(element => element.blur());
+  await page.keyboard.press('ArrowRight');
+  assert.notDeepEqual((await state(page)).mappings, before.mappings, 'ArrowRight outside a field nudges the selected corner');
+}
 async function confirmClose(page, base) {
   await start(page);
   await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click();
@@ -1393,7 +1418,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));

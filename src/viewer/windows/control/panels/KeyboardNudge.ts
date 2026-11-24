@@ -128,9 +128,9 @@ export class KeyboardNudge {
     const opts = this.opts;
     if (!ctrl || !opts) return;
     if (!this.selection) return;
-    // テキスト入力中は矢印キーを奪わない（マッピング名のインライン編集など）
+    // 入力欄の矢印キーは奪わない（マッピング名のインライン編集、数値欄の増減、select の選択など）
     const target = e.target as HTMLElement | null;
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
+    if (target?.isContentEditable || target?.closest?.('input, textarea, select, [contenteditable]')) return;
 
     let dirX = 0, dirY = 0;
     switch (e.key) {
