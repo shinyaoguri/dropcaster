@@ -315,7 +315,8 @@ async function insecureOrigin(browser, base) {
 // ギャラリーのホームは、見出しの文字にヘッダーのボタン列 (言語切替・会場・スライドショー) が被さらない (#178)。
 // 幅と言語を変えて実際の矩形を測る。期待値は「交差しない・画面内にある・クリックが届く」という性質で、
 // レイアウトの計算は写さない。日本語は見出しもボタンも英語より幅が広い。
-const HEADER_WIDTHS = [1600, 1280, 960, 800, 375];
+// 961px は 1 行に並ぶいちばん狭い幅 (960px 以下はボタン列が下の行へ回る)。
+const HEADER_WIDTHS = [1600, 1280, 961, 960, 800, 375];
 const HEADER_TITLES = { en: 'Sketch Gallery', ja: 'スケッチギャラリー' };
 const headerControls = '.header-actions .dc-lang-toggle, .header-actions a';
 
