@@ -6,6 +6,7 @@
 // 本番コードには手を入れず、リスナーの数え上げだけ addInitScript で包む。
 // あわせて、secure context でない LAN の HTTP オリジンでも各ルートが初期化できることを確かめる (#170)。
 // 同じ Gist の差し替え経路で、作品の組み立てが script / CSS の意味を変えないことも確かめる (#110)。
+// ホーム (ギャラリー) のヘッダーは、どの幅でも見出しとボタン列が重ならず、ボタンが押せることを確かめる (#178)。
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -311,6 +312,102 @@ async function insecureOrigin(browser, base) {
   }
 }
 
+// ギャラリーのホームは、見出しの文字にヘッダーのボタン列 (言語切替・会場・スライドショー) が被さらない (#178)。
+// 幅と言語を変えて実際の矩形を測る。期待値は「交差しない・画面内にある・クリックが届く」という性質で、
+// レイアウトの計算は写さない。日本語は見出しもボタンも英語より幅が広い。
+// 961px は 1 行に並ぶいちばん狭い幅 (960px 以下はボタン列が下の行へ回る)。
+const HEADER_WIDTHS = [1600, 1280, 961, 960, 800, 375];
+const HEADER_TITLES = { en: 'Sketch Gallery', ja: 'スケッチギャラリー' };
+const headerControls = '.header-actions .dc-lang-toggle, .header-actions a';
+
+function measureHeader(selector) {
+  const box = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+  const range = document.createRange();
+  range.selectNodeContents(document.querySelector('.header h1'));
+  return {
+    // 見出しは箱ではなく文字そのものの範囲で見る (箱は行いっぱいに広がることがある)
+    title: box(range.getBoundingClientRect()),
+    header: box(document.querySelector('.header').getBoundingClientRect()),
+    actions: box(document.querySelector('.header-actions').getBoundingClientRect()),
+    controls: [...document.querySelectorAll(selector)].map((el) => ({
+      name: el.getAttribute('aria-label') ?? el.textContent.trim(), ...box(el.getBoundingClientRect()) })),
+    viewport: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  };
+}
+
+const intersects = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0
+  && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0;
+const span = (r) => `x ${Math.round(r.left)}..${Math.round(r.right)}, y ${Math.round(r.top)}..${Math.round(r.bottom)}`;
+
+async function assertHeaderLayout(page, label, width) {
+  const m = await page.evaluate(measureHeader, headerControls);
+  assert.equal(m.controls.length, 3, `${label}: ヘッダーの操作は言語切替・会場・スライドショーの 3 つ`);
+  for (const [i, control] of m.controls.entries()) {
+    assert.ok(!intersects(m.title, control),
+      `${label}: 見出し (${span(m.title)}) に「${control.name}」(${span(control)}) が重なっている`);
+    assert.ok(control.left >= 0 && control.right <= m.viewport,
+      `${label}: 「${control.name}」(${span(control)}) が画面 (幅 ${m.viewport}) の外に出ている`);
+    for (const other of m.controls.slice(i + 1)) {
+      assert.ok(!intersects(control, other), `${label}: 「${control.name}」と「${other.name}」が重なっている`);
+    }
+  }
+  assert.ok(m.scrollWidth <= m.viewport, `${label}: ページが横にはみ出している (${m.scrollWidth} > ${m.viewport})`);
+  // 実際のクリックと同じ判定 (表示されていて、押す位置で一番手前にある) を、押さずに確かめる
+  for (const control of await page.locator(headerControls).all()) await control.click({ trial: true, timeout: 3_000 });
+
+  if (width >= 1280) {
+    // 広い幅の並びは変えない: 見出しとボタン列は同じ行で、ボタン列は右端
+    const middle = (m.actions.top + m.actions.bottom) / 2;
+    assert.ok(middle > m.title.top && middle < m.title.bottom, `${label}: ボタン列が見出しと同じ行にない`);
+    assert.ok(Math.abs(m.actions.right - m.header.right) <= 1, `${label}: ボタン列が右端にない`);
+  }
+  if (width >= 1600) {
+    const center = (r) => (r.left + r.right) / 2;
+    assert.ok(Math.abs(center(m.title) - center(m.header)) <= 1,
+      `${label}: 見出しが中央にない (見出し ${center(m.title)}, ヘッダー ${center(m.header)})`);
+  }
+}
+
+async function galleryHeader(browser, base) {
+  for (const lang of ['en', 'ja']) {
+    const context = await browser.newContext({ serviceWorkers: 'block', locale: lang === 'ja' ? 'ja-JP' : 'en-US' });
+    context.setDefaultTimeout(15_000);
+    try {
+      const errors = [];
+      await context.route('**/sketches.json', (r) => r.fulfill({ json: catalog }));
+      const page = await context.newPage();
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto(base.url + '/');
+      await page.waitForSelector('.gallery-grid');
+      assert.equal(await page.locator('.header h1').textContent(), HEADER_TITLES[lang]);
+      for (const width of HEADER_WIDTHS) {
+        await page.setViewportSize({ width, height: 600 });
+        // Web フォントが後から入ると幅が変わるので、読み込みが落ち着いてから測る
+        await page.evaluate(() => document.fonts.ready);
+        await assertHeaderLayout(page, `${base.name}/galleryHeader ${lang} ${width}px`, width);
+      }
+
+      // 一番狭い幅で実際に押す。言語を切り替えると見出しとボタンの幅が変わるので、その後も測り直す
+      const narrow = `${base.name}/galleryHeader ${lang} 375px`;
+      const other = lang === 'ja' ? 'en' : 'ja';
+      await page.locator(`.header-actions [data-lang-set="${other}"]`).click();
+      await page.waitForFunction((title) => document.querySelector('.header h1')?.textContent === title, HEADER_TITLES[other]);
+      await assertHeaderLayout(page, `${narrow} (${other} へ切り替えた後)`, 375);
+      const [popup] = await Promise.all([
+        context.waitForEvent('page'),
+        page.locator('.header-actions a[href$="/slideshow"]').click(),
+      ]);
+      await popup.waitForURL('**/slideshow');
+      await popup.close();
+      await page.locator('.header-actions a[href$="/venue"]').click();
+      await page.waitForFunction(() => location.pathname === '/venue');
+      assert.deepEqual(errors, [], `${narrow}: browser errors`);
+      console.log(`${base.name}/galleryHeader ${lang}: PASS`);
+    } finally { await context.close(); }
+  }
+}
+
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined,
   args: [`--host-resolver-rules=MAP ${INSECURE_HOST} 127.0.0.1`] });
 try {
@@ -331,6 +428,7 @@ try {
         } finally { await env.context.close(); }
       }
       if (!process.env.ROUTES_CASE || process.env.ROUTES_CASE === 'insecureOrigin') await insecureOrigin(browser, base);
+      if (!process.env.ROUTES_CASE || process.env.ROUTES_CASE === 'galleryHeader') await galleryHeader(browser, base);
     } finally { await server.close(); }
   }
 } finally { await browser.close(); }
