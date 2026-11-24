@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { commitFromResolved, resolveBuildInfo, versionFromDescribe, UNRELEASED_VERSION } from '../src/core/build-info.js';
 import { isolatedGit as git } from './fixtures/isolated-git.js';
+import { makeOuterRepo, outerRepoEnvCases, runNode, runNodeInWorktreeHook } from './fixtures/outer-git-env.js';
 
 // ツールカラム下端に出す版 (#154)。ギャラリーの node_modules に入った dropcaster から
 // ギャラリー側リポジトリの SHA を拾わないこと、GitHub から入れた解決 SHA を拾うことを固定する。
@@ -125,6 +126,64 @@ test('resolveBuildInfo reports no version for an untagged unreleased package', a
   try {
     await writeFile(join(pkgRoot, 'package.json'), JSON.stringify({ name: 'dropcaster', version: UNRELEASED_VERSION }));
     assert.deepEqual(resolveBuildInfo(pkgRoot), { version: null, commit: '0123456' });
+  } finally {
+    await rm(gallery, { recursive: true, force: true });
+  }
+});
+
+// 実装が呼ぶ git は、親の環境がどのリポジトリを指していても packageRoot のリポジトリを読む (#253)。
+// linked worktree の git hook の中では git が GIT_DIR を絶対パスで立てるので、そこから build や test を
+// 走らせると、親の環境のまま呼んだ git は hook を起こした外側のリポジトリを読んでいた。
+
+const BUILD_INFO_PROBE = [
+  '--input-type=module', '-e',
+  `import { resolveBuildInfo } from ${JSON.stringify(new URL('../src/core/build-info.js', import.meta.url).href)};
+   console.log(JSON.stringify(resolveBuildInfo(process.argv[1])));`,
+];
+
+/** タグ v0.3.0 の 1 つ先に HEAD があるパッケージのリポジトリ。 */
+async function makeTaggedRepo() {
+  const repo = await makeRepo(UNRELEASED_VERSION);
+  git(repo, 'tag', 'v0.3.0');
+  git(repo, 'commit', '-q', '--allow-empty', '-m', 'second');
+  return { repo, expected: { version: '0.3.0+1', commit: git(repo, 'rev-parse', '--short=7', 'HEAD') } };
+}
+
+test('resolveBuildInfo reads the package repository when the parent git environment points at another one', async () => {
+  const { repo, expected } = await makeTaggedRepo();
+  const outer = await makeOuterRepo();
+  try {
+    const probe = (env) => JSON.parse(runNode([...BUILD_INFO_PROBE, repo], { cwd: outer.repo, env }));
+    assert.deepEqual(probe({}), expected, 'no git environment');
+    for (const [name, env] of outerRepoEnvCases(outer)) assert.deepEqual(probe(env), expected, name);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+    await rm(outer.dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveBuildInfo reads the package repository inside a pre-commit hook of a linked worktree', async () => {
+  const { repo, expected } = await makeTaggedRepo();
+  const outer = await makeOuterRepo();
+  try {
+    const { stdout, gitDir } = await runNodeInWorktreeHook(outer, [...BUILD_INFO_PROBE, repo], { cwd: outer.worktree });
+    // この前提が崩れると下の比較が空振りする: git は linked worktree の hook に外側の GIT_DIR を渡す
+    assert.match(gitDir, /worktrees/);
+    assert.deepEqual(JSON.parse(stdout), expected);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+    await rm(outer.dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveBuildInfo does not take the gallery HEAD when GIT_DIR points at the gallery repository', async () => {
+  const { gallery, pkgRoot } = await makeGallery({
+    version: '0.1.0', resolved: `git+ssh://git@github.com/shinyaoguri/dropcaster.git#${SHA}`,
+  });
+  try {
+    const env = { GIT_DIR: join(gallery, '.git') };
+    assert.deepEqual(JSON.parse(runNode([...BUILD_INFO_PROBE, pkgRoot], { cwd: gallery, env })),
+      { version: '0.1.0', commit: '0123456' });
   } finally {
     await rm(gallery, { recursive: true, force: true });
   }

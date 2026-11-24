@@ -77,6 +77,9 @@ npx /path/to/dropcaster init my-gallery
 - 手元で次の版とノートを見る: `node scripts/release.js next-version` / `node scripts/release.js notes`
   （断片はコミット済みのものだけ数える）。
 - 版の表示は `src/core/build-info.js` が `git describe` で求める。浅い clone（`fetch-depth: 1`）ではタグが取れず版不明になる。
+- `src/core/build-info.js` と `scripts/release.js` が呼ぶ git は、`GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` など
+  読むリポジトリを差し替える環境変数を引き継がない（`src/core/git-env.js`）。linked worktree の git hook の中から
+  実行しても、パッケージ（`release.js` は cwd）のリポジトリを読む。環境変数で読み先を差し替えることはできない。
 
 ## CI
 

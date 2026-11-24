@@ -8,6 +8,7 @@ import {
   addedFragments, bumpFor, checkPullRequest, latestTag, lintAll, lintFragment, nextRelease, renderNotes,
 } from '../scripts/release.js';
 import { isolatedGit as git } from './fixtures/isolated-git.js';
+import { makeOuterRepo, outerRepoEnvCases, runNode, runNodeInWorktreeHook } from './fixtures/outer-git-env.js';
 
 // 版とノートはタグと changelog.d/ の断片から決める (docs/decisions/0022)。
 
@@ -76,6 +77,141 @@ test('nextRelease only reads fragments and titles after the latest tag', async (
     await writeFile(join(repo, 'changelog.d', 'first.feature.md'), '書き直し。\n');
     git(repo, 'commit', '-q', '-am', 'docs: 断片の書き直し (#3)');
     assert.deepEqual(nextRelease(repo), { tag: 'v0.2.1', previous: 'v0.2.0', fragments: ['changelog.d/second.fix.md'] });
+  });
+});
+
+// release.js が呼ぶ git は、親の環境がどのリポジトリを指していても cwd のリポジトリを読む (#253)。
+
+const RELEASE_SCRIPT = join(import.meta.dirname, '..', 'scripts', 'release.js');
+
+/** @param {string} repo @param {Record<string, string>} [env] */
+function nextVersion(repo, env) {
+  return runNode([RELEASE_SCRIPT, 'next-version'], { cwd: repo, env });
+}
+
+test('release.js reads the tags and history of its cwd when the parent git environment points at another repository', async () => {
+  await withRepo(async (tagged) => {
+    await commit(tagged, 'feat: 最初 (#1)', 'first.feature.md');
+    git(tagged, 'tag', 'v0.2.0');
+    await commit(tagged, 'fix(core): 直す (#2)', 'second.fix.md');
+    // タグが無いと断片は index から数える (ls-files) ので、別の経路として確かめる
+    await withRepo(async (untagged) => {
+      await commit(untagged, 'feat: 最初 (#1)', 'first.feature.md');
+      const outer = await makeOuterRepo();
+      try {
+        assert.equal(nextVersion(tagged), 'v0.2.1', 'tagged, no git environment');
+        assert.equal(nextVersion(untagged), 'v0.2.0', 'untagged, no git environment');
+        for (const [name, env] of outerRepoEnvCases(outer)) {
+          assert.equal(nextVersion(tagged, env), 'v0.2.1', `tagged, ${name}`);
+          assert.equal(nextVersion(untagged, env), 'v0.2.0', `untagged, ${name}`);
+        }
+      } finally {
+        await rm(outer.dir, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
+test('release.js reads the tags and history of its cwd inside a pre-commit hook of a linked worktree', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    await commit(repo, 'fix(core): 直す (#2)', 'second.fix.md');
+    const outer = await makeOuterRepo();
+    try {
+      const { stdout, gitDir } = await runNodeInWorktreeHook(outer, [RELEASE_SCRIPT, 'next-version'], { cwd: repo });
+      // この前提が崩れると下の比較が空振りする: git は linked worktree の hook に外側の GIT_DIR を渡す
+      assert.match(gitDir, /worktrees/);
+      assert.equal(stdout, 'v0.2.1');
+    } finally {
+      await rm(outer.dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// 実行する人の git 設定で、数える断片とタグが変わらない (#253)。
+
+/** グローバル設定を config の中身にして next-version を走らせる。 */
+async function nextVersionWithGlobalConfig(repo, config) {
+  const dir = await mkdtemp(join(tmpdir(), 'dropcaster-release-config-'));
+  try {
+    await writeFile(join(dir, 'gitconfig'), config);
+    return nextVersion(repo, { GIT_CONFIG_GLOBAL: join(dir, 'gitconfig') });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test('release.js counts a new fragment that resembles a rewritten one when diff.renames is copies', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    // 中身が first.feature.md と同じ断片を足し、同じ範囲で first.feature.md を書き直す
+    await commit(repo, 'fix(core): 直す (#2)', 'second.fix.md');
+    await writeFile(join(repo, 'changelog.d', 'first.feature.md'), '書き直し。\n');
+    git(repo, 'commit', '-q', '-am', 'docs: 断片の書き直し (#3)');
+    assert.equal(await nextVersionWithGlobalConfig(repo, ''), 'v0.2.1');
+    assert.equal(await nextVersionWithGlobalConfig(repo, '[diff]\n\trenames = copies\n'), 'v0.2.1');
+  });
+});
+
+test('release.js does not count a renamed fragment as new when diff.renames is false', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    git(repo, 'mv', 'changelog.d/first.feature.md', 'changelog.d/renamed.feature.md');
+    await writeFile(join(repo, 'changelog.d', 'second.fix.md'), '別の一文。直した内容を書く。\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'fix(core): 直す (#2)');
+    // 改名した feature の断片を数え直すと minor が上がる
+    assert.equal(await nextVersionWithGlobalConfig(repo, ''), 'v0.2.1');
+    assert.equal(await nextVersionWithGlobalConfig(repo, '[diff]\n\trenames = false\n'), 'v0.2.1');
+  });
+});
+
+test('release.js does not release for a fragment with a non-ASCII name when core.quotePath is false', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    // lint が通さない名前。既定の設定では断片に数えず、出すものが無い (終了コード 2)
+    await commit(repo, 'docs: 名前の違う断片 (#2)', '日本語.fix.md');
+    for (const config of ['', '[core]\n\tquotePath = false\n']) {
+      await assert.rejects(nextVersionWithGlobalConfig(repo, config), (error) => /** @type {{ status?: number }} */ (error).status === 2, JSON.stringify(config));
+    }
+  });
+});
+
+test('release.js does not count renamed and edited fragments as new when diff.renameLimit is small', async () => {
+  await withRepo(async (repo) => {
+    await mkdir(join(repo, 'changelog.d'), { recursive: true });
+    const body = (n) => `機能 ${n} の説明。ある程度の長さを持つ文。\n二行目 ${n}。\n三行目 ${n}。\n四行目 ${n}。\n`;
+    for (const n of [1, 2, 3]) await writeFile(join(repo, 'changelog.d', `old-${n}.feature.md`), body(n));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'feat: 最初 (#1)');
+    git(repo, 'tag', 'v0.2.0');
+    // 改名して 1 行足す (完全一致ではないので、上限つきの検出に頼る)
+    for (const n of [1, 2, 3]) {
+      git(repo, 'mv', `changelog.d/old-${n}.feature.md`, `changelog.d/new-${n}.feature.md`);
+      await writeFile(join(repo, 'changelog.d', `new-${n}.feature.md`), `${body(n)}追記 ${n}。\n`);
+    }
+    await writeFile(join(repo, 'changelog.d', 'second.fix.md'), '直した内容。まったく別の一文を書く。\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'fix(core): 直す (#2)');
+    // 改名した feature の断片を数え直すと minor が上がる
+    assert.equal(await nextVersionWithGlobalConfig(repo, ''), 'v0.2.1');
+    assert.equal(await nextVersionWithGlobalConfig(repo, '[diff]\n\trenameLimit = 1\n'), 'v0.2.1');
+  });
+});
+
+test('release.js finds the latest tag when column.ui is always', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    await commit(repo, 'feat: 次 (#2)', 'second.feature.md');
+    git(repo, 'tag', 'v0.3.0');
+    await commit(repo, 'fix(core): 直す (#3)', 'third.fix.md');
+    assert.equal(await nextVersionWithGlobalConfig(repo, ''), 'v0.3.1');
+    assert.equal(await nextVersionWithGlobalConfig(repo, '[column]\n\tui = always\n'), 'v0.3.1');
   });
 });
 
