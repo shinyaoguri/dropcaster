@@ -129,6 +129,58 @@ test('release.js reads the tags and history of its cwd inside a pre-commit hook 
   });
 });
 
+// 実行する人の git 設定で、数える断片とタグが変わらない (#253)。
+
+/** グローバル設定を config の中身にして next-version を走らせる。 */
+async function nextVersionWithGlobalConfig(repo, config) {
+  const dir = await mkdtemp(join(tmpdir(), 'dropcaster-release-config-'));
+  try {
+    await writeFile(join(dir, 'gitconfig'), config);
+    return nextVersion(repo, { GIT_CONFIG_GLOBAL: join(dir, 'gitconfig') });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test('release.js counts a new fragment that resembles a rewritten one when diff.renames is copies', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    // 中身が first.feature.md と同じ断片を足し、同じ範囲で first.feature.md を書き直す
+    await commit(repo, 'fix(core): 直す (#2)', 'second.fix.md');
+    await writeFile(join(repo, 'changelog.d', 'first.feature.md'), '書き直し。\n');
+    git(repo, 'commit', '-q', '-am', 'docs: 断片の書き直し (#3)');
+    assert.equal(await nextVersionWithGlobalConfig(repo, ''), 'v0.2.1');
+    assert.equal(await nextVersionWithGlobalConfig(repo, '[diff]\n\trenames = copies\n'), 'v0.2.1');
+  });
+});
+
+test('release.js does not count a renamed fragment as new when diff.renames is false', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    git(repo, 'mv', 'changelog.d/first.feature.md', 'changelog.d/renamed.feature.md');
+    await writeFile(join(repo, 'changelog.d', 'second.fix.md'), '別の一文。直した内容を書く。\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'fix(core): 直す (#2)');
+    // 改名した feature の断片を数え直すと minor が上がる
+    assert.equal(await nextVersionWithGlobalConfig(repo, ''), 'v0.2.1');
+    assert.equal(await nextVersionWithGlobalConfig(repo, '[diff]\n\trenames = false\n'), 'v0.2.1');
+  });
+});
+
+test('release.js finds the latest tag when column.ui is always', async () => {
+  await withRepo(async (repo) => {
+    await commit(repo, 'feat: 最初 (#1)', 'first.feature.md');
+    git(repo, 'tag', 'v0.2.0');
+    await commit(repo, 'feat: 次 (#2)', 'second.feature.md');
+    git(repo, 'tag', 'v0.3.0');
+    await commit(repo, 'fix(core): 直す (#3)', 'third.fix.md');
+    assert.equal(await nextVersionWithGlobalConfig(repo, ''), 'v0.3.1');
+    assert.equal(await nextVersionWithGlobalConfig(repo, '[column]\n\tui = always\n'), 'v0.3.1');
+  });
+});
+
 test('latestTag picks the highest release tag numerically and ignores other tags', async () => {
   await withRepo(async (repo) => {
     git(repo, 'tag', 'v0.9.0');
