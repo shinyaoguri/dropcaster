@@ -90,6 +90,43 @@ test('large embedded assets decode without regexp stack overflow; invalid paddin
   assert.deepEqual(decodeAsset(encodeAsset(bytes)), bytes);
   for (const bad of ['a', 'AAAA===A', 'AA=A', '====', 'AA$=']) assert.throws(() => decodeAsset(bad));
 });
+test('an asset already verified under the same id and data is not decoded again; any other asset still is (#171)', () => {
+  // The base64 decode is the observable cost: count the atob calls a parse makes.
+  const decodes = run => {
+    const real = globalThis.atob; let calls = 0;
+    globalThis.atob = data => { calls++; return real(data); };
+    try { run(); } finally { globalThis.atob = real; }
+    return calls;
+  };
+  const p = createProject();
+  p.assets = [{ id: 'wall', name: 'wall.glb', mimeType: 'model/gltf-binary', data: venueFixture().toString('base64') }];
+  p.venue.scene.kind = 'glb'; p.venue.scene.assetId = 'wall';
+  let stored;
+  assert.equal(decodes(() => { stored = parseProject(p); }), 1, 'the first parse decodes and validates the GLB');
+  // A calibration commit: the projector moves, the asset is the one that was just verified.
+  const moved = { ...stored, venue: { ...stored.venue, revision: stored.venue.revision + 1,
+    projectors: [{ ...stored.venue.projectors[0], position: [1, 2, 3] }] } };
+  let committed;
+  assert.equal(decodes(() => { committed = parseProject(moved, stored.assets); }), 0, 'an unchanged asset is not decoded again');
+  assert.deepEqual(committed, moved);
+  assert.equal(decodes(() => parseProject(moved)), 1, 'without verified assets every parse decodes');
+  // The calibration values themselves are still validated.
+  assert.throws(() => parseProject({ ...moved, venue: { ...moved.venue, projectors: [{ ...moved.venue.projectors[0], near: 5, far: 1 }] } }, stored.assets));
+  // The same id does not vouch for different data.
+  const truncated = venueFixture(); truncated[8] = 0;
+  for (const bad of [venueFixture(d => d.images[0].uri = 'https://example.com/image.png'), venueFixture(d => d.buffers[0].uri = '../secret.bin'),
+    venueFixture(d => d.bufferViews[0].byteOffset = 1e9), truncated]) {
+    const replaced = { ...moved, assets: [{ ...stored.assets[0], data: bad.toString('base64') }] };
+    assert.equal(decodes(() => assert.throws(() => parseProject(replaced, stored.assets))), 1);
+  }
+  // Nor does the same data under another id.
+  const renamed = { ...moved, assets: [{ ...stored.assets[0], id: 'other' }], venue: { ...moved.venue, scene: { ...moved.venue.scene, assetId: 'other' } } };
+  assert.equal(decodes(() => parseProject(renamed, stored.assets)), 1);
+  // A verified asset skips only the GLB decode, not the checks on its other fields.
+  assert.throws(() => parseProject({ ...moved, assets: [{ ...stored.assets[0], mimeType: 'model/gltf+json' }] }, stored.assets));
+  assert.throws(() => parseProject({ ...moved, assets: [{ ...stored.assets[0], name: '' }] }, stored.assets));
+  assert.throws(() => parseProject({ ...moved, assets: [stored.assets[0], stored.assets[0]] }, stored.assets));
+});
 
 test('v1 projects migrate without changing calibrated geometry or embedded assets', () => {
   const p = createProject();
