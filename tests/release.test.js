@@ -1,22 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm, readFile } from 'fs/promises';
-import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   BASELINE, SECTIONS, SKIP_LABEL, TYPES_NEEDING_FRAGMENT,
   addedFragments, bumpFor, checkPullRequest, latestTag, lintAll, lintFragment, nextRelease, renderNotes,
 } from '../scripts/release.js';
+import { isolatedGit as git } from './fixtures/isolated-git.js';
 
 // 版とノートはタグと changelog.d/ の断片から決める (docs/decisions/0022)。
-
-const GIT_ID = ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'tag.gpgSign=false', '-c', 'commit.gpgSign=false'];
-
-/** @param {string} cwd @param {string[]} args */
-function git(cwd, ...args) {
-  return execFileSync('git', [...GIT_ID, ...args], { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-}
 
 /** squash merge を模して、断片 (任意) を足すコミットを 1 つ作る。 */
 async function commit(repo, title, fragment) {

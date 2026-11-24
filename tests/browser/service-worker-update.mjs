@@ -377,7 +377,8 @@ const cases = {
     try {
       let page = await openControlled(context, base, '/a');
       await page.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.querySelector('canvas'));
-      const legacy = { kept: `${base.url}/legacy-runtime.txt`, asset: `${base.url}/assets/legacy-old.js`, local: `${base.url}/legacy-local.json` };
+      // local に置くのは作品のファイル。作品でも作品カタログでもないものは、有効化のときに runtime へ移る (#179)
+      const legacy = { kept: `${base.url}/legacy-runtime.txt`, asset: `${base.url}/assets/legacy-old.js`, local: `${base.url}/sketches/legacy/data.json` };
       await page.evaluate(async ({ kept, asset, local }) => {
         await (await caches.open('dropcaster-runtime-old')).put(kept, new Response('kept'));
         await (await caches.open('dropcaster-runtime-old')).put(asset, new Response('old asset'));

@@ -2,7 +2,7 @@
 //
 // 6 つのキャッシュバケットに振り分ける:
 //   shell    アプリ本体の HTML / JS / CSS / 画像 (same-origin の navigate + assets)
-//   local    ローカル sketch (/sketches/*, /sketches.json)
+//   local    ローカル sketch (scope 相対の sketches/*, sketches.json)
 //   op-meta  OpenProcessing API (/api/sketch/* / /code)
 //   gist     GitHub Gist API (api.github.com/gists/* と、ホスト版の同一オリジン中継 /gist-api/*)
 //   op-cdn   外部 CDN (cdn.jsdelivr.net 等) と asset proxy のレスポンス
@@ -73,7 +73,7 @@ const SHELL_ASSET_LIMIT = 200;
 const OFFLINE_NAVIGATION_FALLBACK = new URL('./', self.registration.scope).toString();
 
 // scope のパス (例: '/' や '/gallery/')。ローカル作品の判定をサブパス配信でも効かせるため、
-// ルート前提の matchSegment ではなくこれを基準にする。
+// ルート前提の判定ではなくこれを基準にする。
 const SCOPE_PATH = new URL(self.registration.scope).pathname;
 
 // op-meta の鮮度。これより新しい cached レスポンスはネット往復をスキップ。
@@ -88,10 +88,11 @@ self.addEventListener('activate', (event) => {
     const names = await caches.keys();
     // dropcaster-* で始まるバケットだけ扱う (他アプリの cache を触らない)。
     // 版を上げたときに消すのは古い shell だけ。
-    await Promise.all(names
-      .filter(name => name.startsWith(SHELL_PREFIX) && name !== SHELL_CACHE)
-      .map(name => caches.delete(name)));
+    const oldShells = names.filter(name => name.startsWith(SHELL_PREFIX) && name !== SHELL_CACHE);
     await migrateVersionedContentCaches(names);
+    // 古い shell を消す前に、そこへ入っていた作品のファイルを LOCAL へ移す (#179)
+    await rehomeSketchFiles(oldShells);
+    await Promise.all(oldShells.map(name => caches.delete(name)));
     await self.clients.claim();
   })());
 });
@@ -139,21 +140,18 @@ self.addEventListener('fetch', (event) => {
       event.respondWith(networkFirst(req, GIST_CACHE));
       return;
     }
-    // local sketch 系 (/sketches.json, /sketches/*)
-    if (matchSegment(url.pathname, 'sketches')) {
+    // local sketch 系 (scope 相対の sketches.json, sketches/*)。サブパス配信 (例 /gallery/sketches/*) でも
+    // 作品の HTML (上の navigate) と同じ LOCAL に入れる (#179)
+    if (isLocalSketchResource(url)) {
       event.respondWith(staleWhileRevalidate(req, LOCAL_CACHE));
       return;
     }
     // assets/ 配下と ico/manifest は CacheFirst (vite が hash 付きで吐く)。
     // サブパス配信 (例 /gallery/assets/*) も shell に載せる。install が事前キャッシュした
-    // 資産 (precacheShellAssets) を、オフラインで引けるようにするため (#164)
-    if (
-      matchSegment(url.pathname, 'assets') ||
-      isScopeAsset(url) ||
-      url.pathname.endsWith('/manifest.json') ||
-      url.pathname.endsWith('/icon.svg') ||
-      url.pathname.endsWith('/favicon.ico')
-    ) {
+    // 資産 (precacheShellAssets) を、オフラインで引けるようにするため (#164)。
+    // どちらも scope 相対で見る。scope の外の /assets/ や、作品以外の場所にある同名のファイル
+    // (例 docs/manifest.json) を、版が変わるまで更新されない shell に入れない (#179)
+    if (isScopeAsset(url) || isScopeShellFile(url)) {
       event.respondWith(cacheFirst(req, SHELL_CACHE));
       return;
     }
@@ -413,6 +411,45 @@ async function copyMissing(fromName, toName, keep) {
   }
 }
 
+// 振り分けがルート前提だったころ、サブパス配信の作品のファイルは LOCAL 以外に入っていた (#179):
+//   - サブリソース (sketch.js など) は runtime
+//   - 作品の中の manifest.json・icon.svg・favicon.ico・assets.json は shell (版ごとに消える)
+// いまは LOCAL から引くので、有効化のときに LOCAL へ移す。逆に、scope の外の /sketches/ や、作品の外にある
+// **/sketches.json は LOCAL に入っていたが、いまは runtime から引くので runtime へ移す。
+// 中身のバケットは版をまたいで残るため、移さないと、更新後にオフラインで引けず、読まれないまま残る。
+async function rehomeSketchFiles(oldShellNames) {
+  const isLocal = (req) => isLocalSketchResource(new URL(req.url));
+  // 先に移したものを残すので、開くたびに取り直される runtime を、取り直されない古い shell より先に移す
+  await moveEntries(RUNTIME_CACHE, LOCAL_CACHE, isLocal);
+  for (const name of oldShellNames) await moveEntries(name, LOCAL_CACHE, isLocal);
+  await moveEntries(LOCAL_CACHE, RUNTIME_CACHE, (req) => !isLocal(req));
+}
+
+// from の中で pick に当たるものを to へ移す。to に既にあるものは上書きしない。
+// 1 件の失敗 (容量の超過など) で残りを諦めない。失敗したものは from に残る。
+async function moveEntries(fromName, toName, pick) {
+  try {
+    if (!(await caches.has(fromName))) return;
+    const from = await caches.open(fromName);
+    const picked = (await from.keys()).filter(pick);
+    if (picked.length === 0) return;
+    const to = await caches.open(toName);
+    for (const req of picked) {
+      try {
+        if (!(await to.match(req))) {
+          const res = await from.match(req);
+          if (res) await to.put(req, res);
+        }
+        await from.delete(req);
+      } catch {
+        // この 1 件は from に残す
+      }
+    }
+  } catch {
+    // 移せなくても有効化は続ける
+  }
+}
+
 // --- ヘルパ -----------------------------------------------------------------
 
 function isCacheable(res) {
@@ -433,17 +470,26 @@ function isScopeAsset(url) {
   return url.origin === self.location.origin && url.pathname.startsWith(`${SCOPE_PATH}assets/`);
 }
 
+// scope 直下の manifest とアイコン
+const SCOPE_SHELL_FILES = ['manifest.json', 'icon.svg', 'favicon.ico'];
+function isScopeShellFile(url) {
+  return url.origin === self.location.origin &&
+    SCOPE_SHELL_FILES.some(name => url.pathname === `${SCOPE_PATH}${name}`);
+}
+
 function isLocalSketchPath(url) {
   return url.pathname.startsWith(`${SCOPE_PATH}sketches/`);
 }
 
-function offlineResponse() {
-  return new Response('オフラインです', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+// ローカル作品のファイルと作品カタログ。scope 相対で見るので、ルート配信でもサブパス配信でも同じ判定になり、
+// 同じオリジンに同居する scope の外のサイトの /sketches/ は拾わない (#179)
+function isLocalSketchResource(url) {
+  return url.origin === self.location.origin &&
+    (isLocalSketchPath(url) || url.pathname === `${SCOPE_PATH}sketches.json`);
 }
 
-function matchSegment(pathname, segment) {
-  return pathname === `/${segment}` || pathname === `/${segment}/` ||
-         pathname.startsWith(`/${segment}/`) || pathname.endsWith(`/${segment}.json`);
+function offlineResponse() {
+  return new Response('オフラインです', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
 const IMMUTABLE_CDN_HOSTS = new Set([

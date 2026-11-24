@@ -10,6 +10,7 @@ import ora from 'ora';
 import { OpenProcessingApiClient } from '../../core/modules/op-api-client.js';
 import { assembleLocalOpSketchHtml, planHtmlModeLocalFiles } from '../../core/modules/op-sketch-builder.js';
 import {
+  ASSET_DIR_NAME,
   assetPathsForUrl,
   extractDeckardUrls,
   downloadAssets,
@@ -95,8 +96,15 @@ export async function fetchCommand(idArg, options = {}) {
   const sorted = [...codeTabs].sort((a, b) => (a.orderID ?? 0) - (b.orderID ?? 0));
   let htmlPlan = null;
   if (meta.mode === 'html') {
+    // アセットを同梱するなら、その保存先 (assets/) と同じ名前のタブは別名で書き出す (#220)。
+    // 同梱しない (--no-assets・同梱できる URL が無い) ときは assets/ を作らないので、名前を変えない
+    const bundlesAssets = options.assets !== false
+      && extractDeckardUrls(sorted).some((url) => assetPathsForUrl(url) !== null);
     try {
-      htmlPlan = planHtmlModeLocalFiles({ codeTabs: sorted });
+      htmlPlan = planHtmlModeLocalFiles({
+        codeTabs: sorted,
+        assetDirName: bundlesAssets ? ASSET_DIR_NAME : undefined,
+      });
     } catch {
       console.error(chalk.red(`❌ ${t('fetch.noIndexTab')}`));
       process.exit(1);

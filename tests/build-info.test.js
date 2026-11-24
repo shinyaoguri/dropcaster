@@ -1,19 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'fs/promises';
-import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { commitFromResolved, resolveBuildInfo, versionFromDescribe, UNRELEASED_VERSION } from '../src/core/build-info.js';
+import { isolatedGit as git } from './fixtures/isolated-git.js';
 
 // ツールカラム下端に出す版 (#154)。ギャラリーの node_modules に入った dropcaster から
 // ギャラリー側リポジトリの SHA を拾わないこと、GitHub から入れた解決 SHA を拾うことを固定する。
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
-
-function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-}
 
 /** ギャラリー (git 管理) の node_modules/dropcaster を作る。 */
 async function makeGallery(lockEntry) {
@@ -26,7 +22,7 @@ async function makeGallery(lockEntry) {
       JSON.stringify({ packages: { 'node_modules/dropcaster': lockEntry } }));
   }
   git(gallery, 'init', '-q');
-  git(gallery, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'gallery');
+  git(gallery, 'commit', '-q', '--allow-empty', '-m', 'gallery');
   return { gallery, pkgRoot };
 }
 
@@ -67,7 +63,7 @@ test('resolveBuildInfo uses HEAD when the package root is the git work tree', as
   try {
     await writeFile(join(repo, 'package.json'), JSON.stringify({ name: 'dropcaster', version: '9.9.9' }));
     git(repo, 'init', '-q');
-    git(repo, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'x');
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'x');
     const head = git(repo, 'rev-parse', '--short=7', 'HEAD');
     assert.deepEqual(resolveBuildInfo(repo), { version: '9.9.9', commit: head });
   } finally {
@@ -76,8 +72,6 @@ test('resolveBuildInfo uses HEAD when the package root is the git work tree', as
 });
 
 // 版の正本はタグ (docs/decisions/0022)。package.json の version はリリースで動かない。
-
-const GIT_ID = ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'tag.gpgSign=false', '-c', 'commit.gpgSign=false'];
 
 test('versionFromDescribe reads the release tag and how far HEAD has moved past it', () => {
   assert.equal(versionFromDescribe('v0.2.0-0-gabc1234'), '0.2.0');
@@ -97,17 +91,17 @@ async function makeRepo(version) {
   const repo = await mkdtemp(join(tmpdir(), 'dropcaster-build-info-tag-'));
   await writeFile(join(repo, 'package.json'), JSON.stringify({ name: 'dropcaster', version }));
   git(repo, 'init', '-q');
-  git(repo, ...GIT_ID, 'commit', '-q', '--allow-empty', '-m', 'first');
+  git(repo, 'commit', '-q', '--allow-empty', '-m', 'first');
   return repo;
 }
 
 test('resolveBuildInfo takes the version from the release tag, not package.json', async () => {
   const repo = await makeRepo(UNRELEASED_VERSION);
   try {
-    git(repo, ...GIT_ID, 'tag', 'v0.2.0');
+    git(repo, 'tag', 'v0.2.0');
     assert.equal(resolveBuildInfo(repo).version, '0.2.0');
-    git(repo, ...GIT_ID, 'commit', '-q', '--allow-empty', '-m', 'second');
-    git(repo, ...GIT_ID, 'commit', '-q', '--allow-empty', '-m', 'third');
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'second');
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'third');
     assert.equal(resolveBuildInfo(repo).version, '0.2.0+2');
   } finally {
     await rm(repo, { recursive: true, force: true });
@@ -117,7 +111,7 @@ test('resolveBuildInfo takes the version from the release tag, not package.json'
 test('resolveBuildInfo ignores tags that are not release versions', async () => {
   const repo = await makeRepo(UNRELEASED_VERSION);
   try {
-    git(repo, ...GIT_ID, 'tag', 'poc-3d');
+    git(repo, 'tag', 'poc-3d');
     assert.equal(resolveBuildInfo(repo).version, null);
   } finally {
     await rm(repo, { recursive: true, force: true });

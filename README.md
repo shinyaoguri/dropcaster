@@ -199,6 +199,10 @@ dropcaster fetch 2257553 --no-assets     # アセット同梱をスキップ（O
 対応モードは **p5js / html**。html モードはタブ構成（index.html + JS / CSS / GLSL 等）を
 そのままファイルとして書き出すので、`loadShader('vert.glsl')` のようなタブ参照は
 ローカルファイルで解決されます（index タブは `index.html` として書き出し）。
+アセットを同梱するとき、`assets` という名前のタブ（大文字小文字を問わない）は同梱先の `assets/` と
+重なるので、`assets_2` のような別名で書き出します。`<script src="assets">` や `loadStrings('assets')` のように
+URL を書く位置にある参照は新しい名前に揃えますが、変数に入れた名前などは書き換わりません。
+fetch が付け替えを警告したら、そのタブを読み込めているか確かめてください。
 既知の制限: 同梱されるのはコード中に **deckard の絶対 URL** で書かれたアセットのみです。
 `loadImage('photo.jpg')` のような fileBase 相対参照のアセットは取得できません（p5js モードも同様）。
 アセットはファイル名をデコードした名前（`a%20b.png` → `a b.png`、日本語名も同様）で保存されます。
