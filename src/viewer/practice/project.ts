@@ -172,8 +172,12 @@ export function encodeAsset(bytes: Uint8Array): string {
   return btoa(raw);
 }
 
-/** Validate everything before mutating the live controller; legacy v2 uses the existing parser. */
-export function parseProject(value: unknown): Project {
+/**
+ * Validate everything before mutating the live controller; legacy v2 uses the existing parser.
+ * `verified` are assets this session has already validated: one with the same id and the same data is not
+ * decoded again, so re-validating an edit does not cost a GLB decode. Leave it empty for anything read from outside.
+ */
+export function parseProject(value: unknown, verified: Project['assets'] = []): Project {
   const root = record(value);
   if (root.version === 2 && root.format === undefined) {
     return createProject(parseLayout(root));
@@ -197,7 +201,7 @@ export function parseProject(value: unknown): Project {
     const a = record(value);
     if (a.mimeType !== 'model/gltf-binary') fail('asset');
     const data = str(a.data, Math.ceil(MAX_GLB_BYTES / 3) * 4);
-    validateGlb(decodeAsset(data));
+    if (!verified.some(v => v.id === a.id && v.data === data)) validateGlb(decodeAsset(data));
     return { id: str(a.id), name: str(a.name), mimeType: 'model/gltf-binary' as const, data };
   });
   unique(assets.map(a => a.id));
