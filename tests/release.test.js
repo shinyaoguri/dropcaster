@@ -176,7 +176,7 @@ test('release.js does not release for a fragment with a non-ASCII name when core
     // lint が通さない名前。既定の設定では断片に数えず、出すものが無い (終了コード 2)
     await commit(repo, 'docs: 名前の違う断片 (#2)', '日本語.fix.md');
     for (const config of ['', '[core]\n\tquotePath = false\n']) {
-      await assert.rejects(nextVersionWithGlobalConfig(repo, config), (error) => error.status === 2, JSON.stringify(config));
+      await assert.rejects(nextVersionWithGlobalConfig(repo, config), (error) => /** @type {{ status?: number }} */ (error).status === 2, JSON.stringify(config));
     }
   });
 });
