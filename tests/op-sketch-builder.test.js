@@ -71,6 +71,48 @@ test('html mode: throws when there is no index.html tab', () => {
   assert.throws(() => assembleHtmlModeOpSketchHtml({ ...fx, options: {} }), /index\.html/);
 });
 
+// #211: 参照を URL として読む。[タブ名, index.html に書く参照] は Issue の表の 6 行
+const TAB_REFERENCES = [
+  ['lib.js', 'lib.js'],
+  ['my lib.js', 'my%20lib.js'],
+  ['lib.js', 'lib.js?v=2'],
+  ['a#b.js', 'a%23b.js'],
+  ['my%20lib.js', 'my%20lib.js'],
+  ['a#b.js', 'a#b.js'],
+];
+
+test('html mode: a reference written as a URL embeds the tab it points to', () => {
+  for (const [tabName, ref] of TAB_REFERENCES) {
+    const code = `window.loaded = ${JSON.stringify(tabName)};`;
+    const html = assembleHtmlModeOpSketchHtml({
+      meta: { mode: 'html', fileBase: FILE_BASE },
+      codeTabs: [
+        { title: 'index.html', orderID: 0, code: `<html><head><script src="${ref}"></script></head><body></body></html>` },
+        { title: tabName, orderID: 1, code },
+      ],
+      options: { assetProxyBaseUrl: PROXY },
+    });
+    const tags = [...html.matchAll(/<script src="data:text\/javascript;charset=utf-8;base64,([^"]*)" data-dc-file="([^"]*)"><\/script>/g)];
+    assert.equal(tags.length, 1, `tab "${tabName}" referenced as "${ref}" is embedded`);
+    assert.equal(tags[0][2], tabName);
+    assert.ok(Buffer.from(tags[0][1], 'base64').toString('utf8').startsWith(`${code}\n`), `content of "${tabName}"`);
+    assert.ok(!html.includes(`src="${ref}"`), `the reference "${ref}" is replaced`);
+  }
+});
+
+test('html mode: a stylesheet reference with a query embeds the tab', () => {
+  const html = assembleHtmlModeOpSketchHtml({
+    meta: { mode: 'html', fileBase: FILE_BASE },
+    codeTabs: [
+      { title: 'index.html', orderID: 0, code: '<html><head><link rel="stylesheet" href="style.css?v=2"></head></html>' },
+      { title: 'style.css', orderID: 1, code: 'body { margin: 0; }' },
+    ],
+    options: {},
+  });
+  assert.match(html, /<style>\nbody \{ margin: 0; \}\n<\/style>/);
+  assert.ok(!/<link\b/i.test(html), 'the link is gone');
+});
+
 // --- planHtmlModeLocalFiles (`dropcaster fetch` の html モード用ローカル書き出し計画) ---
 
 test('html-mode local plan: tabs become files verbatim, index tab becomes index.html', () => {

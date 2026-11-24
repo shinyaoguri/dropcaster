@@ -47,6 +47,7 @@ https://dropcaster.soui.dev/gist/<gist id>     ← 公開 Gist（?gist=<gist id>
 - [canvastage](https://github.com/shinyaoguri/canvastage) の「Share to GitHub Gist」で書き出した Gist をそのまま読み込める
 - canvastage 専用ではなく、**`index.html` を含む公開 Gist**なら読み込む。`index.html` から相対参照された Gist 内のファイル（`style.css` / `sketch.js` など）は組み立て時に埋め込まれ、CDN の `<script src>` はそのまま残る
   - `<script src="sketch.js">` は `type="module"`・`defer`・`async`・`nomodule` などの属性を残したまま、src だけをファイル内容の `data:` URL に差し替えるので、実行の順序と意味は元のファイル構成と同じになる
+  - 参照は URL として読む。`sketch.js?v=2` や `style.css#top` はクエリ・フラグメントを除いた `sketch.js`・`style.css` を、`my%20lib.js` は `my lib.js` を指す。参照と同じ名前のファイル（`my%20lib.js` という名前のファイルなど）があれば、そちらを先に選ぶ
   - **埋め込んだ script の中の相対パスの import は解決できない**。module の static import（`import './util.js'`）も、classic / module どちらの script の `import('./lib.js')` も、基準が `data:` URL になるため失敗する（`<base href>` も効かない）。module は 1 ファイルで完結させるか、絶対 URL（CDN）で import する
 - ライブラリやアセットは作者が書いた絶対 URL（CDN）で読まれる。OP のような proxy は経由しない
 - Secret Gist / 削除済み Gist、`index.html` を含まない Gist は読み込めない
