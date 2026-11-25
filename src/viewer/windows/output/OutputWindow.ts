@@ -149,6 +149,8 @@ export class OutputWindow extends BaseWindow {
           <span class="dc-dev-readout-sep">·</span>
           <span id="dc-dev-readout-pct">—</span>
         </div>
+        <!-- ブラックアウト (#194) の黒い覆い。映像・マスク・開発モードの表示より前、操作 UI より後ろ。 -->
+        <div id="dc-output-blackout" aria-hidden="true"></div>
         <button id="dc-output-fs" class="dc-output-ui" title="${t(this.onSketchKey ? 'output.fullscreenSketchKeys' : 'output.fullscreen')}">⛶ ${t(this.onSketchKey ? 'output.fullscreenSketchKeys' : 'output.fullscreen')}</button>
         <div id="dc-output-hint" class="dc-output-ui">${t(this.onSketchKey ? 'output.hintSketchKeys' : 'output.hint')}</div>
         <!-- メイン画面が隠れて映像が止まっている間の案内 (#185)。他の操作 UI と同じく、
@@ -238,6 +240,13 @@ export class OutputWindow extends BaseWindow {
         pointer-events: none;
       }
       #dc-dev-readout .dc-dev-readout-sep { opacity: 0.45; margin: 0 6px; }
+
+      /* --- ブラックアウト (#194): dc-blackout が stage に付いている間、出力全体を黒で覆う --- */
+      /* 下の <video> は止めない (解除した瞬間に、進んだ先の映像が出る)。フェードは付けない (ADR 0024)。
+         全画面ボタンなどの操作 UI (z-index 10 以上) はマウス操作中だけ従来どおり覆いの上に出る。 */
+      #dc-output-blackout { display: none; position: fixed; inset: 0; z-index: 9; background: #000; }
+      #dc-output-stage.dc-blackout #dc-output-blackout { display: block; }
+      #dc-output-stage.dc-blackout .dc-dev-ui { display: none; }
     `;
   }
 
@@ -590,6 +599,15 @@ export class OutputWindow extends BaseWindow {
   // 全画面の出入りでサイズが変わるので少し後に transform を再計算
   private scheduleReapplyTransforms(): void {
     this.window?.setTimeout(() => this.reapplyTransforms(), 300);
+  }
+
+  // --- ブラックアウト (#194) ---
+
+  /** 出力全体を黒で覆う／外す。マッピング・stream・開発モードの状態は変えない。 */
+  setBlackout(on: boolean): void {
+    try {
+      this.window?.document.getElementById('dc-output-stage')?.classList.toggle('dc-blackout', on);
+    } catch { /* closed window */ }
   }
 
   // --- 開発モード（mapping 枠線 ＋ マウス追従クロスヘア） ---
