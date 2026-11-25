@@ -193,6 +193,9 @@ sw.js を配信しても、操作画面が再読み込みされず出力が映�
 Gist と OpenProcessing の html モードの作品を実際に開き、埋め込んだ script・CSS が元のファイル構成と同じに
 働くこと (#110)、クエリ・`%XX`・`#` を含む参照のファイルが読み込まれること (#211) も確かめるので、
 `src/core/modules/html-doc-builder.js` の埋め込みを変えたときも実行する。
+同じスイートの `galleryHeader` は、ギャラリーのホームを幅 1600 / 1280 / 960 / 800 / 375px・英語と日本語で開き、
+見出しとヘッダーのボタン列が重ならず、ボタンが画面内にあって押せることを矩形で確かめる (#178)。
+ホームのヘッダー (`SketchGalleryView`、`style.css` の `.header`) を変えたら実行する。
 
 `npm run test:slideshow` は両 viewer エントリのスライドショーで iframe ごとの rAF 回数を数え、
 先読みした非表示の作品が待機中に描画せず、表示した作品だけが動くことを確かめる。Next / Previous、
@@ -237,9 +240,12 @@ Playwright の Chromium は自動化中のページを常に visible に保つ�
   gitignore 済みの `.claude/settings.local.json` 側に置く。
 
 `npm run test:venue` は独立した `/venue` のGUI操作・実出力・共有・マッピングとの分離を両viewerで検証する。
-`VENUE_ENTRY=gallery|hosted`、`VENUE_CASE=workflow|interaction|recovery|isolation|reload` で絞り込める。
+`VENUE_ENTRY=gallery|hosted`、`VENUE_CASE=workflow|interaction|recovery|assets|isolation|reload` で絞り込める。
 `VENUE_ARTIFACT_DIR=/tmp/venue-images` でスクリーンショットを保存できる。
 `interaction` は実ポインタで移動・回転・サイズ・取消・undoを検証し、`workflow` は輪郭／グリッド／白黒の実ピクセル・popup・解像度・保存再開を確認する。
 `recovery` は不正・遅延読込、GLB、容量不足、WebGL停止時の出力終了と書出を確認する。
+`assets` は GLB の会場で、校正値の確定と取り消しが GLB を復号し直さないこと、GLB・会場ファイル・マッピングの下書き・保存済みの下書きから
+入るものは毎回検証することを、GLB の復号 (`atob`) の回数で確かめる (#171)。`VenueCalibrationPage` の `commit` / `apply` や
+`parseProject` のアセットの扱いを変えたら実行する。
 `isolation` は作品の再生・マッピングの下書き・出力を保ったまま会場を作り、ファイルで明示反映する経路を確認する。
 `workflow` と `isolation` は、会場の画面が隠れたときに校正ウィンドウで操作している間だけ案内が出ること (#185) も確かめる。
