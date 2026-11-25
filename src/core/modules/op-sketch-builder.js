@@ -152,7 +152,11 @@ export function assembleHtmlModeOpSketchHtml({ meta, codeTabs, options = {} }) {
  *   - 他のタブは原形保存が基本。パス区切り・制御文字などの危険名と、
  *     予約名（`_op-meta.json`）・大文字小文字無視での衝突だけ付け替える
  *     （大文字小文字を無視するのは case-insensitive なファイルシステム対策）
+ *   - URL で意味を持つ `#` と `%` を含む名前も付け替える (#211)。`a#b.js` というファイルは、
+ *     参照を `a#b.js` と書けば `a` を、`a%23b.js` と書いても Vite は `a%23b.js` を探すので、
+ *     どう書いても配信されない。`my%20lib.js` は、書かれたままの参照が `my lib.js` を探す
  *   - 付け替えが起きたら全タブ内容中の旧名参照を新名に置換し、renames で返す。
+ *     旧名をパーセントエンコードして書いた参照 (`a%23b.js`) も同じ新名に揃える。
  *     ただし旧名が最終的なファイル名集合にも残っている場合（同名タブの重複など）
  *     は参照先が曖昧なので書き換えない
  *   - assetDirName（呼び出し側がアセットを同梱するディレクトリの名前。例: `assets`）を
@@ -189,6 +193,11 @@ export function planHtmlModeLocalFiles({ codeTabs, assetDirName }) {
   // 付け替え先の連番は、ほかのタブの元の名前も避ける。まだ処理していないタブの名前 (例: assets_2) を
   // 先に取ると、そのタブへの参照まで付け替えたタブを指してしまう (#220)
   const originalLower = new Set(tabs.map(tab => safeLocalTabName(tab.name).toLowerCase()));
+  // 文字の置き換えで決めた名前は、その名前をもともと持つ別のタブにも譲る。先に取ると、
+  // そのタブへの参照が、置き換えたタブを指してしまう (例: `a#b.js` と `a_b.js`)
+  const keptLower = new Set(
+    tabs.filter(tab => safeLocalTabName(tab.name) === tab.name).map(tab => tab.name.toLowerCase()),
+  );
   const renames = [];
   const files = [];
   let indexAssigned = false;
@@ -199,7 +208,8 @@ export function planHtmlModeLocalFiles({ codeTabs, assetDirName }) {
       indexAssigned = true;
     } else {
       outName = safeLocalTabName(tab.name);
-      if (usedLower.has(outName.toLowerCase())) {
+      const takesKeptName = outName !== tab.name && keptLower.has(outName.toLowerCase());
+      if (usedLower.has(outName.toLowerCase()) || takesKeptName) {
         const { stem, ext } = splitTabExt(outName);
         let suffix = 2;
         do {
@@ -232,16 +242,32 @@ export function planHtmlModeLocalFiles({ codeTabs, assetDirName }) {
       file.content = rewriteUrlPositionReferences(file.content, toByFrom);
     }
   }
-  if (anywhere.length > 0) {
-    const toByFrom = new Map(anywhere.map(r => [r.from, r.to]));
-    const pattern = new RegExp(anywhere.map(r => escapeRegExp(r.from)).join('|'), 'g');
+  // 名前を変えないタブでも、配信サーバが `%XX` から戻さない文字 (`+` `&` `@` など) を含むものは、
+  // `%XX` で書いた参照 (`a%2Bb.js`) を名前そのまま (`a+b.js`) に書き直す。viewer は decodeURIComponent で
+  // `a+b.js` を埋め込むが、Vite (sirv) は decodeURI なので `%2B` を戻さず、参照が 404 になる (#211)
+  const servedAsWritten = files
+    .filter(f => SERVER_KEPT_ESCAPES.test(f.name) && !renames.some(r => r.to === f.name))
+    .map(f => ({ from: f.name, to: f.name }));
+  const replaced = [...anywhere, ...servedAsWritten.filter(s => !anywhere.some(r => r.from === s.from))];
+  if (replaced.length > 0) {
+    // 旧名は、書かれたままの形と、パーセントエンコードして書いた形の両方を探す。
+    // 見つけた参照がどのタブを指すかは viewer (html-doc-builder の resolveFileRef) と同じ順序で決める:
+    // 書かれたままの名前のタブが先、無ければデコードした名前のタブ (#211)
+    const toByFrom = new Map(replaced.map(r => [r.from, r.to]));
+    const pattern = new RegExp(replaced.map(r => encodedOrLiteralPattern(r.from)).join('|'), 'g');
     for (const file of files) {
-      file.content = file.content.replace(pattern, m => toByFrom.get(m));
+      file.content = file.content.replace(pattern, m => toByFrom.get(m) ?? toByFrom.get(percentDecoded(m)) ?? m);
     }
   }
 
   return { files, indexName, renames };
 }
+
+/**
+ * decodeURI が `%XX` から戻さない文字のうち、ファイル名に残るもの (`/` `?` `:` `#` は保存名に残らない)。
+ * decodeURIComponent はこれらも戻すので、`%XX` で書いた参照の指す先がサーバと viewer で割れる。
+ */
+const SERVER_KEPT_ESCAPES = /[;@&=+$,]/;
 
 /** 引用符で囲んだ文字列 1 つ (呼び出しの、前にある引数を読み飛ばすのに使う)。\x60 はバッククオート */
 const QUOTED_STRING = String.raw`(?:'[^'\n]*'|"[^"\n]*"|\x60[^\x60]*\x60)`;
@@ -260,7 +286,8 @@ const URL_POSITION = String.raw`\b(?:[sS][rR][cC]|[hH][rR][eE][fF])\s*=\s*`
   + String.raw`|\bopen\s*\(\s*(?:${QUOTED_STRING}\s*,\s*)+`;
 
 /**
- * URL を書く位置にあり、値の全体がタブ名 (前に `./` が付いてもよい) の文字列だけを新名に書き換える。
+ * URL を書く位置にあり、値の全体がタブ名 (前に `./`、後ろにクエリ・フラグメントが付いてもよい) の
+ * 文字列だけを新名に書き換える。`assets?v=2` は viewer でもタブ `assets` を指す (#211)。
  * 単語としての出現 (識別子・コメント・`assets/...` のパス・id や class・データのキー) と、
  * 文字列の連結 (`'assets' + path`) は、タブへの参照と言い切れないので書かれたまま残す。
  * @param {string} content
@@ -271,25 +298,26 @@ function rewriteUrlPositionReferences(content, toByFrom) {
   const names = [...toByFrom.keys()].map(escapeRegExp).join('|');
   // 値の全体がタブ名の文字列を先に探し、見つけた位置でだけ手前の並びを確かめる
   // (手前の並びを全ての位置で確かめると、文字列が長く並ぶ行で遅くなる)
-  const literal = new RegExp(String.raw`(["'\x60])(\./)?(${names})\1(?!\s*\+)`, 'g');
+  const literal = new RegExp(String.raw`(["'\x60])(\./)?(${names})([?#][^"'\x60\s]*)?\1(?!\s*\+)`, 'g');
   const atUrlPosition = new RegExp(`(?<=${URL_POSITION})`, 'y');
-  return content.replace(literal, (whole, quote, dotSlash, name, offset) => {
+  return content.replace(literal, (whole, quote, dotSlash, name, suffix, offset) => {
     atUrlPosition.lastIndex = offset;
     if (!atUrlPosition.test(content)) return whole;
-    return `${quote}${dotSlash ?? ''}${toByFrom.get(name)}${quote}`;
+    return `${quote}${dotSlash ?? ''}${toByFrom.get(name)}${suffix ?? ''}${quote}`;
   });
 }
 
 /**
  * タブ名をローカル書き出しに安全なフラットなファイル名へ変換する。
  * 原形保存が基本 — 典型的なタブ名 (mySketch.js, vert.glsl) はそのまま通り、
- * パス区切り・制御文字・Windows で使えない文字だけ '_' に置き換える。
+ * パス区切り・制御文字・Windows で使えない文字と、URL で意味を持つ `#` `%` だけ '_' に置き換える。
+ * `#` `%` を残すと、書かれたままの参照が別の名前のファイルを探す (#211)。
  * '.' / '..' そのものはディレクトリ参照になるので固定名に落とす。
  */
 function safeLocalTabName(name) {
   const cleaned = String(name)
     .replace(/[\\/]+/g, '_')
-    .replace(/[\x00-\x1f<>:"|?*]+/g, '_');
+    .replace(/[\x00-\x1f<>:"|?*#%]+/g, '_');
   if (!cleaned || /^\.+$/.test(cleaned)) return '_tab';
   return cleaned;
 }
@@ -302,6 +330,46 @@ function splitTabExt(name) {
 
 function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * name そのものと、name をパーセントエンコードして書いた形 (`a#b.js` に対する `a%23b.js`) に
+ * 一致する正規表現のソースを返す。エンコードは文字ごとに任意 (`my file%231.js` のような混在も一致する)。
+ * @param {string} name
+ * @returns {string}
+ */
+function encodedOrLiteralPattern(name) {
+  return Array.from(String(name), (char) => {
+    const encoded = percentEncodedPattern(char);
+    return encoded ? `(?:${escapeRegExp(char)}|${encoded})` : escapeRegExp(char);
+  }).join('');
+}
+
+/**
+ * 1 文字を UTF-8 の `%XX` の並びで書いた形に一致する正規表現のソース (16 進の大文字小文字は問わない)。
+ * UTF-8 にできない文字 (対になっていないサロゲート) は null。
+ * @param {string} char
+ * @returns {string | null}
+ */
+function percentEncodedPattern(char) {
+  if (/^[\uD800-\uDFFF]$/.test(char)) return null;
+  return Array.from(new TextEncoder().encode(char), (byte) => {
+    const hex = byte.toString(16).padStart(2, '0');
+    return `%${hex.replace(/[a-f]/g, digit => `[${digit}${digit.toUpperCase()}]`)}`;
+  }).join('');
+}
+
+/**
+ * パーセントデコードした文字列を返す。デコードできなければ元のまま。
+ * @param {string} text
+ * @returns {string}
+ */
+function percentDecoded(text) {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
 }
 
 /**

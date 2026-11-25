@@ -216,6 +216,9 @@ dev サーバの設定（`src/cli/commands/dev.js`・両 `vite.config.ts`・`src
 保留したまま別ルートへ移り、遅れて届いた成功・失敗の結果が今の画面を上書きしないこと、破棄した
 作品ページが離脱警告などのリスナーを付け直さないことを確かめる。ルート遷移・`App.ts` の世代確認・
 `SketchPageController` の後始末を変えたら実行する。`ROUTES_CASE=<ケース名>` で 1 件だけ流せる。
+Gist と OpenProcessing の html モードの作品を実際に開き、埋め込んだ script・CSS が元のファイル構成と同じに
+働くこと (#110)、クエリ・`%XX`・`#` を含む参照のファイルが読み込まれること (#211) も確かめるので、
+`src/core/modules/html-doc-builder.js` の埋め込みを変えたときも実行する。
 同じスイートの `galleryHeader` は、ギャラリーのホームを幅 1600 / 1280 / 960 / 800 / 375px・英語と日本語で開き、
 見出しとヘッダーのボタン列が重ならず、ボタンが画面内にあって押せることを矩形で確かめる (#178)。
 ホームのヘッダー (`SketchGalleryView`、`style.css` の `.header`) を変えたら実行する。
