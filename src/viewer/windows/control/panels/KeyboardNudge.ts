@@ -82,8 +82,9 @@ export class KeyboardNudge {
     this.selection = sel;
     // Drag handles prevent the browser's default focus change. Release stale tab focus
     // so arrow keys edit the selected handle after switching back to the mapping pane.
+    // 入力欄・select も同じ。フォーカスが残ると、矢印キーは選んだ隅ではなく欄の値を変える (#206)。
     const focused = this.doc?.activeElement;
-    if (sel && focused?.getAttribute('role') === 'tab') (focused as HTMLElement).blur();
+    if (sel && (focused?.getAttribute('role') === 'tab' || focused?.matches('input, textarea, select, [contenteditable]'))) (focused as HTMLElement).blur();
     this.refreshUI();
   }
 
@@ -128,9 +129,9 @@ export class KeyboardNudge {
     const opts = this.opts;
     if (!ctrl || !opts) return;
     if (!this.selection) return;
-    // テキスト入力中は矢印キーを奪わない（マッピング名のインライン編集など）
+    // 入力欄の矢印キーは奪わない（マッピング名のインライン編集、数値欄の増減、select の選択など）
     const target = e.target as HTMLElement | null;
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
+    if (target?.isContentEditable || target?.closest?.('input, textarea, select, [contenteditable]')) return;
 
     let dirX = 0, dirY = 0;
     switch (e.key) {
