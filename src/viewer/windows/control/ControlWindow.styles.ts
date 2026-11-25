@@ -356,6 +356,61 @@ export const CONTROL_PANEL_CSS = `
         color: #fff;
         font-weight: 500;
       }
+      /* 出力ごとの明るさ・色のゲイン (#199)。行 = 名前 | スライダー | 数値。 */
+      .output-correction h4 {
+        margin: 0 0 6px 0;
+        font-size: 12px;
+        color: #aaa;
+        font-weight: 500;
+      }
+      .output-correction-rows {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      .output-correction-row {
+        display: grid;
+        grid-template-columns: 4.5em minmax(0, 1fr) 4em;
+        align-items: center;
+        gap: 8px;
+      }
+      .tool-item .output-correction-row .label {
+        display: block;
+        margin: 0;
+        font-size: 12px;
+        color: #888;
+      }
+      .output-correction-range {
+        width: 100%;
+        min-width: 0;
+        margin: 0;
+        accent-color: #3b82f6;
+      }
+      .output-correction-range:disabled { opacity: .45; cursor: not-allowed; }
+      .output-correction-num {
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
+        padding: 4px 6px;
+        background: #333;
+        border: 0;
+        border-radius: 4px;
+        color: #fff;
+        font: inherit;
+        font-size: 12px;
+        text-align: right;
+        -moz-appearance: textfield;
+      }
+      .output-correction-num::-webkit-outer-spin-button,
+      .output-correction-num::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      .output-correction-num:focus {
+        outline: 0;
+        box-shadow: inset 0 0 0 1px #3b82f6;
+      }
+      .output-correction-num:disabled { color: #666; cursor: not-allowed; }
 
       .tool-button {
         width: 100%;
