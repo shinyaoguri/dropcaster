@@ -30,6 +30,9 @@ const MIN_ASPECT = .2, MAX_ASPECT = 5;
 type SizeSource = 'preset' | 'fullscreen' | 'venue';
 /** 左端のアクティビティバーで切り替えるツール列の中身。 */
 type VenuePanel = 'objects' | 'trace' | 'projector' | 'output' | 'files';
+/** 会場が GLB のとき、そのアセットの中身 (base64)。 */
+const glbOf = (project: Project): string | null => project.venue.scene.kind === 'glb'
+  ? project.assets.find(asset => asset.id === project.venue.scene.assetId)?.data ?? null : null;
 const PANEL_TITLES = { objects: 'calibration.objects', trace: 'calibration.trace', projector: 'calibration.projector', output: 'calibration.output', files: 'calibration.menu' } as const satisfies Record<VenuePanel, MessageKey>;
 
 /**
@@ -67,6 +70,8 @@ export class VenueCalibrationPage {
   private failed = false;
   private selected = '';
   private previous: Project | null = null;
+  /** 3D に表示中のモデルを作った GLB (base64)。立体・サンプル・なぞった推定を表示している間は null。 */
+  private shownGlb: string | null = null;
   private statusKey: MessageKey = 'practice.loading';
   private errorStatus = false;
   private outputSize: [number, number] = [1920, 1080];
@@ -223,9 +228,9 @@ export class VenueCalibrationPage {
       this.off.push(this.session.changes.subscribe(project => this.update(project)), this.session.storage.subscribe(() => this.storageStatus()));
       this.resize = new ResizeObserver(() => this.resizePreview()); this.resize.observe(this.canvas.parentElement!);
       this.canvas.addEventListener('webglcontextlost', this.graphicsLost); this.projection.canvas.addEventListener('webglcontextlost', this.graphicsLost);
-      const action = ++this.action, prepared = await prepareVenue(this.session.changes.get());
+      const action = ++this.action, restored = this.session.changes.get(), prepared = await prepareVenue(restored);
       if (this.disposed || this.failed || action !== this.action) { prepared.dispose(); return; }
-      this.preview.setVenue(prepared.group, prepared.dispose); this.update(this.session.changes.get()); this.resizePreview();
+      this.showVenue(prepared, restored); this.update(this.session.changes.get()); this.resizePreview();
       this.preview.overview(); this.editor.setActive(true); this.translate(); this.status('calibration.ready'); this.updateOutput(); this.setReady();
       this.frame = requestAnimationFrame(this.render);
     } catch (error) { if (!this.disposed) { this.fail(); console.warn('Venue setup unavailable', error); } }
@@ -379,17 +384,26 @@ export class VenueCalibrationPage {
     this.builder?.update(scene,!!this.previous); this.editor?.update(scene,this.builder?.selectedId??'',!!this.previous); this.projection?.render();
     this.get<HTMLButtonElement>('venue-undo-projector').disabled = !this.previous;
   }
-  private commit(project: Project, prepared?: PreparedVenue, fit=false): void {
-    if (this.disposed || this.failed) { prepared?.dispose(); return; }
+  /** 会場の表示を差し替える。`source` の GLB から作ったモデルなら覚えておき、同じ GLB へ戻すときに作り直さない。 */
+  private showVenue(prepared: PreparedVenue, source: Project | null): void {
+    this.preview!.setVenue(prepared.group, prepared.dispose); this.shownGlb = source ? glbOf(source) : null;
+  }
+  /**
+   * 変更を検証して確定する。`prepared` は会場を読み込み直したときに渡す ('shown' は、表示中のモデルをそのまま使うとき)。
+   * 検証済みのアセット (既定は確定済みの会場のもの) と id・data が同じ GLB は復号し直さない (#171)。
+   */
+  private commit(project: Project, prepared?: PreparedVenue | 'shown', fit=false, verified?: Project['assets']): void {
+    const discard = (): void => { if (prepared !== 'shown') prepared?.dispose(); };
+    if (this.disposed || this.failed) { discard(); return; }
     this.adjuster?.flush();
     try {
-      const next=parseProject({...project,venue:{...project.venue,revision:project.venue.revision+1}});
+      const next=parseProject({...project,venue:{...project.venue,revision:project.venue.revision+1}},verified??this.session.changes.get().assets);
       this.editor?.cancel(); this.action++; this.previous=this.session.changes.get();
-      if(prepared) { this.traceShown=null; this.traceRestore++; this.preview!.setVenue(prepared.group,prepared.dispose); }
+      if(prepared) { this.traceShown=null; this.traceRestore++; if(prepared!=='shown') this.showVenue(prepared,next); }
       this.session.update(next);
       if(fit) { this.preview!.overview(); if(next.venue.scene.objects?.length===1) this.editor?.focusSelection(); }
       this.status('calibration.updated');
-    } catch(error) { prepared?.dispose(); this.error(error); }
+    } catch(error) { discard(); this.error(error); }
   }
   /** なぞるパネルを開いている間は、像の直接操作と立体の編集を止める (十字の操作と取り合わない)。 */
   private setTracing(active: boolean): void {
@@ -407,7 +421,7 @@ export class VenueCalibrationPage {
     if (estimate?.objects) {
       const prepared = prepareObjects(estimate.objects);
       this.traceShown = estimate;
-      this.preview.setVenue(prepared.group, prepared.dispose);
+      this.showVenue(prepared, null);
       this.preview.setVenueTransform({ ...defaultScene(), kind: 'objects' });
       this.update(this.session.changes.get());
       return;
@@ -416,9 +430,10 @@ export class VenueCalibrationPage {
     // プロジェクタだけの推定 (測った会場に合わせる) は、確定済みの会場のまま投影を差し替える。
     this.traceShown = estimate;
     if (!replacedVenue) { this.update(this.session.changes.get()); return; }
-    void prepareVenue(this.session.changes.get()).then(prepared => {
+    const committed = this.session.changes.get();
+    void prepareVenue(committed).then(prepared => {
       if (this.disposed || this.failed || token !== this.traceRestore) { prepared.dispose(); return; }
-      this.preview!.setVenue(prepared.group, prepared.dispose); this.update(this.session.changes.get());
+      this.showVenue(prepared, committed); this.update(this.session.changes.get());
     }).catch(error => { if (!this.disposed && token === this.traceRestore) this.error(error); });
   }
   /** なぞった会場とプロジェクタを 1 回の変更 (1 revision) として書き込む。「直前の変更を戻す」1 回で戻る。 */
@@ -452,15 +467,21 @@ export class VenueCalibrationPage {
       this.commit(project,prepareObjects(project.venue.scene.objects!),fit);
     } catch(error) { this.error(error); }
   }
-  private async apply(project: Project): Promise<void> {
+  /**
+   * 会場を読み込み直す。`verified` は呼び出し側が検証を終えたアセットで、渡さなければ GLB をすべて検証する。
+   * 表示中のモデルと同じ GLB なら作り直さず、違うときだけ表示のために 1 回復号する。
+   */
+  private async apply(project: Project, verified: Project['assets'] = []): Promise<void> {
     const action=++this.action; this.editor?.cancel(); this.adjuster?.cancel(); this.status('practice.busy');
     try {
-      const next=parseProject(project), prepared=await prepareVenue(next);
-      if(this.disposed || this.failed || action!==this.action) { prepared.dispose(); return; }
-      this.commit(next,prepared,true); this.status('calibration.loaded');
+      const next=parseProject(project,verified);
+      const prepared=this.shownGlb!==null && glbOf(next)===this.shownGlb ? 'shown' : await prepareVenue(next);
+      if(this.disposed || this.failed || action!==this.action) { if(prepared!=='shown') prepared.dispose(); return; }
+      this.commit(next,prepared,true,next.assets); this.status('calibration.loaded');
     } catch(error) { if(!this.disposed && action===this.action) this.error(error); }
   }
-  private undo(): void { this.adjuster?.cancel(); if(this.previous) void this.apply(this.previous); }
+  /** 戻る先は確定済みだった会場なので、そのアセットは検証済み。 */
+  private undo(): void { this.adjuster?.cancel(); if(this.previous) void this.apply(this.previous,this.previous.assets); }
   private async readFile(model: boolean): Promise<void> {
     const input=this.input(model?'venue-glb-file':'venue-file'), file=input.files?.[0]; input.value=''; if(!file)return;
     const action=++this.action; this.editor?.cancel(); this.status('practice.busy');
@@ -473,7 +494,7 @@ export class VenueCalibrationPage {
       } else {
         const text=await file.text(); if(this.disposed || action!==this.action)return;
         const value=JSON.parse(text), project=value?.format==='dropcaster-venue'?{...importVenue(value,createProject()),name:value.name}:parseProject(value);
-        await this.apply(project);
+        await this.apply(project,project.assets);
       }
     } catch(error) { if(!this.disposed && action===this.action) this.error(error); }
   }
@@ -482,7 +503,7 @@ export class VenueCalibrationPage {
     try {
       const project=await readProject(); if(this.disposed || action!==this.action)return;
       if(!project) { this.status('calibration.noMapping',true);return; }
-      await this.apply(parseProject(project));
+      const mapping=parseProject(project); await this.apply(mapping,mapping.assets);
     } catch(error) { if(!this.disposed && action===this.action)this.error(error); }
   }
   private export(): void {

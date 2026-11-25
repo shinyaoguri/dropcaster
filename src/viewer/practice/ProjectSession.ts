@@ -1,7 +1,7 @@
 import type { WindowController } from '../components/WindowController';
 import type { Sketch } from '../types/sketch';
 import { Emitter } from '../utils/emitter';
-import { createProject, parseProject, reconcileProjectLayout, type Project, type ContentReference } from './project';
+import { createProject, parseProject, reconcileProjectLayout, type Project, type Projector, type ContentReference } from './project';
 import { readProject, writeProject } from './projectStore';
 import { DraftSaver, type StorageState } from './draftSaver';
 
@@ -25,13 +25,19 @@ export class ProjectSession {
   private initialized = false;
   private followContext = true;
   private getContext: () => ShowContext;
+  /**
+   * 配置から消えた出力のプロジェクタ。同じ出力 ID が配置へ戻ったとき (削除の Undo、以前書き出した 2D 設定の
+   * 読込) に校正値を返すため、出力 ID ごとに覚える (#165)。保存はしない。プロジェクトを配置ごと差し替えると
+   * 捨てる (そのとき編集の履歴も空になる)。編集画面を閉じて履歴だけが消えた場合は、このセッションが残る間は残る。
+   */
+  private removedProjectors = new Map<string, Projector>();
 
   constructor(wc: WindowController, getContext: () => ShowContext) {
     this.wc = wc; this.getContext = getContext;
     this.changes = new Emitter(createProject(wc.events.state.get()));
     this.saver = new DraftSaver(() => writeProject(this.changes.get()), state => this.storage.set(state));
     this.off = wc.events.state.subscribe(layout => {
-      this.changes.set(reconcileProjectLayout(this.changes.get(), layout));
+      this.changes.set(reconcileProjectLayout(this.changes.get(), layout, this.removedProjectors));
       // 2D の変更はドラッグ中に毎フレーム届くので、止まってから書く。2D そのものは WindowController が
       // localStorage へ同期で残す。下書きから開く /project では待ちの間の離脱に確認が出る。
       if (this.initialized) this.saver.schedule();
@@ -43,7 +49,7 @@ export class ProjectSession {
       const stored = await readProject();
       if (this.disposed) return;
       // The latest v2 working layout wins; an older async draft cannot roll it back.
-      if (stored) this.changes.set(reconcileProjectLayout(parseProject(stored), this.wc.events.state.get()));
+      if (stored) this.changes.set(reconcileProjectLayout(parseProject(stored), this.wc.events.state.get(), this.removedProjectors));
     } catch { if (!this.disposed) this.storage.set('error'); }
     if (this.disposed) return;
     this.initialized = true;
@@ -63,6 +69,7 @@ export class ProjectSession {
   update(next: Project, layout = false, replaceContent = true): void {
     if (this.disposed) return;
     if (layout && replaceContent) this.followContext = false; // Keep imported references until the user opens them.
+    if (layout) this.removedProjectors.clear();
     const project = { ...next, updatedAt: new Date().toISOString() };
     this.changes.set(project);
     if (layout) this.wc.applyStateFromInline(project.venue.layout);

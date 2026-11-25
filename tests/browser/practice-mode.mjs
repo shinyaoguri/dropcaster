@@ -523,6 +523,56 @@ async function outputs(page) {
   await page.waitForTimeout(1200);
   assert.equal(await page.locator('#source-video').evaluate(v => v.srcObject.getVideoTracks()[0].readyState), 'live');
 }
+/** 出力の削除を Undo / Redo で戻すと、その出力のプロジェクタ校正値も削除前に戻る (#165)。出力ウィンドウは開き直さない (#161)。 */
+async function outputUndo(page) {
+  await start(page);
+  const undoBtn = page.locator('#dc-undo-btn'), redoBtn = page.locator('#dc-redo-btn');
+  await showPanel(page, 'outputs'); await page.locator('#add-output-btn').click();
+  const [kept, target] = (await state(page)).outputs.map(o => o.id);
+  const calibrated = await exportProject(page);
+  Object.assign(calibrated.venue.projectors.find(p => p.outputId === target),
+    { position: [7.5, 1.25, -3], quaternion: [0, 0.6, 0, 0.8], verticalFovDegrees: 31, lensShift: [0.2, -0.4], near: 0.5, far: 80 });
+  Object.assign(calibrated.venue.projectors.find(p => p.outputId === kept), { position: [-2, 3, 6], lensShift: [0, 0.3] });
+  await importProject(page, calibrated);
+  const projectors = async () => (await exportProject(page)).venue.projectors;
+  const before = await projectors();
+  assert.deepEqual(before.map(p => [p.outputId, p.position]), [[kept, [-2, 3, 6]], [target, [7.5, 1.25, -3]]], 'the calibration was imported');
+  assert.equal(await undoBtn.isDisabled(), true, 'loading a project starts a new edit history');
+  await showPanel(page, 'outputs');
+  const remove = id => page.locator(`#outputs-list [data-output-id="${id}"] .remove-output-btn`).click();
+  const promise = page.waitForEvent('popup');
+  await page.locator(`#outputs-list [data-output-id="${target}"] .open-btn`).click();
+  const popup = await promise, closed = popup.waitForEvent('close');
+
+  await remove(target); await closed;
+  assert.deepEqual(await projectors(), [before[0]], 'removing an output leaves the other projector alone');
+  await undoBtn.click();
+  assert.deepEqual((await state(page)).outputs.map(o => o.id), [kept, target]);
+  assert.deepEqual(await projectors(), before, 'undoing the removal restores the whole calibration');
+  await redoBtn.click();
+  assert.deepEqual(await projectors(), [before[0]]);
+  await undoBtn.click();
+  assert.deepEqual(await projectors(), before, 'redo then undo restores it again');
+  // 先頭の出力を消して残りが詰められても、戻せば両方とも元の値になる。
+  await remove(kept);
+  assert.deepEqual(await projectors(), [before[1]], 'compaction does not move the remaining projector');
+  await undoBtn.click();
+  assert.deepEqual(await projectors(), before, 'undo restores the first output without touching the other');
+  // 2D の設定の読込で出力がすべて入れ替わっても、戻せば元の出力は元の値になる。
+  const settings = await state(page);
+  settings.outputs = [{ ...settings.outputs[0], id: 'replacement' }]; settings.activeOutputId = 'replacement';
+  await inProjectPanel(page, async () => {
+    const chooser = page.waitForEvent('filechooser'); await page.locator('#import-settings-btn').click();
+    await (await chooser).setFiles({ name: 'settings.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(settings)) });
+    await page.waitForFunction(() => window.practiceWC.events.state.get().outputs[0].id === 'replacement');
+  });
+  assert.deepEqual((await projectors()).map(p => [p.outputId, p.position]), [['replacement', [0, 2.5, 4.5]]], 'an output never seen starts from the default projector');
+  await undoBtn.click();
+  assert.deepEqual(await projectors(), before, 'undoing a settings import restores every projector');
+  await page.waitForTimeout(300);
+  assert.equal(page.context().pages().length, 1, 'undo does not reopen the output window');
+  await closeEditor(page);
+}
 async function unavailable(page) {
   await page.evaluate(() => {
     window.originalGetContext = HTMLCanvasElement.prototype.getContext;
@@ -1408,7 +1458,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, projectWithoutWebgl, cancellation, loading, confirmClose, confirmHome, history, maskSelect, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, cancellation, loading, confirmClose, confirmHome, history, maskSelect, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
