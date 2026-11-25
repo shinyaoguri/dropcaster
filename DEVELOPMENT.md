@@ -77,6 +77,9 @@ npx /path/to/dropcaster init my-gallery
 - 手元で次の版とノートを見る: `node scripts/release.js next-version` / `node scripts/release.js notes`
   （断片はコミット済みのものだけ数える）。
 - 版の表示は `src/core/build-info.js` が `git describe` で求める。浅い clone（`fetch-depth: 1`）ではタグが取れず版不明になる。
+- `src/core/build-info.js` と `scripts/release.js` が呼ぶ git は、`GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` など
+  読むリポジトリを差し替える環境変数を引き継がない（`src/core/git-env.js`）。linked worktree の git hook の中から
+  実行しても、パッケージ（`release.js` は cwd）のリポジトリを読む。環境変数で読み先を差し替えることはできない。
 
 ## CI
 
@@ -190,6 +193,9 @@ sw.js を配信しても、操作画面が再読み込みされず出力が映�
 保留したまま別ルートへ移り、遅れて届いた成功・失敗の結果が今の画面を上書きしないこと、破棄した
 作品ページが離脱警告などのリスナーを付け直さないことを確かめる。ルート遷移・`App.ts` の世代確認・
 `SketchPageController` の後始末を変えたら実行する。`ROUTES_CASE=<ケース名>` で 1 件だけ流せる。
+Gist と OpenProcessing の html モードの作品を実際に開き、埋め込んだ script・CSS が元のファイル構成と同じに
+働くこと (#110)、クエリ・`%XX`・`#` を含む参照のファイルが読み込まれること (#211) も確かめるので、
+`src/core/modules/html-doc-builder.js` の埋め込みを変えたときも実行する。
 同じスイートの `galleryHeader` は、ギャラリーのホームを幅 1600 / 1280 / 960 / 800 / 375px・英語と日本語で開き、
 見出しとヘッダーのボタン列が重ならず、ボタンが画面内にあって押せることを矩形で確かめる (#178)。
 ホームのヘッダー (`SketchGalleryView`、`style.css` の `.header`) を変えたら実行する。

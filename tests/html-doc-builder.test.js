@@ -163,6 +163,121 @@ test('inline script: integrity on external scripts is left alone', () => {
   assert.ok(assemble(tag, {}).includes(tag));
 });
 
+// --- #211: 参照を fetch shim (lookup) と同じ順序で解決する ---
+// 書かれたままの名前のファイルが先。無ければ URL として解釈し、クエリとフラグメントを除いて
+// パーセントデコードした名前のファイル。
+
+// [ファイル名, index.html に書く参照]。どの行も、参照がそのファイルを指す
+const FILE_REFERENCES = [
+  ['lib.js', 'lib.js'],
+  ['my lib.js', 'my%20lib.js'],
+  ['lib.js', 'lib.js?v=2'],
+  ['a#b.js', 'a%23b.js'],
+  ['my%20lib.js', 'my%20lib.js'],
+  ['a#b.js', 'a#b.js'],
+  // 表の組み合わせ・表記の違い
+  ['lib.js', './lib.js?v=2#top'],
+  ['lib.js', 'lib.js#top'],
+  ['my lib.js', './my%20lib.js?v=2'],
+  ['a#b.js', 'a%23b.js?v=2'],
+  ['a?b.js', 'a%3Fb.js'],
+  ['a?b.js', 'a%3fb.js'],
+  ['100%.js', '100%25.js'],
+  ['日本語.js', '%E6%97%A5%E6%9C%AC%E8%AA%9E.js'],
+  ['lib.js', 'sub/../lib.js'],
+];
+
+for (const [file, ref] of FILE_REFERENCES) {
+  test(`file reference: <script src="${ref}"> embeds the file "${file}"`, () => {
+    const code = `window.loaded = ${JSON.stringify(file)};`;
+    const html = assemble(`<head></head><body><script src="${ref}"></script></body>`, { [file]: code });
+    const scripts = embeddedScripts(html);
+    assert.equal(scripts.length, 1, 'the script is embedded');
+    assert.equal(scripts[0].file, file, 'data-dc-file names the file, not the reference');
+    assert.ok(scripts[0].code.startsWith(`${code}\n`), 'the file content is embedded');
+    assert.match(scripts[0].attrs.get('src'), /^data:text\/javascript;/);
+  });
+
+  test(`file reference: <link rel="stylesheet" href="${ref}"> embeds the file "${file}"`, () => {
+    const css = `body { --from: ${JSON.stringify(file)}; }`;
+    const html = assemble(`<head><link rel="stylesheet" href="${ref}"></head>`, { [file]: css });
+    const all = styles(html);
+    assert.equal(all.length, 1, 'the stylesheet is embedded');
+    assert.equal(all[0].css.trim(), css);
+    assert.ok(!/<link\b/i.test(html), 'the link is gone');
+  });
+}
+
+test('file reference: a file with the name as written wins over the URL reading of the reference', () => {
+  // 同じ文書の fetch shim と同じ優先順位。両方あるときだけ結果が分かれる
+  const cases = [
+    { ref: 'my%20lib.js', files: { 'my lib.js': 'decoded', 'my%20lib.js': 'as written' }, expected: 'my%20lib.js' },
+    { ref: 'a#b.js', files: { a: 'path only', 'a#b.js': 'as written' }, expected: 'a#b.js' },
+    { ref: 'lib.js?v=2', files: { 'lib.js': 'path only', 'lib.js?v=2': 'as written' }, expected: 'lib.js?v=2' },
+    // 書かれたままの名前のファイルが無ければ、URL として読んだ名前のファイル
+    { ref: 'a#b.js', files: { a: 'path only' }, expected: 'a' },
+  ];
+  for (const { ref, files, expected } of cases) {
+    const [script] = embeddedScripts(assemble(`<script src="${ref}"></script>`, files));
+    assert.equal(script?.file, expected, `${ref} with ${Object.keys(files).join(' + ')}`);
+    assert.ok(script.code.startsWith(`${files[expected]}\n`));
+  }
+});
+
+test('file reference: URLs that point outside the document directory are never files', () => {
+  // どの参照も、URL として読むとファイル名 lib.js・style.css を含むが、指しているのは別の場所
+  const refs = [
+    'https://cdn.example.com/lib.js',
+    'https://cdn.example.com/lib.js?v=2',
+    '//cdn.example.com/lib.js',
+    '../lib.js',
+    '../lib.js?v=2',
+    '/lib.js',
+    'sub/lib.js',
+    'lib.js/',
+    'lib.js%2F',
+    'data:text/javascript,lib.js',
+    'blob:https://example.com/lib.js',
+    // 実装が解決に使う仮の URL と同じホスト・パスでも、絶対 URL はファイルにならない
+    'http://a.dc-probe.invalid/a/lib.js',
+    'https://b.dc-probe.invalid/b/lib.js',
+    '//a.dc-probe.invalid/a/lib.js',
+    '/a/lib.js',
+    '/b/lib.js',
+    'https:lib.js',
+    'http:lib.js',
+  ];
+  for (const ref of refs) {
+    const script = `<script src="${ref}"></script>`;
+    const link = `<link rel="stylesheet" href="${ref.replace('lib.js', 'style.css')}">`;
+    const html = assemble(`<head>${script}${link}</head>`, { 'lib.js': '1;', 'style.css': 'a{}' });
+    assert.ok(html.includes(script), `script left as written: ${ref}`);
+    assert.ok(html.includes(link), `link left as written: ${ref}`);
+    assert.equal(embeddedScripts(html).length, 0, ref);
+    assert.equal(styles(html).length, 0, ref);
+  }
+});
+
+test('file reference: names that are not among the files stay as written', () => {
+  const refs = [
+    'missing.js',
+    'missing.js?v=2',
+    'lib.js%3Fv=2', // デコードすると lib.js?v=2 という名前。そのファイルは無い
+    'lib%2Ejs%zz', // デコードできない
+    'LIB.js', // 大文字小文字は区別する
+    // パスが空の参照は文書自身を指す。どのファイルでもない
+    '?v=2',
+    '#top',
+    ' ',
+  ];
+  for (const ref of refs) {
+    const tag = `<script src="${ref}"></script>`;
+    const html = assemble(tag, { 'lib.js': '1;' });
+    assert.ok(html.includes(tag), `left as written: ${ref}`);
+    assert.equal(embeddedScripts(html).length, 0, ref);
+  }
+});
+
 // 組み立て後の <style> を { attrs, css } で返す。
 function styles(html) {
   return [...html.matchAll(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi)].map(m => ({ attrs: attrsOf(`<script${m[1]}>`), css: m[2] }));

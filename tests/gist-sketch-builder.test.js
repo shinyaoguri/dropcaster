@@ -51,6 +51,35 @@ test('gist: relative file refs are inlined and CDN scripts are kept', () => {
   assert.ok(html.includes('cdn.jsdelivr.net/npm/p5@1/lib/p5.min.js'), 'CDN script kept as-is');
 });
 
+test('gist: a reference written as a URL embeds the file it points to', () => {
+  // #211: [ファイル名, index.html に書く参照]。Issue の表の 6 行
+  const references = [
+    ['lib.js', 'lib.js'],
+    ['my lib.js', 'my%20lib.js'],
+    ['lib.js', 'lib.js?v=2'],
+    ['a#b.js', 'a%23b.js'],
+    ['my%20lib.js', 'my%20lib.js'],
+    ['a#b.js', 'a#b.js'],
+  ];
+  for (const [fileName, ref] of references) {
+    const code = `window.loaded = ${JSON.stringify(fileName)};`;
+    const gist = canvastageGistFixture();
+    gist.files = new Map([
+      ['index.html', `<html><head><link rel="stylesheet" href="style.css?v=2"></head><body><script src="${ref}"></script></body></html>`],
+      [fileName, code],
+      ['style.css', 'html, body { margin: 0; }'],
+    ]);
+    const html = assembleGistSketchHtml({ gist });
+
+    const tags = [...html.matchAll(/<script src="data:text\/javascript;charset=utf-8;base64,([^"]*)" data-dc-file="([^"]*)"><\/script>/g)];
+    assert.equal(tags.length, 1, `file "${fileName}" referenced as "${ref}" is embedded`);
+    assert.equal(tags[0][2], fileName);
+    assert.ok(Buffer.from(tags[0][1], 'base64').toString('utf8').startsWith(`${code}\n`), `content of "${fileName}"`);
+    assert.match(html, /<style>\nhtml, body \{ margin: 0; \}\n<\/style>/, 'style.css?v=2 is embedded');
+    assert.ok(!/<link\b/i.test(html), 'the link is gone');
+  }
+});
+
 test('gist: no <base> is emitted (gists have no asset base URL)', () => {
   const html = assembleGistSketchHtml({ gist: canvastageGistFixture() });
   assert.ok(!/<base\b/i.test(html), 'no base href');
