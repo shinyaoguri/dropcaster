@@ -34,6 +34,19 @@ npm run scan:watch       # sketches/ を監視してメタデータだけ更新�
 `npm run dev` は viewer のソース変更をホットリロードしますが、`sketches/` の変更は
 `npm run scan` を実行するまで反映されません（意図的に明示 scan）。
 
+dev サーバ（`npm run dev` / `npm run dev:web`、利用者の `dropcaster dev`）では Service Worker を登録しません (#180)。
+SW はローカル作品を StaleWhileRevalidate で返すので、登録すると作品を書き換えても 1 回目の再読み込みに古い版が出るためです。
+`src/cli/utils/dev-service-worker.js` の Vite プラグイン（`vite.config.ts` と `apps/web/vite.config.ts` に入っている）が、
+viewer に dev サーバで動いていることを伝え（`src/viewer/pwa/register.ts` が登録をやめる）、配信する index.html の先頭に
+「同じオリジンに残っている登録を外し、制御されていたら 1 度だけ読み込み直す」スクリプトを入れます。
+PWA の挙動（オフライン起動・更新の通知）は本番ビルドで確かめます。
+
+```bash
+npm run build && npx vite preview          # ユーザーギャラリー → http://localhost:4173
+npm run build:web && npm run preview:web   # ホスト版
+dropcaster build && dropcaster preview     # 利用者のギャラリー（下の「CLI をローカルプロジェクトでテストする」）
+```
+
 ## `dropcaster dev` / `build` の仕組み（ユーザープロジェクト向け）
 
 `dropcaster dev` / `dropcaster build` は Vite を **パッケージのディレクトリ** を `root` にして起動し、
@@ -42,6 +55,10 @@ npm run scan:watch       # sketches/ を監視してメタデータだけ更新�
 `publicDir` がユーザーの `cwd/public` を指すことで配信されます（`fs.allow` で `cwd` も許可）。
 そのため、現状ユーザーは `index.html` を差し替えられません。`vite.config.ts` の sketches 監視
 プラグインも `dropcaster dev` では効かない（`npm run dev` 専用）— `dropcaster dev --watch` は未実装。
+
+Vite は `root` にある `vite.config.ts` も読むので、上の「dev サーバでは Service Worker を登録しない」プラグインは
+`dropcaster dev` にも掛かります。`dropcaster dev` は `public/manifest.json` だけを生成し、`sw.js` は生成しません
+（以前の版が `public/sw.js` を残していても登録されません）。`sw.js` を出力先に生成するのは `dropcaster build` です。
 
 ## CLI をローカルプロジェクトでテストする
 
@@ -188,6 +205,12 @@ sw.js を配信しても、操作画面が再読み込みされず出力が映�
 再読み込み（オフラインなら接続の確認）を案内することを確かめる (#164)。
 `src/viewer/pwa/` を変えたときも実行する。`SW_UPDATE_ENTRY=gallery|hosted|cli-subpath`、`SW_UPDATE_CASE=<ケース名>`
 で絞り込め、`SW_UPDATE_ARTIFACT_DIR=/tmp/sw-update-images` で通知の表示を保存できる。
+最後に `tests/browser/service-worker-dev.mjs` が dev サーバ（利用者の `dropcaster dev`・`npm run dev`・`npm run dev:web`）を
+実際に起動し、SW が登録されないこと、作品を書き換えるたびに 1 回目の再読み込みで新しい内容が出ること、同じオリジンに
+SW とキャッシュが残っているブラウザ（残った SW が古い viewer を返し、応答の返らない要求を抱えている状態）でも
+開けば登録が外れて同じになること、`dropcaster build` + `dropcaster preview` では今までどおり登録されることを確かめる (#180)。
+dev サーバの設定（`src/cli/commands/dev.js`・両 `vite.config.ts`・`src/cli/utils/dev-service-worker.js`）を変えたときも実行する。
+`SW_DEV_ENTRY=cli|gallery|hosted|cli-preview`、`SW_DEV_CASE=<ケース名>` で絞り込める。
 
 `npm run test:routes` は両 viewer エントリで、Gist / OpenProcessing の取得や作品 iframe の読み込みを
 保留したまま別ルートへ移り、遅れて届いた成功・失敗の結果が今の画面を上書きしないこと、破棄した

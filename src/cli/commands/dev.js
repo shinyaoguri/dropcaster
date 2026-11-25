@@ -6,7 +6,6 @@ import chalk from 'chalk';
 import { loadConfig } from '../utils/config.js';
 import { resolveBuildInfo } from '../../core/build-info.js';
 import { generateManifest } from '../utils/manifest.js';
-import { generateServiceWorker } from '../utils/service-worker.js';
 import { promises as fs } from 'fs';
 import { t } from '../i18n/index.js';
 
@@ -25,19 +24,21 @@ export async function dev(options) {
     // Ensure public directory exists
     await fs.mkdir(publicDir, { recursive: true });
     
-    // Generate manifest.json + multi-bucket service worker in public directory.
-    // ※ viewer (src/viewer/pwa/register.ts) は localhost でも SW を登録する（--host で LAN IP の http から
-    //   開いたときは secure context でないので登録しない）。dev は毎回新しい cacheVersion で出すので、
-    //   dev を再起動すると開いたままのタブには「新しい版があります」が出る（実測、#164）。新しい版は
-    //   タブを閉じるか通知から適用したときに有効になり、activate で古い版の shell だけを捨てる。
-    //   中身のバケット (runtime など) は版をまたいで残るので、dev では Vite のモジュールも runtime に
-    //   残り続ける。dev で SW を登録するかどうかを含め #180 の判断事項。
+    // Generate manifest.json in public directory.
+    // ※ dev では Service Worker を使わない (#180)。SW はローカル作品を StaleWhileRevalidate で返すので、
+    //   登録すると作品を書き換えても 1 回目の再読み込みに古い版が出る。sw.js は生成せず、viewer
+    //   (src/viewer/pwa/register.ts) も登録しない。同じオリジンに以前の版の dev や preview が残した登録は、
+    //   index.html に入るスクリプトが外す。どちらも devServiceWorker() (src/cli/utils/dev-service-worker.js) が
+    //   行い、このプラグインは下の createServer が root (パッケージ) から読む vite.config.ts に入っている。
+    //   public/ に以前の版の dev が書いた sw.js が残っていても登録されない (消しもしない。build は出力先に
+    //   生成し直す)。
+    //   `--host` で LAN の http://<IP> から開いたときは secure context でないので、もともと登録されない。
+    //   PWA の挙動 (オフライン起動・更新の通知) は `dropcaster build` + `dropcaster preview` で確かめる。
     // dev はルート配信 (下の BASE_URL も '/') なので、config に設置先 base・start_url・scope が
     // あっても manifest は '/' で作る。config のまま渡すと start_url '/'・scope '/exhibit/' のように
     // 食い違う (#175)。build で明示された start_url・scope を尊重するのは build 側だけ。
     const devConfig = { ...config, base: '/', start_url: '/', scope: '/' };
     await generateManifest(devConfig, publicDir);
-    await generateServiceWorker(publicDir, { cacheVersion: `dev-${Date.now()}` });
     
     // Create Vite server
     const server = await createServer({

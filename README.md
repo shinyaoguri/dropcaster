@@ -370,6 +370,12 @@ OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（�
 ### `dropcaster dev`
 開発サーバーを起動。`base` の設定にかかわらずルート（`/`）で配信する。
 
+開発サーバーでは Service Worker を登録しません。Service Worker はローカル作品をキャッシュから先に返すので、
+登録すると、作品を更新しても 1 回目の再読み込みでは前の内容が出るためです。同じアドレス（例: `http://localhost:5173`）に、
+以前の版の `dropcaster dev` や同じポートで動かした `preview` が登録した Service Worker が残っている場合は、
+開いたときに登録を外して 1 度だけ自動で読み込み直します。オフライン起動や更新の通知など PWA の挙動は、
+`dropcaster build` のあと `dropcaster preview` で確かめてください（`localhost` で開けば登録されます）。
+
 ### `dropcaster doctor`
 プレビュー GIF 生成に必要なツール (FFmpeg / Chromium) が揃っているか確認。
 
