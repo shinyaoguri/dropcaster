@@ -206,7 +206,7 @@ export class PracticePanel {
     const codes = ['invalid', 'version', 'asset', 'reference', 'externalAsset', 'unsupportedAsset', 'size'];
     // 形式の検証で分かった原因はその文言を出す。それ以外は汎用の文言になるので、元の例外を残す (#198)。
     if (!(error instanceof ProjectFormatError)) console.warn('Project change failed', error);
-    this.status(error instanceof ProjectFormatError && codes.includes(error.message) ? `practice.${error.message}` as MessageKey : 'practice.invalid', true);
+    this.status(!(error instanceof ProjectFormatError) ? 'practice.changeFailed' : codes.includes(error.message) ? `practice.${error.message}` as MessageKey : 'practice.invalid', true);
   }
   private async readFile(): Promise<void> {
     const input = this.get<HTMLInputElement>('practice-project-file'), file = input.files?.[0];
@@ -253,7 +253,10 @@ export class PracticePanel {
     const action = ++this.action;
     try {
       const project = await readProject(this.get<HTMLSelectElement>('practice-saved-projects').value);
-      if (project && !this.disposed && action === this.action) await this.apply(parseProject(project));
+      if (this.disposed || action !== this.action) return;
+      // 一覧にあるのに読み出せない (別のタブで消えたなど)。黙って終えずに知らせ、一覧を取り直す
+      if (!project) { void this.refreshSaved(); throw new Error('The selected project is no longer saved'); }
+      await this.apply(parseProject(project));
     } catch (error) { if (!this.disposed && action === this.action) this.error(error); }
   }
   private export(venueOnly = false): void {

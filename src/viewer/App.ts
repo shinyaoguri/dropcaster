@@ -201,14 +201,10 @@ export class App {
         if (generation !== this.routeGeneration) return;
         console.error(`Saved project could not be opened (${failure}):`, error);
         const opening = failure === 'practice.openError';
-        // 作業中の画面を残したまま失敗したときは、その画面の状態欄に出す。状態欄は平常時は読み上げ専用で
-        // 見た目から外してあるので、見える状態にする (次に MappingWorkspace が状態を書くと元の規則に戻る)。
-        if (!opening && status?.isConnected) {
-          status.textContent = t(failure); status.classList.add('is-error');
-          status.closest('.dc-workspace-notice')?.classList.add('is-visible');
-          return;
-        }
-        if (opening) this.teardownCurrent(); // 開きかけの画面を片付けてから案内に差し替える
+        // 作業中の画面を残したまま失敗したときは、その画面の状態欄に出す。表示の規則 (平常時は読み上げ専用、
+        // エラーは見せる、言語の切り替えで訳し直す) は MappingWorkspace が持つので、そこを通す。
+        if (!opening && (this.sketchPageController?.reportMappingError(failure) || this.slideshowController?.reportMappingError(failure))) return;
+        this.teardownCurrent(); // 生きている画面・開きかけの画面を片付けてから案内に差し替える
         SketchErrorView.render('open-failed', { failure: { title: 'practice.openErrorTitle', message: failure,
           reload: opening || failure === 'practice.draftUnreadable' } });
       }

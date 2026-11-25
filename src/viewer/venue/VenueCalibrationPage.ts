@@ -529,7 +529,7 @@ export class VenueCalibrationPage {
   private error(error:unknown):void {
     // 形式の検証で分かった原因はその文言を出す。それ以外は汎用の文言になるので、元の例外を残す (#198)。
     if(!(error instanceof ProjectFormatError)) console.warn('Venue change failed',error);
-    this.status(error instanceof ProjectFormatError?`practice.${error.message}` as MessageKey:'practice.invalid',true);
+    this.status(error instanceof ProjectFormatError?`practice.${error.message}` as MessageKey:'practice.changeFailed',true);
   }
   private storageStatus():void { const state=this.session.storage.get(); this.get('venue-storage').textContent=t(state==='error'?'practice.storageError':state==='saving'?'practice.saving':'calibration.saved'); }
   private translate(): void {

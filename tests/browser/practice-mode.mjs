@@ -338,6 +338,16 @@ async function projects(page, base) {
   assert.equal(await statusShown(page), true, 'the unreadable-draft notice is on screen, not only announced');
   await logged(page, /test draft read/);
   await snapshot(page, base.name + '-project-draft-unreadable');
+  // 案内は MappingWorkspace の状態文の規則を通す。言語を切り替えても、元の状態文に戻らず訳し直される
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  assert.match(await page.locator('#dc-practice-status').textContent(), /読み出せませんでした/, 'the notice is translated, not dropped, when the language changes');
+  assert.equal(await statusShown(page), true, 'the notice stays on screen after a language change');
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('en'), base.modules);
+  // 保存済みプロジェクトの読み出しの失敗は、設定の誤りとは案内しない
+  await projectControls(page); await page.locator('#practice-open-project').click();
+  await page.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.includes('nothing was changed'));
+  assert.doesNotMatch(await page.locator('#dc-practice-status').textContent(), /Invalid settings/, 'a failed read is not reported as invalid settings');
+  await logged(page, /test draft read/, 2);
   await page.evaluate(() => { IDBDatabase.prototype.transaction = window.realTransaction; });
   // Browser-storage failure keeps edits/export available and reports the failure.
   await page.evaluate(() => { window.realTransaction = IDBDatabase.prototype.transaction; IDBDatabase.prototype.transaction = function (...args) { if (args[1] === 'readwrite') throw new DOMException('test quota', 'QuotaExceededError'); return window.realTransaction.apply(this, args); }; });

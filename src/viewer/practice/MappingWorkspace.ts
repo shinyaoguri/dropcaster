@@ -49,6 +49,11 @@ export class MappingWorkspace {
   }
   get isActive(): boolean { return this.active; }
   toggle(): void { if (this.active) this.stop(); else void this.start(); }
+  /**
+   * 編集を開いている間、外から起きた失敗をこの画面の状態欄に出す。状態文と同じ規則を通すので、
+   * 言語を切り替えても残り、次の状態で上書きされる (#198)。編集を開いていなければ false。
+   */
+  report(key: MessageKey): boolean { if (!this.active || this.disposed || !this.notice) return false; this.status(key, true); return true; }
   updateContent(): void { this.session?.updateContent(); }
   async openProject(project: Project): Promise<void> {
     if (this.disposed) return;
