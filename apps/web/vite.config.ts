@@ -10,6 +10,7 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 import { resolveBuildInfo } from '../../src/core/build-info.js';
+import { devServiceWorker } from '../../src/cli/utils/dev-service-worker.js';
 
 const projectRoot = resolve(__dirname, '..', '..');
 
@@ -21,6 +22,8 @@ export default defineConfig({
     'import.meta.env.DROPCASTER_BUILD': JSON.stringify(resolveBuildInfo(projectRoot)),
   },
   publicDir: resolve(__dirname, 'public'),
+  // dev サーバ (npm run dev:web) では Service Worker を使わない (#180)
+  plugins: [devServiceWorker()],
   resolve: {
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json'],
   },

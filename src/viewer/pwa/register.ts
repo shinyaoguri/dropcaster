@@ -3,7 +3,11 @@
 //
 // 挙動:
 //   - config.enablePwa === false なら何もしない
-//   - localhost / 127.0.0.1 でも登録する (開発中 PWA を試したい場合のため)。
+//   - dev サーバ (dropcaster dev・このリポジトリの npm run dev / dev:web) では登録しない (#180)。
+//     SW はローカル作品を StaleWhileRevalidate で返すので、登録すると作品を書き換えても 1 回目の
+//     再読み込みに古い版が出る。dev サーバかどうかは src/cli/utils/dev-service-worker.js が伝える。
+//     同じオリジンに残っている以前の登録は、そのプラグインが index.html に入れるスクリプトが外す
+//   - 本番ビルドは localhost / 127.0.0.1 でも登録する (dropcaster build + preview で PWA を試すため)。
 //     ただし http (非 https) かつ localhost 以外では登録しない (SW は secure context が必要)
 //   - 新しい版の SW は、ブラウザ標準のライフサイクルどおり、そのオリジンのタブ・ウィンドウが
 //     すべて閉じたときに有効になる。自動で切り替えたり再読み込みしたりしない (#164)。
@@ -21,6 +25,7 @@ import { showUpdateNotice } from './UpdateNotice.js';
 export function registerServiceWorker(): void {
   if (!('serviceWorker' in navigator)) return;
   if (getConfig().enablePwa === false) return;
+  if (import.meta.env.DROPCASTER_DEV_SERVER) return;
   if (!isSecureOrLocalhost()) return;
 
   // ページロード後に登録 (起動高速化のため defer)
