@@ -16,6 +16,7 @@
 import { readFileSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { basename, dirname, join } from 'path';
+import { envWithoutRepositoryLocation } from './git-env.js';
 
 /**
  * @typedef {object} BuildInfo
@@ -61,7 +62,9 @@ export function commitFromResolved(resolved) {
  */
 function git(dir, args) {
   try {
-    return execFileSync('git', args, { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || null;
+    // 親の GIT_DIR などを引き継ぐと、dir ではなく外側のリポジトリを読む (#253)
+    const env = envWithoutRepositoryLocation();
+    return execFileSync('git', args, { cwd: dir, env, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || null;
   } catch {
     return null; // git が無い・作業ツリーでない
   }

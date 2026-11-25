@@ -47,6 +47,7 @@ https://dropcaster.soui.dev/gist/<gist id>     ← 公開 Gist（?gist=<gist id>
 - [canvastage](https://github.com/shinyaoguri/canvastage) の「Share to GitHub Gist」で書き出した Gist をそのまま読み込める
 - canvastage 専用ではなく、**`index.html` を含む公開 Gist**なら読み込む。`index.html` から相対参照された Gist 内のファイル（`style.css` / `sketch.js` など）は組み立て時に埋め込まれ、CDN の `<script src>` はそのまま残る
   - `<script src="sketch.js">` は `type="module"`・`defer`・`async`・`nomodule` などの属性を残したまま、src だけをファイル内容の `data:` URL に差し替えるので、実行の順序と意味は元のファイル構成と同じになる
+  - 参照は URL として読む。`sketch.js?v=2` や `style.css#top` はクエリ・フラグメントを除いた `sketch.js`・`style.css` を、`my%20lib.js` は `my lib.js` を指す。参照と同じ名前のファイル（`my%20lib.js` という名前のファイルなど）があれば、そちらを先に選ぶ
   - **埋め込んだ script の中の相対パスの import は解決できない**。module の static import（`import './util.js'`）も、classic / module どちらの script の `import('./lib.js')` も、基準が `data:` URL になるため失敗する（`<base href>` も効かない）。module は 1 ファイルで完結させるか、絶対 URL（CDN）で import する
 - ライブラリやアセットは作者が書いた絶対 URL（CDN）で読まれる。OP のような proxy は経由しない
 - Secret Gist / 削除済み Gist、`index.html` を含まない Gist は読み込めない
@@ -83,7 +84,8 @@ https://dropcaster.soui.dev/gist/<gist id>     ← 公開 Gist（?gist=<gist id>
    元に戻す／やり直す。ドラッグは 1 回、矢印キーの微調整は手を止めるまでを 1 操作として数える。
    対象は面・マスク・出力の追加・削除・並べ替え・表示切替・名前変更、四隅・crop・マスク頂点・出力レイアウトの変更、
    数値入力、リセット、設定の読込。選択の切替・タブ・テストパターン・出力窓の開閉は対象外で、
-   出力を削除して戻しても閉じた出力窓は開き直さない。履歴は最大 100 件で、再読み込みやプロジェクトの読込で消える。
+   出力を削除して戻しても閉じた出力窓は開き直さない。戻した出力の 3D のプロジェクタ（位置・向き・画角・レンズシフトなど）は削除前の値に戻る（削除した出力を、以前書き出した設定の読込で同じ出力として戻したときも同じ）。
+   履歴は最大 100 件で、再読み込みやプロジェクトの読込で消える。
    名前などの入力欄の中では、`Cmd/Ctrl+Z` は文字入力の取り消しになる。
    ソース列とマッピング列の表示は、細かい調整のために拡大・移動できる。表示だけの変更で、投影・保存・編集履歴には入らない。
 
@@ -202,6 +204,10 @@ dropcaster fetch 2257553 --no-assets     # アセット同梱をスキップ（O
 アセットを同梱するとき、`assets` という名前のタブ（大文字小文字を問わない）は同梱先の `assets/` と
 重なるので、`assets_2` のような別名で書き出します。`<script src="assets">` や `loadStrings('assets')` のように
 URL を書く位置にある参照は新しい名前に揃えますが、変数に入れた名前などは書き換わりません。
+名前に `#` や `%` を含むタブ（`a#b.js`・`my%20lib.js`）も、その文字を `_` に置き換えた名前（`a_b.js`・`my_20lib.js`）で
+書き出します。`#` と `%` は URL で意味を持つので、名前に残すと `<script src="a#b.js">` が `a` を、
+`<script src="my%20lib.js">` が `my lib.js` を探してしまうためです。コード中の元の名前（`a#b.js`）と、
+それをパーセントエンコードした書き方（`a%23b.js`）は、新しい名前に揃えます。
 fetch が付け替えを警告したら、そのタブを読み込めているか確かめてください。
 既知の制限: 同梱されるのはコード中に **deckard の絶対 URL** で書かれたアセットのみです。
 `loadImage('photo.jpg')` のような fileBase 相対参照のアセットは取得できません（p5js モードも同様）。

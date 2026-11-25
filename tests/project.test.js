@@ -36,11 +36,44 @@ test('legacy v2 remains accepted, while malformed or partial layouts are rejecte
   assert.equal(p.venue.layout.outputs.length, 1);
 });
 test('removing a 2D output does not compact physical projector coordinates', () => {
-  let p = createProject(); p = reconcileProjectLayout(p, withAddedOutput(p.venue.layout));
+  let p = createProject(); const removed = new Map(); p = reconcileProjectLayout(p, withAddedOutput(p.venue.layout), removed);
   const id = p.venue.layout.outputs[1].id; p.venue.projectors[1].position = [3,4,5];
-  p = reconcileProjectLayout(p, withRemovedOutput(p.venue.layout, p.venue.layout.outputs[0].id));
+  p = reconcileProjectLayout(p, withRemovedOutput(p.venue.layout, p.venue.layout.outputs[0].id), removed);
   assert.equal(p.venue.layout.outputs[0].position.x, 0);
   assert.equal(p.venue.projectors[0].outputId, id); assert.deepEqual(p.venue.projectors[0].position, [3,4,5]);
+});
+test('an output that returns to the layout (Undo of a delete) gets its projector calibration back (#165)', () => {
+  const removed = new Map();
+  let p = createProject(); p = reconcileProjectLayout(p, withAddedOutput(p.venue.layout), removed);
+  const [keptId, id] = p.venue.layout.outputs.map(o => o.id);
+  const calibrate = (project, outputId, values) => ({ ...project, venue: { ...project.venue,
+    projectors: project.venue.projectors.map(q => q.outputId === outputId ? { ...q, ...values } : q) } });
+  const first = { position: [7.5, 1.25, -3], quaternion: [0, 0.6, 0, 0.8], verticalFovDegrees: 31, aspect: 1.6, lensShift: [0.2, -0.4], near: 0.5, far: 80 };
+  p = calibrate(calibrate(p, id, first), keptId, { position: [-2, 3, 6], lensShift: [0, 0.3] });
+  const both = structuredClone(p.venue.layout), onlyKept = withRemovedOutput(both, id);
+  const projector = (project, outputId) => project.venue.projectors.find(q => q.outputId === outputId);
+  const expectKept = project => {
+    assert.deepEqual(projector(project, keptId).position, [-2, 3, 6]); assert.deepEqual(projector(project, keptId).lensShift, [0, 0.3]);
+  };
+
+  p = reconcileProjectLayout(p, onlyKept, removed);
+  assert.deepEqual(p.venue.projectors.map(q => q.outputId), [keptId]); expectKept(p);
+  p = reconcileProjectLayout(p, structuredClone(both), removed); // Undo
+  assert.deepEqual(p.venue.projectors.map(q => q.outputId), [keptId, id]);
+  assert.deepEqual(projector(p, id), { id: `projector-${id}`, outputId: id, ...first }); expectKept(p);
+
+  // Redo → Undo: 戻した後に校正し直した値が、最初に消したときの値より優先される。
+  const second = { ...first, position: [1, 2, 3], verticalFovDegrees: 55 };
+  p = calibrate(p, id, second);
+  p = reconcileProjectLayout(p, structuredClone(onlyKept), removed);
+  p = reconcileProjectLayout(p, structuredClone(both), removed);
+  assert.deepEqual(projector(p, id), { id: `projector-${id}`, outputId: id, ...second }); expectKept(p);
+
+  // 一度も消していない新しい出力は既定値から始まる。今のプロジェクトにある値は覚えた値で上書きしない。
+  const added = reconcileProjectLayout(p, withAddedOutput(p.venue.layout), removed);
+  assert.deepEqual(added.venue.projectors[2].position, [0, 2.5, 4.5]);
+  removed.set(id, { ...projector(p, id), position: [9, 9, 9] });
+  assert.deepEqual(projector(reconcileProjectLayout(p, structuredClone(both), removed), id).position, [1, 2, 3]);
 });
 test('GLB rejects external images/buffers, cycles, unsupported extensions and out-of-bounds data', () => {
   validateGlb(venueFixture());
@@ -56,6 +89,43 @@ test('large embedded assets decode without regexp stack overflow; invalid paddin
   const bytes = new Uint8Array(8 * 1024 * 1024).fill(123);
   assert.deepEqual(decodeAsset(encodeAsset(bytes)), bytes);
   for (const bad of ['a', 'AAAA===A', 'AA=A', '====', 'AA$=']) assert.throws(() => decodeAsset(bad));
+});
+test('an asset already verified under the same id and data is not decoded again; any other asset still is (#171)', () => {
+  // The base64 decode is the observable cost: count the atob calls a parse makes.
+  const decodes = run => {
+    const real = globalThis.atob; let calls = 0;
+    globalThis.atob = data => { calls++; return real(data); };
+    try { run(); } finally { globalThis.atob = real; }
+    return calls;
+  };
+  const p = createProject();
+  p.assets = [{ id: 'wall', name: 'wall.glb', mimeType: 'model/gltf-binary', data: venueFixture().toString('base64') }];
+  p.venue.scene.kind = 'glb'; p.venue.scene.assetId = 'wall';
+  let stored;
+  assert.equal(decodes(() => { stored = parseProject(p); }), 1, 'the first parse decodes and validates the GLB');
+  // A calibration commit: the projector moves, the asset is the one that was just verified.
+  const moved = { ...stored, venue: { ...stored.venue, revision: stored.venue.revision + 1,
+    projectors: [{ ...stored.venue.projectors[0], position: [1, 2, 3] }] } };
+  let committed;
+  assert.equal(decodes(() => { committed = parseProject(moved, stored.assets); }), 0, 'an unchanged asset is not decoded again');
+  assert.deepEqual(committed, moved);
+  assert.equal(decodes(() => parseProject(moved)), 1, 'without verified assets every parse decodes');
+  // The calibration values themselves are still validated.
+  assert.throws(() => parseProject({ ...moved, venue: { ...moved.venue, projectors: [{ ...moved.venue.projectors[0], near: 5, far: 1 }] } }, stored.assets));
+  // The same id does not vouch for different data.
+  const truncated = venueFixture(); truncated[8] = 0;
+  for (const bad of [venueFixture(d => d.images[0].uri = 'https://example.com/image.png'), venueFixture(d => d.buffers[0].uri = '../secret.bin'),
+    venueFixture(d => d.bufferViews[0].byteOffset = 1e9), truncated]) {
+    const replaced = { ...moved, assets: [{ ...stored.assets[0], data: bad.toString('base64') }] };
+    assert.equal(decodes(() => assert.throws(() => parseProject(replaced, stored.assets))), 1);
+  }
+  // Nor does the same data under another id.
+  const renamed = { ...moved, assets: [{ ...stored.assets[0], id: 'other' }], venue: { ...moved.venue, scene: { ...moved.venue.scene, assetId: 'other' } } };
+  assert.equal(decodes(() => parseProject(renamed, stored.assets)), 1);
+  // A verified asset skips only the GLB decode, not the checks on its other fields.
+  assert.throws(() => parseProject({ ...moved, assets: [{ ...stored.assets[0], mimeType: 'model/gltf+json' }] }, stored.assets));
+  assert.throws(() => parseProject({ ...moved, assets: [{ ...stored.assets[0], name: '' }] }, stored.assets));
+  assert.throws(() => parseProject({ ...moved, assets: [stored.assets[0], stored.assets[0]] }, stored.assets));
 });
 
 test('v1 projects migrate without changing calibrated geometry or embedded assets', () => {

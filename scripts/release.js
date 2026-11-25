@@ -19,6 +19,7 @@ import { execFileSync } from 'child_process';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
+import { envWithoutRepositoryLocation } from '../src/core/git-env.js';
 
 export const FRAGMENT_DIR = 'changelog.d';
 
@@ -54,7 +55,9 @@ const REFERENCE_LINK_PATTERN = /\[[^\]]*\]\[[^\]]*\]/;
  * @param {string[]} args
  */
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+  // 親の GIT_DIR などを引き継ぐと、cwd ではなく外側のリポジトリのタグと履歴を読む (#253)
+  const env = envWithoutRepositoryLocation();
+  return execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
 }
 
 /**
@@ -72,7 +75,9 @@ function parseVersion(version) {
  * @returns {string | null}
  */
 export function latestTag(cwd) {
-  const tags = git(cwd, 'tag', '--list', 'v*', '--merged', 'HEAD').split('\n').filter((t) => TAG_PATTERN.test(t));
+  // --no-column: column.ui / column.tag が always だと 1 行に複数のタグが並び、どれも版のタグに見えなくなる
+  const tags = git(cwd, 'tag', '--list', 'v*', '--merged', 'HEAD', '--no-column')
+    .split('\n').filter((t) => TAG_PATTERN.test(t));
   if (tags.length === 0) return null;
   const key = (/** @type {string} */ t) => parseVersion(t.slice(1));
   return tags.reduce((best, t) => {
@@ -121,9 +126,15 @@ function isFragmentPath(path) {
  * @returns {string[]}
  */
 export function addedFragments(cwd, since) {
+  // core.quotePath: パスの書き出し方を git の既定の形に固定する。実行する人が false にしていると、
+  // 既定では引用符付きで出て断片に数えない名前 (ASCII 以外を含む名前) を、その人だけ数える
   const out = since === null
-    ? git(cwd, 'ls-files', '--', FRAGMENT_DIR)
-    : git(cwd, 'diff', '--name-only', '--diff-filter=A', `${since}..HEAD`, '--', FRAGMENT_DIR);
+    ? git(cwd, '-c', 'core.quotePath=true', 'ls-files', '--', FRAGMENT_DIR)
+    // --find-renames: 改名の検出を git の既定の形に固定する。実行する人の diff.renames が copies だと
+    // 書き直した断片に似た新しい断片がコピー (C) に、false だと改名した断片が追加 (A) に数え直される。
+    // -l0: 検出の上限も固定する。diff.renameLimit が小さいと、中身を変えた改名が追加 (A) に数え直される
+    : git(cwd, '-c', 'core.quotePath=true', 'diff', '--name-only', '--diff-filter=A', '--find-renames', '-l0',
+      `${since}..HEAD`, '--', FRAGMENT_DIR);
   return out.split('\n').filter(isFragmentPath).sort();
 }
 

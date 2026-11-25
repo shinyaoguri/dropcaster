@@ -592,6 +592,56 @@ async function outputs(page) {
   await page.waitForTimeout(1200);
   assert.equal(await page.locator('#source-video').evaluate(v => v.srcObject.getVideoTracks()[0].readyState), 'live');
 }
+/** 出力の削除を Undo / Redo で戻すと、その出力のプロジェクタ校正値も削除前に戻る (#165)。出力ウィンドウは開き直さない (#161)。 */
+async function outputUndo(page) {
+  await start(page);
+  const undoBtn = page.locator('#dc-undo-btn'), redoBtn = page.locator('#dc-redo-btn');
+  await showPanel(page, 'outputs'); await page.locator('#add-output-btn').click();
+  const [kept, target] = (await state(page)).outputs.map(o => o.id);
+  const calibrated = await exportProject(page);
+  Object.assign(calibrated.venue.projectors.find(p => p.outputId === target),
+    { position: [7.5, 1.25, -3], quaternion: [0, 0.6, 0, 0.8], verticalFovDegrees: 31, lensShift: [0.2, -0.4], near: 0.5, far: 80 });
+  Object.assign(calibrated.venue.projectors.find(p => p.outputId === kept), { position: [-2, 3, 6], lensShift: [0, 0.3] });
+  await importProject(page, calibrated);
+  const projectors = async () => (await exportProject(page)).venue.projectors;
+  const before = await projectors();
+  assert.deepEqual(before.map(p => [p.outputId, p.position]), [[kept, [-2, 3, 6]], [target, [7.5, 1.25, -3]]], 'the calibration was imported');
+  assert.equal(await undoBtn.isDisabled(), true, 'loading a project starts a new edit history');
+  await showPanel(page, 'outputs');
+  const remove = id => page.locator(`#outputs-list [data-output-id="${id}"] .remove-output-btn`).click();
+  const promise = page.waitForEvent('popup');
+  await page.locator(`#outputs-list [data-output-id="${target}"] .open-btn`).click();
+  const popup = await promise, closed = popup.waitForEvent('close');
+
+  await remove(target); await closed;
+  assert.deepEqual(await projectors(), [before[0]], 'removing an output leaves the other projector alone');
+  await undoBtn.click();
+  assert.deepEqual((await state(page)).outputs.map(o => o.id), [kept, target]);
+  assert.deepEqual(await projectors(), before, 'undoing the removal restores the whole calibration');
+  await redoBtn.click();
+  assert.deepEqual(await projectors(), [before[0]]);
+  await undoBtn.click();
+  assert.deepEqual(await projectors(), before, 'redo then undo restores it again');
+  // 先頭の出力を消して残りが詰められても、戻せば両方とも元の値になる。
+  await remove(kept);
+  assert.deepEqual(await projectors(), [before[1]], 'compaction does not move the remaining projector');
+  await undoBtn.click();
+  assert.deepEqual(await projectors(), before, 'undo restores the first output without touching the other');
+  // 2D の設定の読込で出力がすべて入れ替わっても、戻せば元の出力は元の値になる。
+  const settings = await state(page);
+  settings.outputs = [{ ...settings.outputs[0], id: 'replacement' }]; settings.activeOutputId = 'replacement';
+  await inProjectPanel(page, async () => {
+    const chooser = page.waitForEvent('filechooser'); await page.locator('#import-settings-btn').click();
+    await (await chooser).setFiles({ name: 'settings.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(settings)) });
+    await page.waitForFunction(() => window.practiceWC.events.state.get().outputs[0].id === 'replacement');
+  });
+  assert.deepEqual((await projectors()).map(p => [p.outputId, p.position]), [['replacement', [0, 2.5, 4.5]]], 'an output never seen starts from the default projector');
+  await undoBtn.click();
+  assert.deepEqual(await projectors(), before, 'undoing a settings import restores every projector');
+  await page.waitForTimeout(300);
+  assert.equal(page.context().pages().length, 1, 'undo does not reopen the output window');
+  await closeEditor(page);
+}
 async function unavailable(page) {
   await page.evaluate(() => {
     window.originalGetContext = HTMLCanvasElement.prototype.getContext;
@@ -1022,6 +1072,126 @@ async function maskSelect(page, base) {
   await page.keyboard.press('Escape');
   assert.equal((await state(page)).mappings.some(m => m.drafting), false);
 }
+/** マスクの描画中、入力欄で押したキーはその欄だけに効き、描画中のマスクを変えない (#206)。 */
+async function maskDraftKeys(page) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  const host = await page.locator('#output-stage .dc-canvas-host').boundingBox();
+  const at = (fx, fy) => page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
+  const masks = async () => (await state(page)).mappings.filter(m => m.kind === 'mask');
+  const focusedTag = () => page.evaluate(() => document.activeElement?.tagName);
+  await page.locator('#add-mask-btn').click();
+  for (const [fx, fy] of [[.3, .3], [.6, .3], [.45, .6]]) await at(fx, fy);
+  const [drawn] = await masks();
+  assert.equal(drawn.drafting, true); assert.equal(drawn.points.length, 3);
+  /** 描画中のまま、頂点が描いたときと同じである。 */
+  const draftKept = async label => {
+    const now = await masks();
+    assert.deepEqual(now.map(m => ({ id: m.id, drafting: m.drafting, points: m.points })), [{ id: drawn.id, drafting: true, points: drawn.points }], label);
+  };
+
+  // 出力設定の数値欄: Backspace / Delete は欄の文字を消し、Escape は欄の取消、Enter は欄の確定
+  await showPanel(page, 'outputs');
+  const x = page.locator('#output-x-input');
+  const outputX = async () => (await state(page)).outputs[0].position.x;
+  const committedX = await outputX(), shownX = await x.inputValue();
+  await x.fill('123'); await x.press('Backspace');
+  assert.equal(await x.inputValue(), '12', 'Backspace in the output field deletes its last digit');
+  await draftKept('Backspace in the output field keeps the mask being drawn');
+  await x.press('Home'); await x.press('Delete');
+  assert.equal(await x.inputValue(), '2', 'Delete in the output field deletes its first digit');
+  await draftKept('Delete in the output field keeps the mask being drawn');
+  await x.press('Escape');
+  assert.equal(await x.inputValue(), shownX, 'Escape in the output field restores the committed value');
+  assert.equal(await outputX(), committedX, 'Escape in the output field commits nothing');
+  await draftKept('Escape in the output field keeps the mask being drawn');
+  await x.fill('40'); await x.press('Enter');
+  assert.equal(await outputX(), 40, 'Enter in the output field commits the value');
+  await draftKept('Enter in the output field keeps the mask being drawn');
+
+  // マッピング名の rename 欄: 同じく欄だけに効く
+  await showPanel(page, 'mappings');
+  const name = page.locator(`.mapping-list-item[data-id="${drawn.id}"] .name`);
+  const input = page.locator('.mapping-list-item .name-input');
+  const original = await name.innerText();
+  assert.ok(original.length >= 3, 'the mask has a name long enough to edit');
+  await name.dblclick();
+  await input.press('End'); await input.press('Backspace');
+  assert.equal(await input.inputValue(), original.slice(0, -1), 'Backspace in the rename field deletes its last character');
+  await draftKept('Backspace in the rename field keeps the mask being drawn');
+  await input.press('Home'); await input.press('Delete');
+  assert.equal(await input.inputValue(), original.slice(1, -1), 'Delete in the rename field deletes its first character');
+  await draftKept('Delete in the rename field keeps the mask being drawn');
+  await input.press('Escape');
+  assert.equal(await input.count(), 0, 'Escape closes the rename field');
+  assert.equal(await name.innerText(), original, 'Escape in the rename field keeps the name');
+  await draftKept('Escape in the rename field keeps the mask being drawn');
+  await name.dblclick(); await input.fill('pen'); await input.press('Enter');
+  assert.equal(await input.count(), 0, 'Enter closes the rename field');
+  assert.equal((await masks())[0].name, 'pen', 'Enter in the rename field commits the name');
+  await draftKept('Enter in the rename field keeps the mask being drawn');
+
+  // 入力欄の外 (プレビュー上) では従来どおり: Backspace / Delete で頂点を 1 つ消し、Enter で確定、Escape で破棄
+  const points = async () => (await masks())[0].points;
+  await at(.6, .6);
+  assert.equal((await points()).length, 4);
+  assert.notEqual(await focusedTag(), 'INPUT');
+  await page.keyboard.press('Backspace');
+  assert.deepEqual(await points(), drawn.points, 'Backspace on the preview removes the last vertex');
+  await page.keyboard.press('Delete');
+  assert.deepEqual(await points(), drawn.points.slice(0, 2), 'Delete on the preview removes the last vertex');
+  await page.keyboard.press('Enter');
+  assert.equal((await masks())[0].drafting, true, 'Enter with two vertices keeps drawing');
+  await at(.45, .6); await page.keyboard.press('Enter');
+  const [closed] = await masks();
+  assert.ok(!closed.drafting, 'Enter on the preview closes the mask'); assert.equal(closed.points.length, 3);
+  await page.locator('#add-mask-btn').click();
+  await at(.2, .7); await at(.3, .8);
+  assert.equal((await masks()).length, 2);
+  await page.keyboard.press('Escape');
+  assert.deepEqual((await masks()).map(m => m.id), [drawn.id], 'Escape on the preview discards the mask being drawn');
+}
+/** 隅を選んだまま <select> で押した矢印キーは、その欄のもので、選んだ隅を動かさない (#206 と同じ約束)。 */
+async function nudgeSelectKeys(page) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await page.locator('#output-stage [data-corner]').first().click();
+  assert.equal(await page.locator('#output-stage .quad-handle.kbd-selected').count(), 1, 'a corner is selected for the arrow keys');
+  await showPanel(page, 'preview3d');
+  const quality = page.locator('#practice-quality'); await quality.waitFor();
+  assert.equal(await page.locator('#output-stage .quad-handle.kbd-selected').count(), 1, 'the corner stays selected in the 3D panel');
+  // window は document の後に呼ばれるので、document のキー処理が既定の動作を止めたかをここで見られる。
+  await page.evaluate(() => addEventListener('keydown', event => { window.lastKeyPrevented = event.defaultPrevented; }));
+  const before = await state(page);
+  await quality.focus();
+  assert.equal(await quality.inputValue(), '640');
+  await page.keyboard.press('ArrowDown');
+  assert.deepEqual((await state(page)).mappings, before.mappings, 'ArrowDown in a select keeps the selected corner in place');
+  assert.equal(await page.evaluate(() => window.lastKeyPrevented), false, 'ArrowDown in a select is left to the browser');
+  // macOS の Chromium は閉じた select の矢印キーで一覧を開く (値は変えない) ので、値はそれ以外で確かめる。
+  if (process.platform === 'darwin') await page.keyboard.press('Escape');
+  else assert.equal(await quality.inputValue(), '960', 'ArrowDown in a select picks its next option');
+  // 欄の外では従来どおり、矢印キーが選んだ隅を動かす
+  await quality.evaluate(element => element.blur());
+  await page.keyboard.press('ArrowRight');
+  assert.notDeepEqual((await state(page)).mappings, before.mappings, 'ArrowRight outside a field nudges the selected corner');
+  // 逆の順。欄にフォーカスがあるまま隅を押すと (ハンドルは既定のフォーカス移動を止める)、矢印キーは押した隅に届く。
+  const corner = page.locator('#output-stage [data-corner]').first();
+  const picked = await quality.inputValue();
+  await quality.focus(); await corner.click();
+  let moved = await state(page);
+  await page.keyboard.press('ArrowRight');
+  assert.notDeepEqual((await state(page)).mappings, moved.mappings, 'pressing a corner while a select has focus hands the arrow keys to the corner');
+  assert.equal(await quality.inputValue(), picked, 'the select keeps its value once a corner is picked');
+  await showPanel(page, 'outputs');
+  const x = page.locator('#output-x-input'); const xValue = await x.inputValue();
+  await x.focus(); await corner.click();
+  moved = await state(page);
+  await page.keyboard.press('ArrowUp');
+  assert.notDeepEqual((await state(page)).mappings, moved.mappings, 'pressing a corner while a number field has focus hands the arrow keys to the corner');
+  assert.equal(await x.inputValue(), xValue, 'the number field keeps its value once a corner is picked');
+  assert.equal((await state(page)).outputs[0].position.x, moved.outputs[0].position.x, 'the output does not move');
+}
 async function confirmClose(page, base) {
   await start(page);
   await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click();
@@ -1398,7 +1568,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);
