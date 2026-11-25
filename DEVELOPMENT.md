@@ -222,6 +222,9 @@ Gist と OpenProcessing の html モードの作品を実際に開き、埋め�
 同じスイートの `galleryHeader` は、ギャラリーのホームを幅 1600 / 1280 / 960 / 800 / 375px・英語と日本語で開き、
 見出しとヘッダーのボタン列が重ならず、ボタンが画面内にあって押せることを矩形で確かめる (#178)。
 ホームのヘッダー (`SketchGalleryView`、`style.css` の `.header`) を変えたら実行する。
+`heroTooltip` は、カタログが空のホーム (hero) を幅 320 / 375 / 768px・英語と日本語で開き、ページが横にはみ出さないこと、
+「?」のツールチップが非表示のときも、フォーカス・hover で表示したときも画面内にあり、768px では「?」の真上に出ることを確かめる (#284)。
+hero (`OpIdEntryView`、`style.css` の `.op-hero-*`) を変えたら実行する。
 
 `npm run test:slideshow` は両 viewer エントリのスライドショーで iframe ごとの rAF 回数を数え、
 先読みした非表示の作品が待機中に描画せず、表示した作品だけが動くことを確かめる。Next / Previous、
