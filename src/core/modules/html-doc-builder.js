@@ -7,7 +7,9 @@
 //
 //   1. index.html 内の <script src> / <link rel=stylesheet href> が仮想ファイル名を
 //      指していれば内容を埋め込む (パーサ起点のロードは実行時に横取りできないため、
-//      組み立て時に解決する)。script は属性 (type="module"・defer・async・nomodule 等)
+//      組み立て時に解決する)。参照は 2. の shim と同じ順序で解決する (resolveFileRef):
+//      書かれたままの名前が先、無ければ URL として解釈した名前 (`lib.js?v=2` → `lib.js`、
+//      `my%20lib.js` → `my lib.js`)。script は属性 (type="module"・defer・async・nomodule 等)
 //      を残したまま src だけを内容の data: URL に差し替えるので、実行の意味と順序は
 //      ブラウザが src 付き script として決め、中身が HTML として解析されることもない (#110)。
 //      ただし data: URL の module は自分の URL が data: になるため、module 同士の
@@ -76,8 +78,8 @@ function inlineFileScripts(doc, files) {
   return doc.replace(
     /<script\b([^>]*)\bsrc\s*=\s*(["'])([^"']+)\2([^>]*)>\s*<\/script>/gi,
     (whole, pre, _q, src, post) => {
-      const name = normalizeFileRef(src);
-      if (!files.has(name)) return whole; // 外部 URL や CDN 参照はそのまま
+      const name = resolveFileRef(src, files);
+      if (name === null) return whole; // 外部 URL や CDN 参照はそのまま
       // integrity は落とす: 埋め込む本体は sourceURL の追記や OP の proxy 書き換えで元のハッシュと
       // 一致せず、残すと error イベントも出さずに実行が止まる (埋め込み前の inline script でも無視されていた)
       const attrs = (/** @type {string} */ text) => dropAttributes(text, SCRIPT_DROPPED_ATTRS);
@@ -160,8 +162,8 @@ function inlineFileStylesheets(doc, files) {
     if (!/\brel\s*=\s*(["']?)stylesheet\1/i.test(whole)) return whole;
     const m = /\bhref\s*=\s*(["'])([^"']+)\1/i.exec(whole);
     if (!m) return whole;
-    const name = normalizeFileRef(m[2]);
-    if (!files.has(name)) return whole;
+    const name = resolveFileRef(m[2], files);
+    if (name === null) return whole;
     // disabled の link は適用されない。style には同じ意味の属性が無いので埋め込まずに残す
     if (hasAttribute(attrText, 'disabled')) return whole;
     const kept = dropAttributes(attrText.replace(/\/\s*$/, ''), LINK_ONLY_ATTRS).trim();
@@ -189,12 +191,58 @@ function escapeStyleText(css) {
 }
 
 /**
- * 相対参照をファイル名に正規化する（`./foo.js` → `foo.js`）。
- * @param {string} ref
- * @returns {string}
+ * `<script src>` / `<link href>` の参照が指す仮想ファイルの名前を返す。指していなければ null。
+ * 解決の順序は fetch shim の lookup (buildFileFetchShim) と同じにする。同じ文書の中で、
+ * 埋め込みと実行時の fetch が別のファイルを選ばないようにするため (#211):
+ *   1. 書かれたままの名前 (先頭の `./` だけ除く)。名前に `#` や `%XX` を含むファイルは、
+ *      その名前で書けば指せる
+ *   2. 無ければ URL として解釈し、クエリとフラグメントを除いてパーセントデコードした名前
+ *      (`lib.js?v=2` → `lib.js`、`my%20lib.js` → `my lib.js`、`a%23b.js` → `a#b.js`)
+ * 外部 URL・別ディレクトリへの参照 (`../x.js`・`/x.js`) は 2. でも名前にならない。
+ *
+ * @param {string} ref 属性に書かれた参照
+ * @param {Map<string, string>} files
+ * @returns {string | null}
  */
-function normalizeFileRef(ref) {
-  return String(ref ?? '').trim().replace(/^\.\//, '');
+function resolveFileRef(ref, files) {
+  const raw = String(ref ?? '').trim().replace(/^\.\//, '');
+  if (files.has(raw)) return raw;
+  const name = sameDirectoryFileName(ref);
+  return name !== null && files.has(name) ? name : null;
+}
+
+/**
+ * 組み立て時には文書の URL が決まっていないので、参照を仮の文書ディレクトリから解決して確かめる。
+ * オリジンもパスも違う 2 つを使い、両方で「そのディレクトリの同じ名前」になる参照だけを
+ * 相対参照とみなす。絶対 URL・`//host/…`・`/` 始まりのパスは、仮の URL のどちらかと偶然一致しても、
+ * もう片方とは一致しない。スキームも変えてあるので、文書と同じスキームのときだけ相対になる
+ * `https:lib.js` の形も相対とみなさない。
+ */
+const PROBE_DIRECTORY_URLS = ['http://a.dc-probe.invalid/a/', 'https://b.dc-probe.invalid/b/'];
+
+/**
+ * 参照を URL として解釈し、文書と同じディレクトリを起点にしたパス (クエリ・フラグメントを除き、
+ * パーセントデコード済み) を返す。文書のディレクトリの外を指す参照、解釈・デコードできない参照は null。
+ * @param {string} ref
+ * @returns {string | null}
+ */
+function sameDirectoryFileName(ref) {
+  /** @type {string | null} */
+  let found = null;
+  for (const directoryUrl of PROBE_DIRECTORY_URLS) {
+    let name;
+    try {
+      const dir = new URL(directoryUrl);
+      const resolved = new URL(String(ref ?? ''), dir);
+      if (resolved.origin !== dir.origin || !resolved.pathname.startsWith(dir.pathname)) return null;
+      name = decodeURIComponent(resolved.pathname.slice(dir.pathname.length));
+    } catch {
+      return null; // URL として解釈できない、または `%zz` のようにデコードできない
+    }
+    if (found !== null && name !== found) return null;
+    found = name;
+  }
+  return found;
 }
 
 /**

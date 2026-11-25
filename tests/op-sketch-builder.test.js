@@ -71,6 +71,48 @@ test('html mode: throws when there is no index.html tab', () => {
   assert.throws(() => assembleHtmlModeOpSketchHtml({ ...fx, options: {} }), /index\.html/);
 });
 
+// #211: 参照を URL として読む。[タブ名, index.html に書く参照] は Issue の表の 6 行
+const TAB_REFERENCES = [
+  ['lib.js', 'lib.js'],
+  ['my lib.js', 'my%20lib.js'],
+  ['lib.js', 'lib.js?v=2'],
+  ['a#b.js', 'a%23b.js'],
+  ['my%20lib.js', 'my%20lib.js'],
+  ['a#b.js', 'a#b.js'],
+];
+
+test('html mode: a reference written as a URL embeds the tab it points to', () => {
+  for (const [tabName, ref] of TAB_REFERENCES) {
+    const code = `window.loaded = ${JSON.stringify(tabName)};`;
+    const html = assembleHtmlModeOpSketchHtml({
+      meta: { mode: 'html', fileBase: FILE_BASE },
+      codeTabs: [
+        { title: 'index.html', orderID: 0, code: `<html><head><script src="${ref}"></script></head><body></body></html>` },
+        { title: tabName, orderID: 1, code },
+      ],
+      options: { assetProxyBaseUrl: PROXY },
+    });
+    const tags = [...html.matchAll(/<script src="data:text\/javascript;charset=utf-8;base64,([^"]*)" data-dc-file="([^"]*)"><\/script>/g)];
+    assert.equal(tags.length, 1, `tab "${tabName}" referenced as "${ref}" is embedded`);
+    assert.equal(tags[0][2], tabName);
+    assert.ok(Buffer.from(tags[0][1], 'base64').toString('utf8').startsWith(`${code}\n`), `content of "${tabName}"`);
+    assert.ok(!html.includes(`src="${ref}"`), `the reference "${ref}" is replaced`);
+  }
+});
+
+test('html mode: a stylesheet reference with a query embeds the tab', () => {
+  const html = assembleHtmlModeOpSketchHtml({
+    meta: { mode: 'html', fileBase: FILE_BASE },
+    codeTabs: [
+      { title: 'index.html', orderID: 0, code: '<html><head><link rel="stylesheet" href="style.css?v=2"></head></html>' },
+      { title: 'style.css', orderID: 1, code: 'body { margin: 0; }' },
+    ],
+    options: {},
+  });
+  assert.match(html, /<style>\nbody \{ margin: 0; \}\n<\/style>/);
+  assert.ok(!/<link\b/i.test(html), 'the link is gone');
+});
+
 // --- planHtmlModeLocalFiles (`dropcaster fetch` の html モード用ローカル書き出し計画) ---
 
 test('html-mode local plan: tabs become files verbatim, index tab becomes index.html', () => {
@@ -293,6 +335,164 @@ test('html-mode local plan: without an asset directory, a tab named "assets" is 
     { name: 'assets', content: "fetch('assets');" },
   ]);
   assert.deepEqual(plan.renames, []);
+});
+
+// --- #211: URL で意味を持つ # と % を含むタブ名 ---
+// 名前に # や % が残ると、書かれたままの参照は別の名前のファイルを探す (`a#b.js` → `a`、
+// `my%20lib.js` → `my lib.js`)。保存名から外し、参照を保存名に揃える。
+
+test('html-mode local plan: tabs named with # or % are saved under URL-safe names, references as written follow', () => {
+  const codeTabs = [
+    {
+      title: 'index.html', orderID: 0, code: [
+        '<script src="a#b.js"></script>',
+        "<script src='./my%20lib.js'></script>",
+        '<link rel="stylesheet" href="50%.css">',
+        '<script src="main.js"></script>',
+      ].join('\n'),
+    },
+    { title: 'a#b.js', orderID: 1, code: 'window.hash = 1;' },
+    { title: 'my%20lib.js', orderID: 2, code: 'window.percent = 1;' },
+    { title: '50%.css', orderID: 3, code: 'body { width: 50%; }' },
+    { title: 'main.js', orderID: 4, code: "loadStrings('a#b.js'); fetch(\"my%20lib.js?v=2\");" },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs });
+
+  assert.deepEqual(plan.files.map(f => f.name), ['index.html', 'a_b.js', 'my_20lib.js', '50_.css', 'main.js']);
+  assert.deepEqual(plan.renames, [
+    { from: 'a#b.js', to: 'a_b.js' },
+    { from: 'my%20lib.js', to: 'my_20lib.js' },
+    { from: '50%.css', to: '50_.css' },
+  ]);
+  assert.equal(plan.files[0].content, [
+    '<script src="a_b.js"></script>',
+    "<script src='./my_20lib.js'></script>",
+    '<link rel="stylesheet" href="50_.css">',
+    '<script src="main.js"></script>',
+  ].join('\n'));
+  // タブの中身は変わらない (CSS の 50% はタブ名ではない)
+  assert.equal(plan.files[1].content, 'window.hash = 1;');
+  assert.equal(plan.files[2].content, 'window.percent = 1;');
+  assert.equal(plan.files[3].content, 'body { width: 50%; }');
+  assert.equal(plan.files[4].content, "loadStrings('a_b.js'); fetch(\"my_20lib.js?v=2\");");
+});
+
+test('html-mode local plan: references that percent-encode a renamed tab name follow it too', () => {
+  // viewer では `a%23b.js` がタブ `a#b.js` を指す。fetch 後も同じタブを指す
+  const index = [
+    '<script src="a%23b.js"></script>',
+    '<script src="./a%23b.js?v=2#top"></script>',
+    '<script src="100%25.js"></script>',
+    '<script src="my%20file%231.js"></script>',
+    '<script src="my file%231.js"></script>',
+    '<script src="caf%c3%a9%23.js"></script>',
+    '<script src="caf%C3%A9%23.js"></script>',
+    '<script src="café%23.js"></script>',
+  ].join('\n');
+  const codeTabs = [
+    { title: 'index.html', orderID: 0, code: index },
+    { title: 'a#b.js', orderID: 1, code: '1;' },
+    { title: '100%.js', orderID: 2, code: '2;' },
+    { title: 'my file#1.js', orderID: 3, code: '3;' },
+    { title: 'café#.js', orderID: 4, code: '4;' },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs });
+
+  assert.deepEqual(plan.files.map(f => f.name), ['index.html', 'a_b.js', '100_.js', 'my file_1.js', 'café_.js']);
+  assert.equal(plan.files[0].content, [
+    '<script src="a_b.js"></script>',
+    '<script src="./a_b.js?v=2#top"></script>',
+    '<script src="100_.js"></script>',
+    '<script src="my file_1.js"></script>',
+    '<script src="my file_1.js"></script>',
+    '<script src="café_.js"></script>',
+    '<script src="café_.js"></script>',
+    '<script src="café_.js"></script>',
+  ].join('\n'));
+});
+
+test('html-mode local plan: a reference that is both a tab name and an encoding of another points to the tab of that name', () => {
+  // viewer と同じ順序: 書かれたままの名前のタブが先、無ければデコードした名前のタブ
+  const index = [
+    '<script src="a#b.js"></script>',
+    '<script src="a%23b.js"></script>',
+    '<script src="a%2523b.js"></script>',
+  ].join('\n');
+  const CONTENT = { 'a#b.js': 'window.tab = "hash";', 'a%23b.js': 'window.tab = "percent";' };
+  for (const order of [['a#b.js', 'a%23b.js'], ['a%23b.js', 'a#b.js']]) {
+    const codeTabs = [
+      { title: 'index.html', orderID: 0, code: index },
+      ...order.map((title, i) => ({ title, orderID: i + 1, code: CONTENT[title] })),
+    ];
+    const plan = planHtmlModeLocalFiles({ codeTabs });
+    const saved = Object.fromEntries(plan.files.map(f => [f.name, f.content]));
+
+    assert.deepEqual(Object.keys(saved).sort(), ['a_23b.js', 'a_b.js', 'index.html'], order.join(' → '));
+    assert.equal(saved['a_b.js'], 'window.tab = "hash";');
+    assert.equal(saved['a_23b.js'], 'window.tab = "percent";');
+    assert.equal(saved['index.html'], [
+      '<script src="a_b.js"></script>',
+      '<script src="a_23b.js"></script>',
+      '<script src="a_23b.js"></script>',
+    ].join('\n'));
+  }
+});
+
+test('html-mode local plan: a tab whose name is already URL-safe on disk keeps its name and its encoded references', () => {
+  // 空白を含む名前のファイルは、`my%20lib.js` でも `my lib.js` でも配信される。付け替えない
+  const index = '<script src="my%20lib.js"></script><script src="my lib.js"></script><script src="lib.js?v=2"></script>';
+  const codeTabs = [
+    { title: 'index.html', orderID: 0, code: index },
+    { title: 'my lib.js', orderID: 1, code: '1;' },
+    { title: 'lib.js', orderID: 2, code: '2;' },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs });
+
+  assert.deepEqual(plan.files.map(f => f.name), ['index.html', 'my lib.js', 'lib.js']);
+  assert.deepEqual(plan.renames, []);
+  assert.equal(plan.files[0].content, index);
+});
+
+test('html-mode local plan: a tab renamed for its characters does not take the name another tab already has', () => {
+  // `a#b.js` を a_b.js にすると、タブ a_b.js への参照まで付け替えたタブを指す
+  const index = '<script src="a#b.js"></script><script src="a_b.js"></script>';
+  const CONTENT = { 'a#b.js': 'window.tab = "hash";', 'a_b.js': 'window.tab = "underscore";' };
+  for (const order of [['a#b.js', 'a_b.js'], ['a_b.js', 'a#b.js']]) {
+    const codeTabs = [
+      { title: 'index.html', orderID: 0, code: index },
+      ...order.map((title, i) => ({ title, orderID: i + 1, code: CONTENT[title] })),
+    ];
+    const plan = planHtmlModeLocalFiles({ codeTabs });
+    const saved = Object.fromEntries(plan.files.map(f => [f.name, f.content]));
+
+    assert.deepEqual(plan.renames, [{ from: 'a#b.js', to: 'a_b_2.js' }], order.join(' → '));
+    assert.equal(saved['a_b.js'], 'window.tab = "underscore";');
+    assert.equal(saved['a_b_2.js'], 'window.tab = "hash";');
+    assert.equal(saved['index.html'], '<script src="a_b_2.js"></script><script src="a_b.js"></script>');
+  }
+});
+
+test('html-mode local plan: a reference to the "assets" tab with a query or a fragment follows the rename', () => {
+  const codeTabs = [
+    {
+      title: 'index.html', orderID: 0, code: [
+        '<script src="assets?v=2"></script>',
+        "<link rel=\"stylesheet\" href='./assets#top'>",
+        '<a href="assets/readme.txt?v=2">assets</a>',
+      ].join('\n'),
+    },
+    { title: 'assets', orderID: 1, code: 'x' },
+    { title: 'main.js', orderID: 2, code: "fetch('assets?cache=1'); fetch('assets?' + query); const q = 'assets?v=2';" },
+  ];
+  const plan = planHtmlModeLocalFiles({ codeTabs, assetDirName: 'assets' });
+
+  assert.equal(plan.files[0].content, [
+    '<script src="assets_2?v=2"></script>',
+    "<link rel=\"stylesheet\" href='./assets_2#top'>",
+    '<a href="assets/readme.txt?v=2">assets</a>',
+  ].join('\n'));
+  // 連結する文字列と、URL を書く位置に無い文字列は、従来どおり書き換えない
+  assert.equal(plan.files[2].content, "fetch('assets_2?cache=1'); fetch('assets?' + query); const q = 'assets?v=2';");
 });
 
 test('p5js mode: assembleOpSketchHtml is unchanged by the html-mode addition', () => {
