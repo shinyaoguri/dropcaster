@@ -860,6 +860,186 @@ async function history(page, base) {
   await snapshot(page, 'history');
   await closeEditor(page);
 }
+/** 面・マスクの複製 (#191)。元のすぐ前面に 20px ずらして入り、複製した側が選ばれる。複製を編集しても元と出力は変わらず、Undo / Redo の 1 件になる。 */
+async function duplicate(page, base) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  const undoBtn = page.locator('#dc-undo-btn'), redoBtn = page.locator('#dc-redo-btn'), dupBtn = page.locator('#duplicate-mapping-btn');
+  const plain = value => JSON.parse(JSON.stringify(value));
+  const current = async () => plain(await state(page));
+  const shifted = p => ({ x: p.x + 20, y: p.y + 20 });
+  const rows = () => page.locator('#mappings-list .mapping-list-item').evaluateAll(els => els.map(el => el.dataset.id));
+  const drag = async (locator, dx, dy) => {
+    const box = await locator.boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await page.mouse.move(x, y); await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(x + dx * i / 8, y + dy * i / 8);
+    await page.mouse.up();
+  };
+  // 操作部は一覧の下、追加ボタンの行の次にある。
+  assert.equal(await page.locator('#dc-tool-panel-mappings .mappings-add-buttons + .mappings-item-buttons > #duplicate-mapping-btn').count(), 1, 'the duplicate button sits under the add buttons');
+  assert.equal(await dupBtn.innerText(), 'Duplicate selected');
+  assert.match(await dupBtn.getAttribute('title'), /in front of the original/);
+  // 元の面: crop を既定から変え、名前を付ける。
+  await drag(page.locator('#selection-box .handle-se'), -48, -32);
+  await page.locator('.mapping-list-item .name').dblclick();
+  await page.locator('.mapping-list-item .name-input').fill('wall'); await page.locator('.mapping-list-item .name-input').press('Enter');
+  // 出力ウィンドウを開いておき、複製と編集がそこへ届くことも見る。
+  await showPanel(page, 'outputs');
+  const popupPromise = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click();
+  const popup = await popupPromise;
+  const outMappings = () => popup.locator('#dc-output-canvas .dc-out-mapping').evaluateAll(els => els.map(el => el.style.transform));
+  const outMasks = () => popup.locator('#dc-output-canvas .dc-out-mask polygon').evaluateAll(els => els.map(el => el.getAttribute('points')));
+  const outputShows = (selector, count) => popup.waitForFunction(([s, n]) => document.querySelectorAll(s).length === n, [selector, count]);
+  await outputShows('#dc-output-canvas .dc-out-mapping', 1);
+  await showPanel(page, 'mappings'); await page.locator('#mapping-tab').click();
+
+  // ── 面の複製
+  const before = await current(), wall = before.mappings[0], [wallOut] = await outMappings();
+  assert.equal(before.mappings.length, 1); assert.equal(wall.name, 'wall');
+  assert.notDeepEqual(wall.source, { x: 0, y: 0, width: 100, height: 100 }, 'the original has a non-default crop');
+  await snapshot(page, `${base.name}-duplicate-mapping-before`);
+  await dupBtn.click();
+  const duplicated = await current(), copy = duplicated.mappings[0];
+  assert.deepEqual(duplicated.mappings.map(m => m.id), [copy.id, wall.id], 'the copy goes right in front of the original');
+  assert.notEqual(copy.id, wall.id); assert.equal(duplicated.activeId, copy.id, 'the copy is selected');
+  assert.equal(copy.name, 'wall copy');
+  assert.deepEqual(copy.source, wall.source, 'the copy keeps the crop');
+  assert.deepEqual(copy.quad, { topLeft: shifted(wall.quad.topLeft), topRight: shifted(wall.quad.topRight), bottomRight: shifted(wall.quad.bottomRight), bottomLeft: shifted(wall.quad.bottomLeft) }, 'the copy is offset 20px right and down');
+  assert.deepEqual(duplicated.mappings[1], wall, 'the original is untouched');
+  assert.deepEqual(await rows(), [copy.id, wall.id]);
+  assert.equal(await page.locator(`.mapping-list-item[data-id="${copy.id}"].active .name`).innerText(), 'wall copy');
+  assert.equal(await page.locator('.mapping-list-item.active').count(), 1);
+  await outputShows('#dc-output-canvas .dc-out-mapping', 2);
+  const [wallOutAfter, copyOut] = await outMappings();
+  assert.equal(wallOutAfter, wallOut, 'the original is drawn as before in the output window');
+  assert.notEqual(copyOut, wallOut, 'the copy is drawn at its own place in the output window');
+  await snapshot(page, `${base.name}-duplicate-mapping-after`);
+  // Undo / Redo の 1 件。Redo は同じ ID・順序・選択を戻す。
+  await undoBtn.click();
+  assert.deepEqual(await current(), before, 'one undo removes the copy and reselects the original');
+  await outputShows('#dc-output-canvas .dc-out-mapping', 1);
+  await redoBtn.click();
+  assert.deepEqual(await current(), duplicated, 'redo restores the copy with the same id, order and selection');
+  assert.equal(await redoBtn.isDisabled(), true);
+  await outputShows('#dc-output-canvas .dc-out-mapping', 2);
+  // 複製した側の四隅・crop を動かしても、元の面と、出力ウィンドウでの元の面は変わらない。
+  await drag(page.locator('#output-stage .quad-handle[data-corner="topLeft"]'), 36, 24);
+  await drag(page.locator('#selection-box .handle-se'), -30, -20);
+  const edited = await current();
+  assert.notDeepEqual(edited.mappings[0].quad, copy.quad, 'the corner drag moved the copy');
+  assert.notDeepEqual(edited.mappings[0].source, copy.source, 'the crop drag changed the copy');
+  assert.deepEqual(edited.mappings[1], wall, 'editing the copy leaves the original alone');
+  await popup.waitForFunction(old => [...document.querySelectorAll('#dc-output-canvas .dc-out-mapping')].at(-1).style.transform !== old, copyOut);
+  assert.equal((await outMappings())[0], wallOut, 'editing the copy leaves the original alone in the output window');
+  await snapshot(page, `${base.name}-duplicate-mapping-edited`);
+
+  // ── 表示 OFF の面を複製すると OFF のまま
+  await page.locator(`.mapping-list-item[data-id="${wall.id}"] .toggle-btn`).click();
+  await page.locator(`.mapping-list-item[data-id="${wall.id}"] .name`).click();
+  await dupBtn.click();
+  const hidden = await current();
+  assert.ok(![copy.id, wall.id].includes(hidden.activeId), 'the second copy has its own id');
+  assert.deepEqual(hidden.mappings.map(m => m.id), [copy.id, hidden.activeId, wall.id], 'the second copy goes between the first copy and the original');
+  assert.equal(hidden.mappings[1].enabled, false, 'a hidden original gives a hidden copy');
+  assert.equal(await page.locator(`.mapping-list-item[data-id="${hidden.mappings[1].id}"].disabled.active`).count(), 1);
+  await undoBtn.click(); await undoBtn.click();
+  assert.deepEqual((await current()).mappings, edited.mappings, 'undoing the copy and the toggle returns to the two visible mappings');
+
+  // ── マスクの複製
+  await page.locator('#add-mask-btn').click();
+  const host = await page.locator('#output-stage .dc-canvas-host').boundingBox();
+  for (const [fx, fy] of [[.3, .3], [.55, .32], [.42, .6]]) await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
+  await page.keyboard.press('Enter');
+  const beforeMask = await current(), pillar = beforeMask.mappings[0];
+  assert.equal(pillar.kind, 'mask'); assert.equal(pillar.points.length, 3); assert.equal(beforeMask.activeId, pillar.id);
+  await outputShows('#dc-output-canvas .dc-out-mask polygon', 1);
+  const [pillarOut] = await outMasks();
+  await snapshot(page, `${base.name}-duplicate-mask-before`);
+  await dupBtn.click();
+  const maskDuplicated = await current(), maskCopy = maskDuplicated.mappings[0];
+  assert.deepEqual(maskDuplicated.mappings.map(m => m.id), [maskCopy.id, ...beforeMask.mappings.map(m => m.id)], 'the mask copy goes right in front of the original mask');
+  assert.equal(new Set(maskDuplicated.mappings.map(m => m.id)).size, maskDuplicated.mappings.length, 'ids stay unique');
+  assert.equal(maskCopy.kind, 'mask'); assert.ok(!maskCopy.drafting, 'the mask copy is not being drawn');
+  assert.equal(maskCopy.name, `${pillar.name} copy`);
+  assert.equal(maskDuplicated.activeId, maskCopy.id, 'the mask copy is selected');
+  assert.deepEqual(maskCopy.points, pillar.points.map(shifted), 'the mask copy is offset 20px right and down');
+  assert.deepEqual(maskDuplicated.mappings[1], pillar, 'the original mask is untouched');
+  assert.equal(await page.locator(`.mapping-list-item[data-id="${maskCopy.id}"].is-mask.active .kind-badge`).count(), 1);
+  await outputShows('#dc-output-canvas .dc-out-mask polygon', 2);
+  const maskCopyOut = maskCopy.points.map(p => `${p.x},${p.y}`).join(' ');
+  assert.deepEqual(await outMasks(), [pillarOut, maskCopyOut], 'the output window draws both masks, the copy in front');
+  await snapshot(page, `${base.name}-duplicate-mask-after`);
+  await undoBtn.click();
+  assert.deepEqual(await current(), beforeMask, 'one undo removes the mask copy and reselects the original mask');
+  await redoBtn.click();
+  assert.deepEqual(await current(), maskDuplicated, 'redo restores the mask copy with the same id, order and selection');
+  // 複製したマスクの頂点を動かしても、元のマスクは変わらない。
+  await drag(page.locator('#output-stage .mask-vertex-handle').first(), 30, -18);
+  const maskEdited = await current();
+  assert.notDeepEqual(maskEdited.mappings[0].points, maskCopy.points, 'the vertex drag moved the mask copy');
+  assert.deepEqual(maskEdited.mappings[1], pillar, 'editing the mask copy leaves the original mask alone');
+  await popup.waitForFunction(old => [...document.querySelectorAll('#dc-output-canvas .dc-out-mask polygon')].at(-1).getAttribute('points') !== old, maskCopyOut);
+  assert.equal((await outMasks())[0], pillarOut, 'editing the mask copy leaves the original mask alone in the output window');
+  await snapshot(page, `${base.name}-duplicate-mask-edited`);
+
+  // ── ペン描画中は複製できない (押しても、描画中のマスクも他の項目も増えない)
+  await page.locator('#add-mask-btn').click();
+  assert.equal(await dupBtn.evaluate(el => getComputedStyle(el).pointerEvents), 'none', 'the duplicate button is inert while drawing a mask');
+  await page.mouse.click(host.x + host.width * .7, host.y + host.height * .7); await page.mouse.click(host.x + host.width * .8, host.y + host.height * .7);
+  const drawing = await current();
+  await dupBtn.evaluate(el => el.click());
+  assert.deepEqual(await current(), drawing, 'a mask being drawn is not duplicated');
+  await page.keyboard.press('Escape');
+  assert.deepEqual((await current()).mappings, maskEdited.mappings, 'cancelling the drawing leaves the duplicated items as they were');
+
+  // ── 保存: 自動保存・設定 JSON・プロジェクトの書き出しに複製がそのまま入り、読み込むと同じ項目に戻る
+  const saved = await current();
+  await page.waitForFunction(expected => {
+    const raw = localStorage.getItem('dropcaster.mappings.v2');
+    return !!raw && JSON.stringify(JSON.parse(raw).mappings) === expected;
+  }, JSON.stringify(saved.mappings));
+  const settings = await inProjectPanel(page, async () => {
+    const promise = page.waitForEvent('download'); await page.locator('#export-settings-btn').click();
+    const stream = await (await promise).createReadStream(); const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return JSON.parse(Buffer.concat(chunks).toString());
+  });
+  assert.deepEqual(settings.mappings, saved.mappings, 'the settings JSON holds the copies');
+  assert.equal(settings.version, 2);
+  assert.deepEqual((await exportProject(page)).venue.layout.mappings, saved.mappings, 'the exported project holds the copies');
+  await page.locator(`.mapping-list-item[data-id="${maskEdited.mappings[0].id}"] .remove-btn`).click();
+  assert.equal((await current()).mappings.length, saved.mappings.length - 1);
+  await inProjectPanel(page, async () => {
+    const chooser = page.waitForEvent('filechooser'); await page.locator('#import-settings-btn').click();
+    await (await chooser).setFiles({ name: 'settings.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(settings)) });
+    await page.waitForFunction(n => window.practiceWC.events.state.get().mappings.length === n, saved.mappings.length);
+  });
+  // 読み込みは閉じたマスクの drafting: false を落とす (複製より前からの正規化) ので、それ以外を比べる。
+  const parsed = mappings => mappings.map(({ drafting, ...m }) => m);
+  assert.deepEqual(parsed((await current()).mappings), parsed(saved.mappings), 'importing the settings JSON restores the copies');
+
+  // ── 日本語では「<元の名前> のコピー」
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  assert.equal(await dupBtn.innerText(), '選択中を複製');
+  await page.locator(`.mapping-list-item[data-id="${wall.id}"] .name`).click();
+  await dupBtn.click();
+  const ja = await current();
+  assert.equal(ja.mappings.find(m => m.id === ja.activeId).name, 'wall のコピー');
+  await snapshot(page, `${base.name}-duplicate-ja`);
+  await popup.close();
+
+  // ── 再読み込みしても複製した項目が残る
+  await page.waitForFunction(expected => {
+    const raw = localStorage.getItem('dropcaster.mappings.v2');
+    return !!raw && JSON.stringify(JSON.parse(raw).mappings) === expected;
+  }, JSON.stringify(ja.mappings));
+  await page.reload(); await page.waitForSelector(entryButton); await observeControllers(page, base);
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  assert.deepEqual(parsed((await current()).mappings), parsed(ja.mappings), 'the copies survive a reload');
+  assert.equal(new Set(ja.mappings.map(m => m.id)).size, ja.mappings.length, 'ids stay unique');
+  await closeEditor(page);
+}
 // プレビュー上のクリックは、押した時点で前面にある項目を選ぶ。ペン描画中は切り替えない (#112)
 /** ソース列・マッピング列の拡大・パン (#193)。表示だけで、state・履歴は変わらず、拡大中も編集の換算が合う。 */
 async function zoomPan(page, base) {
@@ -1568,7 +1748,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, cancellation, loading, confirmClose, confirmHome, history, duplicate, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

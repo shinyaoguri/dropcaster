@@ -295,6 +295,56 @@ export function withAddedMask(state: MappingsState): MappingsState {
   return { ...state, mappings: [entry, ...cleaned], activeId: id };
 }
 
+/** 複製を元からずらす量（仮想キャンバス px。右下へ同じだけ）。重なった 2 つを見分け、掴めるようにする。 */
+export const DUPLICATE_OFFSET_PX = 20;
+
+/**
+ * 指定 id の面・マスクを複製して active にする (#191)。
+ *
+ *  - 複製は配列上で元のすぐ前（= すぐ前面）に入れる。
+ *  - 四隅・マスク頂点を DUPLICATE_OFFSET_PX だけ右下へ平行移動する。平行移動なので凸性と遠近の強さ
+ *    (ADR 0007) は元と変わらない。crop・表示 ON/OFF は元と同じ。
+ *  - ID は新しく振る。名前は copyName（省略時は元の名前のまま）。表示名の組み立ては i18n を持つ呼び出し側が行う。
+ *  - 幾何は深く複製するので、複製した側を編集しても元は変わらない。
+ *  - 写すのは下に列挙した項目だけ。後から増える項目（編集ロックなど）を暗黙に引き継がない。
+ *
+ * id が無い・ペン描画中 (drafting) のマスクは複製せず、state をそのまま返す。
+ */
+export function withDuplicatedItem(state: MappingsState, id: string, copyName?: string): MappingsState {
+  const index = state.mappings.findIndex(m => m.id === id);
+  if (index < 0) return state;
+  const original = state.mappings[index];
+  if (isMaskEntry(original) && original.drafting) return state;
+
+  const usedIds = new Set(state.mappings.map(m => m.id));
+  let newId: string;
+  do {
+    newId = isMaskEntry(original) ? generateMaskId() : generateMappingId();
+  } while (usedIds.has(newId));
+
+  const name = copyName ?? original.name;
+  const d = DUPLICATE_OFFSET_PX;
+  const copy: MappingItem = isMaskEntry(original)
+    ? {
+        kind: 'mask',
+        id: newId,
+        name,
+        enabled: original.enabled,
+        points: original.points.map(p => ({ x: p.x + d, y: p.y + d })),
+      }
+    : {
+        id: newId,
+        name,
+        enabled: original.enabled,
+        source: { x: original.source.x, y: original.source.y, width: original.source.width, height: original.source.height },
+        quad: translateQuad(original.quad, d, d),
+      };
+
+  const mappings = state.mappings.slice();
+  mappings.splice(index, 0, copy);
+  return { ...state, mappings, activeId: newId };
+}
+
 /** drafting mask に頂点を末尾追加する。drafting でない / mask でない時は no-op。 */
 export function withMaskPointAppended(state: MappingsState, id: string, point: Point): MappingsState {
   return {
