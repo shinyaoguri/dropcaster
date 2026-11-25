@@ -21,14 +21,27 @@
  * 30 秒たっても古い SW がページを制御していた (実測、#180)。
  * キャッシュは消さない。SW が無ければ参照されない。
  */
-export const DEV_UNREGISTER_SCRIPT = `// dropcaster: dev サーバでは Service Worker を使わない。残っている登録を外す。
+/**
+ * @param {string} base dev サーバの base (`/` や `/sub/`)
+ * @returns {string} index.html に入れるスクリプト
+ */
+export function devUnregisterScript(base) {
+  return `// dropcaster: dev サーバでは Service Worker を使わない。残っている登録を外す。
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(async (registrations) => {
-    if (registrations.length === 0) return;
-    await Promise.all(registrations.map((registration) => registration.unregister()));
-    if (navigator.serviceWorker.controller) location.reload();
+    // 外すのは、このページを制御しうる登録 (scope が base かその上) だけ。作品が自分の階層に登録した SW は残す
+    const base = new URL(${JSON.stringify(base)}, location.href).href;
+    await Promise.all(registrations.filter((registration) => base.startsWith(registration.scope)).map((registration) => registration.unregister()));
+    // 登録が空でも、制御は残っていることがある (別のタブが先に登録を外した)。制御されている限り読み込み直す
+    if (!navigator.serviceWorker.controller) return;
+    // 登録を外しても制御が消えない環境で繰り返さないよう、タブごとに 10 秒に 1 回までにする
+    const key = 'dropcaster-dev-sw-reload';
+    if (Date.now() - Number(sessionStorage.getItem(key) || 0) < 10000) return;
+    sessionStorage.setItem(key, String(Date.now()));
+    location.reload();
   }).catch(() => {});
 }`;
+}
 
 /**
  * dev サーバ用の Vite プラグイン。build には掛からない (`apply: 'serve'`) ので、本番ビルドの viewer は
@@ -37,15 +50,17 @@ if ('serviceWorker' in navigator) {
  * @returns {import('vite').Plugin}
  */
 export function devServiceWorker() {
+  let base = '/';
   return {
     name: 'dropcaster:dev-service-worker',
     apply: 'serve',
     config: () => ({
       define: { 'import.meta.env.DROPCASTER_DEV_SERVER': 'true' },
     }),
+    configResolved(config) { base = config.base; },
     // head の先頭に入れる: 後ろに置くと、外部のスタイルシート (フォントなど) の読み込みが終わるまで実行されない
     transformIndexHtml: () => [
-      { tag: 'script', children: DEV_UNREGISTER_SCRIPT, injectTo: 'head-prepend' },
+      { tag: 'script', children: devUnregisterScript(base), injectTo: 'head-prepend' },
     ],
   };
 }

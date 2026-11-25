@@ -306,6 +306,14 @@ const cases = {
   async leftoverWorker({ origin, gallery, leftover }) {
     // dev サーバを止めている間に作品を書き換えた (キャッシュには書き換え前の版が残っている)
     const expected = await editSketch(gallery.publicDir);
+    // 別のタブが先に登録を外すと、後のタブは「登録は空・制御は残る」になる。その状態を作り (登録の一覧だけ空に見せる)、
+    // 読み込み直して抜けようとすること、制御が消えなくても繰り返さないことを確かめる
+    const stale = await leftover.newPage();
+    await stale.addInitScript(() => { navigator.serviceWorker.getRegistrations = async () => []; });
+    await stale.goto(origin + '/a', { waitUntil: 'commit' });
+    await sleep(SETTLE_MS * 2);
+    assert.equal(await loads(stale), 2, '登録が空で制御だけ残ったページの読み込み直しが 1 回でない');
+    await stale.close();
     const page = await leftover.newPage();
     // 読み込みの途中でページが自分を読み込み直すので、読み込みの完了は待たない
     await page.goto(origin + '/a', { waitUntil: 'commit' });
