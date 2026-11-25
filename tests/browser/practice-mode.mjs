@@ -642,6 +642,56 @@ async function outputUndo(page) {
   assert.equal(page.context().pages().length, 1, 'undo does not reopen the output window');
   await closeEditor(page);
 }
+/** 3D プレビューは選んだ台だけでなく全台のガイドを出し、選んだ台とそれ以外を見分けられる。出力の追加・削除・校正値に追従する (#129)。 */
+const guideState = page => page.evaluate(() => window.practicePreview.scene.children.filter(o => o.name === 'projector-guide')
+  .map(g => ({ role: g.userData.role, outputId: g.userData.outputId, visible: g.visible, position: g.position.toArray().map(v => Number(v.toFixed(4))),
+    accent: g.children[1].material.color.getHexString() })));
+const yawed = (() => { const q = [-0.07, -0.26, -0.02, 0.96], n = Math.hypot(...q); return q.map(v => v / n); })();
+async function multiProjectorGuides(page, base) {
+  await start(page);
+  await showPanel(page, 'outputs'); await page.locator('#add-output-btn').click();
+  const [first, second] = (await state(page)).outputs.map(o => o.id);
+  const calibrated = await exportProject(page);
+  Object.assign(calibrated.venue.projectors.find(p => p.outputId === second), { position: [3, 2.2, 3.5], quaternion: yawed });
+  await importProject(page, calibrated);
+  await showPanel(page, 'preview3d'); await page.locator('#practice-overview').click(); await page.waitForTimeout(400);
+  await snapshot(page, base.name + '-multi-projector-guides');
+  let guides = await guideState(page);
+  assert.equal(guides.length, 2, 'one guide per projector');
+  const selected = guides.find(g => g.role === 'selected'), other = guides.find(g => g.role === 'other');
+  assert.equal(selected?.outputId, first, 'the chosen output keeps the selected guide');
+  assert.equal(other?.outputId, second, 'the other output gets its own guide');
+  assert.deepEqual(other.position, [3, 2.2, 3.5], 'the other guide uses its saved calibration');
+  assert.notEqual(selected.accent, other.accent, 'the selected guide is distinguishable from the others');
+  assert.ok(guides.every(g => g.visible));
+  // 選ぶ台を替えると役割が入れ替わる。保存した校正値は変わらない。
+  const saved = (await exportProject(page)).venue.projectors;
+  await showPanel(page, 'preview3d'); await page.locator('#practice-output').selectOption(second);
+  guides = await guideState(page);
+  assert.deepEqual(guides.map(g => [g.role, g.outputId]).sort(), [['other', first], ['selected', second]]);
+  assert.deepEqual((await exportProject(page)).venue.projectors, saved, 'switching the guide does not rewrite calibration');
+  // 既存のチェックで全台をまとめて隠す・出す。ガイドは固定背景に入らない。
+  await showPanel(page, 'preview3d');
+  const background = await page.evaluate(() => window.practicePreview.backgroundImage());
+  await page.locator('#practice-guides').uncheck();
+  assert.ok((await guideState(page)).every(g => !g.visible), 'the existing checkbox hides every guide');
+  assert.equal(await page.evaluate(() => window.practicePreview.backgroundImage()), background, 'guides never enter the projector background');
+  await page.locator('#practice-guides').check();
+  assert.ok((await guideState(page)).every(g => g.visible));
+  // 校正値の変更に追従する。
+  const moved = await exportProject(page);
+  moved.venue.projectors.find(p => p.outputId === first).position = [-2.5, 2, 4];
+  await importProject(page, moved);
+  assert.deepEqual((await guideState(page)).find(g => g.outputId === first)?.position, [-2.5, 2, 4], 'the other guide follows a calibration change');
+  // 出力を足すと増え、消すと減る。
+  await showPanel(page, 'outputs'); await page.locator('#add-output-btn').click();
+  assert.equal((await guideState(page)).length, 3, 'adding an output adds its guide');
+  await page.locator(`#outputs-list [data-output-id="${first}"] .remove-output-btn`).click();
+  await page.locator(`#outputs-list [data-output-id="${second}"] .remove-output-btn`).click();
+  guides = await guideState(page);
+  assert.deepEqual(guides.map(g => g.role), ['selected'], 'removing outputs removes their guides');
+  assert.equal(guides[0].outputId, (await state(page)).outputs[0].id);
+}
 async function unavailable(page) {
   await page.evaluate(() => {
     window.originalGetContext = HTMLCanvasElement.prototype.getContext;
@@ -1568,7 +1618,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping, multiProjectorGuides })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

@@ -378,6 +378,8 @@ export class VenueCalibrationPage {
     if(select.dataset.options!==options) { select.replaceChildren(...outputs.map((o,i)=>new Option(o.name||`Output ${i+1}`,o.id))); select.dataset.options=options; }
     select.value=this.selected;
     const projector=project.venue.projectors.find(p=>p.outputId===this.selected)!;
+    // 他の出力の台は確定済みの校正値でガイドだけを出す。調整・校正パターンは選んだ台だけが対象 (#129)。
+    this.preview.setOtherProjectors(project.venue.projectors.filter(p=>p.outputId!==this.selected));
     if (this.traceShown?.objects) this.showProjector(this.traceShown.projector);
     else { this.preview.setVenueTransform(project.venue.scene); this.showProjector(this.traceShown?.projector ?? this.adjuster?.pending ?? projector); }
     this.followAspect(projector.aspect);

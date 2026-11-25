@@ -25,6 +25,20 @@ const projection = `
   }
 `;
 
+/** 保存されたプロジェクタの姿勢・画角・レンズシフトをカメラへ写す。投影カメラと他の台のガイドで共有する。 */
+function applyOptics(camera: THREE.PerspectiveCamera, config: Projector): void {
+  camera.position.fromArray(config.position);
+  camera.quaternion.fromArray(config.quaternion);
+  camera.fov = config.verticalFovDegrees; camera.aspect = config.aspect;
+  camera.near = config.near; camera.far = config.far;
+  camera.updateMatrixWorld(true);
+  const h = config.near * Math.tan(THREE.MathUtils.degToRad(config.verticalFovDegrees) / 2);
+  const w = h * config.aspect;
+  camera.projectionMatrix.makePerspective(-w + 2*w*config.lensShift[0], w + 2*w*config.lensShift[0],
+    h + 2*h*config.lensShift[1], -h + 2*h*config.lensShift[1], config.near, config.far);
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+}
+
 /** Shared geometric renderer. Streams and project state belong to the caller. */
 export class ProjectionPreview {
   readonly renderer: THREE.WebGLRenderer;
@@ -48,6 +62,10 @@ export class ProjectionPreview {
   private depthDirty = true;
   private disposed = false;
   private guide?: ProjectorGuide;
+  /** 選んでいない出力の台のガイド (#129)。観察専用で、投影・深度・compositor には入らない。 */
+  private others: { camera: THREE.PerspectiveCamera; guide: ProjectorGuide }[] = [];
+  private othersKey = '[]';
+  private guidesVisible = false;
   depthRenders = 0;
 
   constructor(canvas: HTMLCanvasElement, video: HTMLVideoElement, width = 640, height = 360) {
@@ -139,9 +157,29 @@ export class ProjectionPreview {
   }
 
   private updateGuide(): void {
-    this.guide?.update(this.projector, new THREE.Box3().setFromObject(this.venue ?? this.sample));
+    if (!this.guide) return;
+    const bounds = new THREE.Box3().setFromObject(this.venue ?? this.sample);
+    this.guide.update(this.projector, bounds);
+    for (const other of this.others) other.guide.update(other.camera, bounds);
   }
-  setGuidesVisible(visible: boolean): void { if (this.guide) this.guide.group.visible = visible; }
+  setGuidesVisible(visible: boolean): void {
+    this.guidesVisible = visible;
+    if (this.guide) this.guide.group.visible = visible;
+    for (const other of this.others) other.guide.group.visible = visible;
+  }
+  /** 選んでいない出力のプロジェクタをガイドだけで表示する。台の追加・削除・校正値の変更に追従する (#129)。 */
+  setOtherProjectors(projectors: readonly Projector[]): void {
+    const key = JSON.stringify(projectors);
+    if (this.disposed || !this.guide || key === this.othersKey) return;
+    this.othersKey = key;
+    while (this.others.length > projectors.length) { const other = this.others.pop()!; this.scene.remove(other.guide.group); other.guide.dispose(); }
+    while (this.others.length < projectors.length) {
+      const guide = new ProjectorGuide('other'); guide.group.visible = this.guidesVisible;
+      this.scene.add(guide.group); this.others.push({ camera: new THREE.PerspectiveCamera(), guide });
+    }
+    projectors.forEach((config, index) => { applyOptics(this.others[index].camera, config); this.others[index].guide.group.userData.outputId = config.outputId; });
+    this.updateGuide();
+  }
 
   setState(state: MappingsState, outputId: string): void { this.compositor.setState(state, outputId); }
   setBoxVisible(visible: boolean): void { this.box.visible = visible; this.depthDirty = true; }
@@ -155,16 +193,8 @@ export class ProjectionPreview {
   }
 
   setProjector(config: Projector): void {
-    this.projector.position.fromArray(config.position);
-    this.projector.quaternion.fromArray(config.quaternion);
-    this.projector.fov = config.verticalFovDegrees; this.projector.aspect = config.aspect;
-    this.projector.near = config.near; this.projector.far = config.far;
-    this.projector.updateMatrixWorld(true);
-    const h = config.near * Math.tan(THREE.MathUtils.degToRad(config.verticalFovDegrees) / 2);
-    const w = h * config.aspect;
-    this.projector.projectionMatrix.makePerspective(-w + 2*w*config.lensShift[0], w + 2*w*config.lensShift[0],
-      h + 2*h*config.lensShift[1], -h + 2*h*config.lensShift[1], config.near, config.far);
-    this.projector.projectionMatrixInverse.copy(this.projector.projectionMatrix).invert();
+    applyOptics(this.projector, config);
+    if (this.guide) this.guide.group.userData.outputId = config.outputId;
     this.projectionMatrix.multiplyMatrices(this.projector.projectionMatrix, this.projector.matrixWorldInverse);
     this.setPreviewWidth(this.previewWidth);
     this.depthDirty = true;
@@ -248,7 +278,7 @@ export class ProjectionPreview {
 
   overview(): void {
     const bounds = new THREE.Box3().setFromObject(this.venue ?? this.sample);
-    if (this.guide?.group.visible) bounds.expandByObject(this.guide.group);
+    for (const guide of [this.guide, ...this.others.map(other => other.guide)]) if (guide?.group.visible) bounds.expandByObject(guide.group);
     const center = bounds.getCenter(new THREE.Vector3()), size = bounds.getSize(new THREE.Vector3()).length();
     this.observer.far = Math.max(50, size * 10); this.observer.updateProjectionMatrix();
     this.controls.maxDistance = Math.max(25, size * 5); this.controls.minDistance = Math.max(0.01, size / 1000);
@@ -352,7 +382,7 @@ export class ProjectionPreview {
     if (this.disposed) return;
     this.disposed = true;
     this.controls?.dispose(); this.compositor?.dispose(); this.depthTarget.dispose(); this.depthMaterial.dispose();
-    this.guide?.dispose();
+    this.guide?.dispose(); this.others.forEach(other => other.guide.dispose()); this.others = [];
     this.importedMaterials.forEach(m => m.dispose()); this.venueCleanup?.();
     this.materials.forEach(m => m.dispose()); this.geometries.forEach(g => g.dispose());
     this.scene.clear(); this.renderer.dispose();

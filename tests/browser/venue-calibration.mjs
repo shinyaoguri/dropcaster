@@ -823,6 +823,49 @@ const VENUE_PANELS={
   output:['#venue-resolution'],
   files:['#venue-name','#venue-export','#venue-load','#venue-copy-mapping','#practice-load-glb','#practice-sample','#venue-mapping','[data-lang-set=ja]'],
 };
+/** 会場ページも全台のガイドを出し、選んだ台とそれ以外を見分けられる。微調整と校正画像は選んだ台だけが対象 (#129)。 */
+const venueGuides=page=>page.evaluate(()=>window.calibrationPage.preview.scene.children.filter(o=>o.name==='projector-guide')
+  .map(g=>({role:g.userData.role,outputId:g.userData.outputId,visible:g.visible,position:g.position.toArray().map(v=>Number(v.toFixed(4))),accent:g.children[1].material.color.getHexString()})));
+const yawed=(()=>{const q=[-0.07,-0.26,-0.02,0.96],n=Math.hypot(...q);return q.map(v=>v/n)})();
+async function multiProjectorGuides(page,base){
+  const single=await download(page),image=await pixels(page),layout=single.venue.layout,[out]=layout.outputs,[first]=single.venue.projectors;
+  const second={...structuredClone(out),id:'output-second',name:'Second',position:{x:out.position.x+out.size.width,y:out.position.y}};
+  await load(page,{...single,venue:{...single.venue,layout:{...layout,canvas:{...layout.canvas,width:layout.canvas.width+out.size.width},outputs:[out,second]},
+    projectors:[first,{...first,id:'projector-second',outputId:second.id,position:[3,2.2,3.5],quaternion:yawed}]}});
+  await page.locator('#practice-overview').click();await page.waitForTimeout(400);
+  await snapshot(page,`${base.name}-venue-multi-projector-guides`);
+  let guides=await venueGuides(page);
+  assert.equal(guides.length,2,'one guide per projector');
+  let selected=guides.find(g=>g.role==='selected'),other=guides.find(g=>g.role==='other');
+  assert.equal(selected?.outputId,out.id,'the chosen output keeps the selected guide');
+  assert.equal(other?.outputId,second.id,'the other output gets its own guide');
+  assert.deepEqual(other.position,[3,2.2,3.5],'the other guide uses its saved calibration');
+  assert.notEqual(selected.accent,other.accent,'the selected guide is distinguishable from the others');
+  assert.deepEqual(await pixels(page),image,'other projectors never enter the calibration image');
+  // 微調整は選んだ台だけを動かす。他の台のガイドと校正値はそのまま。
+  await change(page,'#practice-p-position-0',1.25);
+  guides=await venueGuides(page);selected=guides.find(g=>g.role==='selected');other=guides.find(g=>g.role==='other');
+  assert.equal(selected.position[0],1.25,'the selected guide follows the edited projector');
+  assert.deepEqual(other.position,[3,2.2,3.5],'editing the selected projector leaves the other guide');
+  const projectors=(await current(page)).venue.projectors;
+  assert.deepEqual(projectors.find(p=>p.outputId===second.id).position,[3,2.2,3.5],'editing the selected projector leaves the other calibration');
+  // 選ぶ台を替えると役割が入れ替わり、校正画像はその台の視点になる。
+  await reveal(page,'#practice-output');await page.locator('#practice-output').selectOption(second.id);
+  guides=await venueGuides(page);
+  assert.deepEqual(guides.map(g=>[g.role,g.outputId]).sort(),[['other',out.id],['selected',second.id]]);
+  assert.equal(guides.find(g=>g.role==='other').position[0],1.25,'the previously selected projector stays as a guide');
+  assert.notEqual((await pixels(page)).hash,image.hash,'the calibration image follows the newly selected projector');
+  assert.deepEqual((await current(page)).venue.projectors,projectors,'switching the selection does not rewrite calibration');
+  // 既存のチェックで全台をまとめて隠す・出す。
+  await page.locator('#practice-guides').uncheck();
+  assert.ok((await venueGuides(page)).every(g=>!g.visible),'the existing checkbox hides every guide');
+  await page.locator('#practice-guides').check();
+  assert.ok((await venueGuides(page)).every(g=>g.visible));
+  // 1 台の会場に戻すと、他の台のガイドは消える。
+  await load(page,single);
+  guides=await venueGuides(page);
+  assert.deepEqual(guides.map(g=>[g.role,g.outputId]),[['selected',out.id]],'loading a one-output venue removes the other guides');
+}
 async function selectedPanel(page){return page.locator('.dc-activity-btn[aria-selected=true]').getAttribute('data-tool-panel')}
 async function activityBar(page,base){
   assert.deepEqual(await page.locator('.dc-activity-btn').evaluateAll(buttons=>buttons.map(b=>b.dataset.toolPanel)),Object.keys(VENUE_PANELS));
@@ -884,7 +927,7 @@ try{
     const server=await createServer({configFile:resolve(root,config),root:hosted?resolve(root,'apps/web'):root,server:{host:'127.0.0.1',port:0,open:false,watch:null,hmr:false},logLevel:'error'});
     try{
       await server.listen();const base={name,url:`http://127.0.0.1:${server.httpServer.address().port}`,modules:hosted?`/@fs${root.slice(0,-1)}/src/viewer`:'/src/viewer'};
-      for(const [testName,run] of Object.entries({activityBar,workflow,interaction,adjust,trace,match,recovery,assets,isolation,reload})){
+      for(const [testName,run] of Object.entries({activityBar,workflow,interaction,adjust,trace,match,recovery,assets,isolation,reload,multiProjectorGuides})){
         if(process.env.VENUE_CASE&&process.env.VENUE_CASE!==testName)continue;
         const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block',locale:'en-US'}),errors=[];
         const lines=[];consoleLines.set(context,lines);
