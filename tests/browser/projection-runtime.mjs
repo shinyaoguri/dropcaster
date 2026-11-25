@@ -687,6 +687,167 @@ async function quadTilesCase(page) {
   }
 }
 
+// #196: 投影が映らないときの原因を、観測できた状態から操作画面に出す。ソース列に作品側
+// (canvas 待ち・canvas なし・capture 失敗・取り直し中・canvas が複数)、出力一覧の各行に出力側
+// (未起動・再生エラー) を対処と一緒に出し、正常に戻ったら消す。静止した作品・テストパターンは失敗にしない。
+async function diagnosisCase(page, base) {
+  const sourceStatus = () => page.evaluate(() => {
+    const el = document.getElementById('dc-source-status');
+    return { hidden: el.hidden, kind: el.dataset.kind, level: el.dataset.level,
+      text: el.querySelector('.dc-source-status-text').textContent,
+      hint: el.querySelector('.dc-source-status-hint').hidden ? '' : el.querySelector('.dc-source-status-hint').textContent };
+  });
+  const waitKind = (kind, timeout) => page.waitForFunction(kind => document.getElementById('dc-source-status').dataset.kind === kind, kind, { timeout });
+  const outputRow = () => page.evaluate(() => {
+    const status = document.querySelector('.output-item .output-status');
+    return status ? { kind: status.dataset.kind, text: status.textContent } : null;
+  });
+  // 一瞬だけの状態 (取り直し中) も取りこぼさないよう、ソース列の表示の移り変わりを記録する。
+  await page.evaluate(() => {
+    const h = window.runtimeRegression;
+    const el = document.getElementById('dc-source-status');
+    h.statusLog = [];
+    new MutationObserver(() => h.statusLog.push({ kind: el.dataset.kind, hidden: el.hidden, text: el.textContent.trim() }))
+      .observe(el, { attributes: true, childList: true, subtree: true, characterData: true });
+  });
+
+  // 出力を開く前: 出力一覧の行に「未起動」と開き方が出る。ソース列は配信していないので何も出さない。
+  assert.deepEqual(await outputRow(), { kind: 'notOpen', text: 'Not open: press “Open” to project on this output.' }, 'closed output: not open');
+  assert.equal((await sourceStatus()).hidden, true, 'idle: no source notice');
+
+  // canvas を作らない作品 (ここでは作るのを止めている作品)。待っている間は待っていると出し、
+  // 待ち時間を過ぎたら「canvas が見つかりません」と対処を出す。出力の行は開いたので消える。
+  await page.evaluate(async html => {
+    const h = window.runtimeRegression;
+    h.source = await h.addFrame({ html });
+  }, fixture({ delay: 600000 }));
+  const popupPromise = page.waitForEvent('popup');
+  await page.evaluate(async () => {
+    const h = window.runtimeRegression;
+    h.popup = h.wc.openOutputWindow();
+    await h.wc.startCanvasStreaming(h.source);
+  });
+  await popupPromise;
+  assert.deepEqual(await sourceStatus(), { hidden: false, kind: 'waiting', level: 'pending',
+    text: 'Waiting for the sketch to create its canvas…', hint: '' }, 'no canvas yet: waiting');
+  await page.waitForFunction(() => !document.querySelector('.output-item .output-status'));
+  await waitKind('noCanvas', 8000);
+  const noCanvas = await sourceStatus();
+  assert.deepEqual({ ...noCanvas, hint: undefined }, { hidden: false, kind: 'noCanvas', level: 'error', text: 'No canvas found in the sketch.', hint: undefined });
+  assert.match(noCanvas.hint, /may not be creating a canvas/, 'no canvas: hint');
+  // 作品が canvas を作ったら映し、表示も消える (正常に戻る)。
+  await page.evaluate(() => window.runtimeRegression.source.contentWindow.createCanvas());
+  await waitVideo(page, 320);
+  await waitKind('ok');
+  assert.deepEqual(await sourceStatus(), { hidden: true, kind: 'ok', level: 'ok', text: '', hint: '' }, 'canvas appeared: back to normal');
+
+  // track が終わったら取り直し中と出し、取り直せたら消す。
+  await page.evaluate(() => {
+    const h = window.runtimeRegression;
+    h.statusLog.length = 0; h.oldTrack = h.track();
+    h.oldTrack.dispatchEvent(new Event('ended'));
+  });
+  await page.waitForFunction(() => {
+    const h = window.runtimeRegression; return h.track() !== h.oldTrack && h.track()?.readyState === 'live';
+  });
+  await waitVideo(page, 320);
+  const recapture = await page.evaluate(() => window.runtimeRegression.statusLog);
+  assert.ok(recapture.some(s => s.kind === 'recapturing' && !s.hidden && s.text === 'The video from the canvas stopped. Capturing it again…'),
+    `track ended: recapturing is shown (${JSON.stringify(recapture)})`);
+  assert.deepEqual(await sourceStatus(), { hidden: true, kind: 'ok', level: 'ok', text: '', hint: '' }, 'recaptured: back to normal');
+
+  // canvas が複数あると、最初の 1 枚を映していることを知らせる (失敗にはしない)。減ったら消す。
+  await page.evaluate(() => {
+    const h = window.runtimeRegression;
+    h.extraCanvas = h.source.contentDocument.createElement('canvas');
+    h.source.contentDocument.body.appendChild(h.extraCanvas);
+  });
+  await page.waitForFunction(() => !document.getElementById('dc-source-status').hidden);
+  assert.deepEqual(await sourceStatus(), { hidden: false, kind: 'ok', level: 'notice',
+    text: 'The sketch has 2 canvases. The first one (320×240) is projected.', hint: '' }, 'two canvases: first one');
+  await page.evaluate(() => window.runtimeRegression.extraCanvas.remove());
+  await page.waitForFunction(() => document.getElementById('dc-source-status').hidden);
+
+  // テストパターンを映している間も、静止した作品 (描き直さない canvas) を映している間も失敗にしない。
+  await click(page, '[data-pattern="grid"]');
+  await waitVideo(page, 1920);
+  assert.deepEqual(await sourceStatus(), { hidden: true, kind: 'testPattern', level: 'ok', text: '', hint: '' }, 'test pattern: not a failure');
+  await click(page, '[data-pattern="off"]');
+  await waitVideo(page, 320);
+  const still = `<!doctype html><script>addEventListener('load', () => {
+    const canvas = document.createElement('canvas'); canvas.width = 200; canvas.height = 100;
+    canvas.getContext('2d').fillRect(0, 0, 200, 100); document.body.appendChild(canvas);
+  });</script><body></body>`;
+  await addSource(page, still, 'still');
+  await page.evaluate(() => {
+    const h = window.runtimeRegression; h.statusLog.length = 0; h.wc.setSource(h.still);
+  });
+  // 描き終えた後に捕まえた静止 canvas は、次に描き直すまで映像のフレームを出さないことがある。
+  // フレームの有無では判定しないので、capture が始まったこと (寸法と live の track) だけを待つ。
+  await page.waitForFunction(() => {
+    const h = window.runtimeRegression;
+    return h.wc.events.videoDimensions.get().width === 200 && h.track()?.readyState === 'live';
+  });
+  await page.waitForTimeout(6000); // 「canvas なし」の待ち時間 (5 秒) を越えても変わらない
+  assert.deepEqual(await sourceStatus(), { hidden: true, kind: 'ok', level: 'ok', text: '', hint: '' }, 'still canvas: not a failure');
+  assert.deepEqual((await page.evaluate(() => window.runtimeRegression.statusLog)).filter(s => !s.hidden), [], 'still canvas: nothing shown meanwhile');
+
+  // 別のサイトの画像を CORS の許可なしに描いた canvas は captureStream が SecurityError になる。
+  // 原因と対処を出し、作品が描ける canvas に替えたら映して消す。
+  await page.context().route('http://other.test/**', route => route.fulfill({ contentType: 'image/png',
+    body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64') }));
+  const tainted = fixture({ width: 240, height: 120, delay: 600000 }).replace('</script>', `
+    addEventListener('load', async () => {
+      const img = new Image(); img.src = 'http://other.test/texture.png'; await img.decode();
+      const dirty = document.createElement('canvas'); dirty.width = 160; dirty.height = 90;
+      dirty.getContext('2d').drawImage(img, 0, 0);
+      document.body.appendChild(dirty);
+      window.useCleanCanvas = () => { dirty.remove(); createCanvas(); };
+    });</script>`);
+  await page.evaluate(async html => {
+    const h = window.runtimeRegression;
+    h.tainted = await h.addFrame({ html });
+    h.wc.setSource(h.tainted);
+  }, tainted);
+  await waitKind('captureFailed');
+  const failed = await sourceStatus();
+  assert.deepEqual({ ...failed, hint: undefined }, { hidden: false, kind: 'captureFailed', level: 'error',
+    text: 'Could not capture video from the sketch canvas (SecurityError).', hint: undefined }, 'tainted canvas: capture failed');
+  assert.match(failed.hint, /without CORS permission/, 'tainted canvas: hint names CORS');
+  await page.evaluate(() => window.runtimeRegression.tainted.contentWindow.useCleanCanvas());
+  await waitVideo(page, 240);
+  await waitKind('ok');
+  assert.equal((await sourceStatus()).hidden, true, 'clean canvas: back to normal');
+
+  // 出力ウィンドウの <video>.play() が拒否されたら (自動再生を許さないブラウザ設定など)、その出力の行に出す。
+  const outputPopup = page.context().pages().find(p => p !== page);
+  const rebind = () => outputPopup.evaluate(() => {
+    for (const video of document.querySelectorAll('video')) { video.autoplay = false; video.srcObject = null; }
+    opener.postMessage({ type: 'output-needs-stream' }, opener.location.origin);
+  });
+  await outputPopup.evaluate(() => {
+    window.realPlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = () => Promise.reject(new DOMException('autoplay is not allowed', 'NotAllowedError'));
+  });
+  await rebind();
+  await page.waitForFunction(() => document.querySelector('.output-item .output-status')?.dataset.kind === 'playError');
+  assert.deepEqual(await outputRow(), { kind: 'playError', text: 'The output window could not play the video (NotAllowedError).'
+    + 'The browser is blocking autoplay for this site. Allow autoplay in the site settings, then close this output and open it again.' }, 'play rejected: shown on the row');
+  assert.deepEqual(Object.values(await page.evaluate(() => window.runtimeRegression.wc.events.outputDiagnosis.get())),
+    [{ kind: 'playError', error: 'NotAllowedError' }], 'play rejected: state model');
+  await outputPopup.evaluate(() => { HTMLMediaElement.prototype.play = window.realPlay; });
+  await rebind();
+  await page.waitForFunction(() => !document.querySelector('.output-item .output-status'));
+  assert.deepEqual(Object.values(await page.evaluate(() => window.runtimeRegression.wc.events.outputDiagnosis.get())),
+    [{ kind: 'open' }], 'play resumed: back to normal');
+
+  // 出力を閉じると、行は再び「未起動」に戻る。日本語でも同じ。
+  await outputPopup.close();
+  await page.waitForFunction(() => document.querySelector('.output-item .output-status')?.dataset.kind === 'notOpen');
+  await page.evaluate(async moduleBase => (await import(`${moduleBase}/i18n/index.ts`)).setLang('ja'), base.modules);
+  assert.deepEqual(await outputRow(), { kind: 'notOpen', text: '未起動: 「開く」で出力ウィンドウを開くと、この出力に映ります。' }, 'ja: not open');
+}
+
 /** RUNTIME_ARTIFACT_DIR があれば、メイン画面を隠して操作中の出力 (案内が出た状態) を保存する。 */
 async function snapshotNotice(page, popup, file) {
   const dir = process.env.RUNTIME_ARTIFACT_DIR;
@@ -781,7 +942,7 @@ try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`,
         modules: hosted ? `/@fs${root}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, keys: keysCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase, mainHidden: mainHiddenCase })) {
+      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, keys: keysCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase, mainHidden: mainHiddenCase, diagnosis: diagnosisCase })) {
         if (process.env.RUNTIME_CASE && process.env.RUNTIME_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = [];

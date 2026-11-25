@@ -11,6 +11,11 @@ import { ScreenWakeLock } from '../utils/wakeLock';
 import { dispatchSketchKey } from '../utils/sketchKeys';
 import { Emitter } from '../utils/emitter';
 import { t } from '../i18n/index.js';
+import {
+  diagnosisErrorName,
+  type OutputDiagnosisMap,
+  type SourceDiagnosis,
+} from '../runtime/projectionDiagnosis';
 import type {
   DevCursorEvent,
   OutputBoundsMap,
@@ -25,6 +30,9 @@ const STATE_STORAGE_KEY = 'dropcaster.mappings.v2';
 // drag が止まってから何 ms 後に localStorage へ書き出すか。drag 中は毎フレーム reschedule して
 // 書込みを発火させない（最後の mutation から STATE_SAVE_QUIESCE_MS 経過してから 1 回だけ flush）。
 const STATE_SAVE_QUIESCE_MS = 600;
+// 作品の document に canvas が無いまま、この時間が過ぎたら「canvas なし」と表示する (#196)。
+// SketchFrame.whenCanvasReady の既定の待ち時間と同じ。canvas が後から現れれば、その時点で映す。
+const CANVAS_WAIT_MS = 5000;
 
 // Window Management API（Chrome/Edge 系のみ）の最小型定義
 interface ScreenDetailed {
@@ -98,7 +106,14 @@ export class WindowController {
     // 操作ウィンドウのプレビューからの mousemove のいずれも canvas px に変換してここで集約し、
     // 全出力ウィンドウ + プレビューに同じ canvas-space cursor を放送する。
     devCursor: new Emitter<DevCursorEvent>({ visible: false, canvasX: 0, canvasY: 0 }),
+    // 投影が映らないときの原因 (#196)。作品側と、出力ごとの出力側の状態。観測した事実だけで決める。
+    sourceDiagnosis: new Emitter<SourceDiagnosis>({ kind: 'idle' }),
+    outputDiagnosis: new Emitter<OutputDiagnosisMap>({}),
   };
+  /** 出力 id → 出力ウィンドウの <video>.play() が拒否されたときの例外名 (#196)。閉じた出力の分は消す。 */
+  private outputPlayErrors = new Map<string, string>();
+  /** canvas が見つからないまま CANVAS_WAIT_MS 経ったら「canvas なし」にするタイマー (#196)。 */
+  private canvasWaitTimer: number | null = null;
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
     // 出力ウィンドウからの `output-needs-stream` のみハンドル（outputId 指定があれば対象のみ bind）。
@@ -369,13 +384,67 @@ export class WindowController {
           const video = el as HTMLVideoElement;
           if (video.srcObject !== stream) {
             video.srcObject = stream;
-            video.play().catch(() => { /* ignore */ });
+            video.play().then(() => this.setOutputPlayError(outputId, null), (error: unknown) => {
+              // 新しい srcObject の読み込みで前の play() が中断されただけ (AbortError) なら失敗ではない。
+              const name = diagnosisErrorName(error);
+              if (name === 'AbortError') return;
+              this.setOutputPlayError(outputId, name);
+              // 後から再生が始まれば (利用者の操作など) 表示を戻す。
+              video.addEventListener('playing', () => this.setOutputPlayError(outputId, null), { once: true });
+            });
           }
         });
       } catch (error) {
         console.error('WindowController: 出力ウィンドウへの stream 設定エラー:', error);
       }
     }
+  }
+
+  /** 出力ウィンドウの再生の失敗を記録・解除し、出力側の状態を更新する (#196)。 */
+  private setOutputPlayError(outputId: string, error: string | null): void {
+    if (error) this.outputPlayErrors.set(outputId, error);
+    else this.outputPlayErrors.delete(outputId);
+    this.refreshOutputDiagnosis();
+  }
+
+  /** state.outputs の各出力について、開閉と再生の失敗から出力側の状態を決める (#196)。 */
+  private refreshOutputDiagnosis(): void {
+    const map: OutputDiagnosisMap = {};
+    for (const out of this.state.outputs) {
+      const win = this.outputWindows.get(out.id)?.getWindow();
+      if (!win || win.closed) {
+        this.outputPlayErrors.delete(out.id);
+        map[out.id] = { kind: 'notOpen' };
+        continue;
+      }
+      const error = this.outputPlayErrors.get(out.id);
+      map[out.id] = error ? { kind: 'playError', error } : { kind: 'open' };
+    }
+    this.events.outputDiagnosis.setIfChanged(map, (a, b) => JSON.stringify(a) === JSON.stringify(b));
+  }
+
+  private setSourceDiagnosis(next: SourceDiagnosis): void {
+    this.events.sourceDiagnosis.setIfChanged(next, (a, b) => JSON.stringify(a) === JSON.stringify(b));
+  }
+
+  /** いま映している canvas の数を、作品の DOM の変化に合わせて更新する (#196)。 */
+  private refreshCanvasCount(iframe: HTMLIFrameElement): void {
+    if (this.events.sourceDiagnosis.get().kind !== 'ok') return;
+    const canvasCount = iframe.contentDocument?.querySelectorAll('canvas').length ?? 0;
+    if (canvasCount > 0) this.setSourceDiagnosis({ kind: 'ok', canvasCount });
+  }
+
+  /** canvas がまだ無い。待ち時間を過ぎても現れなければ「canvas なし」にする (#196)。 */
+  private waitForCanvas(iframe: HTMLIFrameElement): void {
+    if (this.canvasWaitTimer !== null) return;
+    this.setSourceDiagnosis({ kind: 'waiting' });
+    const generation = this.sourceGeneration;
+    this.canvasWaitTimer = window.setTimeout(() => {
+      this.canvasWaitTimer = null;
+      if (generation !== this.sourceGeneration || this.currentSourceIframe !== iframe
+        || this.testPatternKind !== 'off' || this.waitingForSourceLoad || this.capturedCanvas) return;
+      if (!this.getCanvasFromIframe(iframe)) this.setSourceDiagnosis({ kind: 'noCanvas' });
+    }, CANVAS_WAIT_MS);
   }
 
   closeAllWindows(): void {
@@ -409,6 +478,7 @@ export class WindowController {
     // 出力が削除されていたら対応するポップアウトを閉じる（残り続けると孤立ウィンドウになる）
     this.closeOrphanedOutputWindows();
     this.broadcastStateToOutput();
+    this.refreshOutputDiagnosis();
   }
 
   /** state.outputs に存在しなくなった outputId の出力ウィンドウを閉じる。 */
@@ -554,6 +624,7 @@ export class WindowController {
       this.sourceDocumentObserver = new MutationObserver(() => {
         if (!isCurrent() || this.waitingForSourceLoad) return;
         if (this.getCanvasFromIframe(iframe) !== this.capturedCanvas) this.scheduleRecapture();
+        else this.refreshCanvasCount(iframe);
       });
       this.sourceDocumentObserver.observe(doc, { childList: true, subtree: true });
     };
@@ -576,13 +647,17 @@ export class WindowController {
     if (!iframe) return false;
     if (this.waitingForSourceLoad || this.testPatternKind !== 'off') return false;
     const canvas = this.getCanvasFromIframe(iframe);
-    if (!canvas) return false;
+    if (!canvas) {
+      this.waitForCanvas(iframe);
+      return false;
+    }
 
     try {
       // fps 指定なし = canvas の描画レートに追従（最大滑らかさ。静的スケッチでは変化時のみキャプチャ）
       const stream = canvas.captureStream();
       if (!stream) {
         console.error('WindowController: MediaStreamの取得に失敗しました');
+        this.setSourceDiagnosis({ kind: 'captureFailed', error: 'no MediaStream' });
         return false;
       }
       this.trackStream(stream);
@@ -598,9 +673,11 @@ export class WindowController {
       this.notifyVideoDimensions();
       this.broadcastStream(stream);
       this.clearWebglWarningWhenReady(stream);
+      this.setSourceDiagnosis({ kind: 'ok', canvasCount: iframe.contentDocument?.querySelectorAll('canvas').length ?? 1 });
       return true;
     } catch (error) {
       console.error('WindowController: Canvas streaming開始エラー:', error);
+      this.setSourceDiagnosis({ kind: 'captureFailed', error: diagnosisErrorName(error) });
       return false;
     }
   }
@@ -622,6 +699,7 @@ export class WindowController {
       // context lost 中の mute で reload 予約を取り消さない。
       if (this.contextLostReloadTimer !== null || this.waitingForSourceLoad) return;
       console.warn('WindowController: ソースキャプチャの track が終了 — 自動再キャプチャ');
+      this.setSourceDiagnosis({ kind: 'recapturing' });
       this.scheduleRecapture();
     };
     stream.getVideoTracks().forEach((track) => {
@@ -719,6 +797,7 @@ export class WindowController {
         console.error('WindowController: notifyOutputBounds エラー', error);
       }
     }
+    this.refreshOutputDiagnosis();
     const json = JSON.stringify(map);
     if (json === this.lastOutputBoundsJson) return;
     this.lastOutputBoundsJson = json;
@@ -755,6 +834,7 @@ export class WindowController {
         this.broadcastStream(stream);
         this.clearWebglWarningWhenReady(stream);
       }
+      this.setSourceDiagnosis({ kind: 'testPattern' });
     }
 
     this.broadcastTestPatternState();
@@ -829,6 +909,7 @@ export class WindowController {
           this.waitingForSourceLoad = true;
           this.sourceDocumentObserver?.disconnect();
           this.releaseCapturedStream();
+          this.setSourceDiagnosis({ kind: 'waiting' });
           // srcdoc 属性がある場合（OP 経路）は src の再代入ではナビゲーションが
           // 起きないので、srcdoc 自体を再代入してリロードを起こす。
           try {
@@ -906,6 +987,8 @@ export class WindowController {
 
     this.windowMonitoringInterval = window.setInterval(() => {
       if (!this.hasStreamConsumers()) {
+        // beforeunload が届かずに閉じた出力も、出力一覧で「未起動」に戻す (#196)。
+        this.notifyOutputBounds();
         this.stopCanvasStreaming();
         return;
       }
@@ -970,6 +1053,10 @@ export class WindowController {
       clearTimeout(this.recaptureTimer);
       this.recaptureTimer = null;
     }
+    if (this.canvasWaitTimer !== null) {
+      clearTimeout(this.canvasWaitTimer);
+      this.canvasWaitTimer = null;
+    }
 
     this.activeStreams.forEach(stream => {
       stream.getTracks().forEach(track => {
@@ -993,6 +1080,7 @@ export class WindowController {
     this.testPatternKind = 'off';
     this.broadcastTestPatternState();
     this.broadcastWebglContextStatus('ok');
+    this.setSourceDiagnosis({ kind: 'idle' });
 
     // ウィンドウ監視を停止
     if (this.windowMonitoringInterval !== null) {

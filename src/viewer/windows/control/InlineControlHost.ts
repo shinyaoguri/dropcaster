@@ -19,6 +19,7 @@ import type {
   WebglContextStatus,
 } from './ControlHost';
 import type { Listener } from '../../utils/emitter';
+import type { OutputDiagnosisMap, SourceDiagnosis } from '../../runtime/projectionDiagnosis';
 import type { WindowController } from '../../components/WindowController';
 
 export class InlineControlHost implements ControlHost {
@@ -102,5 +103,16 @@ export class InlineControlHost implements ControlHost {
 
   onWebglContextChange(handler: Listener<WebglContextStatus>): Unsubscribe {
     return this.wc.events.webglContext.subscribe(handler);
+  }
+
+  // --- 投影が映らないときの原因 (#196) ---
+
+  getSourceDiagnosis(): SourceDiagnosis { return this.wc.events.sourceDiagnosis.get(); }
+  onSourceDiagnosisChange(handler: Listener<SourceDiagnosis>): Unsubscribe {
+    return this.wc.events.sourceDiagnosis.subscribe(handler);
+  }
+  getOutputDiagnosis(): OutputDiagnosisMap { return this.wc.events.outputDiagnosis.get(); }
+  onOutputDiagnosisChange(handler: Listener<OutputDiagnosisMap>): Unsubscribe {
+    return this.wc.events.outputDiagnosis.subscribe(handler);
   }
 }

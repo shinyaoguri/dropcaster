@@ -234,6 +234,9 @@ pause・resume・先読み、`SlideshowView` の切替を変えたら実行す�
 作品切替、WebGL ロストからの復旧とキャンセル、メイン画面が隠れたときの出力ウィンドウの案内 (#185) を
 検証する。実際の UI / popup / captureStream と
 決定的な作品 fixture を使い、CI でも実行する。既存 Chromium は同じく `CHROMIUM_PATH` で指定する。
+`diagnosis` は投影が映らない原因の表示 (#196) を、canvas を作らない作品・CORS の許可なしに画像を描いた canvas
+(captureStream の SecurityError)・track の終了・canvas の追加・静止した canvas・テストパターン・出力の `play()` の拒否で再現して確かめる。
+track の終了は `ended` イベントの送出で、`play()` の拒否は出力ウィンドウの `HTMLMediaElement.prototype.play` の差し替えで再現する。
 `RUNTIME_CASE=<ケース名>` で 1 件だけ流せ、`RUNTIME_ARTIFACT_DIR=/tmp/runtime-images` で案内の出た出力を保存できる。
 Playwright の Chromium は自動化中のページを常に visible に保つため、メイン画面の hidden は
 `tests/browser/lib/main-hidden-notice.mjs` が `visibilityState` と `visibilitychange` を差し替えて再現する。
