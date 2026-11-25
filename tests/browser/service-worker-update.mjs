@@ -86,6 +86,7 @@ function startServer(dir, state, basePath) {
     const pathname = full.slice(basePath.length);
     if (pathname === '/sw.js') {
       state.swFetches = (state.swFetches ?? 0) + 1;
+      state.swFetchedAt = Date.now();
       trace.add(`server: sw.js を返す (${swVersion(state.sw)}、${state.swFetches} 回目)`);
       res.writeHead(200, { 'Content-Type': CONTENT_TYPES['.js'], 'Cache-Control': 'no-cache' }).end(state.sw);
       return;
@@ -169,6 +170,17 @@ async function publishAndSettle(page, state, version) {
   trace.add(`test: ${SETTLE_MS}ms 待った ${await pageState(page)}`);
 }
 
+/**
+ * ブラウザは SW が制御するナビゲーション (操作画面と作品の iframe) の 1.5 秒ほど後に、自分でも sw.js を
+ * 取りにいく (更新確認。ナビゲーションのたびに先へ延びる)。新しい版を配信した後にこれが来ると、
+ * テストの update() とは別に、同じ版の install がもう 1 度走る (#231)。最後のナビゲーションの後の
+ * この確認がサーバに届くまで待ち、旧版を配信している間に済ませる。
+ */
+async function settleBrowserUpdateCheck(context, state) {
+  await until(() => (state.swFetchedAt ?? 0) > (lastNavigationAt.get(context) ?? Infinity), '最後のナビゲーションの後の、ブラウザ自身の更新確認');
+  trace.add('test: 最後のナビゲーションの後の、ブラウザ自身の更新確認が済んだ');
+}
+
 /** 全ウィンドウを閉じて開き直し、version の shell だけが残る (= その版が有効になる) まで待つ。 */
 async function reopenAfterClose(context, base, version) {
   for (const p of context.pages()) await p.close();
@@ -186,6 +198,8 @@ function navigateInApp(page, base, route) {
 
 /** 応答が終わっていないリクエスト (コンテキストごと)。値は出した時刻。 */
 const pendingRequests = new WeakMap();
+/** 最後のナビゲーション (操作画面と作品の iframe) のリクエストを出した時刻 (コンテキストごと)。 */
+const lastNavigationAt = new WeakMap();
 
 async function newContext(browser, options = {}) {
   const context = await browser.newContext({ locale: process.env.SW_UPDATE_LOCALE || 'en-US', viewport: { width: 1280, height: 800 }, ...options });
@@ -215,7 +229,10 @@ async function newContext(browser, options = {}) {
   pendingRequests.set(context, pending);
   context.on('request', (r) => {
     pending.set(r, Date.now());
-    if (r.isNavigationRequest()) trace.add(`request: ナビゲーション ${r.url()}`);
+    if (r.isNavigationRequest()) {
+      lastNavigationAt.set(context, Date.now());
+      trace.add(`request: ナビゲーション ${r.url()}`);
+    }
   });
   context.on('requestfinished', (r) => pending.delete(r));
   context.on('requestfailed', (r) => { pending.delete(r); trace.add(`request: 失敗 ${r.url()} (${r.failure()?.errorText})`); });
@@ -432,6 +449,10 @@ const cases = {
     try {
       const page = await openControlled(context, base, '/a');
       const before = await loads(page);
+      // 失敗する install はやり直しの対象になる (待機中の同じ版が無いので、ブラウザ自身の更新確認でも
+      // install が走る)。その install が下の検査の最中に重ならないよう、先に済ませる。成功する install の
+      // ケースでは、更新確認は待機中の版と比べる (Service Worker 仕様の Update) ので 2 度目の install は起きない
+      await settleBrowserUpdateCheck(context, state);
       state.blocked = VENUE_CHUNK;
       await publishAndSettle(page, state, 'v2');
       assert.equal(await hasWaiting(page), false, '資産が取れないまま新しい版が待機に入った');
