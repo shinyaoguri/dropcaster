@@ -1192,6 +1192,124 @@ async function nudgeSelectKeys(page) {
   assert.equal(await x.inputValue(), xValue, 'the number field keeps its value once a corner is picked');
   assert.equal((await state(page)).outputs[0].position.x, moved.outputs[0].position.x, 'the output does not move');
 }
+/**
+ * マッピング設定の四隅の数値入力 (#192)。表示はドラッグ・矢印キーに追従し、Enter / Tab で置き、Escape で取り消す。
+ * 凸でなくなる・遠近が強すぎる・数値でない値は採用せず理由を出す。確定は Undo の 1 件。欄のキーは隅の微調整に奪われない。
+ */
+async function cornerInput(page, base) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await showPanel(page, 'mappings');
+  const undoBtn = page.locator('#dc-undo-btn'), redoBtn = page.locator('#dc-redo-btn');
+  const field = (abbr, axis) => page.locator(`#mapping-${abbr}-${axis}-input`);
+  const error = page.locator('#mapping-corner-error');
+  const quad = async () => { const s = await state(page); return structuredClone(s.mappings.find(m => m.id === s.activeId).quad); };
+  const abbrs = { topLeft: 'tl', topRight: 'tr', bottomRight: 'br', bottomLeft: 'bl' };
+  /** 8 つの欄が quad を小数 1 桁で示している (読み取りの誤差は 0.05 まで)。 */
+  const shows = async (label) => {
+    const q = await quad();
+    for (const [corner, abbr] of Object.entries(abbrs)) for (const axis of ['x', 'y']) {
+      const shown = Number(await field(abbr, axis).inputValue());
+      assert.ok(Math.abs(shown - q[corner][axis]) <= 0.05 + 1e-9, `${label}: ${abbr} ${axis} shows ${shown} for ${q[corner][axis]}`);
+    }
+  };
+  const section = page.locator('#dc-tool-panel-mappings .tool-section').last();
+  const tlHandle = page.locator('#output-stage .quad-handle[data-corner="topLeft"]');
+  for (const [abbr, axis] of [['tl', 'x'], ['br', 'y']]) assert.equal(await field(abbr, axis).isEnabled(), true, `${abbr} ${axis} is editable`);
+  assert.equal(await error.isHidden(), true, 'no reason is shown on entry');
+  await shows('on entry');
+  if (artifactDir) await section.screenshot({ path: resolve(artifactDir, base.name + '-corner-entry.png') });
+
+  // ドラッグ・矢印キーで動かすと欄が追従する
+  const box = await tlHandle.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(box.x + box.width / 2 + i * 4, box.y + box.height / 2 + i * 3);
+  await page.mouse.up();
+  await shows('after a drag');
+  await page.keyboard.press('ArrowRight'); await page.keyboard.press('Shift+ArrowDown');
+  await shows('after arrow keys');
+
+  // Enter で置く: その隅だけが入力した値ちょうどに移り、ハンドルと出力 (WindowController の state) に届く。Undo 1 回で戻る
+  const before = await quad();
+  const typedX = Math.round(before.topLeft.x) + 12.5;
+  await field('tl', 'x').fill(String(typedX)); await field('tl', 'x').press('Enter');
+  const placed = await quad();
+  assert.deepEqual(placed, { ...before, topLeft: { x: typedX, y: before.topLeft.y } }, 'Enter moves only that corner to the typed value');
+  assert.equal(await field('tl', 'x').evaluate(el => el === document.activeElement), false, 'Enter leaves the field');
+  assert.equal(await tlHandle.evaluate(el => parseFloat(el.style.left)), typedX, 'the corner handle follows the typed value');
+  assert.equal(await error.isHidden(), true);
+  if (artifactDir) await section.screenshot({ path: resolve(artifactDir, base.name + '-corner-placed.png') });
+  await undoBtn.click();
+  assert.deepEqual(await quad(), before, 'one undo reverts the typed corner');
+  await shows('after undo');
+  await redoBtn.click();
+  assert.deepEqual(await quad(), placed, 'redo places it again');
+
+  // フォーカス移動 (Tab) でも置ける
+  const typedY = Math.round(placed.topLeft.y) - 4.5;
+  await field('tl', 'y').fill(String(typedY)); await field('tl', 'y').press('Tab');
+  const tabbed = await quad();
+  assert.deepEqual(tabbed.topLeft, { x: typedX, y: typedY }, 'Tab commits the typed value');
+
+  // Escape は取消: 欄は確定済みの値に戻り、state も履歴も変わらない (次の Undo は Tab の確定を戻す)
+  const trShown = await field('tr', 'x').inputValue();
+  await field('tr', 'x').fill('987.6'); await field('tr', 'x').press('Escape');
+  assert.equal(await field('tr', 'x').inputValue(), trShown, 'Escape restores the field');
+  assert.deepEqual(await quad(), tabbed, 'Escape keeps the corner');
+  await undoBtn.click();
+  assert.deepEqual(await quad(), placed, 'Escape added no history: the next undo reverts the Tab commit');
+  await redoBtn.click();
+
+  // 凸でなくなる値・遠近が強すぎる値・数値でない値は採用せず、欄を戻して理由を出す。履歴も積まない
+  const rejects = async (abbr, axis, typed, pattern, label) => {
+    const q = await quad(); const shown = await field(abbr, axis).inputValue();
+    const undoable = await undoBtn.isEnabled(), redoable = await redoBtn.isEnabled();
+    await field(abbr, axis).fill(typed); await field(abbr, axis).press('Enter');
+    assert.deepEqual(await quad(), q, `${label} is not applied`);
+    assert.equal(await field(abbr, axis).inputValue(), shown, `${label}: the field shows the committed value again`);
+    assert.equal(await error.isVisible(), true, `${label}: a reason is shown`);
+    assert.match(await error.innerText(), pattern, `${label}: the reason names the cause`);
+    assert.equal(await field(abbr, axis).getAttribute('aria-invalid'), 'true', `${label}: the field is marked invalid`);
+    assert.deepEqual([await undoBtn.isEnabled(), await redoBtn.isEnabled()], [undoable, redoable], `${label} adds no history`);
+  };
+  // 左下を右下より右へ = 辺が交差する
+  await rejects('bl', 'x', String(Math.round(tabbed.bottomRight.x + 500)), /no longer be convex.*nearest position a drag can reach is \(-?\d+\.\d, -?\d+\.\d\)/s, 'a twisting value');
+  if (artifactDir) await section.screenshot({ path: resolve(artifactDir, base.name + '-corner-rejected.png') });
+  // 書き直し始めると理由は消える
+  await field('bl', 'x').fill('1'); assert.equal(await error.isHidden(), true, 'typing again clears the reason');
+  await field('bl', 'x').press('Escape');
+  // 左下を真下へ遠く = 凸のままだが遠近の強さが 20 倍を超える
+  await rejects('bl', 'y', String(Math.round(tabbed.bottomLeft.y + 100000)), /stronger than 20×/, 'a too-steep value');
+  await rejects('tr', 'y', '', /enter a number/, 'an empty value');
+  // 理由は選択を変えると消える
+  await page.locator('#add-mapping-btn').click();
+  assert.equal(await error.isHidden(), true, 'switching the mapping clears the reason');
+  await shows('after switching the mapping');
+
+  // 欄の中の矢印キー・Enter・Escape は選んだ隅の微調整に奪われない (#206)
+  await tlHandle.click();
+  assert.equal(await page.locator('#output-stage .quad-handle.kbd-selected').count(), 1, 'a corner is selected for the arrow keys');
+  const selected = await quad();
+  await field('br', 'x').focus();
+  for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) await page.keyboard.press(key);
+  assert.deepEqual((await quad()).topLeft, selected.topLeft, 'arrow keys in a corner field leave the selected corner alone');
+  await field('br', 'x').press('Escape');
+  assert.deepEqual((await quad()).topLeft, selected.topLeft);
+  await tlHandle.click(); await page.keyboard.press('ArrowRight');
+  assert.notDeepEqual((await quad()).topLeft, selected.topLeft, 'arrow keys outside the fields still nudge the selected corner');
+
+  // マスクを描いている間 (active がマスク) は入力できない
+  await page.locator('#add-mask-btn').click();
+  assert.equal(await field('tl', 'x').isDisabled(), true, 'corner fields are disabled while a mask is active');
+  assert.equal(await field('tl', 'x').inputValue(), '');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !window.practiceWC.events.state.get().mappings.some(m => m.drafting));
+
+  // 日本語の表示
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  await rejects('bl', 'x', String(Math.round((await quad()).bottomRight.x + 500)), /凸でなくなります/, 'a twisting value (ja)');
+  if (artifactDir) await section.screenshot({ path: resolve(artifactDir, base.name + '-corner-rejected-ja.png') });
+}
 async function confirmClose(page, base) {
   await start(page);
   await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click();
@@ -1568,7 +1686,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, cornerInput, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

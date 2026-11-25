@@ -352,6 +352,27 @@ export const CONTROL_PANEL_CSS = `
         color: #666;
         cursor: not-allowed;
       }
+      /* マッピング設定の四隅の数値入力 (#192)。1 セルに「TL x , y」を並べる。 */
+      .corner-value .corner-sep {
+        color: #888;
+        margin: 0 2px;
+      }
+      .corner-value .num-input[aria-invalid="true"] {
+        box-shadow: inset 0 0 0 1px #f87171;
+        border-radius: 2px;
+      }
+      .corner-input-error {
+        margin: 8px 0 0;
+        padding: 6px 8px;
+        border-radius: 4px;
+        background: rgba(248, 113, 113, 0.12);
+        color: #fca5a5;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      .corner-input-error[hidden] {
+        display: none;
+      }
       #output-settings-target {
         color: #fff;
         font-weight: 500;
