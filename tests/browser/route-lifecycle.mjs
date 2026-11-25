@@ -8,7 +8,7 @@
 // 同じ Gist の差し替え経路で、作品の組み立てが script / CSS の意味を変えないことも確かめる (#110)。
 // Gist と OpenProcessing の html モードで、URL として書いた参照 (クエリ・%XX・#) のファイルが読み込まれることも確かめる (#211)。
 // ホーム (ギャラリー) のヘッダーは、どの幅でも見出しとボタン列が重ならず、ボタンが押せることを確かめる (#178)。
-// カタログが空のホーム (hero) は、どの幅でもページが横にはみ出さず、「?」のツールチップが画面内に出ることを確かめる (#284)。
+// カタログが空のホーム (hero) は、測った幅と文字サイズでページが横にはみ出さず、「?」のツールチップが画面内に出ることを確かめる (#284)。
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -471,8 +471,15 @@ async function galleryHeader(browser, base) {
 // カタログが空のホーム (hero) は、狭い幅でも横にはみ出さない。「?」のツールチップは非表示でも
 // 絶対配置の箱がページの幅に数えられるので、表示前と、フォーカス・hover で表示した後の両方を測る (#284)。
 // 期待値は「scrollWidth が clientWidth を超えない・ツールチップが 0..clientWidth に収まる」という性質。
-// 768px 以上はツールチップを「?」の真上に出す見た目を保つ。
-const HERO_WIDTHS = [320, 375, 768];
+// 48em 以上 (既定の文字サイズでは 768px 以上) はツールチップを「?」の真上に出す見た目を保つ。
+// ブラウザの文字サイズを大きくすると文とツールチップが広がるので、20px・24px の設定でも、
+// 既定の区切り 768px より広い幅を測る (px の区切りでは 768〜1024px ではみ出していた)。
+// 24px で 320px のような狭い幅は、見出し "dropcaster" が折り返さずに溢れる別の原因があるので測らない。
+const HERO_CASES = [
+  { fontPx: 16, widths: [320, 375, 768] },
+  { fontPx: 20, widths: [768, 900] },
+  { fontPx: 24, widths: [1024] },
+];
 
 function measureHeroTip() {
   const box = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
@@ -486,7 +493,7 @@ function measureHeroTip() {
   };
 }
 
-async function assertHeroTip(page, label, width, shown) {
+async function assertHeroTip(page, label, width, shown, fontPx) {
   // 表示は opacity の transition だけで、矩形と visibility は切り替わった時点で決まる
   const m = await page.evaluate(measureHeroTip);
   assert.ok(m.scrollWidth <= m.viewport, `${label}: ページが横にはみ出している (${m.scrollWidth} > ${m.viewport})`);
@@ -495,7 +502,7 @@ async function assertHeroTip(page, label, width, shown) {
     `${label}: ツールチップ (${span(m.tip)}) が画面 (幅 ${m.viewport}) の外に出ている`);
   if (!shown) return;
   assert.ok(m.tip.bottom <= m.mark.top, `${label}: ツールチップ (${span(m.tip)}) が「?」(${span(m.mark)}) の上にない`);
-  if (width >= 768) {
+  if (width >= 48 * fontPx) {
     const center = (r) => (r.left + r.right) / 2;
     assert.ok(Math.abs(center(m.tip) - center(m.mark)) <= 1,
       `${label}: ツールチップが「?」の真上にない (ツールチップ ${center(m.tip)}, 「?」 ${center(m.mark)})`);
@@ -514,18 +521,24 @@ async function heroTooltip(browser, base) {
       await page.goto(base.url + '/');
       await page.waitForSelector('#op-id-input-hero');
       assert.equal(await page.evaluate(() => document.documentElement.lang), lang);
-      for (const width of HERO_WIDTHS) {
-        const label = `${base.name}/heroTooltip ${lang} ${width}px`;
-        await page.setViewportSize({ width, height: 600 });
-        await page.evaluate(() => document.fonts.ready);
-        await page.mouse.move(0, 0);
-        await page.evaluate(() => /** @type {HTMLElement} */ (document.activeElement)?.blur());
-        await assertHeroTip(page, `${label} (非表示)`, width, false);
-        await page.locator('.op-hero-help').focus();
-        await assertHeroTip(page, `${label} (フォーカス)`, width, true);
-        await page.evaluate(() => /** @type {HTMLElement} */ (document.activeElement)?.blur());
-        await page.locator('.op-hero-help').hover();
-        await assertHeroTip(page, `${label} (hover)`, width, true);
+      // ブラウザの文字サイズの設定 (Chrome の「フォントサイズ」) を CDP で変える
+      const cdp = await context.newCDPSession(page);
+      for (const { fontPx, widths } of HERO_CASES) {
+        await cdp.send('Page.setFontSizes', { fontSizes: { standard: fontPx } });
+        await page.waitForFunction((px) => getComputedStyle(document.documentElement).fontSize === `${px}px`, fontPx);
+        for (const width of widths) {
+          const label = `${base.name}/heroTooltip ${lang} ${width}px (文字 ${fontPx}px)`;
+          await page.setViewportSize({ width, height: 600 });
+          await page.evaluate(() => document.fonts.ready);
+          await page.mouse.move(0, 0);
+          await page.evaluate(() => /** @type {HTMLElement} */ (document.activeElement)?.blur());
+          await assertHeroTip(page, `${label} (非表示)`, width, false, fontPx);
+          await page.locator('.op-hero-help').focus();
+          await assertHeroTip(page, `${label} (フォーカス)`, width, true, fontPx);
+          await page.evaluate(() => /** @type {HTMLElement} */ (document.activeElement)?.blur());
+          await page.locator('.op-hero-help').hover();
+          await assertHeroTip(page, `${label} (hover)`, width, true, fontPx);
+        }
       }
       assert.deepEqual(errors, [], `${base.name}/heroTooltip ${lang}: browser errors`);
       console.log(`${base.name}/heroTooltip ${lang}: PASS`);
