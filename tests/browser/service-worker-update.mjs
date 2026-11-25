@@ -30,6 +30,10 @@ if (artifactDir) await mkdir(artifactDir, { recursive: true });
 const TIMEOUT_MS = 20_000;
 // 自動の再読み込みや出力の close が起きうる間だけ待つ (正しければ何も起きずに待ち切る)
 const SETTLE_MS = 1_500;
+// ナビゲーションの確定からブラウザ自身の更新確認が届くまでの下限とみなす時間 (settleBrowserUpdateCheck)。
+// 実測 (Chromium rev 1243、Linux): 作品の iframe の確定から 1.53〜1.55 秒。前のナビゲーション (操作画面) の
+// 確認が iframe の確定の後に届いた例は、確定から 18〜131ms。その間で、両側に 0.5 秒ほどの余裕を取る
+const BROWSER_CHECK_MIN_MS = 1_000;
 const REPEAT = Math.max(1, Number(process.env.SW_UPDATE_REPEAT) || 1);
 const entryButton = '#open-windows-btn, #mapping-btn';
 const notice = '#dc-update-notice';
@@ -86,7 +90,7 @@ function startServer(dir, state, basePath) {
     const pathname = full.slice(basePath.length);
     if (pathname === '/sw.js') {
       state.swFetches = (state.swFetches ?? 0) + 1;
-      state.swFetchedAt = Date.now();
+      (state.swFetchTimes ??= []).push(Date.now());
       trace.add(`server: sw.js を返す (${swVersion(state.sw)}、${state.swFetches} 回目)`);
       res.writeHead(200, { 'Content-Type': CONTENT_TYPES['.js'], 'Cache-Control': 'no-cache' }).end(state.sw);
       return;
@@ -154,6 +158,9 @@ const pageState = (page) => page.evaluate(async () => {
   } catch (err) { state.sw = String(err); }
   return JSON.stringify(state);
 });
+/** 記録用の pageState。ページの再読み込み中などで取れなくても、記録が失敗の原因にならないよう文字列で返す。 */
+const pageStateForTrace = (page) => Promise.race([pageState(page), sleep(2_000).then(() => '(2 秒待っても応答なし)')])
+  .catch((err) => `(取れない: ${err.message.split('\n')[0]})`);
 const cachedIn = (page, bucket, url) => page.evaluate(async ([b, u]) => !!(await (await caches.open(b)).match(u)), [bucket, url]);
 
 /** 新しい版を配信して update() し、その install が終わる (待機に入るか失敗する) まで待つ。 */
@@ -165,19 +172,26 @@ async function publishAndSettle(page, state, version) {
   await until(async () => (state.swFetches ?? 0) > before, `新しい版 ${version} の sw.js が取られる`);
   trace.add(`test: ${version} の update() が返り、sw.js が取られた`);
   await until(() => page.evaluate(async () => !(await navigator.serviceWorker.getRegistration()).installing), `新しい版 ${version} の install が終わる`);
-  trace.add(`test: installing が無い ${await pageState(page)}`);
+  trace.add(`test: installing が無い ${await pageStateForTrace(page)}`);
   await sleep(SETTLE_MS);
-  trace.add(`test: ${SETTLE_MS}ms 待った ${await pageState(page)}`);
+  trace.add(`test: ${SETTLE_MS}ms 待った ${await pageStateForTrace(page)}`);
 }
 
 /**
- * ブラウザは SW が制御するナビゲーション (操作画面と作品の iframe) の 1.5 秒ほど後に、自分でも sw.js を
- * 取りにいく (更新確認。ナビゲーションのたびに先へ延びる)。新しい版を配信した後にこれが来ると、
- * テストの update() とは別に、同じ版の install がもう 1 度走る (#231)。最後のナビゲーションの後の
- * この確認がサーバに届くまで待ち、旧版を配信している間に済ませる。
+ * ブラウザは SW が制御するナビゲーション (操作画面と作品の iframe) の後に、少し遅れて自分でも sw.js を
+ * 取りにいく (更新確認)。待っている間に次のナビゲーションが確定すれば 1 回にまとまるが、待ちが明けた後に
+ * 確定したナビゲーションには、もう 1 回の確認が来る。新しい版を配信した後にこれが来ると、テストの
+ * update() とは別に同じ版の install がもう 1 度走る (#231)。そこで、作品の iframe まで読み込み終えて
+ * ナビゲーションが出尽くしてから、最後のナビゲーションの確認がサーバに届くまで待ち、旧版を配信している
+ * 間に済ませる。
+ * 最後のナビゲーションの確認かどうかは、確定 (またはリクエストの遅いほう) から BROWSER_CHECK_MIN_MS 以上
+ * 後に届いたかで分ける。前のナビゲーションの確認は、その待ちが明けた直後に届くので、最後のナビゲーションの
+ * すぐ後にしか重ならない。
  */
-async function settleBrowserUpdateCheck(context, state) {
-  await until(() => (state.swFetchedAt ?? 0) > (lastNavigationAt.get(context) ?? Infinity), '最後のナビゲーションの後の、ブラウザ自身の更新確認');
+async function settleBrowserUpdateCheck(page, context, state) {
+  await page.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.querySelector('canvas'));
+  await until(() => (state.swFetchTimes ?? []).some(t => t - (lastNavigationAt.get(context) ?? Infinity) >= BROWSER_CHECK_MIN_MS),
+    '最後のナビゲーションの後の、ブラウザ自身の更新確認');
   trace.add('test: 最後のナビゲーションの後の、ブラウザ自身の更新確認が済んだ');
 }
 
@@ -198,7 +212,7 @@ function navigateInApp(page, base, route) {
 
 /** 応答が終わっていないリクエスト (コンテキストごと)。値は出した時刻。 */
 const pendingRequests = new WeakMap();
-/** 最後のナビゲーション (操作画面と作品の iframe) のリクエストを出した時刻 (コンテキストごと)。 */
+/** 最後のナビゲーション (操作画面と作品の iframe) のリクエストか確定の、遅いほうの時刻 (コンテキストごと)。 */
 const lastNavigationAt = new WeakMap();
 
 async function newContext(browser, options = {}) {
@@ -224,6 +238,12 @@ async function newContext(browser, options = {}) {
   context.on('page', (p) => {
     p.on('pageerror', (e) => errors.push(e.message));
     p.on('load', () => trace.add(`page: load ${p.url()}`));
+    // 作品の iframe を含む、ナビゲーションの確定 (commit)。ブラウザ自身の更新確認の起点 (settleBrowserUpdateCheck)
+    p.on('framenavigated', (f) => {
+      if (!f.url().startsWith('http')) return;
+      lastNavigationAt.set(context, Date.now());
+      trace.add(`page: framenavigated ${f.url()}`);
+    });
   });
   const pending = new Map();
   pendingRequests.set(context, pending);
@@ -246,8 +266,7 @@ async function newContext(browser, options = {}) {
  */
 async function closeContext(context) {
   for (const page of context.pages()) {
-    const state = await Promise.race([pageState(page), sleep(2_000).then(() => '(2 秒待っても応答なし)')]).catch((err) => `(取れない: ${err.message})`);
-    trace.add(`閉じる直前: ${page.url()} ${state}`);
+    trace.add(`閉じる直前: ${page.url()} ${await pageStateForTrace(page)}`);
   }
   const now = Date.now();
   for (const [request, since] of pendingRequests.get(context) ?? []) trace.add(`閉じる直前: 応答が終わっていない ${request.method()} ${request.url()} (${now - since}ms 前から)`);
@@ -452,7 +471,7 @@ const cases = {
       // 失敗する install はやり直しの対象になる (待機中の同じ版が無いので、ブラウザ自身の更新確認でも
       // install が走る)。その install が下の検査の最中に重ならないよう、先に済ませる。成功する install の
       // ケースでは、更新確認は待機中の版と比べる (Service Worker 仕様の Update) ので 2 度目の install は起きない
-      await settleBrowserUpdateCheck(context, state);
+      await settleBrowserUpdateCheck(page, context, state);
       state.blocked = VENUE_CHUNK;
       await publishAndSettle(page, state, 'v2');
       assert.equal(await hasWaiting(page), false, '資産が取れないまま新しい版が待機に入った');
