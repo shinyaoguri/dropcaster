@@ -49,6 +49,11 @@ export class MappingWorkspace {
   }
   get isActive(): boolean { return this.active; }
   toggle(): void { if (this.active) this.stop(); else void this.start(); }
+  /**
+   * 編集を開いている間、外から起きた失敗をこの画面の状態欄に出す。状態文と同じ規則を通すので、
+   * 言語を切り替えても残り、次の状態で上書きされる (#198)。編集を開いていなければ false。
+   */
+  report(key: MessageKey): boolean { if (!this.active || this.disposed || !this.notice) return false; this.status(key, true); return true; }
   updateContent(): void { this.session?.updateContent(); }
   async openProject(project: Project): Promise<void> {
     if (this.disposed) return;
@@ -181,8 +186,9 @@ export class MappingWorkspace {
       if (!this.active || generation !== this.generation || this.panel !== panel) { panel.dispose(); return; }
       panel.setVisible(this.editor.selectedTab === 'preview');
       this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting');
-    } catch {
+    } catch (error) {
       if (!this.active || this.disposed || generation !== this.generation) return;
+      console.warn('3D preview unavailable', error);
       this.status('practice.error', true); this.previewFailed();
     }
   }

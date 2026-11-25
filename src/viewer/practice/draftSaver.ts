@@ -76,7 +76,7 @@ export class DraftSaver {
     this.flush();
   }
 
-  private saveQuietly(): void { this.save().catch(() => { /* reported as 'error' */ }); }
+  private saveQuietly(): void { this.save().catch(error => { console.warn('Draft could not be saved', error); /* the state is reported as 'error' */ }); }
   private visibility = (): void => { if (this.events.document.hidden) this.flush(); };
   private beforeUnload = (event: Event): void => {
     this.beforeLeave();

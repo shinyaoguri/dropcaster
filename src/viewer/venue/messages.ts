@@ -27,6 +27,9 @@ const labels = {
   previewHint: ['Load a venue to preview your content. Create or align the venue in the separate Venue setup screen.', '会場を読み込んで作品の投影を確認できます。会場の作成・位置合わせは、別画面の「会場の作成・調整」で行います。'],
   loadPreview: ['Load venue file', '会場ファイルを読み込む'],
   graphicsError: ['3D graphics stopped. Your saved venue is kept; reload this screen to resume. Output has been closed.', '3D描画が停止しました。保存済みの会場は保持しています。この画面を再読み込みして再開してください。出力は閉じました。'],
+  // WebGL の停止以外で画面を始められなかったとき (#198)。App の案内画面と、この画面の状態欄の両方で使う。
+  openErrorTitle: ['Could not open venue setup', '会場の作成・調整を開けませんでした'],
+  openError: ['Venue setup could not start. Your saved venue is kept. Reload to try again.', '会場の作成・調整を始められませんでした。保存済みの会場は保持しています。再読み込みしてもう一度お試しください。'],
   reload: ['Reload', '再読み込み'],
   // なぞる (#246、ADR 0023)。手順の文言は traceModel の TOOL_STEPS と対応する。
   trace: ['Trace', 'なぞる'],

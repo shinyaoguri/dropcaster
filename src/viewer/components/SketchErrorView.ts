@@ -8,14 +8,16 @@
 //   - kind: 'invalid-format'    取得はできたがスケッチとして実行できない (Gist に
 //                               index.html が無い等)。元ページへのリンクを案内
 //   - kind: 'not-found'         404 / API エラー。ホームに戻る案内
+//   - kind: 'open-failed'       作品の取得ではなく、画面 (会場・保存したプロジェクト) を
+//                               開けなかった。呼び出し側が渡す見出しと案内を出す (#198)
 //
 // 視覚スタイルは既存 .container 系を流用しつつ、専用クラスは少しだけ追加。
 
 import { routeHref } from '../utils/paths.js';
-import { t, onLangChange } from '../i18n/index.js';
+import { t, onLangChange, type MessageKey } from '../i18n/index.js';
 import { langSwitcherHtml, wireLangSwitcher } from '../i18n/LanguageSwitcher.js';
 
-export type SketchErrorKind = 'rate-limit' | 'unsupported-mode' | 'invalid-format' | 'not-found';
+export type SketchErrorKind = 'rate-limit' | 'unsupported-mode' | 'invalid-format' | 'not-found' | 'open-failed';
 
 export interface SketchErrorOptions {
   /** rate-limit のとき: Retry-After ヘッダから抽出した待機時間 (ms) */
@@ -30,6 +32,8 @@ export interface SketchErrorOptions {
   source?: 'op' | 'gist';
   /** 任意追加メッセージ (generic な技術詳細) */
   detail?: string;
+  /** open-failed のとき: 見出しと案内 (言語切替で引き直すのでキーで渡す)。reload で再読み込みのボタンを出す */
+  failure?: { title: MessageKey; message: MessageKey; reload?: boolean };
 }
 
 export class SketchErrorView {
@@ -52,6 +56,9 @@ export class SketchErrorView {
           break;
         case 'invalid-format':
           SketchErrorView.renderInvalidFormat(app, options);
+          break;
+        case 'open-failed':
+          SketchErrorView.renderOpenFailed(app, options);
           break;
         default:
           SketchErrorView.renderNotFound(app, options);
@@ -174,6 +181,24 @@ export class SketchErrorView {
         </div>
       </div>
     `;
+  }
+
+  private static renderOpenFailed(app: HTMLElement, opts: SketchErrorOptions): void {
+    const failure = opts.failure;
+    if (!failure) { SketchErrorView.renderNotFound(app, opts); return; }
+    app.innerHTML = `
+      <div class="container sketch-error">
+        <div class="dc-lang-corner">${langSwitcherHtml()}</div>
+        <div class="sketch-error-icon">⚠</div>
+        <h1 class="sketch-error-title">${escapeHtml(t(failure.title))}</h1>
+        <p class="sketch-error-message">${escapeHtml(t(failure.message))}</p>
+        <div class="sketch-error-actions">
+          ${failure.reload ? `<button type="button" class="sketch-error-button" data-reload>${t('pwa.reload')}</button>` : ''}
+          <a href="${routeHref('/')}" class="sketch-error-link">${t('sketchError.home')}</a>
+        </div>
+      </div>
+    `;
+    app.querySelector('[data-reload]')?.addEventListener('click', () => window.location.reload());
   }
 
   /** 元ページへのリンク。文言は取り込み元 (OP / Gist) で出し分ける。 */

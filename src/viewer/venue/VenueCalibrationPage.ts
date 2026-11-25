@@ -178,10 +178,13 @@ export class VenueCalibrationPage {
     this.wire(); this.off.push(onLangChange(() => this.translate())); this.translate();
     await this.session.ready;
     if (this.disposed) return;
+    // レンダラーを作り終えるまでの失敗は WebGL が使えないことによる。それ以降の失敗を 3D 描画の停止と案内しない (#198)。
+    let graphics = true;
     try {
       this.preview = new ProjectionPreview(this.canvas, document.createElement('video'));
       this.preview.setGuidesVisible(true);
       this.projection = new CalibrationProjection(this.preview);
+      graphics = false;
       this.projection.canvas.hidden = true; this.mirror.id = 'venue-image';
       this.get('venue-output-stage').append(this.mirror, this.projection.canvas);
       this.output = new CalibrationWindow(this.projection, () => this.updateOutput(), {
@@ -233,7 +236,7 @@ export class VenueCalibrationPage {
       this.showVenue(prepared, restored); this.update(this.session.changes.get()); this.resizePreview();
       this.preview.overview(); this.editor.setActive(true); this.translate(); this.status('calibration.ready'); this.updateOutput(); this.setReady();
       this.frame = requestAnimationFrame(this.render);
-    } catch (error) { if (!this.disposed) { this.fail(); console.warn('Venue setup unavailable', error); } }
+    } catch (error) { if (!this.disposed) { this.fail(graphics ? 'calibration.graphicsError' : 'calibration.openError'); console.warn('Venue setup unavailable', error); } }
   }
   private get<T extends HTMLElement = HTMLElement>(id: string): T { return this.root.querySelector(`#${id}`)!; }
   private input(id: string): HTMLInputElement { return this.get(id); }
@@ -544,7 +547,11 @@ export class VenueCalibrationPage {
     this.trace?.drawOverlay(context, width / source.width, ratio);
   }
   private status(key: MessageKey,error=false):void { this.statusKey=key;this.errorStatus=error;this.get('venue-status').textContent=t(key);this.get('venue-status').classList.toggle('is-error',error); }
-  private error(error:unknown):void { this.status(error instanceof ProjectFormatError?`practice.${error.message}` as MessageKey:'practice.invalid',true); }
+  private error(error:unknown):void {
+    // 形式の検証で分かった原因はその文言を出す。それ以外は汎用の文言になるので、元の例外を残す (#198)。
+    if(!(error instanceof ProjectFormatError)) console.warn('Venue change failed',error);
+    this.status(error instanceof ProjectFormatError?`practice.${error.message}` as MessageKey:'practice.changeFailed',true);
+  }
   private storageStatus():void { const state=this.session.storage.get(); this.get('venue-storage').textContent=t(state==='error'?'practice.storageError':state==='saving'?'practice.saving':'calibration.saved'); }
   private translate(): void {
     applyControlTranslations(this.root); this.activityBar.render();
@@ -561,7 +568,7 @@ export class VenueCalibrationPage {
     this.trace?.render(); this.mirrored = '';
   }
   private graphicsLost=(event:Event):void=>{event.preventDefault();this.fail();};
-  private fail():void {this.failed=true;this.setReady();this.adjuster?.cancel();this.editor?.cancel();this.output?.close();cancelAnimationFrame(this.frame);this.status('calibration.graphicsError',true);this.get<HTMLButtonElement>('venue-open-output').disabled=true;this.get('venue-reload').hidden=false;}
+  private fail(key:MessageKey='calibration.graphicsError'):void {this.failed=true;this.setReady();this.adjuster?.cancel();this.editor?.cancel();this.output?.close();cancelAnimationFrame(this.frame);this.status(key,true);this.get<HTMLButtonElement>('venue-open-output').disabled=true;this.get('venue-reload').hidden=false;}
   destroy():void {
     if(this.disposed)return;
     this.adjuster?.flush();

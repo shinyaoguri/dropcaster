@@ -1,7 +1,7 @@
 import type { Sketch } from '../types/sketch.js';
 import { SlideshowView } from './SlideshowView';
 import { routeHref } from '../utils/paths.js';
-import { t } from '../i18n/index.js';
+import { t, type MessageKey } from '../i18n/index.js';
 import type { Project } from '../practice/project';
 
 export class SlideshowController {
@@ -61,4 +61,5 @@ export class SlideshowController {
     this.view.destroy();
   }
   public async openProject(project: Project): Promise<void> { await this.view.openProject(project); }
+  public reportMappingError(key: MessageKey): boolean { return this.view.reportMappingError(key); }
 }

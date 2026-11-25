@@ -75,6 +75,20 @@ test('a failed write reports error and is no longer pending', async () => {
   assert.equal(leave(), false, 'the error stays visible in the status; leaving is not held');
 });
 
+// #198: 連続変更の書き込みは呼び出し元が待たない。状態を error にするだけでなく、元の例外を残す。
+test('a failed debounced write keeps the original error in the console', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const warn = t.mock.method(console, 'warn', () => {});
+  const { saver, writes, states } = harness();
+  saver.schedule(); t.mock.timers.tick(DRAFT_DEBOUNCE_MS);
+  const cause = new Error('quota');
+  writes[0].reject(cause); await settle();
+  assert.equal(states.at(-1), 'error');
+  assert.equal(warn.mock.calls.length, 1);
+  const logged = /** @type {unknown[]} */ (warn.mock.calls[0].arguments);
+  assert.ok(logged.includes(cause), 'the write error itself is logged');
+});
+
 test('an older write finishing late cannot report the newer commit as saved', async () => {
   const { saver, writes, states } = harness();
   const first = saver.save(), second = saver.save();

@@ -25,7 +25,7 @@ export class VenueSession {
       const stored = await readProject('venue-draft');
       if (!this.disposed && stored) this.changes.set(this.document(parseProject(stored)));
       else if (!this.disposed) await this.save();
-    } catch { if (!this.disposed) this.storage.set('error'); }
+    } catch (error) { console.warn('Venue draft could not be restored', error); if (!this.disposed) this.storage.set('error'); }
   }
   private document(project: Project): Project {
     return { ...project, content: [], show: { contentIds: [], currentIndex: 0, intervalSeconds: 30 } };
@@ -37,7 +37,7 @@ export class VenueSession {
     void this.save();
   }
   async save(): Promise<void> {
-    try { await this.saver.save(); } catch { /* reported through storage */ }
+    try { await this.saver.save(); } catch (error) { console.warn('Venue draft could not be saved', error); /* the state is reported through storage */ }
   }
   dispose(): void {
     this.disposed = true; this.saver.dispose();
