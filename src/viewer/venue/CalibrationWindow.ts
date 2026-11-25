@@ -50,7 +50,7 @@ export class CalibrationWindow {
       clearInterval(this.monitor);
       this.monitor = setInterval(() => { if (this.output && !this.output.isOpen()) this.close(); }, 500);
       this.update(); this.changed(); return true;
-    } catch { this.close(); child.close(); return false; }
+    } catch (error) { console.warn('Calibration output could not be set up', error); this.close(); child.close(); return false; }
   }
   update(): void {
     if (!this.isOpen) return;

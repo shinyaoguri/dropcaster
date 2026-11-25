@@ -13,7 +13,7 @@ import { SketchErrorView } from './components/SketchErrorView.js';
 import { API_CONFIG, GIST_CONFIG } from '../core/modules/constants.js';
 import { readProject } from './practice/projectStore';
 import { parseProject } from './practice/project';
-import { t } from './i18n';
+import { t, type MessageKey } from './i18n';
 import type { VenueCalibrationPage } from './venue/VenueCalibrationPage';
 import { sampleSketch } from './practice/sampleSketch';
 
@@ -163,11 +163,16 @@ export class App {
 
     // Resolve every saved reference before replacing the current working view.
     this.router.registerRoute('/project', async () => {
-      const generation = ++this.routeGeneration;
+      let generation = ++this.routeGeneration;
       const status = document.getElementById('dc-practice-status');
       if (status) status.textContent = t('practice.loading');
+      // 失敗した段階で案内を変える (#198)。下書きを読めないことと、作品を取得できないことは対処が違う。
+      let failure: MessageKey = 'practice.draftUnreadable';
       try {
-        const project = parseProject(await readProject());
+        const stored = await readProject();
+        if (!stored) { failure = 'practice.draftMissing'; throw new Error('No project draft is saved'); }
+        const project = parseProject(stored);
+        failure = 'practice.contentMissing';
         const sketches = await Promise.all(project.show.contentIds.map(async id => {
           const ref = project.content.find(c => c.id === id)!;
           if (ref.kind === 'op') return this.opSource.resolve(ref.ref);
@@ -179,7 +184,9 @@ export class App {
         }));
         if (generation !== this.routeGeneration) return;
         if (!sketches.length) throw new Error('No saved sketches');
-        this.teardownCurrent();
+        failure = 'practice.openError';
+        // teardownCurrent は世代を進める。ここから先の失敗も、この遷移のものとして案内する。
+        this.teardownCurrent(); generation = this.routeGeneration;
         if (sketches.length === 1) {
           const controller = new SketchPageController();
           this.sketchPageController = controller;
@@ -190,10 +197,16 @@ export class App {
           this.slideshowController.start(sketches, project.show);
           await this.slideshowController.openProject(project);
         }
-      } catch {
+      } catch (error) {
         if (generation !== this.routeGeneration) return;
-        if (status?.isConnected) { status.textContent = t('practice.contentMissing'); status.classList.add('is-error'); }
-        else SketchErrorView.render('not-found', { detail: t('practice.contentMissing') });
+        console.error(`Saved project could not be opened (${failure}):`, error);
+        const opening = failure === 'practice.openError';
+        // 作業中の画面を残したまま失敗したときは、その画面の状態欄に出す。表示の規則 (平常時は読み上げ専用、
+        // エラーは見せる、言語の切り替えで訳し直す) は MappingWorkspace が持つので、そこを通す。
+        if (!opening && (this.sketchPageController?.reportMappingError(failure) || this.slideshowController?.reportMappingError(failure))) return;
+        this.teardownCurrent(); // 生きている画面・開きかけの画面を片付けてから案内に差し替える
+        SketchErrorView.render('open-failed', { failure: { title: 'practice.openErrorTitle', message: failure,
+          reload: opening || failure === 'practice.draftUnreadable' } });
       }
     });
 
@@ -211,8 +224,13 @@ export class App {
         if (generation !== this.routeGeneration) return;
         const page = new VenueCalibrationPage(); this.venuePage = page;
         await page.initialize();
-      } catch {
-        if (generation === this.routeGeneration) { this.venuePage?.destroy(); this.venuePage = null; SketchErrorView.render('not-found', { detail: t('calibration.graphicsError') }); }
+      } catch (error) {
+        if (generation !== this.routeGeneration) return;
+        // ここへ来るのは画面のコードを取得できないときと、3D を作り始める前の失敗 (#198)。
+        // WebGL が使えないことは VenueCalibrationPage が自分の画面で案内する。
+        console.error('Venue setup could not be opened:', error);
+        this.venuePage?.destroy(); this.venuePage = null;
+        SketchErrorView.render('open-failed', { failure: { title: 'calibration.openErrorTitle', message: 'calibration.openError', reload: true } });
       }
     });
     this.router.registerRoute('/mapping', openSampleMapping);

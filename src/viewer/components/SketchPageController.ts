@@ -9,6 +9,7 @@ import { InlineControlHost } from '../windows/control/InlineControlHost';
 import { publicAssetPath } from '../utils/paths.js';
 import { MappingWorkspace } from '../practice/MappingWorkspace';
 import type { Project } from '../practice/project';
+import type { MessageKey } from '../i18n/index.js';
 
 export class SketchPageController {
   private fullscreenManager: FullscreenManager;
@@ -70,6 +71,7 @@ export class SketchPageController {
   }
 
   async openProject(project: Project): Promise<void> { await this.workspace.openProject(project); }
+  reportMappingError(key: MessageKey): boolean { return !this.isDestroyed && this.workspace.report(key); }
   async startMapping(): Promise<void> { if (!this.isDestroyed) await this.workspace.start(); }
 
   /**

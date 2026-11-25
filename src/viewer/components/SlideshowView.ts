@@ -5,7 +5,7 @@ import { SketchPool } from '../runtime/SketchPool.js';
 import { WindowController } from './WindowController';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import { InlineControlHost } from '../windows/control/InlineControlHost';
-import { t, onLangChange } from '../i18n/index.js';
+import { t, onLangChange, type MessageKey } from '../i18n/index.js';
 import { MappingWorkspace } from '../practice/MappingWorkspace';
 import type { Project } from '../practice/project';
 
@@ -666,4 +666,5 @@ export class SlideshowView {
     this.langUnsub = null;
   }
   public async openProject(project: Project): Promise<void> { await this.workspace?.openProject(project); }
+  public reportMappingError(key: MessageKey): boolean { return this.workspace?.report(key) ?? false; }
 }

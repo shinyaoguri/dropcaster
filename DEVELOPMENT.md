@@ -218,6 +218,7 @@ Playwright の Chromium は自動化中のページを常に visible に保つ�
 
 `npm run test:practice` は製品の個別作品／スライドショー UI からマッピングを起動し、実出力との併用、
 3Dの遅延初期化・タブ非表示中の描画休止・明示的な実出力開始、投影ガイドの分離、既存編集、GLB／パッケージ保存、異常 import、容量不足、描画復旧・終了を両エントリで検証する。
+`projects` は `/project` を開けなかったときの案内が原因 (下書きが無い・読み出せない・作品を取得できない・開く途中の失敗) ごとに分かれ、保存・読み出しの元の例外が console に残ること (#198) も確かめる。
 `PRACTICE_ARTIFACT_DIR=/tmp/practice-images` でスクリーンショットを保存できる。
 `PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=workspace|workspaceSlideshow|lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample|slideshowDraft`
 で失敗箇所だけを再実行できる。内蔵サンプルの実 UI は `/mapping`（`/practice` も互換 URL として維持）。GLB サンプルは `docs/samples/`。
@@ -247,6 +248,7 @@ Playwright の Chromium は自動化中のページを常に visible に保つ�
 `VENUE_ARTIFACT_DIR=/tmp/venue-images` でスクリーンショットを保存できる。
 `interaction` は実ポインタで移動・回転・サイズ・取消・undoを検証し、`workflow` は輪郭／グリッド／白黒の実ピクセル・popup・解像度・保存再開を確認する。
 `recovery` は不正・遅延読込、GLB、容量不足、WebGL停止時の出力終了と書出を確認する。
+画面のコードを取得できないとき・WebGL 以外の理由で始められないときに 3D 描画の停止と案内しないこと、保存・読み出しの元の例外が console に残ること (#198) も確かめる。
 `assets` は GLB の会場で、校正値の確定と取り消しが GLB を復号し直さないこと、GLB・会場ファイル・マッピングの下書き・保存済みの下書きから
 入るものは毎回検証することを、GLB の復号 (`atob`) の回数で確かめる (#171)。`VenueCalibrationPage` の `commit` / `apply` や
 `parseProject` のアセットの扱いを変えたら実行する。
