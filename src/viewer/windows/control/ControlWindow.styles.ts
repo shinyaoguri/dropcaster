@@ -1059,6 +1059,20 @@ export const CONTROL_PANEL_CSS = `
         color: #ff5555;
         border-color: #ff5555;
       }
+      /* 出力側の状態と対処 (#196)。行の下に 1 段で出す */
+      .output-item.has-status { flex-wrap: wrap; }
+      .output-item .output-status {
+        flex: 1 0 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding-top: 4px;
+        color: #999;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      .output-item .output-status[data-kind="playError"] { color: #fca5a5; font-weight: 600; }
+      .output-item .output-status-hint { font-weight: 400; color: #ccc; }
       #add-output-btn {
         margin-top: 4px;
       }
@@ -1377,6 +1391,28 @@ export const CONTROL_PANEL_CSS = `
         color: #ccc;
         font-weight: 500;
       }
+
+      /* 投影が映らないときの作品側の原因と対処 (#196)。ソース列の見出しの下に置く。
+         失敗は WebGL ロストの帯と同じ系統の色、注意・未確認は控えめにする */
+      .dc-source-status {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 12px;
+        border-bottom: 1px solid #333;
+        border-left: 3px solid #666;
+        background: #262626;
+        color: #ddd;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .dc-source-status[hidden] { display: none; }
+      .dc-source-status[data-level="error"] { border-left-color: #ef4444; background: #3a1d1d; color: #fecaca; }
+      .dc-source-status[data-level="notice"] { border-left-color: #ca8a04; }
+      .dc-source-status-text { font-weight: 600; }
+      .dc-source-status-hint { color: #bbb; }
+      .dc-source-status[data-level="error"] .dc-source-status-hint { color: #fca5a5; }
 
       /* ソースカラムのスタイル */
       .video-container {

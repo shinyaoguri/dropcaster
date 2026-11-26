@@ -282,6 +282,11 @@ export function controlPanelHtml(): string {
           <div class="column-header">
             <h2 data-i18n="control.column.source">${t('control.column.source')}</h2>
           </div>
+          <!-- 投影が映らないときの作品側の原因と対処 (#196)。文言は ProjectionDiagnosisPanel が入れる -->
+          <div id="dc-source-status" class="dc-source-status" role="status" aria-live="polite" hidden>
+            <span class="dc-source-status-text"></span>
+            <span class="dc-source-status-hint" hidden></span>
+          </div>
           <div class="video-container">
             <div class="source-preview-wrapper">
               <div class="canvas-frame">

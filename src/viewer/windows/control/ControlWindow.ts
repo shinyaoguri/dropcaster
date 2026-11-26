@@ -14,6 +14,7 @@ import { SourceCropPanel } from './panels/SourceCropPanel';
 import { MappingAreaPanel } from './panels/MappingAreaPanel';
 import { MaskEditPanel } from './panels/MaskEditPanel';
 import { CornerInputPanel } from './panels/CornerInputPanel';
+import { ProjectionDiagnosisPanel } from './panels/ProjectionDiagnosisPanel';
 import { MappingsController } from './MappingsController';
 import {
   isMaskEntry,
@@ -66,6 +67,8 @@ export class ControlWindow extends BaseWindow {
   private layoutPanel = new LayoutPanel();
   private outputSettings = new OutputSettingsPanel();
   private cornerInputs = new CornerInputPanel();
+  /** 投影が映らないときの原因の表示 (#196)。 */
+  private diagnosis = new ProjectionDiagnosisPanel();
   /** 現在 active なタブ（'mapping' / 'layout'）。タブ切替時に LayoutPanel.refresh() を駆動。 */
   private activeTab: ControlTab = 'mapping';
   private tabListeners = new Set<(tab: ControlTab) => void>();
@@ -292,6 +295,8 @@ export class ControlWindow extends BaseWindow {
         e.canvasX, e.canvasY, e.visible,
       )),
     );
+    // 投影が映らないときの原因 (#196): ソース列の案内と、出力一覧の各行の状態。
+    this.diagnosis.attach(h, { onOutputDiagnosisChange: () => this.mappingsList.rerender() });
   }
 
   /** 購読を全部外して host 自体も dispose する。inline 解除時に呼ぶ。 */
@@ -321,6 +326,7 @@ export class ControlWindow extends BaseWindow {
     this.layoutPanel.destroy();
     this.outputSettings.destroy();
     this.cornerInputs.destroy();
+    this.diagnosis.destroy();
     this.tabListeners.clear(); this.activeTab = 'mapping';
     this.activityBar.destroy();
   }
@@ -505,6 +511,7 @@ ${CONTROL_PANEL_CSS}
         autoOpenAddedOutput: () => false,
         closeOutputWindow: (outputId) => host.closeOutputWindow(outputId),
         isOutputWindowOpen: (outputId) => this.outputBounds[outputId] !== undefined,
+        getOutputDiagnosis: (outputId) => host.getOutputDiagnosis()[outputId],
       });
     }
 
