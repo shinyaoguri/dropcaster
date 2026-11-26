@@ -1,5 +1,5 @@
 import { randomId } from '../utils/randomId.ts';
-import { defaultMappingsState, parseMappingsState, CORNER_KEYS, type MappingsState } from '../utils/mappingTransform.ts';
+import { defaultMappingsState, parseMappingsState, CORNER_KEYS, OUTPUT_CORRECTION_KEYS, OUTPUT_CORRECTION_MAX, type MappingsState } from '../utils/mappingTransform.ts';
 import type { Sketch } from '../types/sketch.ts';
 
 export type Vec3 = [number, number, number];
@@ -79,6 +79,13 @@ function parseLayout(value: unknown): MappingsState {
     str(output.id); point(output.position); size(output.size);
     if (output.pixelSize) size(output.pixelSize);
     if (output.screen) { size(output.screen); num(output.screen.left, -1_000_000, 1_000_000); num(output.screen.top, -1_000_000, 1_000_000); }
+  }
+  // 出力の補正 (#199) は省略できる。書いてあるなら、v2 パーサが黙って丸める前に範囲外・数でない値を拒む。
+  for (const original of outputs) {
+    const correction = record(original).correction;
+    if (correction === undefined) continue;
+    const c = record(correction);
+    for (const key of OUTPUT_CORRECTION_KEYS) if (c[key] !== undefined) num(c[key], 0, OUTPUT_CORRECTION_MAX);
   }
   for (const [index, item] of layout.mappings.entries()) {
     const original = record(mappings[index]);

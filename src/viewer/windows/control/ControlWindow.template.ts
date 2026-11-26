@@ -189,6 +189,33 @@ export function controlPanelHtml(): string {
                     </div>
                   </div>
                 </div>
+                <div class="tool-item output-correction">
+                  <h4 data-i18n="control.outputCorrection.title">${t('control.outputCorrection.title')}</h4>
+                  <p class="section-hint" data-i18n="control.outputCorrection.hint">${t('control.outputCorrection.hint')}</p>
+                  <div class="output-correction-rows">
+                    <div class="output-correction-row">
+                      <label class="label" for="output-correction-brightness-range" data-i18n="control.outputCorrection.brightness">${t('control.outputCorrection.brightness')}</label>
+                      <input id="output-correction-brightness-range" class="output-correction-range" data-correction="brightness" type="range" min="0" max="2" step="0.01" value="1" disabled />
+                      <input id="output-correction-brightness-input" class="num-input output-correction-num" data-correction="brightness" type="number" min="0" max="2" step="0.01" inputmode="decimal" disabled />
+                    </div>
+                    <div class="output-correction-row">
+                      <label class="label" for="output-correction-r-range" data-i18n="control.outputCorrection.r">${t('control.outputCorrection.r')}</label>
+                      <input id="output-correction-r-range" class="output-correction-range" data-correction="r" type="range" min="0" max="2" step="0.01" value="1" disabled />
+                      <input id="output-correction-r-input" class="num-input output-correction-num" data-correction="r" type="number" min="0" max="2" step="0.01" inputmode="decimal" disabled />
+                    </div>
+                    <div class="output-correction-row">
+                      <label class="label" for="output-correction-g-range" data-i18n="control.outputCorrection.g">${t('control.outputCorrection.g')}</label>
+                      <input id="output-correction-g-range" class="output-correction-range" data-correction="g" type="range" min="0" max="2" step="0.01" value="1" disabled />
+                      <input id="output-correction-g-input" class="num-input output-correction-num" data-correction="g" type="number" min="0" max="2" step="0.01" inputmode="decimal" disabled />
+                    </div>
+                    <div class="output-correction-row">
+                      <label class="label" for="output-correction-b-range" data-i18n="control.outputCorrection.b">${t('control.outputCorrection.b')}</label>
+                      <input id="output-correction-b-range" class="output-correction-range" data-correction="b" type="range" min="0" max="2" step="0.01" value="1" disabled />
+                      <input id="output-correction-b-input" class="num-input output-correction-num" data-correction="b" type="number" min="0" max="2" step="0.01" inputmode="decimal" disabled />
+                    </div>
+                  </div>
+                  <button id="output-correction-reset" class="tool-button" data-i18n="control.outputCorrection.reset" disabled>${t('control.outputCorrection.reset')}</button>
+                </div>
               </div>
             </div>
 
