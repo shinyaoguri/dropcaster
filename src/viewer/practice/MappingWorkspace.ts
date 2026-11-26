@@ -2,6 +2,7 @@ import type { WindowController } from '../components/WindowController';
 import type { ControlWindow } from '../windows/control/ControlWindow';
 import type { SketchFrame } from '../runtime/SketchFrame';
 import type { PracticePanel } from './PracticePanel';
+import { ProjectPanel, projectErrorKey } from './ProjectPanel';
 import { ProjectSession, type ShowContext } from './ProjectSession';
 import { installPracticeStyles } from './style';
 import { t, onLangChange, type MessageKey } from '../i18n/index';
@@ -19,6 +20,10 @@ export class MappingWorkspace {
   private session: ProjectSession | null = null;
   private panel: PracticePanel | null = null;
   private pendingPanel: Promise<void> | null = null;
+  /** 読み込み中の 3D を、取り込みの後に裏で始めたまま誰も表示を求めていない。状態文を変えず、タブも動かさない。 */
+  private quietPanel = false;
+  /** プロジェクトの操作。3D の PracticePanel とは別に、編集を開いている間ずっと置く (ADR 0012)。 */
+  private projectPanel: ProjectPanel | null = null;
   private editor: ControlWindow | null = null;
   /** アクティビティバーの下端に差し込むホーム・閉じると、それぞれの確認ダイアログ。 */
   private toolbar: HTMLElement | null = null;
@@ -34,6 +39,8 @@ export class MappingWorkspace {
   private off: (() => void)[] = [];
   private active = false;
   private statusKey: MessageKey = 'practice.waiting';
+  /** 状態文の `{reason}` に入れる文言のキー。言語を切り替えたときも訳し直す。 */
+  private statusReason: MessageKey | null = null;
   private error = false;
   private disposed = false;
 
@@ -138,17 +145,28 @@ export class MappingWorkspace {
     this.notice.querySelector('#practice-retry')!.addEventListener('click', () => {
       editor.selectTab('preview'); void this.ensurePanel();
     });
-    // 3D とプロジェクトのパネルを開くことは、3D 設定・プロジェクトの明示操作として PracticePanel を読み込む
-    // (ADR 0012)。マッピング・出力・確認のパネルだけを使う間は Three.js を読み込まない。
+    // 3D のパネルを開くことは 3D 設定の明示操作として PracticePanel を読み込む (ADR 0012)。
+    // マッピング・出力・確認・プロジェクトのパネルだけを使う間は Three.js を読み込まず、WebGL も要らない。
     this.offToolPanel = editor.onToolPanelChange(panel => {
-      if (panel === 'preview3d' || panel === 'project') void this.ensurePanel();
+      if (panel === 'preview3d') void this.ensurePanel();
     });
     this.offTab = editor.onTabChange(tab => {
       this.panel?.setVisible(tab === 'preview');
       if (tab === 'preview') void this.ensurePanel();
     });
-    this.session ??= new ProjectSession(this.options.wc, this.options.getContext);
+    const session = this.session ??= new ProjectSession(this.options.wc, this.options.getContext);
     this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting'); this.translate();
+    // 下書きの復元を待ってから置く。復元より前の取り込み・名前の変更が、復元で上書きされないようにする。
+    const generation = this.generation, scope = this.scope;
+    void session.ready.then(() => {
+      if (!this.active || this.disposed || generation !== this.generation) return;
+      // 取り込み・保存済みを開く・取り込み前に戻すで形のある会場が入ったら、/project から開くときと同じく 3D を読み込んで背景を作る (#169)。
+      // 形の無い会場に戻ったときは、前の会場の失敗で残った再試行を消す (3D は 3D のタブを開けば読み込む)。
+      this.projectPanel = new ProjectPanel(scope, session, (key, error) => this.status(key, error), shaped => {
+        if (shaped) void this.ensurePanel(true);
+        else if (!this.panel && !this.pendingPanel) this.setRetry(false);
+      });
+    });
     void this.connectSource();
   }
 
@@ -165,46 +183,67 @@ export class MappingWorkspace {
     }
   }
 
-  private ensurePanel(): Promise<void> {
+  /** `quiet` は取り込みの後の裏の読み込み。取り込みの結果の状態文を残し、失敗しても 3D 以外のタブは動かさない。 */
+  private ensurePanel(quiet = false): Promise<void> {
     if (!this.active || this.disposed) return Promise.resolve();
-    if (this.pendingPanel) return this.pendingPanel;
+    if (this.pendingPanel) {
+      if (!quiet && this.quietPanel) { this.quietPanel = false; this.status('practice.loading'); }
+      return this.pendingPanel;
+    }
     if (this.panel) return Promise.resolve();
-    const generation = this.generation;
+    const generation = this.generation; this.quietPanel = quiet;
     const pending = this.loadPanel(generation).finally(() => { if (this.pendingPanel === pending) this.pendingPanel = null; });
     this.pendingPanel = pending;
     return pending;
   }
   private async loadPanel(generation: number): Promise<void> {
-    this.status('practice.loading'); this.setRetry(false);
+    if (!this.quietPanel) this.status('practice.loading');
+    this.setRetry(false);
     try {
       const [{ PracticePanel }] = await Promise.all([import('./PracticePanel'), this.session!.ready]);
       if (!this.active || this.disposed || generation !== this.generation || !this.scope || !this.editor) return;
       const panel = new PracticePanel(this.scope, this.options.wc, this.session!, this.editor,
-        (key, error) => this.status(key, error), () => this.previewFailed());
+        (key, error) => this.status(key, error), error => {
+          if (error !== null) { console.warn('3D venue could not be built', error); this.report3dFailure(error); }
+          this.previewFailed();
+        },
+        () => this.projectPanel?.chooseFile());
       this.panel = panel;
       await panel.initialize();
       if (!this.active || generation !== this.generation || this.panel !== panel) { panel.dispose(); return; }
       panel.setVisible(this.editor.selectedTab === 'preview');
-      this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting');
+      if (!this.quietPanel) this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting');
     } catch (error) {
       if (!this.active || this.disposed || generation !== this.generation) return;
       console.warn('3D preview unavailable', error);
-      this.status('practice.error', true); this.previewFailed();
+      this.report3dFailure(error); this.previewFailed();
     }
   }
+  /**
+   * 会場を作れなかったときはその理由を、WebGL が使えないなどそれ以外は 3D を表示できない旨を知らせる。
+   * 取り込み・開く・戻すの直後 (状態文がその結果のまま) なら、取り込みを拒否したときの文言と区別できるよう、
+   * 確定したことと理由を両方伝える。取り込みは確定したままで、取り込み前に戻せる (#169)。
+   */
+  private report3dFailure(error: unknown): void {
+    const reason = projectErrorKey(error);
+    if (this.statusKey === 'practice.imported' || this.statusKey === 'practice.venueImported') {
+      this.status(reason ? 'practice.importedUnbuildable' : 'practice.importedNo3d', true, reason);
+    } else this.status(reason ?? 'practice.error', true);
+  }
+  /** 3D を表示しているときだけマッピングへ戻す。取り込みの後の裏の読み込み・作り直しの失敗で、出力レイアウトなどから動かさない。 */
   private previewFailed(): void {
     this.panel?.dispose(); this.panel = null;
     this.setRetry(true);
-    this.editor?.selectTab('mapping');
+    if (this.editor?.selectedTab === 'preview') this.editor.selectTab('mapping');
   }
   private setRetry(visible: boolean): void {
     this.notice?.querySelector('#practice-retry')?.toggleAttribute('hidden', !visible);
     this.updateNotice();
   }
-  private status(key: MessageKey, error = false): void {
-    this.statusKey = key; this.error = error;
+  private status(key: MessageKey, error = false, reason: MessageKey | null = null): void {
+    this.statusKey = key; this.error = error; this.statusReason = reason;
     const element = this.notice?.querySelector('#dc-practice-status');
-    if (element) { element.textContent = t(key); element.classList.toggle('is-error', error); }
+    if (element) { element.textContent = reason ? t(key, { reason: t(reason) }) : t(key); element.classList.toggle('is-error', error); }
     this.updateNotice();
   }
   /** 平常時の状態文は読み上げ用に残して見た目からは外し、エラーと再試行があるときだけ見せる。 */
@@ -217,7 +256,7 @@ export class MappingWorkspace {
     if (this.toolbar) applyControlTranslations(this.toolbar);
     if (this.venueEntry) applyControlTranslations(this.venueEntry);
     if (this.notice) applyControlTranslations(this.notice);
-    this.status(this.statusKey, this.error);
+    this.status(this.statusKey, this.error, this.statusReason);
   }
   stop(): void {
     if (!this.active) return;
@@ -225,6 +264,7 @@ export class MappingWorkspace {
     this.offTab?.(); this.offTab = null;
     this.offToolPanel?.(); this.offToolPanel = null;
     this.panel?.dispose(); this.panel = null; this.editor = null;
+    this.projectPanel?.dispose(); this.projectPanel = null;
     this.toolbar?.remove(); this.toolbar = null;
     this.venueEntry?.remove(); this.venueEntry = null;
     this.notice?.remove(); this.notice = null;
