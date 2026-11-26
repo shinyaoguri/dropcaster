@@ -5,6 +5,7 @@ import {
   isMappingEnabled,
   isMaskEntry,
   mappingColor,
+  outputChannelGains,
   type MappingEntry,
   type MaskEntry,
   type MappingsState,
@@ -139,7 +140,15 @@ export class OutputWindow extends BaseWindow {
              CSS px で持ち、parent transform で「自身が担当する OutputDef.position+size の
              矩形」だけがウィンドウに映るようスケール・平行移動する。
              この中の .dc-out-mapping は仮想キャンバス px 座標で warp される。 -->
-        <div id="dc-output-canvas"></div>
+        <!-- 出力ごとの明るさ・色のゲイン (#199)。映像とマスクだけを包み、操作 UI・開発モードの表示には掛けない。
+             補正なしのときは filter を付けない (追加の描画をしない)。窓の大きさで切り抜くので、
+             フィルタの描画面は窓の実ピクセル数に収まる (仮想キャンバス全体や warp した要素の範囲に広がらない)。 -->
+        <div id="dc-output-correction"><div id="dc-output-canvas"></div></div>
+        <svg id="dc-output-correction-defs" width="0" height="0" aria-hidden="true" focusable="false">
+          <filter id="dc-output-correction-filter" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB">
+            <feColorMatrix id="dc-output-correction-matrix" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0"></feColorMatrix>
+          </filter>
+        </svg>
         <svg id="dc-dev-overlay" aria-hidden="true">
           <line id="dc-dev-crosshair-h" x1="0" y1="0" x2="0" y2="0"></line>
           <line id="dc-dev-crosshair-v" x1="0" y1="0" x2="0" y2="0"></line>
@@ -168,6 +177,9 @@ export class OutputWindow extends BaseWindow {
          transform: scale() translate() で「この出力が担当する矩形」がウィンドウ内に収まるよう変換する。
          実 px サイズと位置はランタイム（OutputWindow.applyCanvasTransform）で書き込む。 */
       #dc-output-canvas { position: absolute; top: 0; left: 0; transform-origin: top left; will-change: transform; }
+      /* 補正 (#199) の filter を付ける箱。ステージと同じ大きさで切り抜く。 */
+      #dc-output-correction { position: absolute; inset: 0; overflow: hidden; }
+      #dc-output-correction-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
       /* .dc-out-mapping は仮想キャンバスのフル寸法に置かれ、matrix3d で quad（仮想 px）に warp する。
          親（dc-output-canvas）の scale が反映されて最終的に画面に合うサイズになる。 */
       .dc-out-mapping { position: absolute; top: 0; left: 0; overflow: hidden; transform-origin: top left; backface-visibility: hidden; will-change: transform; }
@@ -338,6 +350,7 @@ export class OutputWindow extends BaseWindow {
       this.canvasWidth = 0;
       this.canvasHeight = 0;
       this.sync();
+      this.applyCorrection(undefined);
       return;
     }
     this.canvasWidth = state.canvas.width;
@@ -386,6 +399,7 @@ export class OutputWindow extends BaseWindow {
     // quad/source の微調整だけのときは要求しない（毎フレーム postMessage 往復を避ける）。
     const createdNew = this.sync();
     this.applyCanvasTransform();
+    this.applyCorrection(out?.correction);
     if (createdNew) this.requestStream();
   }
 
@@ -539,6 +553,27 @@ export class OutputWindow extends BaseWindow {
    * scale: ウィンドウサイズ／出力矩形サイズ。
    * translate: -outputRect.x, -outputRect.y（scale 前に適用される＝translate は untransformed 座標）。
    */
+  /**
+   * 出力の補正 (#199) を映像とマスクに掛ける。各画素の sRGB 値に brightness × r / g / b を掛ける
+   * (feColorMatrix の対角だけ。オフセットを持たないので黒は黒のまま、透明は透明のまま)。
+   * 補正なしなら filter を外し、補正を入れる前と同じ描画にする。
+   */
+  private applyCorrection(correction: OutputDef['correction']): void {
+    if (!this.window) return;
+    const doc = this.window.document;
+    const box = doc.getElementById('dc-output-correction');
+    if (!box) return;
+    const gains = outputChannelGains(correction);
+    if (!gains) {
+      box.style.filter = '';
+      return;
+    }
+    const [r, g, b] = gains;
+    doc.getElementById('dc-output-correction-matrix')
+      ?.setAttribute('values', `${r} 0 0 0 0  0 ${g} 0 0 0  0 0 ${b} 0 0  0 0 0 1 0`);
+    box.style.filter = 'url(#dc-output-correction-filter)';
+  }
+
   private applyCanvasTransform(): void {
     if (!this.window) return;
     const canvasEl = this.window.document.getElementById('dc-output-canvas');

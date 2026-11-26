@@ -88,6 +88,8 @@ export function isMappingEnabled(m: MappingItem): boolean {
  *              placeOnExternalScreen が利用する。
  *  - pixelSize: 実出力ウィンドウのバッキングストア相当解像度（任意）。未指定時は
  *              size をフォールバックに使う。aspect 計算の参考値。
+ *  - correction: 出力ごとの明るさ・RGB のゲイン（任意、#199）。未指定は補正なし（全ゲイン 1）。
+ *              プロジェクタごとの明るさ・色味の差を揃えるためのもので、作品の演出には使わない（ADR 0024）。
  */
 export interface OutputDef {
   id: string;
@@ -96,6 +98,50 @@ export interface OutputDef {
   size: { width: number; height: number };
   screen?: { left: number; top: number; width: number; height: number; label?: string };
   pixelSize?: { width: number; height: number };
+  correction?: OutputCorrection;
+}
+
+/**
+ * 出力全体に掛ける掛け算のゲイン（#199）。各値は 0〜OUTPUT_CORRECTION_MAX、既定 1。
+ * 画素値（sRGB の符号値）に brightness × r / g / b を掛ける。オフセット・ガンマは扱わないので黒は黒のまま。
+ */
+export interface OutputCorrection {
+  brightness: number;
+  r: number;
+  g: number;
+  b: number;
+}
+
+export const OUTPUT_CORRECTION_KEYS = ['brightness', 'r', 'g', 'b'] as const;
+export type OutputCorrectionKey = typeof OUTPUT_CORRECTION_KEYS[number];
+export const OUTPUT_CORRECTION_MAX = 2;
+
+/** 補正なし（全ゲイン 1）。 */
+export function identityOutputCorrection(): OutputCorrection {
+  return { brightness: 1, r: 1, g: 1, b: 1 };
+}
+
+/**
+ * 任意の値を補正値に整える。数でない・欠けた項目は 1、範囲外は 0〜OUTPUT_CORRECTION_MAX に丸める。
+ * 補正なしと同じになるとき（object でない場合を含む）は undefined を返し、保存データに項目を残さない。
+ */
+export function normalizeOutputCorrection(value: unknown): OutputCorrection | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const out = identityOutputCorrection();
+  for (const key of OUTPUT_CORRECTION_KEYS) {
+    const v = raw[key];
+    if (typeof v === 'number' && Number.isFinite(v)) out[key] = Math.min(OUTPUT_CORRECTION_MAX, Math.max(0, v));
+  }
+  return OUTPUT_CORRECTION_KEYS.every(key => out[key] === 1) ? undefined : out;
+}
+
+/** 実際に掛ける R / G / B のゲイン（brightness × 各色）。補正なしなら null。 */
+export function outputChannelGains(correction: OutputCorrection | undefined): [number, number, number] | null {
+  const c = normalizeOutputCorrection(correction);
+  if (!c) return null;
+  const gains: [number, number, number] = [c.brightness * c.r, c.brightness * c.g, c.brightness * c.b];
+  return gains.every(g => g === 1) ? null : gains;
 }
 
 /**
@@ -636,6 +682,27 @@ export function withOutputRenamed(state: MappingsState, outputId: string, name: 
   };
 }
 
+/**
+ * 出力の補正値を設定する（#199）。`undefined` や補正なしと同じ値なら項目ごと消す（リセット）。
+ * 値は normalizeOutputCorrection で範囲に丸める。該当なしなら no-op。
+ */
+export function withOutputCorrectionSet(
+  state: MappingsState,
+  outputId: string,
+  correction: Partial<OutputCorrection> | undefined,
+): MappingsState {
+  if (!state.outputs.some(o => o.id === outputId)) return state;
+  const next = normalizeOutputCorrection(correction);
+  return {
+    ...state,
+    outputs: state.outputs.map(o => {
+      if (o.id !== outputId) return o;
+      const { correction: _old, ...rest } = o;
+      return next ? { ...rest, correction: next } : rest;
+    }),
+  };
+}
+
 /** activeOutputId を設定。`undefined` で解除、無効 id は no-op。 */
 export function withActiveOutputSet(state: MappingsState, outputId: string | undefined): MappingsState {
   if (outputId !== undefined && !state.outputs.some(o => o.id === outputId)) return state;
@@ -694,6 +761,7 @@ export function parseMappingsState(data: unknown): MappingsState | null {
         typeof pixelRaw.height === 'number'
           ? { width: pixelRaw.width, height: pixelRaw.height }
           : undefined;
+      const correction = normalizeOutputCorrection(o.correction);
       validOutputs.push({
         id: o.id,
         name: typeof o.name === 'string' ? o.name : undefined,
@@ -701,6 +769,8 @@ export function parseMappingsState(data: unknown): MappingsState | null {
         size: { width: sz.width, height: sz.height },
         screen,
         pixelSize,
+        // 補正なしは項目を作らない（#199 以前のファイルと同じ形に保つ）。
+        ...(correction ? { correction } : {}),
       });
     }
   }

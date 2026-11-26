@@ -846,6 +846,109 @@ async function diagnosisCase(page, base) {
   await page.waitForFunction(() => document.querySelector('.output-item .output-status')?.dataset.kind === 'notOpen');
   await page.evaluate(async moduleBase => (await import(`${moduleBase}/i18n/index.ts`)).setLang('ja'), base.modules);
   assert.deepEqual(await outputRow(), { kind: 'notOpen', text: '未起動: 「開く」で出力ウィンドウを開くと、この出力に映ります。' }, 'ja: not open');
+// #199: 出力ごとの明るさ・RGB のゲイン。操作パネルで変えた値がその出力の映像 (テストパターンを含む) にだけ
+// 掛け算で掛かり、マスクの黒は黒のまま。スライダーのドラッグ 1 回が Undo 1 件で、リセット・保存で保たれる。
+async function correctionCase(page) {
+  await addSource(page, fixture({ color: 'rgb(200, 200, 200)' }));
+  await start(page);
+  // 前の出力窓 (既定の state の出力) を閉じ、2 出力の state にしてから開き直す。
+  for (const other of page.context().pages()) if (other !== page) await other.close();
+  const W = 640, H = 360;
+  const quad = (x, y, w, h) => ({ topLeft: { x, y }, topRight: { x: x + w, y }, bottomRight: { x: x + w, y: y + h }, bottomLeft: { x, y: y + h } });
+  await page.evaluate(s => window.runtimeRegression.wc.applyStateFromInline(s), {
+    version: 2,
+    canvas: { width: 2 * W, height: H },
+    outputs: [
+      { id: 'o1', name: 'Output 1', position: { x: 0, y: 0 }, size: { width: W, height: H } },
+      { id: 'o2', name: 'Output 2', position: { x: W, y: 0 }, size: { width: W, height: H } },
+    ],
+    // 先頭ほど前面。右の出力の左上 1/4 をマスクで黒く抜く。
+    mappings: [
+      { kind: 'mask', id: 'k1', points: [{ x: W, y: 0 }, { x: W + W / 2, y: 0 }, { x: W + W / 2, y: H / 2 }, { x: W, y: H / 2 }] },
+      { id: 'm1', source: { x: 0, y: 0, width: 100, height: 100 }, quad: quad(0, 0, 2 * W, H) },
+    ],
+    activeId: 'm1',
+    activeOutputId: 'o2',
+  });
+  const open = async id => {
+    const [popup] = await Promise.all([page.waitForEvent('popup'), page.evaluate(id => window.runtimeRegression.wc.openOutputWindowFor(id), id)]);
+    await popup.setViewportSize({ width: W, height: H });
+    await popup.waitForFunction(() => [...document.querySelectorAll('.dc-out-mapping video')].some(v => v.readyState >= 2));
+    return popup;
+  };
+  const left = await open('o1'), right = await open('o2');
+  // 出力窓の 1 画素 (合成後の画面)。映像の中央 (マスク外) と、マスクの中 (右の出力の左上)。
+  const pixel = async (popup, x, y) => {
+    await popup.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const png = await popup.screenshot({ clip: { x, y, width: 1, height: 1 } });
+    return page.evaluate(async png => {
+      const img = new Image(); img.src = `data:image/png;base64,${png}`; await img.decode();
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0);
+      return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    }, png.toString('base64'));
+  };
+  const near = (actual, expected, label) => assert.ok(actual.every((v, i) => Math.abs(v - expected[i]) <= 3), `${label}: ${actual} ≈ ${expected}`);
+  const look = async () => ({ left: await pixel(left, W * 3 / 4, H * 3 / 4), right: await pixel(right, W * 3 / 4, H * 3 / 4), mask: await pixel(right, W / 8, H / 8) });
+  const correction = () => page.evaluate(() => window.runtimeRegression.wc.events.state.get().outputs.map(o => o.correction ?? null));
+  const before = await look();
+  near(before.left, [200, 200, 200], 'no correction: left'); near(before.right, [200, 200, 200], 'no correction: right'); near(before.mask, [0, 0, 0], 'no correction: mask');
+  assert.equal(await right.evaluate(() => document.getElementById('dc-output-correction').style.filter), '', 'no correction adds no filter');
+
+  await click(page, '#dc-activity-outputs');
+  assert.equal(await page.locator('#output-settings-target').textContent(), 'Output 2');
+  // スライダーのドラッグ 1 回 (途中の値も出力へ届く) = Undo 1 件。
+  const box = await page.locator('#output-correction-brightness-range').boundingBox();
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width / 2, y);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(box.x + box.width * (0.5 - i * 0.03), y);
+  const midDrag = await correction();
+  await page.mouse.up();
+  const dragged = await correction();
+  assert.equal(midDrag[0], null, 'the other output is untouched');
+  assert.ok(midDrag[1] && midDrag[1].brightness < 1, `drag updates live: ${JSON.stringify(midDrag[1])}`);
+  assert.ok(dragged[1].brightness < midDrag[1].brightness + 1e-9);
+  await click(page, '#dc-undo-btn');
+  assert.deepEqual(await correction(), [null, null], 'one undo reverts the whole drag');
+  assert.equal(await page.locator('#dc-undo-btn').isDisabled(), true, 'the drag was a single history entry');
+  await click(page, '#dc-redo-btn');
+  assert.deepEqual(await correction(), dragged, 'redo restores the dragged value');
+
+  // 数値欄: 明るさ 2 (白飛び)、B 0.5。右の出力だけ R・G = 200 x 2 → 255 で頭打ち、B = 200 x 2 x 0.5。
+  const type = async (key, value) => {
+    await page.locator(`#output-correction-${key}-input`).fill(value);
+    await page.locator(`#output-correction-${key}-input`).press('Enter');
+  };
+  await type('brightness', '2'); await type('b', '0.5');
+  assert.deepEqual((await correction())[1], { brightness: 2, r: 1, g: 1, b: 0.5 });
+  const boosted = await look();
+  near(boosted.left, [200, 200, 200], 'boosted: left unchanged'); near(boosted.right, [255, 255, 200], 'boosted: right'); near(boosted.mask, [0, 0, 0], 'boosted: mask stays black');
+  await type('brightness', '0.5');
+  const dimmed = await look();
+  near(dimmed.left, [200, 200, 200], 'dimmed: left unchanged'); near(dimmed.right, [100, 100, 50], 'dimmed: right'); near(dimmed.mask, [0, 0, 0], 'dimmed: mask');
+  // テストパターン (白) にも掛かる。
+  await click(page, '[data-pattern="white"]');
+  await waitVideo(page, 1920);
+  const pattern = await look();
+  near(pattern.left, [255, 255, 255], 'white pattern: left'); near(pattern.right, [128, 128, 64], 'white pattern: right'); near(pattern.mask, [0, 0, 0], 'white pattern: mask');
+  await click(page, '[data-pattern="off"]');
+  await waitVideo(page, 320);
+
+  // 自動保存と再マウント (再読み込みと同じ復元経路) で保たれる。
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('dropcaster.mappings.v2') ?? 'null')?.outputs?.[1]?.correction?.brightness === 0.5);
+  await page.evaluate(() => window.runtimeRegression.mount());
+  await click(page, '#dc-activity-outputs');
+  assert.deepEqual(await page.evaluate(() => window.runtimeRegression.host.getState().outputs.map(o => o.correction ?? null)), [null, { brightness: 0.5, r: 1, g: 1, b: 0.5 }]);
+  assert.equal(await page.locator('#output-correction-b-input').inputValue(), '0.5');
+
+  // リセットで既定に戻り、補正なしの描画 (filter なし) に戻る。
+  await click(page, '#output-correction-reset');
+  assert.deepEqual(await correction(), [null, null]);
+  assert.equal(await page.locator('#output-correction-reset').isDisabled(), true);
+  near((await look()).right, [200, 200, 200], 'reset: right');
+  assert.equal(await right.evaluate(() => document.getElementById('dc-output-correction').style.filter), '');
+  await left.close(); await right.close();
 }
 
 /** RUNTIME_ARTIFACT_DIR があれば、メイン画面を隠して操作中の出力 (案内が出た状態) を保存する。 */
@@ -1195,7 +1298,7 @@ try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`,
         modules: hosted ? `/@fs${root}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, keys: keysCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase, mainHidden: mainHiddenCase, diagnosis: diagnosisCase, blackout: blackoutCase, blackoutPages: blackoutPagesCase })) {
+      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, keys: keysCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase, mainHidden: mainHiddenCase, correction: correctionCase, diagnosis: diagnosisCase, blackout: blackoutCase, blackoutPages: blackoutPagesCase })) {
         if (process.env.RUNTIME_CASE && process.env.RUNTIME_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = [];
