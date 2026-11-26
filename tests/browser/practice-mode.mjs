@@ -408,14 +408,40 @@ async function projects(page, base) {
     await logged(other, /Missing local sketch/);
   } finally { await direct.close(); }
   // #198: 下書きを読み出せないときも 3D は開く。読み出し (下書きの復元・保存済み一覧) の例外を両方残す。
-  // 状態欄の表示は続く書き込みが成功すると保存済みに戻るので、ここでは待たない。
+  // #286: 復元できなかった間は、マッピングを始めても 2D の配置を変えても自動保存しない (保存欄は error のまま)。
+  // 名前を付けるような明示的な確定では書き、その後は自動保存に戻る。
+  const addMapping = async other => { await other.locator('#mapping-tab').click(); await showPanel(other, 'mappings'); await other.locator('#add-mapping-btn').click(); };
+  /** 2D の配置を変え、自動保存の待ち (600ms) を過ぎても書かず、保存欄が error のままであること。`read` で下書きを返す。 */
+  const holdsDraft = async (other, read) => {
+    await addMapping(other); await other.waitForTimeout(1500);
+    assert.match(await other.locator('#practice-storage').textContent(), /Could not save/, 'the storage label keeps the restore failure');
+    return read();
+  };
   const unreadable = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
   try {
     observeConsole(unreadable);
     await unreadable.addInitScript(() => { const real = IDBDatabase.prototype.transaction; IDBDatabase.prototype.transaction = function (...args) { if (args[1] !== 'readwrite') throw new DOMException('test restore read', 'InvalidStateError'); return real.apply(this, args); }; });
     const other = await setup(unreadable, base); await start(other);
     await logged(other, /test restore read/, 2);
+    // 読み出しは止めてあるので、書き込み用のトランザクションで中身を見る。
+    const stored = () => other.evaluate(() => new Promise((resolve, reject) => { const request = indexedDB.open('dropcaster.projects'); request.onsuccess = () => {
+      const get = request.result.transaction('projects', 'readwrite').objectStore('projects').get('draft'); get.onsuccess = () => resolve(get.result ?? null); get.onerror = () => reject(get.error); }; }));
+    assert.equal(await holdsDraft(other, stored), null, 'a failed read does not let autosave write the default project');
+    await projectControls(other); await change(other, '#practice-project-name', 'Named after a failed read');
+    await other.waitForFunction(() => document.querySelector('#practice-storage').textContent.includes('saved'));
+    assert.equal((await stored()).name, 'Named after a failed read', 'naming the project is an explicit commit');
+    await addMapping(other); await other.waitForTimeout(1500);
+    assert.equal((await stored()).venue.layout.mappings.length, (await state(other)).mappings.length, 'the next layout change is autosaved again');
   } finally { await unreadable.close(); }
+  const newer = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
+  try {
+    observeConsole(newer);
+    const other = await setup(newer, base), draft = { ...saved, schemaVersion: 99 };
+    const read = () => other.evaluate(async modules => (await import(`${modules}/practice/projectStore.ts`)).readProject(), base.modules);
+    await other.evaluate(async ({ modules, draft }) => (await import(`${modules}/practice/projectStore.ts`)).writeProject(draft), { modules: base.modules, draft });
+    await start(other); await logged(other, /ProjectFormatError: version/);
+    assert.deepEqual(await holdsDraft(other, read), draft, 'a draft from a newer build is not replaced by the default project');
+  } finally { await newer.close(); }
   // #198: 作品を取得できた後、開く途中の失敗も黙って捨てず、案内と元の例外を残す。この後 page の作業画面は使わない。
   await page.evaluate(async modules => {
     const { SketchPageController } = await import(`${modules}/components/SketchPageController.ts`);

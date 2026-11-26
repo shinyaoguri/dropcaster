@@ -16,6 +16,7 @@ export const DRAFT_DEBOUNCE_MS = 600;
  * - 名前・フォームの確定・取り込みのような離散的な確定は `save()` でその場で書き込みを始める。
  * - ドラッグのような連続操作は `schedule()` で、最後の変更から DRAFT_DEBOUNCE_MS 後に 1 回だけ書く。
  * - 保存待ちか書き込み中に離脱しようとしたら、保存を始めてから離脱確認を出す。
+ * - 持ち主が書かないと決めた変更 (`hold()`。下書きを復元できなかった間、#286) は、次の `save()` まで離脱確認を出す。
  *   再読み込みでは非同期の IndexedDB 書込が完了しないので、離脱時の書込だけには頼らない。
  */
 export class DraftSaver {
@@ -26,6 +27,7 @@ export class DraftSaver {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private version = 0;
   private writing = 0;
+  private held = false;
 
   /** `beforeLeave` commits edits the owner still holds (e.g. a nudge waiting to settle) before the check. */
   constructor(write: () => Promise<void>, report: (state: StorageState) => void, beforeLeave: () => void = () => {},
@@ -36,8 +38,13 @@ export class DraftSaver {
     events.document.addEventListener('visibilitychange', this.visibility);
   }
 
-  /** A debounced write is waiting or a write has not finished. */
-  get pending(): boolean { return this.timer !== undefined || this.writing > 0; }
+  /** A debounced write is waiting, a write has not finished, or a change was held. */
+  get pending(): boolean { return this.timer !== undefined || this.writing > 0 || this.held; }
+  /** A change was held back by `hold()` and no save has started since. */
+  get holding(): boolean { return this.held; }
+
+  /** A change the owner does not write yet: nothing is written, but leaving asks first until the next `save()`. */
+  hold(): void { this.held = true; }
 
   /** Continuous change: write once the changes stop. */
   schedule(): void {
@@ -52,7 +59,7 @@ export class DraftSaver {
    * Rejects with the write error; the state is reported either way.
    */
   async save(write = this.write): Promise<void> {
-    clearTimeout(this.timer); this.timer = undefined;
+    clearTimeout(this.timer); this.timer = undefined; this.held = false;
     const version = ++this.version;
     this.writing++;
     this.report('saving');
