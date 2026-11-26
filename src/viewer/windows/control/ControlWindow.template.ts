@@ -48,6 +48,12 @@ export function controlPanelHtml(): string {
         <span class="dc-banner-icon">⚠</span>
         <span class="dc-banner-text" data-i18n-html="control.banner.webglLost">${t('control.banner.webglLost')}</span>
       </div>
+      <!-- ブラックアウト中の帯 (#194)。どのパネルを開いていても (畳んでいても) 見え、ここからも解除できる -->
+      <div id="dc-blackout-banner" class="dc-banner" hidden role="status">
+        <span class="dc-banner-icon" aria-hidden="true">■</span>
+        <span class="dc-banner-text" data-i18n="control.blackout.banner">${t('control.blackout.banner')}</span>
+        <button type="button" id="dc-blackout-release" class="dc-banner-action" data-i18n="control.blackout.release">${t('control.blackout.release')}</button>
+      </div>
       <div class="control-container">
         <!-- アクティビティバー: ツールカラムの中身 (パネル) を切り替える。選択中を再度押すとツールカラムを畳む -->
         <div class="dc-activity-bar">
@@ -181,6 +187,16 @@ export function controlPanelHtml(): string {
                   <button class="tool-button test-pattern-btn" data-pattern="grid" data-i18n="control.testPattern.grid">${t('control.testPattern.grid')}</button>
                   <button class="tool-button test-pattern-btn" data-pattern="smpte" data-i18n="control.testPattern.smpte">${t('control.testPattern.smpte')}</button>
                 </div>
+              </div>
+
+              <!-- ブラックアウト (#194): 全出力を一度に黒にする。状態は実行中だけで、保存しない -->
+              <div class="tool-section">
+                <h3 data-i18n="control.blackout.title">${t('control.blackout.title')}</h3>
+                <p class="section-hint" data-i18n="control.blackout.hint">${t('control.blackout.hint')}</p>
+                <button type="button" id="dc-blackout-toggle" class="tool-button dc-blackout-toggle" aria-pressed="false">
+                  <span class="dc-blackout-dot" aria-hidden="true"></span>
+                  <span class="dc-blackout-label" data-i18n="control.blackout.off">${t('control.blackout.off')}</span>
+                </button>
               </div>
 
               <div class="tool-section">

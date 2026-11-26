@@ -1,4 +1,5 @@
 import { mappingIcon } from './mappingIcon';
+import { BlackoutControl, blackoutIcon } from './BlackoutControl';
 import type { Sketch } from '../types/sketch.js';
 import { publicAssetPath } from '../utils/paths.js';
 import { SketchPool } from '../runtime/SketchPool.js';
@@ -26,6 +27,7 @@ export class SlideshowView {
   private inlinePanel: ControlWindow | null = null;
   private langUnsub: (() => void) | null = null;
   private workspace: MappingWorkspace | null = null;
+  private blackout: BlackoutControl | null = null;
 
   render(sketchIds: string[], sketches: Sketch[], show?: { currentIndex: number; intervalSeconds: number }): void {
     this.sketchIds = sketchIds;
@@ -79,6 +81,9 @@ export class SlideshowView {
             <button id="mapping-btn" class="control-btn" data-i18n-title="slideshow.mapping" title="${t('slideshow.mapping')}">
               ${mappingIcon}
             </button>
+            <button id="blackout-btn" class="control-btn" aria-pressed="false">
+              ${blackoutIcon}
+            </button>
           </div>
           <div class="progress-bar-container">
             <div id="progress-bar" class="progress-bar"></div>
@@ -106,6 +111,9 @@ export class SlideshowView {
     this.windowController = new WindowController();
     this.workspace = new MappingWorkspace({ wc: this.windowController, getFrame: () => this.pool?.current ?? null,
       mountEditor: () => this.mountInlineEditor(), unmountEditor: () => this.unmountInlineEditor(), getContext: () => ({ sketches: this.sketches, currentIndex: this.currentIndex, intervalSeconds: this.SLIDE_INTERVAL / 1000 }) });
+    // ブラックアウト (#194): ヘッダのボタンと B キー。編集中も効く (下の handleKeydown とは別に受ける)。
+    this.blackout?.dispose();
+    this.blackout = new BlackoutControl(this.windowController, document.getElementById('blackout-btn') as HTMLButtonElement | null);
     this.setupEventListeners();
     // タブが閉じられたらマッピング用の出力ウィンドウも閉じる
     window.addEventListener('pagehide', this.boundCloseProjectionWindows);
@@ -206,6 +214,16 @@ export class SlideshowView {
         background: rgba(96, 165, 250, 0.35);
         border-color: rgba(96, 165, 250, 0.8);
         color: #bfdbfe;
+      }
+
+      /* ブラックアウト中 (#194)。黒のまま気付かないことが無いよう、ヘッダを隠さず赤で示す。 */
+      .control-btn.blackout-active {
+        background: #b91c1c;
+        border-color: #fca5a5;
+        color: #fff;
+      }
+      .slideshow-container:has(#blackout-btn.blackout-active) .slideshow-header {
+        opacity: 1;
       }
 
 
@@ -656,6 +674,7 @@ export class SlideshowView {
     document.removeEventListener('keydown', this.boundHandleKeydown);
     window.removeEventListener('pagehide', this.boundCloseProjectionWindows);
     this.workspace?.dispose(); this.workspace = null;
+    this.blackout?.dispose(); this.blackout = null;
     this.unmountInlineEditor();
     this.windowController?.stopCanvasStreaming();
     this.windowController?.destroy();
