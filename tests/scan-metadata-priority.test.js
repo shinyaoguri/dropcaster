@@ -196,15 +196,15 @@ test('empty _op-meta.json values fall through to the HTML values', async () => {
   });
 });
 
-test('unreadable _op-meta.json is ignored with a warning and HTML values are used', async () => {
+// 壊れた _op-meta.json は HTML の値に落とさず、解析の失敗にする (#275。詳しくは scan-unreadable-inputs.test.js)
+test('unreadable _op-meta.json fails the scan instead of falling back to the HTML values', async () => {
   await withTempProject(async (root) => {
     await writeIndex(root, 'sketch123', html({ title: 'HTML title', description: 'HTML description' }));
     await writeJson(root, 'sketch123', '_op-meta.json', '{ not json');
-    const stderr = await scanOk(root);
-    const sketch = await entry(root, 'sketch123');
-    assert.equal(sketch.title, 'HTML title');
-    assert.equal(sketch.description, 'HTML description');
-    assert.match(stderr, /_op-meta\.json/);
+    const { code, stderr } = await runScan(root);
+    assert.equal(code, 1, `scan must fail:\n${stderr}`);
+    assert.match(stderr, /Failed to analyze sketch123: _op-meta\.json is not valid JSON/);
+    assert.deepEqual(await readCatalog(root), []);
   });
 });
 
