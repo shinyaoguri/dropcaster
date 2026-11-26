@@ -123,7 +123,8 @@ async function loadMetadataFile(sketchPath, fileName) {
   if (raw === null) return null;
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    // 先頭の BOM (Windows のメモ帳などが付ける) は JSON の一部ではないので除く
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ''));
   } catch (error) {
     throw new Error(`${fileName} is not valid JSON: ${error.message}`, { cause: error });
   }

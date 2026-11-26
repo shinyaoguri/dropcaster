@@ -464,3 +464,29 @@ test('script references that point at nothing readable as a file are still ignor
   });
 });
 
+// 反証で見つかった副作用: BOM 付きの JSON (Windows のメモ帳で保存したものなど) を壊れているとして扱っていた
+test('metadata files and public/sketches.json with a UTF-8 BOM are read normally', async () => {
+  await withTempProject(async (root) => {
+    const a = await writeSketch(root, 'a', 'A');
+    await writeFile(join(a, 'dropcaster.meta.json'), `﻿${JSON.stringify({ title: 'Manual A', tags: ['x'] })}`, 'utf-8');
+    const b = await writeSketch(root, 'b', 'B');
+    await writeFile(join(b, '_op-meta.json'), `﻿${JSON.stringify({ title: 'OP B', description: 'OP description' })}`, 'utf-8');
+
+    const first = await run(root, []);
+    assert.equal(first.code, 0, `scan with BOM metadata failed${describe(first.stderr)}`);
+    const catalog = await readCatalog(root);
+    const entryA = catalog.find((s) => s.id === 'a');
+    assert.equal(entryA.title, 'Manual A');
+    assert.deepEqual(entryA.tags, ['x']);
+    const entryB = catalog.find((s) => s.id === 'b');
+    assert.equal(entryB.title, 'OP B');
+    assert.equal(entryB.description, 'OP description');
+
+    // 前回のカタログ (BOM 付き) の userData が --sketch のマージで保たれる
+    const withUserData = catalog.map((s) => (s.id === 'b' ? { ...s, userData: { userName: 'Author' } } : s));
+    await writeFile(catalogPath(root), `﻿${JSON.stringify(withUserData, null, 2)}`, 'utf-8');
+    const single = await run(root, ['--sketch', 'a']);
+    assert.equal(single.code, 0, `scan with a BOM catalog failed${describe(single.stderr)}`);
+    assert.deepEqual(byId(await readCatalog(root)).map((s) => [s.id, s.userData?.userName ?? null]), [['a', null], ['b', 'Author']]);
+  });
+});
