@@ -42,6 +42,7 @@ WindowController の状態通知・復旧処理に、3D 消費者を追加する
 書出時は端末固有 screen を除き、編集選択は先頭項目へ正規化する。
 
 作品の本体は同梱しない。revision は取得時のメタデータであり、版を固定した保証ではない。
+OP / Gist の作品のコードの固定は 2026-11-26 に追加した（下の「作品のコードの固定」。[#197](https://github.com/shinyaoguri/dropcaster/issues/197)）。
 local は開いたギャラリーの catalog から解決する。op/gist は既存の取得経路を使う。
 builtin/checkerboard は配布物に内蔵した調整用映像。順序・間隔を含む再開は `/project` で
 全参照を解決してから切り替える。取得失敗時に実行中の画面を破棄しない。
@@ -86,6 +87,25 @@ builtin/checkerboard は配布物に内蔵した調整用映像。順序・間�
   IndexedDB の書込が完了しないため、pagehide での保存には頼らない（2026-11-16 改訂。#168）。
   OS の強制終了などは対象外で、保存表示の確認と portable package の書出で補う。
   この規則は `/venue` の会場下書きにも同じく適用する。
+
+### 作品のコードの固定
+
+（2026-11-26 追加。[#197](https://github.com/shinyaoguri/dropcaster/issues/197)。判断は [#120](https://github.com/shinyaoguri/dropcaster/issues/120) で 2026-11-15 に合意。）
+
+- content の OP / Gist は `revisionPinned: true` と `hash`（作品の参照とコードの SHA-256）を持てる。local / builtin は固定できない。
+  schemaVersion は 3 のまま。固定より前の parser は `revisionPinned: false` 以外を版のエラーで拒否するので、固定を含む
+  プロジェクトを黙って最新で開かない。固定を含まないプロジェクトは以前の版でも読める。
+- コードは IndexedDB の別の DB `dropcaster.sketch-snapshots`（store `snapshots`）に hash をキーにして置く。
+  OP はメタデータとコード、Gist はファイル一式に、作者・作品 URL・ライセンス・取得日時を添える。複数のプロジェクトで共有し、
+  30 MiB の package 上限と切り離す。`dropcaster.projects` の版を上げると以前の viewer がその DB を開けなくなる
+  （VersionError で固定を含まないプロジェクトまで読めない）ので、別の DB にした。
+- 書き出しには参照と hash だけを載せ、第三者のコードを含めない。受け取った側に無ければ今の内容を取得して照合し、
+  同じならそれを残し、違えば知らせて固定し直すか選ばせる。
+- hash は crypto.subtle（secure context 限定）を使わない同期の実装で求め、LAN の http でも同じ値にする。
+  照合には作品の見た目を決める部分（OP の mode・engineURL・fileBase・ライブラリの URL・タブ、Gist のファイル）だけを入れる。
+- 素材は固定しない（#120 の段階 2）。固定したコードの削除（参照されなくなった版の片付け）は行わない。
+- 退けた案: Project に埋め込む（上限への積み上がりとプロジェクトごとの重複）、ライセンスが許すときだけ書き出しに含める
+  （Gist にライセンスの情報が無く判定できない）。
 
 ### UI と寿命
 

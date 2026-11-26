@@ -2,9 +2,13 @@ import { randomId } from '../utils/randomId';
 import { parseProject, portableProject, portableVenue, importVenue, ProjectFormatError,
   MAX_PACKAGE_BYTES, type Project } from './project';
 import { listProjects, readProject } from './projectStore';
+import { readSnapshot, storeSnapshot } from './snapshotStore';
+import { shownSnapshots, type SketchSnapshot } from './sketchSnapshot';
+import { OpenProcessingSource } from '../services/OpenProcessingSource';
+import { GistSource } from '../services/GistSource';
 import type { ProjectSession } from './ProjectSession';
 import { applyControlTranslations } from '../windows/control/ControlWindow.template';
-import { t, onLangChange, type MessageKey } from '../i18n/index';
+import { t, getLang, onLangChange, type MessageKey } from '../i18n/index';
 import { routeHref } from '../utils/paths';
 
 // `./controls` は回転の換算に three を使う。このパネルは Three.js を読み込まないので、同じ形の部品をここに持つ。
@@ -17,9 +21,21 @@ export function projectErrorKey(error: unknown): MessageKey | null {
   return error instanceof ProjectFormatError && FORMAT_ERRORS.includes(error.message) ? `practice.${error.message}` as MessageKey : null;
 }
 
+type Content = Project['content'][number];
+type Pinned = Extract<Content, { revisionPinned: true }>;
 /**
- * プロジェクトという入れ物の操作 (名前・保存・複製・開く・書き出し・取り込み・会場の書き出し・取り込み前に戻す・作品参照)。
- * ProjectSession と projectStore だけに依存し、WebGL / Three.js を必要としない (ADR 0012)。
+ * 固定した作品 (#197) のコードがこのブラウザにあるか。無ければ今の内容を取得して照合する。
+ * changed は受け取ったプロジェクトなどで、今の内容が固定時と違う (固定時のコードはどこにも無い)。
+ */
+type PinState = { kind: 'checking' } | { kind: 'pinned'; fetchedAt: string } | { kind: 'changed'; latest: SketchSnapshot }
+  | { kind: 'unavailable' } | { kind: 'storeError' };
+const pinKey = (item: Pinned) => `${item.id}:${item.hash}`;
+const sameSketch = (snapshot: SketchSnapshot, item: Content) =>
+  snapshot.payload.kind === item.kind && snapshot.payload.ref.toLowerCase() === item.ref.toLowerCase();
+
+/**
+ * プロジェクトという入れ物の操作 (名前・保存・複製・開く・書き出し・取り込み・会場の書き出し・取り込み前に戻す・作品参照と
+ * そのコードの固定 (#197))。ProjectSession・projectStore・snapshotStore と OP / Gist の取得元に依存し、WebGL / Three.js を必要としない (ADR 0012)。
  * 取り込みは検証 (parseProject / importVenue) に成功した時点で確定する。3D の会場は PracticePanel が session の変更を見て作り直す。
  * 取り込み・保存済みを開く・取り込み前に戻すで会場が変わったら、確定の後に `venueChanged` で知らせる。形のある会場なら
  * MappingWorkspace が 3D を裏で読み込む (ADR 0010)。
@@ -34,6 +50,10 @@ export class ProjectPanel {
   private session: ProjectSession;
   private status: (key: MessageKey, error?: boolean) => void;
   private venueChanged: (shaped: boolean) => void;
+  private pins = new Map<string, PinState>();
+  /** 固定・最新版の取得・固定し直しを実行中の作品の id。 */
+  private pinning = new Set<string>();
+  private sources?: { op: OpenProcessingSource; gist: GistSource };
 
   constructor(scope: HTMLElement, session: ProjectSession, status: (key: MessageKey, error?: boolean) => void, venueChanged: (shaped: boolean) => void) {
     this.session = session; this.status = status; this.venueChanged = venueChanged;
@@ -64,7 +84,7 @@ export class ProjectPanel {
   private get<T extends HTMLElement = HTMLInputElement>(id: string): T { return this.root.querySelector<T>(`#${id}`)!; }
   private translate(): void {
     applyControlTranslations(this.root);
-    this.update(this.session.changes.get()); this.storageStatus();
+    this.update(this.session.changes.get()); this.renderContent(undefined, true); this.storageStatus();
   }
   private storageStatus(): void {
     const state = this.session.storage.get();
@@ -74,14 +94,131 @@ export class ProjectPanel {
     if (this.disposed) return;
     const name = this.get<HTMLInputElement>('practice-project-name');
     if (document.activeElement !== name) name.value = project.name === 'Untitled' ? t('practice.untitled') : project.name;
-    const contents = this.get('practice-content-list');
-    const text = project.show.contentIds.map(id => project.content.find(c => c.id === id)?.title ?? id).join('\n');
-    if (contents.dataset.content !== text) {
-      contents.replaceChildren(...text.split('\n').filter(Boolean).map(title => { const li = document.createElement('li'); li.textContent = title; return li; }));
-      contents.dataset.content = text;
-    }
+    this.renderContent(project);
     this.get<HTMLButtonElement>('practice-open-content').disabled = !project.content.length;
     this.get<HTMLButtonElement>('practice-undo-import').disabled = !this.previous;
+  }
+  /** 作品の一覧。OP / Gist は固定の状態と操作を並べる (#197)。題名は第三者の文字列なので textContent で入れる。 */
+  private renderContent(project = this.session.changes.get(), force = false): void {
+    if (this.disposed) return;
+    const contents = this.get('practice-content-list');
+    const items = project.show.contentIds.map(id => project.content.find(c => c.id === id)
+      ?? { id, kind: 'local' as const, ref: id, title: id, revision: null, revisionPinned: false as const });
+    const view = items.map(item => {
+      const state = item.revisionPinned ? this.pins.get(pinKey(item)) : undefined;
+      const shown = shownSnapshots.get(item.id);
+      return { item, state, busy: this.pinning.has(item.id),
+        notShown: item.revisionPinned && state?.kind === 'pinned' && !!shown && sameSketch(shown, item) && shown.hash !== item.hash };
+    });
+    const signature = JSON.stringify(view.map(({ item, state, busy, notShown }) => [item.id, item.title, item.kind, item.revisionPinned && item.hash,
+      state?.kind, state?.kind === 'pinned' ? state.fetchedAt : '', busy, notShown]));
+    if (!force && contents.dataset.content === signature) return;
+    contents.dataset.content = signature;
+    const focused = document.activeElement instanceof HTMLElement && contents.contains(document.activeElement) ? document.activeElement.dataset : undefined;
+    contents.replaceChildren(...view.map(({ item, state, busy, notShown }) => {
+      const li = document.createElement('li'); li.dataset.id = item.id;
+      const title = document.createElement('span'); title.className = 'dc-content-title'; title.textContent = item.title; li.append(title);
+      if (item.kind !== 'op' && item.kind !== 'gist') return li;
+      const hint = (text: string) => { const p = document.createElement('p'); p.className = 'dc-practice-hint dc-content-pin'; p.textContent = text; li.append(p); };
+      const actions: [string, MessageKey][] = [];
+      if (!item.revisionPinned) actions.push(['pin', 'practice.pin']);
+      else {
+        if (state?.kind === 'pinned') {
+          const date = new Date(state.fetchedAt).toLocaleString(getLang() === 'ja' ? 'ja-JP' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
+          hint(t('practice.pinnedAt', { date }));
+          if (notShown) hint(t('practice.pinNotShown'));
+        } else hint(t(state?.kind === 'changed' ? 'practice.pinChanged' : state?.kind === 'unavailable' ? 'practice.pinUnavailable'
+          : state?.kind === 'storeError' ? 'practice.pinStoreError' : 'practice.pinChecking'));
+        hint(t('practice.pinAssets'));
+        actions.push(state?.kind === 'changed' ? ['repin', 'practice.repin'] : ['refresh', 'practice.refreshPin'], ['unpin', 'practice.unpin']);
+      }
+      const row = document.createElement('div'); row.className = 'dc-content-actions';
+      for (const [action, key] of actions) {
+        const control = document.createElement('button'); control.type = 'button'; control.className = 'tool-button';
+        control.dataset.action = action; control.dataset.id = item.id; control.textContent = t(key); control.disabled = busy;
+        row.append(control);
+      }
+      li.append(row);
+      return li;
+    }));
+    // 状態が変わって作り直しても、操作していた作品のボタンからフォーカスを外さない。
+    if (focused?.id) {
+      const same = [...contents.querySelectorAll<HTMLButtonElement>('button[data-id]')].filter(b => b.dataset.id === focused.id);
+      (same.find(b => b.dataset.action === focused.action) ?? same[0])?.focus();
+    }
+    for (const { item } of view) if (item.revisionPinned && !this.pins.has(pinKey(item))) void this.checkPin(item);
+  }
+  private source(kind: 'op' | 'gist'): OpenProcessingSource | GistSource {
+    this.sources ??= { op: new OpenProcessingSource(), gist: new GistSource() };
+    return this.sources[kind];
+  }
+  /** いま表示している版 (取得し直さない)。 */
+  private shown(item: Content): SketchSnapshot | undefined {
+    const shown = shownSnapshots.get(item.id);
+    return shown && sameSketch(shown, item) ? shown : undefined;
+  }
+  /** 取得元から今の内容を取り、開ける作品か (未対応の mode・index.html の無い Gist でないか) を組み立てて確かめる。 */
+  private async fetchLatest(item: Content): Promise<SketchSnapshot> {
+    if (item.kind !== 'op' && item.kind !== 'gist') throw new Error('Only OpenProcessing and Gist sketches can be pinned');
+    const source = this.source(item.kind), snapshot = await source.fetchSnapshot(item.ref);
+    source.build(snapshot);
+    return snapshot;
+  }
+  private async checkPin(item: Pinned): Promise<void> {
+    const key = pinKey(item);
+    this.pins.set(key, { kind: 'checking' });
+    let state: PinState;
+    try {
+      const stored = await readSnapshot(item.hash);
+      if (stored) state = { kind: 'pinned', fetchedAt: stored.fetchedAt };
+      else {
+        // 受け取ったプロジェクトなど、固定時のコードがこのブラウザに無い。今の内容 (表示中ならその版) が同じなら、それを固定時のコードとして残す。
+        let latest: SketchSnapshot | undefined;
+        try { latest = this.shown(item) ?? await this.fetchLatest(item); }
+        catch (error) { console.warn('Current sketch code could not be fetched to check the pin', error); }
+        if (!latest) state = { kind: 'unavailable' };
+        else if (latest.hash === item.hash) state = { kind: 'pinned', fetchedAt: (await storeSnapshot(latest)).fetchedAt };
+        else state = { kind: 'changed', latest };
+      }
+    } catch (error) { console.warn('Pinned sketch code could not be read', error); state = { kind: 'storeError' }; }
+    if (this.disposed) return;
+    this.pins.set(key, state); this.renderContent();
+  }
+  private async pin(id: string, action: string): Promise<void> {
+    const item = this.session.changes.get().content.find(c => c.id === id);
+    if (!item || (item.kind !== 'op' && item.kind !== 'gist') || this.pinning.has(id)) return;
+    if (action === 'unpin') {
+      if (!item.revisionPinned) return;
+      const { hash: _hash, ...rest } = item;
+      const project = this.session.changes.get();
+      this.session.update({ ...project, content: project.content.map(c => c.id === id ? { ...rest, revisionPinned: false as const } : c) });
+      this.status('practice.unpinned');
+      return;
+    }
+    this.pinning.add(id); this.renderContent();
+    try {
+      let snapshot: SketchSnapshot;
+      const state = item.revisionPinned ? this.pins.get(pinKey(item)) : undefined;
+      if (action === 'repin' && state?.kind === 'changed') snapshot = state.latest;
+      else if (action === 'refresh') {
+        // 明示的に最新を取る。取れなければ固定したコードをそのまま使う。
+        try { snapshot = await this.fetchLatest(item); }
+        catch (error) { console.warn('Latest sketch code could not be fetched', error); if (!this.disposed) this.status('practice.pinFetchFailed', true); return; }
+      } else if (action === 'pin') snapshot = this.shown(item) ?? await this.fetchLatest(item);
+      else return;
+      const stored = await storeSnapshot(snapshot);
+      if (this.disposed) return;
+      const project = this.session.changes.get(), target = project.content.find(c => c.id === id);
+      // 待つ間に取り込みなどで作品が入れ替わったら、何も変えない。
+      if (!target || target.kind !== item.kind || target.ref !== item.ref) return;
+      const unchanged = target.revisionPinned && target.hash === stored.hash;
+      this.pins.set(`${id}:${stored.hash}`, { kind: 'pinned', fetchedAt: stored.fetchedAt });
+      this.session.update({ ...project, content: project.content.map(c => c.id === id ? { ...c, revisionPinned: true as const, hash: stored.hash } : c) });
+      this.status(action === 'refresh' ? (unchanged ? 'practice.pinUpToDate' : 'practice.pinRefreshed') : 'practice.pinned');
+    } catch (error) {
+      console.warn('Sketch code could not be pinned', error);
+      if (!this.disposed) this.status('practice.pinFailed', true);
+    } finally { this.pinning.delete(id); this.renderContent(); }
   }
   private wireControls(): void {
     const click = (id: string, run: () => void) => this.get(id).addEventListener('click', run);
@@ -100,6 +237,10 @@ export class ProjectPanel {
       if (this.previous) this.apply(this.previous, this.previousMode === 'venue');
     });
     click('practice-open-content', () => void this.openContent());
+    this.get('practice-content-list').addEventListener('click', event => {
+      const target = (event.target as Element).closest<HTMLButtonElement>('button[data-action]');
+      if (target?.dataset.id && target.dataset.action) void this.pin(target.dataset.id, target.dataset.action);
+    });
   }
   private error(error: unknown): void {
     // 形式の検証で分かった原因はその文言を出す。それ以外は設定の誤りとは言わず、元の例外を残す (#198)。

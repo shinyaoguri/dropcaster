@@ -12,6 +12,7 @@ import { Error404View } from './components/Error404View.js';
 import { SketchErrorView } from './components/SketchErrorView.js';
 import { API_CONFIG, GIST_CONFIG } from '../core/modules/constants.js';
 import { readProject } from './practice/projectStore';
+import { readSnapshot } from './practice/snapshotStore';
 import { parseProject } from './practice/project';
 import { t, type MessageKey } from './i18n';
 import type { VenueCalibrationPage } from './venue/VenueCalibrationPage';
@@ -175,8 +176,16 @@ export class App {
         failure = 'practice.contentMissing';
         const sketches = await Promise.all(project.show.contentIds.map(async id => {
           const ref = project.content.find(c => c.id === id)!;
-          if (ref.kind === 'op') return this.opSource.resolve(ref.ref);
-          if (ref.kind === 'gist') return this.gistSource.resolve(ref.ref);
+          if (ref.kind === 'op' || ref.kind === 'gist') {
+            const source = ref.kind === 'op' ? this.opSource : this.gistSource;
+            // 固定した作品は、このブラウザにある固定時のコードで開き、取得元へ問い合わせない (#197)。
+            // 無ければ (受け取ったプロジェクト・消えた記録) 最新を開き、違いはプロジェクトパネルが知らせる。
+            if (ref.revisionPinned) {
+              const pinned = await readSnapshot(ref.hash).catch(error => { console.warn('Pinned sketch code could not be read', error); return undefined; });
+              if (pinned && pinned.payload.kind === ref.kind && pinned.payload.ref.toLowerCase() === ref.ref.toLowerCase()) return source.fromSnapshot(pinned);
+            }
+            return source.resolve(ref.ref);
+          }
           if (ref.kind === 'builtin') return sampleSketch();
           const local = this.sketchService.getSketchById(ref.ref);
           if (!local) throw new Error('Missing local sketch');

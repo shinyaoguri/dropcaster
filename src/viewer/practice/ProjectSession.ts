@@ -1,7 +1,7 @@
 import type { WindowController } from '../components/WindowController';
 import type { Sketch } from '../types/sketch';
 import { Emitter } from '../utils/emitter';
-import { createProject, parseProject, reconcileProjectLayout, type Project, type Projector, type ContentReference } from './project';
+import { createProject, keepPins, parseProject, reconcileProjectLayout, type Project, type Projector, type ContentReference } from './project';
 import { readProject, writeProject } from './projectStore';
 import { DraftSaver, type StorageState } from './draftSaver';
 
@@ -59,7 +59,8 @@ export class ProjectSession {
     if (!this.followContext) return;
     const context = this.getContext();
     if (!context.sketches.length) return;
-    const content = context.sketches.map(contentReference);
+    // 作り直した参照でも、同じ作品の固定 (#197) は外さない。
+    const content = keepPins(context.sketches.map(contentReference), this.changes.get().content);
     this.changes.set({ ...this.changes.get(), content, show: { contentIds: content.map(c => c.id),
       currentIndex: context.currentIndex, intervalSeconds: context.intervalSeconds } });
     // 作品の自動送り・連打のたびに資産ごと書かないよう、まとめて書く。参照は再表示時に表示中の作品から作り直す。
