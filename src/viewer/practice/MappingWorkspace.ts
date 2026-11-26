@@ -39,6 +39,8 @@ export class MappingWorkspace {
   private off: (() => void)[] = [];
   private active = false;
   private statusKey: MessageKey = 'practice.waiting';
+  /** 状態文の `{reason}` に入れる文言のキー。言語を切り替えたときも訳し直す。 */
+  private statusReason: MessageKey | null = null;
   private error = false;
   private disposed = false;
 
@@ -201,7 +203,11 @@ export class MappingWorkspace {
       const [{ PracticePanel }] = await Promise.all([import('./PracticePanel'), this.session!.ready]);
       if (!this.active || this.disposed || generation !== this.generation || !this.scope || !this.editor) return;
       const panel = new PracticePanel(this.scope, this.options.wc, this.session!, this.editor,
-        (key, error) => this.status(key, error), () => this.previewFailed(), () => this.projectPanel?.chooseFile());
+        (key, error) => this.status(key, error), error => {
+          if (error !== null) { console.warn('3D venue could not be built', error); this.report3dFailure(error); }
+          this.previewFailed();
+        },
+        () => this.projectPanel?.chooseFile());
       this.panel = panel;
       await panel.initialize();
       if (!this.active || generation !== this.generation || this.panel !== panel) { panel.dispose(); return; }
@@ -210,10 +216,19 @@ export class MappingWorkspace {
     } catch (error) {
       if (!this.active || this.disposed || generation !== this.generation) return;
       console.warn('3D preview unavailable', error);
-      // 会場を作れなかったときはその理由を、WebGL が使えないなどそれ以外は 3D を表示できない旨を知らせる。
-      // 裏の読み込みでも知らせる。取り込みは確定したままで、取り込み前に戻せる (#169)。
-      this.status(projectErrorKey(error) ?? 'practice.error', true); this.previewFailed();
+      this.report3dFailure(error); this.previewFailed();
     }
+  }
+  /**
+   * 会場を作れなかったときはその理由を、WebGL が使えないなどそれ以外は 3D を表示できない旨を知らせる。
+   * 取り込み・開く・戻すの直後 (状態文がその結果のまま) なら、取り込みを拒否したときの文言と区別できるよう、
+   * 確定したことと理由を両方伝える。取り込みは確定したままで、取り込み前に戻せる (#169)。
+   */
+  private report3dFailure(error: unknown): void {
+    const reason = projectErrorKey(error);
+    if (this.statusKey === 'practice.imported' || this.statusKey === 'practice.venueImported') {
+      this.status(reason ? 'practice.importedUnbuildable' : 'practice.importedNo3d', true, reason);
+    } else this.status(reason ?? 'practice.error', true);
   }
   /** 3D を表示しているときだけマッピングへ戻す。取り込みの後の裏の読み込み・作り直しの失敗で、出力レイアウトなどから動かさない。 */
   private previewFailed(): void {
@@ -225,10 +240,10 @@ export class MappingWorkspace {
     this.notice?.querySelector('#practice-retry')?.toggleAttribute('hidden', !visible);
     this.updateNotice();
   }
-  private status(key: MessageKey, error = false): void {
-    this.statusKey = key; this.error = error;
+  private status(key: MessageKey, error = false, reason: MessageKey | null = null): void {
+    this.statusKey = key; this.error = error; this.statusReason = reason;
     const element = this.notice?.querySelector('#dc-practice-status');
-    if (element) { element.textContent = t(key); element.classList.toggle('is-error', error); }
+    if (element) { element.textContent = reason ? t(key, { reason: t(reason) }) : t(key); element.classList.toggle('is-error', error); }
     this.updateNotice();
   }
   /** 平常時の状態文は読み上げ用に残して見た目からは外し、エラーと再試行があるときだけ見せる。 */
@@ -241,7 +256,7 @@ export class MappingWorkspace {
     if (this.toolbar) applyControlTranslations(this.toolbar);
     if (this.venueEntry) applyControlTranslations(this.venueEntry);
     if (this.notice) applyControlTranslations(this.notice);
-    this.status(this.statusKey, this.error);
+    this.status(this.statusKey, this.error, this.statusReason);
   }
   stop(): void {
     if (!this.active) return;

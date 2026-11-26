@@ -1,7 +1,6 @@
 import { ProjectionPreview } from './ProjectionPreview';
 import { prepareVenue, type PreparedVenue } from './loadVenue';
 import type { Project } from './project';
-import { projectErrorKey } from './ProjectPanel';
 import type { ProjectSession } from './ProjectSession';
 import type { WindowController } from '../components/WindowController';
 import type { ControlWindow } from '../windows/control/ControlWindow';
@@ -41,12 +40,13 @@ export class PracticePanel {
   private session: ProjectSession;
   private editor: ControlWindow;
   private status: (key: MessageKey, error?: boolean) => void;
-  private onFailure: () => void;
+  /** 3D の失敗。会場を作れなかったときはその例外を、状態文を出し済みのとき (context lost) は null を渡す。 */
+  private onFailure: (error: unknown) => void;
   private chooseVenueFile: () => void;
   private canvas = document.createElement('canvas');
 
   constructor(scope: HTMLElement, wc: WindowController, session: ProjectSession, editor: ControlWindow,
-    status: (key: MessageKey, error?: boolean) => void, onFailure: () => void, chooseVenueFile: () => void) {
+    status: (key: MessageKey, error?: boolean) => void, onFailure: (error: unknown) => void, chooseVenueFile: () => void) {
     this.session = session; this.editor = editor; this.status = status; this.onFailure = onFailure; this.chooseVenueFile = chooseVenueFile;
     const state = session.changes.get().venue.layout;
     this.selected = state.activeOutputId ?? state.outputs[0].id;
@@ -125,8 +125,7 @@ export class PracticePanel {
     try {
       if (await this.buildVenue(project)) this.preview.overview();
     } catch (error) {
-      if (this.disposed) return;
-      this.status(projectErrorKey(error) ?? 'practice.error', true); this.onFailure();
+      if (!this.disposed) this.onFailure(error);
     }
   }
   private get<T extends HTMLElement = HTMLInputElement>(id: string): T { return this.settings.querySelector<T>(`#${id}`)!; }
@@ -193,7 +192,7 @@ export class PracticePanel {
     this.get('practice-blend').addEventListener('input', () => this.showBackground());
     click('practice-load-venue', () => this.chooseVenueFile());
   }
-  private contextLost = (event: Event) => { event.preventDefault(); this.status('practice.contextLost', true); this.onFailure(); };
+  private contextLost = (event: Event) => { event.preventDefault(); this.status('practice.contextLost', true); this.onFailure(null); };
   dispose(): void {
     if (this.disposed) return; this.disposed = true; this.action++;
     cancelAnimationFrame(this.frame); this.observer.disconnect(); this.off.forEach(off => off());

@@ -305,15 +305,18 @@ async function projects(page, base) {
   }
   // 検証を通った GLB は取り込みを確定する。3D で会場を作れなくても取り消さず、3D の失敗として理由を知らせる (#169、ADR 0010)。
   const emptyModel = structuredClone(baseline); emptyModel.assets[0].data = Buffer.from(venueFixture(d => { d.scenes[0].nodes = []; })).toString('base64'); await importProject(page, emptyModel);
-  const unbuildable = async () => {
+  // 取り込みの直後は、拒否 (プロジェクトを変えない) の文言と区別できるよう、確定したことと理由を両方出す。再試行では理由だけ。
+  const unbuildable = async committed => {
     await page.waitForSelector('#practice-retry:not([hidden])');
-    assert.match(await page.locator('#dc-practice-status').textContent(), /300,000 triangles/);
+    const text = await page.locator('#dc-practice-status').textContent();
+    assert.match(text, /300,000 triangles/);
+    if (committed) assert.match(text, /^Loaded, but the venue cannot be shown in 3D\./); else assert.doesNotMatch(text, /Loaded/);
     assert.equal(await page.locator('#dc-practice-status').evaluate(e => e.classList.contains('is-error')), true);
   };
-  await unbuildable();
+  await unbuildable(true);
   assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true', '2D editing continues');
   assert.equal((await exportProject(page)).assets[0].data, emptyModel.assets[0].data, 'a validated import is kept when only the 3D build fails');
-  await page.locator('#practice-retry').click(); await unbuildable(); // 再試行しても同じ会場は作れない
+  await page.locator('#practice-retry').click(); await unbuildable(false); // 再試行しても同じ会場は作れない
   // 取り込み前に戻すと、3D を裏で読み込み直して元の会場に戻る。再試行だけが残ることはない。
   await projectControls(page); await page.locator('#practice-undo-import').click();
   const restored = await exportProject(page);
@@ -701,7 +704,8 @@ async function projectWithoutWebgl(page, base) {
   const backgroundLoadFails = async before => {
     await page.waitForFunction(before => window.webglAttempts > before, before);
     await page.waitForSelector('#practice-retry:not([hidden])');
-    assert.match(await status.textContent(), /3D is unavailable/); assert.equal(await failed(), true);
+    // 3D を表示できない旨と、取り込み・開くは確定したことを両方伝える。
+    assert.match(await status.textContent(), /^Loaded\. 3D is unavailable here, so the venue is not shown in 3D/); assert.equal(await failed(), true);
     assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true', '2D editing continues');
   };
   // 名前・書き出し・名前を付けて保存・複製・保存済みを開く・会場の書き出し・形の無い会場の取り込みと戻すは、3D を読み込まない。
@@ -764,9 +768,10 @@ async function projectWithoutWebgl(page, base) {
   const beforeUndo = await attempts();
   await page.locator('#practice-undo-import').click(); await backgroundLoadFails(beforeUndo); // 戻した先も形のある会場
   assert.equal((await exportProject(page)).venue.projectors[0].position[0], 1.25, 'undo restores the project before the import');
-  // 3D を開いても失敗を知らせるだけで、プロジェクトの節はそのまま残る。
-  await page.locator('#preview-tab').click(); await page.waitForSelector('#practice-retry:not([hidden])');
-  assert.match(await status.innerText(), /3D is unavailable/);
+  // 3D を開いても失敗を知らせるだけで、プロジェクトの節はそのまま残る。3D を開いたときは取り込みの確定とは言わない。
+  await page.locator('#preview-tab').click();
+  await page.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.startsWith('3D is unavailable. You can continue'));
+  await page.waitForSelector('#practice-retry:not([hidden])');
   assert.equal(await page.locator('#practice-export').count(), 1); assert.equal(await page.locator('#practice-export').isVisible(), true);
   assert.equal(await name(), 'No GPU venue');
   await change(page, '#practice-project-name', 'Still editable');
@@ -809,9 +814,15 @@ async function projectImport3d(page, base) {
   const empty = glb(venueFixture(d => { d.scenes[0].nodes = []; }));
   await importProject(page, empty);
   await page.waitForSelector('#practice-retry:not([hidden])');
-  const committed = /300,000 triangles/;
+  // 拒否 (下の 30 MB 超) と区別できるよう、読み込みは確定したことと 3D で表示できない理由・戻し方を両方出す。
+  const committed = /^Loaded, but the venue cannot be shown in 3D\. Venue limit: 20 MB \/ 300,000 triangles\. Package limit: 30 MB\. You can keep editing in 2D, or use “Return to previous project”\.$/;
   assert.match(await status.textContent(), committed); assert.equal(await failed(), true);
   assert.equal(await statusShown(page), true, 'the failure is on screen right after the import');
+  // 言語を切り替えても、理由ごと訳し直す。
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  assert.match(await status.textContent(), /^読み込みました。ただし会場を3Dで表示できません。会場は20 MB・30万ポリゴン、パッケージは30 MBまでです。2D編集はそのまま続けられ、「読込前のプロジェクトに戻す」で戻せます。$/);
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('en'), base.modules);
+  assert.match(await status.textContent(), committed);
   assert.equal(loaded(), true, 'importing a venue shape loads 3D in the background'); await onMapping();
   assert.equal((await exportProject(page)).assets[0].data, empty.assets[0].data, 'the validated import is kept');
   assert.equal(await page.locator('#practice-undo-import').isEnabled(), true, 'undo is still available when the failure shows');
@@ -820,6 +831,11 @@ async function projectImport3d(page, base) {
   assert.deepEqual(restored.assets, first.assets); assert.deepEqual(restored.venue.scene, first.venue.scene);
   assert.equal(await page.locator('#practice-retry').isHidden(), true, 'returning to a venue without a shape leaves no stale retry');
   assert.equal(await failed(), false);
+  // 取り込みを拒否したとき (30 MB 超) は従来の文言のままで、確定したとは言わない。プロジェクトも変えない。
+  await inProjectPanel(page, () => page.locator('#practice-project-file').setInputFiles({ name: 'huge.json', mimeType: 'application/json', buffer: Buffer.alloc(30 * 1024 * 1024 + 1, 32) }));
+  await page.waitForFunction(() => document.querySelector('#dc-practice-status').classList.contains('is-error'));
+  assert.equal(await status.textContent(), 'Venue limit: 20 MB / 300,000 triangles. Package limit: 30 MB.');
+  assert.deepEqual(await exportProject(page), restored, 'a rejected import does not change the project');
   // 作れる会場は、3D のタブを開かずに 2D 編集の背景が出る。取り込みの状態文は残り、3D の読み込みの文言で上書きしない。
   const wall = glb(venueFixture());
   await importProject(page, wall); await background.waitFor({ state: 'attached' });
