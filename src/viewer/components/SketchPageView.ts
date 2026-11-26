@@ -1,4 +1,5 @@
 import { mappingIcon } from './mappingIcon';
+import { blackoutIcon } from './BlackoutControl';
 import type { Sketch } from '../types/sketch.js';
 import { UIElementController } from '../ui/services/UIElementController';
 import { escapeHtml } from '../utils/html.js';
@@ -85,6 +86,15 @@ export class SketchPageView {
           aria-label="${t('sketchPage.openWindows')}"
         >
           ${mappingIcon}
+        </button>
+
+        <!-- ブラックアウト (#194): 全出力を一度に黒にする。名前と状態は BlackoutControl が付ける -->
+        <button
+          id="blackout-btn"
+          class="blackout-button top-right-button ui-element"
+          aria-pressed="false"
+        >
+          ${blackoutIcon}
         </button>
 
         <!-- 投影中のソース可視化レイヤ（前面化して、各マッピングのソース矩形を枠で描く。子は動的生成） -->

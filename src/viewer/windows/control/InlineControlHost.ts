@@ -60,6 +60,16 @@ export class InlineControlHost implements ControlHost {
     this.wc.setTestPattern(kind);
   }
 
+  // --- blackout ---
+
+  getBlackout(): boolean { return this.wc.events.blackout.get(); }
+  onBlackoutChange(handler: Listener<boolean>): Unsubscribe {
+    return this.wc.events.blackout.subscribe(handler);
+  }
+  requestBlackout(on: boolean): void {
+    this.wc.setBlackout(on);
+  }
+
   // --- output bounds ---
 
   getOutputBounds(): OutputBoundsMap { return this.wc.events.outputBounds.get(); }

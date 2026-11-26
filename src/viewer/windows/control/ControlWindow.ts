@@ -13,6 +13,7 @@ import { OutputSettingsPanel } from './panels/OutputSettingsPanel';
 import { SourceCropPanel } from './panels/SourceCropPanel';
 import { MappingAreaPanel } from './panels/MappingAreaPanel';
 import { MaskEditPanel } from './panels/MaskEditPanel';
+import { CornerInputPanel } from './panels/CornerInputPanel';
 import { ProjectionDiagnosisPanel } from './panels/ProjectionDiagnosisPanel';
 import { MappingsController } from './MappingsController';
 import {
@@ -65,6 +66,7 @@ export class ControlWindow extends BaseWindow {
   private maskEdit = new MaskEditPanel();
   private layoutPanel = new LayoutPanel();
   private outputSettings = new OutputSettingsPanel();
+  private cornerInputs = new CornerInputPanel();
   /** 投影が映らないときの原因の表示 (#196)。 */
   private diagnosis = new ProjectionDiagnosisPanel();
   /** 現在 active なタブ（'mapping' / 'layout'）。タブ切替時に LayoutPanel.refresh() を駆動。 */
@@ -288,6 +290,7 @@ export class ControlWindow extends BaseWindow {
       h.onTestPatternChange((k: TestPatternKindOrOff) => this.updateTestPatternUI(k)),
       h.onWebglContextChange((status: WebglContextStatus) => this.updateWebglContextBanner(status)),
       h.onDevModeChange((enabled: boolean) => this.updateDevModeUI(enabled)),
+      h.onBlackoutChange((on: boolean) => this.updateBlackoutUI(on)),
       h.onDevCursorChange((e: DevCursorEvent) => this.outputViz.updateDevCursor(
         e.canvasX, e.canvasY, e.visible,
       )),
@@ -322,6 +325,7 @@ export class ControlWindow extends BaseWindow {
     this.maskEdit.destroy();
     this.layoutPanel.destroy();
     this.outputSettings.destroy();
+    this.cornerInputs.destroy();
     this.diagnosis.destroy();
     this.tabListeners.clear(); this.activeTab = 'mapping';
     this.activityBar.destroy();
@@ -473,6 +477,12 @@ ${CONTROL_PANEL_CSS}
     // 出力設定（X/Y/幅/高さ）入力欄 — outputs[*] のアクティブな 1 件の position/size を編集
     this.outputSettings.attach(scope, this.ctrl);
 
+    // マッピング設定の四隅の数値入力（#192）。置いた後は refreshTransform → onQuadChanged で各表示が追従する
+    this.cornerInputs.attach(scope, this.ctrl, {
+      onBeforeCommit: () => this.keyboardNudge.endNudge(),
+      onQuadCommitted: () => this.mappingArea.refreshTransform(),
+    });
+
     // 出力レイアウト編集タブ（仮想キャンバス上で各 output を 2D ドラッグ・リサイズで配置 + マッピング preview）
     if (this.hostDoc && this.controlHost) {
       this.layoutPanel.attach(scope, this.hostDoc, this.controlHost.window, this.ctrl, {
@@ -536,6 +546,16 @@ ${CONTROL_PANEL_CSS}
     });
     // 初期表示を host の現在値に合わせる
     if (this.controlHost) this.updateDevModeUI(this.controlHost.getDevMode());
+
+    // ブラックアウト (#194) — 「確認」パネルのボタンで入切り、帯のボタンは解除だけ。
+    // 表示は host からの onBlackoutChange で確定する (B キーや編集の外のボタンと同じ 1 つの状態)。
+    scope.querySelector('#dc-blackout-toggle')?.addEventListener('click', () => {
+      this.controlHost?.requestBlackout(!(this.controlHost?.getBlackout() ?? false));
+    });
+    scope.querySelector('#dc-blackout-release')?.addEventListener('click', () => {
+      this.controlHost?.requestBlackout(false);
+    });
+    if (this.controlHost) this.updateBlackoutUI(this.controlHost.getBlackout());
 
     // ディスプレイサイズを更新
     this.outputViz.refreshOutputViz();
@@ -625,7 +645,6 @@ ${CONTROL_PANEL_CSS}
     if (!scope) return;
 
     const source = this.ctrl.getActiveSource();
-    const quad = this.ctrl.getActiveQuad();
 
     // ソース値の更新
     const sourceX = scope.querySelector('#source-x-value');
@@ -638,16 +657,8 @@ ${CONTROL_PANEL_CSS}
     if (sourceW) sourceW.textContent = source.width.toFixed(1);
     if (sourceH) sourceH.textContent = source.height.toFixed(1);
 
-    // マッピング: 4隅の値を更新
-    const fmt = (p: { x: number; y: number }) => `${p.x.toFixed(1)}, ${p.y.toFixed(1)}`;
-    const tl = scope.querySelector('#mapping-tl-value');
-    const tr = scope.querySelector('#mapping-tr-value');
-    const bl = scope.querySelector('#mapping-bl-value');
-    const br = scope.querySelector('#mapping-br-value');
-    if (tl) tl.textContent = fmt(quad.topLeft);
-    if (tr) tr.textContent = fmt(quad.topRight);
-    if (bl) bl.textContent = fmt(quad.bottomLeft);
-    if (br) br.textContent = fmt(quad.bottomRight);
+    // マッピング: 4隅の数値入力欄を更新（focus 中の欄は CornerInputPanel が上書きしない）
+    this.cornerInputs.refresh();
 
     // 出力設定: アクティブ出力の position/size を入力欄に反映
     this.outputSettings.refresh();
@@ -747,6 +758,22 @@ ${CONTROL_PANEL_CSS}
     if (!el) return;
     if (status === 'lost') el.removeAttribute('hidden');
     else el.setAttribute('hidden', '');
+  }
+
+  /** ブラックアウトの帯と「確認」パネルのボタンを、host が持つ状態に合わせる (#194)。 */
+  private updateBlackoutUI(on: boolean): void {
+    const scope = this.scopeEl;
+    if (!scope) return;
+    scope.querySelector('#dc-blackout-banner')?.toggleAttribute('hidden', !on);
+    const btn = scope.querySelector('#dc-blackout-toggle');
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const label = btn.querySelector('.dc-blackout-label');
+    if (label) {
+      const key = on ? 'control.blackout.on' : 'control.blackout.off';
+      label.setAttribute('data-i18n', key);
+      label.textContent = t(key);
+    }
   }
 
   /** テストパターンボタンの active 表示を kind に合わせて切り替える（state は親が持っている）。 */

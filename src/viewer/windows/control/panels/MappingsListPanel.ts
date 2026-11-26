@@ -6,6 +6,7 @@
  *   - #add-output-btn   ← クリックで withAddedOutput
  *   - #mappings-list    ← mapping を全件フラットに列挙（色 / 名前 / enable / 削除）
  *   - #add-mapping-btn  ← クリックで withAddedMapping
+ *   - #duplicate-mapping-btn ← クリックで選択中の面・マスクを withDuplicatedItem
  *   - #export-settings-btn / #import-settings-btn ← 全設定 (MappingsState) の JSON 書出 / 読込
  *
  * 出力管理とマッピング管理は独立した存在として扱う。マッピングがどの出力に映るかは
@@ -32,6 +33,7 @@ import {
   withAddedMapping,
   withAddedMask,
   withAddedOutput,
+  withDuplicatedItem,
   withMappingRenamed,
   withMappingReordered,
   withMappingToggled,
@@ -441,6 +443,21 @@ export class MappingsListPanel {
     if (addMaskBtn) {
       addMaskBtn.addEventListener('click', () => {
         ctrl.replaceState(withAddedMask(ctrl.getState()));
+      });
+    }
+
+    // 選択中の面・マスクを複製する (#191)。複製した側が active になる。ペン描画中のマスクは複製されない
+    // (withDuplicatedItem が同じ state を返す)。名前は表示名 (name が無ければ通し番号) を元に作る。
+    const duplicateBtn = scope.querySelector('#duplicate-mapping-btn');
+    if (duplicateBtn) {
+      duplicateBtn.addEventListener('click', () => {
+        const before = ctrl.getState();
+        const index = before.mappings.findIndex(m => m.id === before.activeId);
+        if (index < 0) return;
+        const copyName = t('control.mappings.duplicate.name', { name: mappingDisplayNames(before.mappings)[index] });
+        const next = withDuplicatedItem(before, before.activeId, copyName);
+        if (next === before) return;
+        ctrl.replaceState(next);
       });
     }
 

@@ -85,6 +85,13 @@ export interface ControlHost {
   /** ユーザ操作で別パターンへ切替を要求（test-pattern-set 相当）。 */
   requestTestPattern(kind: TestPatternKindOrOff): void;
 
+  // --- ブラックアウト（全出力を黒にする。#194） ---
+
+  getBlackout(): boolean;
+  onBlackoutChange(handler: (on: boolean) => void): Unsubscribe;
+  /** UI からブラックアウトの入切りを要求。 */
+  requestBlackout(on: boolean): void;
+
   // --- 出力ウィンドウの寸法・全画面状態（出力 id ごと） ---
 
   getOutputBounds(): OutputBoundsMap;

@@ -162,7 +162,7 @@ export class MappingWorkspace {
       if (!this.active || this.disposed || generation !== this.generation) return;
       // 取り込み・保存済みを開く・取り込み前に戻すで形のある会場が入ったら、/project から開くときと同じく 3D を読み込んで背景を作る (#169)。
       // 形の無い会場に戻ったときは、前の会場の失敗で残った再試行を消す (3D は 3D のタブを開けば読み込む)。
-      this.projectPanel = new ProjectPanel(scope, session, (key, error) => this.status(key, error), shaped => {
+      this.projectPanel = new ProjectPanel(scope, session, (key, error, reason) => this.status(key, error, reason), shaped => {
         if (shaped) void this.ensurePanel(true);
         else if (!this.panel && !this.pendingPanel) this.setRetry(false);
       });
