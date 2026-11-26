@@ -21,7 +21,8 @@ export function projectErrorKey(error: unknown): MessageKey | null {
  * プロジェクトという入れ物の操作 (名前・保存・複製・開く・書き出し・取り込み・会場の書き出し・取り込み前に戻す・作品参照)。
  * ProjectSession と projectStore だけに依存し、WebGL / Three.js を必要としない (ADR 0012)。
  * 取り込みは検証 (parseProject / importVenue) に成功した時点で確定する。3D の会場は PracticePanel が session の変更を見て作り直す。
- * 取り込み・保存済みを開くで形のある会場が入ったときだけ、確定の後に `prepare3d` で 3D を裏で読み込む (ADR 0010)。
+ * 取り込み・保存済みを開く・取り込み前に戻すで会場が変わったら、確定の後に `venueChanged` で知らせる。形のある会場なら
+ * MappingWorkspace が 3D を裏で読み込む (ADR 0010)。
  */
 export class ProjectPanel {
   private root = document.createElement('div');
@@ -32,10 +33,10 @@ export class ProjectPanel {
   private previousMode: 'project' | 'venue' = 'project';
   private session: ProjectSession;
   private status: (key: MessageKey, error?: boolean) => void;
-  private prepare3d: () => void;
+  private venueChanged: (shaped: boolean) => void;
 
-  constructor(scope: HTMLElement, session: ProjectSession, status: (key: MessageKey, error?: boolean) => void, prepare3d: () => void) {
-    this.session = session; this.status = status; this.prepare3d = prepare3d;
+  constructor(scope: HTMLElement, session: ProjectSession, status: (key: MessageKey, error?: boolean) => void, venueChanged: (shaped: boolean) => void) {
+    this.session = session; this.status = status; this.venueChanged = venueChanged;
     this.root.className = 'dc-practice-settings';
     this.root.innerHTML = `<section id="dc-practice-project" class="tool-section"><h3>${label('practice.project')}</h3>
       <label class="dc-practice-field">${label('practice.projectName')}<input id="practice-project-name" maxlength="200" required></label>
@@ -96,7 +97,7 @@ export class ProjectPanel {
     click('practice-export', () => this.export());
     click('practice-export-venue', () => this.export(true));
     click('practice-undo-import', () => {
-      if (this.previous) this.apply(this.previous, this.previousMode === 'venue', false);
+      if (this.previous) this.apply(this.previous, this.previousMode === 'venue');
     });
     click('practice-open-content', () => void this.openContent());
   }
@@ -118,11 +119,8 @@ export class ProjectPanel {
       else this.apply(parseProject(value));
     } catch (error) { if (!this.disposed && action === this.action) this.error(error); }
   }
-  /**
-   * `project` は検証済み (parseProject / importVenue を通ったもの)。3D の構築を待たずに確定する。
-   * `opened` は取り込み・保存済みを開く (取り込み前に戻すは false)。
-   */
-  private apply(project: Project, venueOnly = false, opened = true): void {
+  /** `project` は検証済み (parseProject / importVenue を通ったもの)。3D の構築を待たずに確定する。 */
+  private apply(project: Project, venueOnly = false): void {
     if (this.disposed) return;
     ++this.action;
     this.previous = this.session.changes.get();
@@ -133,8 +131,8 @@ export class ProjectPanel {
     this.status(venueOnly ? 'practice.venueImported' : 'practice.imported');
     this.session.update(project, true, !venueOnly);
     // 形のある会場 (GLB・部材) が入ったら 3D を裏で読み込む。2D 編集の背景 (プロジェクタ視点の会場) がすぐ出て、
-    // 作れない会場の失敗も取り込み前に戻せるうちに分かる。読み込みに失敗しても取り込みは確定したまま (#169)。
-    if (opened && project.venue.scene.kind !== 'sample') this.prepare3d();
+    // 作れない会場の失敗も取り込み前に戻せるうちに分かる。戻した先の会場も同じく出す。読み込みに失敗しても取り込みは確定したまま (#169)。
+    this.venueChanged(project.venue.scene.kind !== 'sample');
   }
   private async refreshSaved(): Promise<void> {
     try {

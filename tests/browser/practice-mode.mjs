@@ -314,11 +314,13 @@ async function projects(page, base) {
   assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true', '2D editing continues');
   assert.equal((await exportProject(page)).assets[0].data, emptyModel.assets[0].data, 'a validated import is kept when only the 3D build fails');
   await page.locator('#practice-retry').click(); await unbuildable(); // 再試行しても同じ会場は作れない
-  // 取り込み前に戻すと、再試行で 3D も元の会場に戻る。
+  // 取り込み前に戻すと、3D を裏で読み込み直して元の会場に戻る。再試行だけが残ることはない。
   await projectControls(page); await page.locator('#practice-undo-import').click();
   const restored = await exportProject(page);
   assert.deepEqual(restored.assets, baseline.assets); assert.deepEqual(restored.venue.scene, baseline.venue.scene);
-  await page.locator('#practice-retry').click(); await page.waitForSelector('#dc-practice-canvas');
+  await page.locator('.dc-practice-background').waitFor({ state: 'attached' });
+  assert.equal(await page.locator('#practice-retry').isHidden(), true, 'undo leaves no stale retry');
+  await page.locator('#preview-tab').click(); await page.waitForSelector('#dc-practice-canvas');
   await page.waitForFunction(() => document.querySelector('#practice-dimensions')?.textContent === 'Venue size: 12.00 × 4.00 × 0.00 m');
   const legacy = baseline.venue.layout; legacy.mappings[0].name = 'Legacy loaded';
   await importProject(page, legacy); assert.equal((await state(page)).mappings[0].name, 'Legacy loaded');
@@ -759,7 +761,8 @@ async function projectWithoutWebgl(page, base) {
   const received = await exportProject(page);
   assert.equal(received.venue.projectors[0].position[0], 2.5); assert.equal(received.name, 'No GPU venue'); assert.deepEqual(received.assets, withVenue.assets);
   assert.equal(await page.locator('#practice-undo-import').isEnabled(), true);
-  await page.locator('#practice-undo-import').click();
+  const beforeUndo = await attempts();
+  await page.locator('#practice-undo-import').click(); await backgroundLoadFails(beforeUndo); // 戻した先も形のある会場
   assert.equal((await exportProject(page)).venue.projectors[0].position[0], 1.25, 'undo restores the project before the import');
   // 3D を開いても失敗を知らせるだけで、プロジェクトの節はそのまま残る。
   await page.locator('#preview-tab').click(); await page.waitForSelector('#practice-retry:not([hidden])');
@@ -784,7 +787,7 @@ async function projectWithoutWebgl(page, base) {
 }
 // #169 の (b): WebGL が使える環境で、「プロジェクト」パネルから形のある会場を取り込む・保存済みを開くと、3D のタブを開かなくても
 // 確定の後に 3D を裏で読み込み、2D 編集の背景 (プロジェクタ視点の会場) がすぐ出る。作れない会場の失敗は、取り込み前に戻せるうちに分かる。
-async function projectImport3d(page) {
+async function projectImport3d(page, base) {
   await page.locator(entryButton).click();
   await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
   await projectControls(page);
@@ -796,8 +799,8 @@ async function projectImport3d(page) {
   const first = await exportProject(page);
   await page.locator('#practice-save').click(); await page.waitForFunction(() => document.querySelector('#practice-saved-projects').options.length === 1);
   assert.equal(loaded(), false, 'opening the project panel, naming, saving and exporting do not load 3D');
-  const glb = (data, base = first) => {
-    const project = structuredClone(base);
+  const glb = (data, from = first) => {
+    const project = structuredClone(from);
     project.assets = [{ id: 'wall-glb', name: 'wall.glb', mimeType: 'model/gltf-binary', data: Buffer.from(data).toString('base64') }];
     project.venue.scene = { ...project.venue.scene, kind: 'glb', assetId: 'wall-glb' };
     return project;
@@ -806,7 +809,8 @@ async function projectImport3d(page) {
   const empty = glb(venueFixture(d => { d.scenes[0].nodes = []; }));
   await importProject(page, empty);
   await page.waitForSelector('#practice-retry:not([hidden])');
-  assert.match(await status.textContent(), /300,000 triangles/); assert.equal(await failed(), true);
+  const committed = /300,000 triangles/;
+  assert.match(await status.textContent(), committed); assert.equal(await failed(), true);
   assert.equal(await statusShown(page), true, 'the failure is on screen right after the import');
   assert.equal(loaded(), true, 'importing a venue shape loads 3D in the background'); await onMapping();
   assert.equal((await exportProject(page)).assets[0].data, empty.assets[0].data, 'the validated import is kept');
@@ -814,12 +818,29 @@ async function projectImport3d(page) {
   await page.locator('#practice-undo-import').click();
   const restored = await exportProject(page);
   assert.deepEqual(restored.assets, first.assets); assert.deepEqual(restored.venue.scene, first.venue.scene);
+  assert.equal(await page.locator('#practice-retry').isHidden(), true, 'returning to a venue without a shape leaves no stale retry');
+  assert.equal(await failed(), false);
   // 作れる会場は、3D のタブを開かずに 2D 編集の背景が出る。取り込みの状態文は残り、3D の読み込みの文言で上書きしない。
   const wall = glb(venueFixture());
   await importProject(page, wall); await background.waitFor({ state: 'attached' });
   await onMapping(); assert.equal(await page.locator('#practice-retry').isHidden(), true);
   assert.match(await status.textContent(), /Project loaded/); assert.equal(await failed(), false);
   assert.equal(await background.evaluate(img => img.complete && img.naturalWidth > 0), true, 'the projector view of the venue is drawn');
+  // 作れる会場から作れない会場を取り込んで失敗し、取り込み前に戻すと、背景と 3D が戻る。3D のタブを表示していても同じ。
+  for (const tab of ['mapping', 'preview']) {
+    if (tab === 'preview') { await page.locator('#preview-tab').click(); await page.waitForSelector('#dc-practice-canvas'); }
+    await importProject(page, glb(venueFixture(d => { d.scenes[0].nodes = []; }), wall));
+    await page.waitForSelector('#practice-retry:not([hidden])');
+    assert.match(await status.textContent(), committed); assert.equal(await background.count(), 0);
+    await inProjectPanel(page, () => page.locator('#practice-undo-import').click());
+    await background.waitFor({ state: 'attached' });
+    assert.equal(await page.locator('#practice-retry').isHidden(), true, `${tab}: undo leaves no stale retry`);
+    assert.equal(await failed(), false); assert.deepEqual((await exportProject(page)).assets, wall.assets);
+    await onMapping();
+  }
+  await page.locator('#preview-tab').click(); await page.waitForSelector('#dc-practice-canvas');
+  await page.waitForFunction(() => document.querySelector('#practice-dimensions')?.textContent === 'Venue size: 6.00 × 4.00 × 0.00 m');
+  await page.locator('#mapping-tab').click();
   await page.locator('#practice-save').click(); await page.waitForTimeout(300);
   // 編集を閉じて開き直すと背景は無い (3D を読み込まない)。保存済みを開くと、3D のタブを開かずに背景が出る。
   await closeEditor(page); await page.locator(entryButton).click();
