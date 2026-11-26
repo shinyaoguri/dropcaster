@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from 'fs/promises';
-import { join, resolve, sep } from 'path';
+import { join, relative, resolve, sep } from 'path';
 import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE, OP_METADATA_FILE } from './constants.js';
 import { brokenSymlinkError, readOptionalTextFile } from './file-manager.js';
 import { t } from '../../cli/i18n/index.js';
@@ -345,48 +345,57 @@ function detectSketchType(htmlContent, sketchPath) {
 }
 
 /**
- * インタラクティブ要素を検出
+ * インタラクティブ要素を検出する。
+ * 作品の JS (ディレクトリ直下の .js と、<script src> が指すローカルのファイル) が読めないとき
+ * (ENOENT 以外の失敗・リンク先の無い symlink)、作品のディレクトリを一覧できないときは、ファイル名を
+ * 添えて例外を投げる。黙って飛ばすと、カタログの interactiveElements が前触れなく変わるため (#275)。
+ * <script src> が指す先が無い (ENOENT など、ファイルを指していない) 参照は、今までどおり無視する。
+ * @param {string} sketchPath
+ * @param {string} htmlContent
+ * @returns {Promise<string[]>}
  */
 export async function detectInteractiveElements(sketchPath, htmlContent) {
   const elements = new Set();
 
-  try {
-    // HTMLファイル内のインラインスクリプトから検出
-    const scriptContent = extractInlineScripts(htmlContent);
-    detectInteractivePatterns(scriptContent, elements);
+  // HTMLファイル内のインラインスクリプトから検出
+  const scriptContent = extractInlineScripts(htmlContent);
+  detectInteractivePatterns(scriptContent, elements);
 
-    // 外部JavaScriptファイルを検索・解析
-    const jsFiles = await findJavaScriptFiles(sketchPath);
-    for (const jsFile of jsFiles) {
-      try {
-        const jsContent = await readFile(jsFile, 'utf-8');
-        detectInteractivePatterns(jsContent, elements);
-      } catch (error) {
-        console.warn(`Warning: Could not read JS file ${jsFile}:`, error.message);
-      }
-    }
+  // 外部JavaScriptファイルを検索・解析
+  const jsFiles = await findJavaScriptFiles(sketchPath);
+  for (const jsFile of jsFiles) {
+    const jsContent = await readSketchScript(sketchPath, jsFile);
+    if (jsContent !== null) detectInteractivePatterns(jsContent, elements);
+  }
 
-    // HTMLファイル内のスクリプトsrc属性から検出
-    const scriptSrcs = extractScriptSrcs(htmlContent);
-    for (const src of scriptSrcs) {
-      if (!src.startsWith('http')) { // 外部CDNは除外
-        try {
-          const jsPath = resolve(sketchPath, src);
-          // `../` を含む src でスケッチディレクトリ外を読まないようにする
-          if (!jsPath.startsWith(resolve(sketchPath) + sep)) continue;
-          const jsContent = await readFile(jsPath, 'utf-8');
-          detectInteractivePatterns(jsContent, elements);
-        } catch (error) {
-          // ファイルが見つからない場合は無視
-        }
-      }
-    }
-
-  } catch (error) {
-    console.warn(`Warning: Error detecting interactive elements:`, error.message);
+  // HTMLファイル内のスクリプトsrc属性から検出
+  const scriptSrcs = extractScriptSrcs(htmlContent);
+  for (const src of scriptSrcs) {
+    if (src.startsWith('http')) continue; // 外部CDNは除外
+    const jsPath = resolve(sketchPath, src);
+    // `../` を含む src でスケッチディレクトリ外を読まないようにする
+    if (!jsPath.startsWith(resolve(sketchPath) + sep)) continue;
+    const jsContent = await readSketchScript(sketchPath, jsPath);
+    if (jsContent !== null) detectInteractivePatterns(jsContent, elements);
   }
 
   return Array.from(elements);
+}
+
+/**
+ * 作品の JS を読む。ファイルを指していない (無い・途中がファイル・ディレクトリ) ときは null。
+ * 読めない (権限など)・リンク先の無い symlink のときは、作品内のパスを添えて例外を投げる。
+ * @param {string} sketchPath
+ * @param {string} jsPath
+ * @returns {Promise<string | null>}
+ */
+async function readSketchScript(sketchPath, jsPath) {
+  try {
+    return await readOptionalTextFile(jsPath);
+  } catch (error) {
+    if (error?.code === 'ENOTDIR' || error?.code === 'EISDIR') return null;
+    throw new Error(`Could not read ${relative(sketchPath, jsPath)}: ${error.message}`, { cause: error });
+  }
 }
 
 /**
@@ -415,23 +424,21 @@ function extractScriptSrcs(htmlContent) {
 }
 
 /**
- * スケッチディレクトリ内のJavaScriptファイルを検索
+ * スケッチディレクトリ直下の .js ファイル (ディレクトリを除く) を返す。
+ * ディレクトリを一覧できないときは例外を投げる (detectInteractiveElements)。
+ * @param {string} sketchPath
+ * @returns {Promise<string[]>}
  */
 async function findJavaScriptFiles(sketchPath) {
-  const jsFiles = [];
-
+  let entries;
   try {
-    const files = await readdir(sketchPath);
-    for (const file of files) {
-      if (file.endsWith('.js')) {
-        jsFiles.push(join(sketchPath, file));
-      }
-    }
+    entries = await readdir(sketchPath, { withFileTypes: true });
   } catch (error) {
-    // ディレクトリが読めない場合は空配列を返す
+    throw new Error(`Could not list the sketch directory: ${error.message}`, { cause: error });
   }
-
-  return jsFiles;
+  return entries
+    .filter(entry => entry.name.endsWith('.js') && !entry.isDirectory())
+    .map(entry => join(sketchPath, entry.name));
 }
 
 /**

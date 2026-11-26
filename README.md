@@ -340,7 +340,8 @@ OpenProcessing の作品 ID 1 個を `sketches/sketch<id>/` に取り込む（�
 スケッチをスキャンして `public/sketches/` にコピーし、`public/sketches.json` を生成（デフォルトでプレビュー GIF も生成）。
 `index.html` を読めない・解析できないスケッチ（リンク先の無い symlink の `index.html` を含む）、
 `dropcaster.meta.json` / `_op-meta.json` があるのに読めない・JSON として壊れているスケッチ、
-コピーできなかったスケッチがあると、スケッチ名と原因を表示して終了コード 1 で終わる
+スケッチの JS（ディレクトリ直下の `.js` と、`<script src>` が指すローカルのファイル）を読めないスケッチ
+（`<script src>` の指す先が無いだけなら失敗にしない）、コピーできなかったスケッチがあると、スケッチ名と原因を表示して終了コード 1 で終わる
 （`--sketch` で 1 件だけスキャンしたときも同じ）。成功したスケッチは
 `sketches.json` に載り、失敗したスケッチは今回の内容では載らない（`index.html` のある前回のコピーが
 `public/sketches/` に残っていれば、それと前回の項目をそのまま残す）。`index.html` の無いディレクトリは

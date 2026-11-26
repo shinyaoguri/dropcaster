@@ -70,7 +70,7 @@ async function readCatalog(root) {
   return JSON.parse(await readFile(catalogPath(root), 'utf-8'));
 }
 
-/** @param {{ id: string }[]} list */
+/** @param {Array<{ id: string, [key: string]: any }>} list */
 function byId(list) {
   return [...list].sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -367,3 +367,100 @@ test('a full scan removes the public copy and preview of a directory that no lon
     assert.equal(await readFile(join(root, 'public', 'sketches', 'a', 'index.html'), 'utf-8'), htmlOf('A'));
   });
 });
+
+// 反証で見つかった同じ根本原因: 作品の JS が読めないと、interactiveElements が黙って変わっていた
+/**
+ * 作品 b (直下の sketch.js でキーボード、<script src="js/main.js"> でタッチ) を a と一緒に公開する。
+ * @param {string} root
+ */
+async function publishWithScripts(root) {
+  await writeSketch(root, 'a', 'A');
+  const b = join(root, 'sketches', 'b');
+  await mkdir(join(b, 'js'), { recursive: true });
+  await writeFile(join(b, 'index.html'),
+    '<!doctype html><title>B</title><script src="sketch.js"></script><script src="js/main.js"></script><script src="missing.js"></script>', 'utf-8');
+  await writeFile(join(b, 'sketch.js'), 'function keyPressed() {}', 'utf-8');
+  await writeFile(join(b, 'js', 'main.js'), 'function touchStarted() {}', 'utf-8');
+  const first = await run(root, []);
+  assert.equal(first.code, 0, `initial scan failed${describe(first.stderr)}`);
+  const catalog = await readCatalog(root);
+  assert.deepEqual(catalog.find((s) => s.id === 'b').interactiveElements, ['キーボード', 'タッチ'],
+    'precondition: both scripts are detected, and the missing script src is ignored');
+  return { b, catalog };
+}
+
+/**
+ * @param {string} root
+ * @param {Array<{ id: string }>} before
+ * @param {RegExp} message
+ * @param {string[][]} [argsList]
+ */
+async function assertScriptFailure(root, before, message, argsList = [[], ['--sketch', 'b']]) {
+  for (const args of argsList) {
+    const name = args.length > 0 ? args.join(' ') : 'full scan';
+    const result = await run(root, args);
+    assert.equal(result.code, 1, `${name}: scan must fail with exit code 1${describe(result.stderr)}`);
+    assert.match(result.stderr, message, name);
+    assert.match(result.stderr, /Keeping the previously published copy and catalog entry of b/, name);
+    assert.match(result.stderr, /1 sketch\(es\) could not be analyzed: b/, name);
+    assert.deepEqual(byId(await readCatalog(root)), byId(before), `${name}: interactiveElements of b are not replaced`);
+  }
+}
+
+test('a sketch script that is a broken symlink fails the scan and keeps the previous entry', { skip: symlinkSkip }, async () => {
+  await withTempProject(async (root) => {
+    const { b, catalog } = await publishWithScripts(root);
+    await rm(join(b, 'sketch.js'));
+    await symlink('nowhere.js', join(b, 'sketch.js'));
+    await assertScriptFailure(root, catalog,
+      /Failed to analyze b: Could not read sketch\.js: sketch\.js is a broken symbolic link \(target not found: nowhere\.js\)/);
+  });
+});
+
+test('a script referenced by <script src> that is a broken symlink fails the scan', { skip: symlinkSkip }, async () => {
+  await withTempProject(async (root) => {
+    const { b, catalog } = await publishWithScripts(root);
+    await rm(join(b, 'js', 'main.js'));
+    await symlink('nowhere.js', join(b, 'js', 'main.js'));
+    await assertScriptFailure(root, catalog, /Failed to analyze b: Could not read js\/main\.js: main\.js is a broken symbolic link/);
+  });
+});
+
+test('an unreadable sketch script (permissions) fails the scan, for top-level and <script src> files', { skip: permissionSkip }, async () => {
+  await withTempProject(async (root) => {
+    const { b, catalog } = await publishWithScripts(root);
+    await chmod(join(b, 'sketch.js'), 0o000);
+    await assertScriptFailure(root, catalog, /Failed to analyze b: Could not read sketch\.js: (EACCES|EPERM)/);
+
+    await chmod(join(b, 'sketch.js'), 0o644);
+    await chmod(join(b, 'js', 'main.js'), 0o000);
+    await assertScriptFailure(root, catalog, /Failed to analyze b: Could not read js\/main\.js: (EACCES|EPERM)/);
+  });
+});
+
+test('a sketch directory that cannot be listed fails the scan', { skip: permissionSkip }, async () => {
+  await withTempProject(async (root) => {
+    const { b, catalog } = await publishWithScripts(root);
+    // 一覧はできないが、名前の分かっているファイル (index.html) は開ける
+    await chmod(b, 0o311);
+    await assertScriptFailure(root, catalog, /Failed to analyze b: Could not list the sketch directory: (EACCES|EPERM)/, [[]]);
+  });
+});
+
+test('script references that point at nothing readable as a file are still ignored', async () => {
+  await withTempProject(async (root) => {
+    const dir = await writeSketch(root, 'refs', 'refs');
+    await writeFile(join(dir, 'index.html'),
+      '<!doctype html><title>refs</title><script src="missing.js"></script><script src="lib"></script><script src="index.html/x.js"></script><script src="sketch.js?v=2"></script>', 'utf-8');
+    await mkdir(join(dir, 'lib'));
+    // .js で終わる名前のディレクトリはスクリプトではない
+    await mkdir(join(dir, 'vendor.js'));
+    await writeFile(join(dir, 'sketch.js'), 'function mousePressed() {}', 'utf-8');
+
+    const result = await run(root, []);
+    assert.equal(result.code, 0, `scan failed${describe(result.stderr)}`);
+    assert.doesNotMatch(result.stderr, /Failed to analyze|Could not read/);
+    assert.deepEqual((await readCatalog(root)).map((s) => [s.id, s.interactiveElements]), [['refs', ['マウス']]]);
+  });
+});
+
