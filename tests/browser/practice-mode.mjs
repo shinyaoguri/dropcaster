@@ -587,6 +587,20 @@ async function slideshowExportRefused(page, base) {
   assert.equal(venue.format, 'dropcaster-venue'); assert.equal(downloads, 1);
   await snapshot(page, base.name + '-export-refused');
 }
+// #173: 作品が 1 万件を超える下書きは再読み込みでは直らないので、/project は再読み込みを勧めず理由を出す。
+async function projectTooLarge(page, base) {
+  await page.evaluate(async modules => {
+    const { createProject } = await import(`${modules}/practice/project.ts`), store = await import(`${modules}/practice/projectStore.ts`);
+    const project = createProject();
+    project.content = Array.from({ length: 10001 }, (_, i) => ({ id: `s${i}`, kind: 'local', ref: `s${i}`, title: `Sketch ${i}`, revision: null, revisionPinned: false }));
+    project.show.contentIds = project.content.map(c => c.id);
+    await store.writeProject(project);
+  }, base.modules);
+  await page.goto(base.url + '/project'); await page.waitForSelector('.sketch-error');
+  assert.match(await page.locator('.sketch-error').innerText(), /more than 10,000 sketches/);
+  assert.equal(await page.locator('.sketch-error [data-reload]').count(), 0, 'a reload does not help, so it is not offered');
+  await logged(page, /practice\.draftTooLarge/);
+}
 async function slideshow(page, base) {
   await snapshot(page, base.name + '-slideshow-entry');
   await start(page); await page.locator('#play-pause-btn').click();
@@ -1904,7 +1918,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, projectTooLarge, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

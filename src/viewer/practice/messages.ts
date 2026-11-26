@@ -59,6 +59,7 @@ const labels = {
   openErrorTitle: ['Could not open the saved project', '保存したプロジェクトを開けませんでした'],
   draftMissing: ['No working project is saved in this browser. Open a sketch and start mapping, or import a package.', 'このブラウザに作業中のプロジェクトが保存されていません。作品を開いてマッピングを始めるか、パッケージを読み込んでください。'],
   draftUnreadable: ['The project saved in this browser could not be read. Reload to try again, or import an exported package.', 'このブラウザに保存したプロジェクトを読み出せませんでした。再読み込みしてもう一度試すか、書き出したパッケージを読み込んでください。'],
+  draftTooLarge: ['The working project saved in this browser has more than 10,000 sketches, so it cannot be opened. Open a slideshow with fewer sketches, or import an exported package.', 'このブラウザに保存した作業中のプロジェクトは作品が10,000件を超えているため開けません。作品の少ないスライドショーから始めるか、書き出したパッケージを読み込んでください。'],
   openError: ['The saved project could not be opened. Reload to try again.', '保存したプロジェクトを開く途中で失敗しました。再読み込みしてもう一度お試しください。'],
   imported: ['Project loaded. Open saved sketches or continue with the current sketch.', 'プロジェクトを読み込みました。保存した作品を開くか、現在の作品で続けられます。'],
   // 取り込み・開く・戻すは確定したが、裏で読み込んだ 3D で会場を表示できなかった (#169)。拒否 (invalid・size など) とは別の文言にする
