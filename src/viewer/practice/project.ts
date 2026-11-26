@@ -16,10 +16,16 @@ export interface VenueScene {
   kind: 'sample' | 'glb' | 'objects'; assetId?: string; objects?: VenueObject[]; metersPerUnit: number;
   position: Vec3; quaternion: Quaternion; scale: Vec3; color: string;
 }
-export interface ContentReference {
+/**
+ * `revisionPinned: true` の OP / Gist は、`hash` のコードを固定した作品 (#197)。コードはこのブラウザの別の store
+ * (snapshotStore) にあり、Project とその書き出しには参照と hash だけを置く。固定より前の viewer の parser は
+ * `revisionPinned: false` 以外を版のエラーとして拒否するので、固定を含むプロジェクトを黙って最新で開くことはない。
+ */
+export type ContentReference = {
   id: string; kind: 'local' | 'op' | 'gist' | 'builtin'; ref: string; title: string;
-  path?: string; revision: string | null; revisionPinned: false;
-}
+  path?: string; revision: string | null;
+} & ({ revisionPinned: false; hash?: undefined } | { revisionPinned: true; hash: string });
+export const PIN_HASH = /^[0-9a-f]{64}$/;
 export interface Project {
   format: 'dropcaster-project'; schemaVersion: 3; id: string; name: string; createdAt: string; updatedAt: string;
   venue: { id: string; revision: number; layout: MappingsState; scene: VenueScene; projectors: Projector[] };
@@ -274,6 +280,18 @@ export function parseProject(value: unknown, verified: Project['assets'] = [], d
 }
 
 /**
+ * 表示中の作品から作り直した参照に、前の参照の固定を引き継ぐ。作品の送り・開き直しで参照を作り直しても、
+ * 同じ作品 (id・種類・参照先が同じ) の固定を外さない (#197)。件数の 2 乗にならないよう、前の参照は id で引く。
+ */
+export function keepPins(next: ContentReference[], previous: ContentReference[]): ContentReference[] {
+  const pinned = new Map(previous.filter(p => p.revisionPinned).map(p => [p.id, p]));
+  return next.map(item => {
+    const old = pinned.get(item.id);
+    return old?.revisionPinned && old.kind === item.kind && old.ref === item.ref ? { ...item, revisionPinned: true, hash: old.hash } : item;
+  });
+}
+
+/**
  * 作品参照 (`content`) と再生順 (`show.contentIds`) を検証する。parseProject の一部で、作業中のショーが
  * 保存して読み込み直せるかを確かめるのにも使う (#173)。contentIds は同じ作品を何度含んでもよい。
  */
@@ -286,9 +304,15 @@ export function parseShowReferences(contentValue: unknown, contentIdsValue: unkn
     if ((kind === 'op' && !OP_REF.test(ref)) || (kind === 'gist' && !GIST_REF.test(ref))) fail('reference');
     const path = c.path === undefined ? undefined : str(c.path, 2000);
     if (path && !isReferencePath(path)) fail('reference');
-    if (c.revisionPinned !== false) fail('version');
+    if (c.revisionPinned !== false && c.revisionPinned !== true) fail('version');
+    const pin = c.revisionPinned === true
+      ? { revisionPinned: true as const, hash: typeof c.hash === 'string' && PIN_HASH.test(c.hash) ? c.hash : fail() }
+      : { revisionPinned: false as const };
+    // 固定できるのは取得元から取り直す作品だけ。ローカル作品はギャラリーのファイルで版が決まる。
+    if (pin.revisionPinned && kind !== 'op' && kind !== 'gist') fail('reference');
+    if (!pin.revisionPinned && c.hash !== undefined) fail();
     return { id: str(c.id, MAX_REFERENCE_LENGTH), kind: kind as ContentReference['kind'], ref, title: str(c.title, 10000), path,
-      revision: c.revision === null ? null : str(c.revision), revisionPinned: false as const };
+      revision: c.revision === null ? null : str(c.revision), ...pin };
   });
   unique(content.map(c => c.id));
   const contentIds = showList(contentIdsValue).map(id => str(id, MAX_REFERENCE_LENGTH));
