@@ -70,7 +70,9 @@ export class ProjectPanel {
   }
   private storageStatus(): void {
     const state = this.session.storage.get();
-    this.get('practice-storage').textContent = t(state === 'error' ? 'practice.storageError' : state === 'saving' ? 'practice.saving' : 'practice.saved');
+    const unwritable = state === 'error' ? this.session.unwritable : null;
+    this.get('practice-storage').textContent = unwritable ? t('practice.notSaved', { reason: t(this.reason(unwritable)) })
+      : t(state === 'error' ? 'practice.storageError' : state === 'saving' ? 'practice.saving' : 'practice.saved');
   }
   private update(project: Project): void {
     if (this.disposed) return;
@@ -164,7 +166,10 @@ export class ProjectPanel {
     try {
       if (copy) this.session.update({ ...this.session.changes.get(), id: randomId(), createdAt: new Date().toISOString() });
       await this.session.save(true); await this.refreshSaved();
-    } catch (error) { console.warn('Named project could not be saved', error); this.status('practice.storageError', true); }
+    } catch (error) {
+      if (error instanceof ProjectFormatError) { this.status('practice.notSaved', true, this.reason(error)); return; }
+      console.warn('Named project could not be saved', error); this.status('practice.storageError', true);
+    }
   }
   private async openSaved(): Promise<void> {
     const action = ++this.action;
@@ -190,7 +195,13 @@ export class ProjectPanel {
     link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   private async openContent(): Promise<void> {
-    await this.session.save(); if (this.disposed || this.session.storage.get() === 'error') { this.status('practice.storageError', true); return; }
+    // 読み込み直せない内容は保存しないので、/project へは移らない (#173)。
+    await this.session.save(); if (this.disposed) return;
+    if (this.session.storage.get() === 'error') {
+      const unwritable = this.session.unwritable;
+      if (unwritable) this.status('practice.notSaved', true, this.reason(unwritable)); else this.status('practice.storageError', true);
+      return;
+    }
     // App resolves references before replacing the running view. Opening a project never opens outputs.
     const link = document.createElement('a'); link.href = routeHref('/project'); document.body.append(link); link.click(); link.remove();
   }

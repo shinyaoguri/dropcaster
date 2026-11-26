@@ -1,7 +1,7 @@
 import type { WindowController } from '../components/WindowController';
 import type { Sketch } from '../types/sketch';
 import { Emitter } from '../utils/emitter';
-import { createProject, parseProject, reconcileProjectLayout, showReferences, type Project, type Projector } from './project';
+import { createProject, parseProject, reconcileProjectLayout, showReferences, ProjectFormatError, type Project, type Projector } from './project';
 import { readProject, writeProject } from './projectStore';
 import { DraftSaver, type StorageState } from './draftSaver';
 
@@ -30,11 +30,16 @@ export class ProjectSession {
    * 捨てる (そのとき編集の履歴も空になる)。編集画面を閉じて履歴だけが消えた場合は、このセッションが残る間は残る。
    */
   private removedProjectors = new Map<string, Projector>();
+  /**
+   * 最後に書こうとしたプロジェクトが、このアプリで読み込み直せなかった理由。読み込み直せないものは下書きに
+   * 書かず、前に保存した内容を残す (#173)。自動保存も明示的な保存も同じ判定を通る。
+   */
+  private unwritableReason: ProjectFormatError | null = null;
 
   constructor(wc: WindowController, getContext: () => ShowContext) {
     this.wc = wc; this.getContext = getContext;
     this.changes = new Emitter(createProject(wc.events.state.get()));
-    this.saver = new DraftSaver(() => writeProject(this.changes.get()), state => this.storage.set(state));
+    this.saver = new DraftSaver(async () => writeProject(this.writable(this.changes.get())), state => this.storage.set(state));
     this.off = wc.events.state.subscribe(layout => {
       this.changes.set(reconcileProjectLayout(this.changes.get(), layout, this.removedProjectors));
       // 2D の変更はドラッグ中に毎フレーム届くので、止まってから書く。2D そのものは WindowController が
@@ -69,6 +74,17 @@ export class ProjectSession {
     this.autosave();
   }
   private autosave(): void { if (this.initialized && !this.unrestored) this.saver.schedule(); }
+  /** 保存しなかった理由 (読み込み直せない内容)。保存できたら null に戻る。 */
+  get unwritable(): ProjectFormatError | null { return this.unwritableReason; }
+  /** 下書きに書く前に、読み込むときと同じ検証を通す。作業中の GLB は検証済みなので復号し直さない。 */
+  private writable(project: Project): Project {
+    try { parseProject(project, project.assets); } catch (error) {
+      if (error instanceof ProjectFormatError) this.unwritableReason = error;
+      throw error;
+    }
+    this.unwritableReason = null;
+    return project;
+  }
   /** A discrete commit (name, import, undo of an import, copy): saving starts now. */
   update(next: Project, layout = false, replaceContent = true): void {
     if (this.disposed) return;
@@ -83,9 +99,10 @@ export class ProjectSession {
   /** Explicit commit; it also ends the hold a failed restore put on autosave. */
   async save(named = false): Promise<void> {
     const project = this.changes.get();
-    this.unrestored = false;
     try {
       await this.saver.save(async () => {
+        this.writable(project);
+        this.unrestored = false; // 読み込み直せない内容は書かないので、復元できなかった下書きもそのまま残る
         await writeProject(project);
         if (named) await writeProject(project, project.id);
       });

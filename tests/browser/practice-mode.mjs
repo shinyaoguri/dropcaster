@@ -602,7 +602,7 @@ async function slideshowCatalogShapes(page, base) {
 async function slideshowExportRefused(page, base) {
   await page.route('**/sketches.json', r => r.fulfill({ json: [catalog[0], { ...catalog[1], title: 'x'.repeat(10001) }] }));
   await page.reload(); await enterShow(page, 0);
-  await page.waitForFunction(() => /cannot be saved/.test(document.querySelector('#dc-practice-status').textContent));
+  await page.waitForFunction(() => /would not load back/.test(document.querySelector('#dc-practice-status').textContent));
   assert.ok(await statusShown(page), 'the unsavable sketches are reported when the editor opens');
   assert.match(await page.locator('#dc-practice-status').textContent(), /10,000 characters/);
   let downloads = 0; page.on('download', () => downloads++);
@@ -614,6 +614,31 @@ async function slideshowExportRefused(page, base) {
   const venue = await exportProject(page, '#practice-export-venue');
   assert.equal(venue.format, 'dropcaster-venue'); assert.equal(downloads, 1);
   await snapshot(page, base.name + '-export-refused');
+}
+// #173: 読み込み直せない作品の並びは、自動保存でも明示的な保存でも下書きに書かず、前の良い下書きを残す。
+// 保存した作品を開く (/project) へも移らない。
+async function slideshowUnsavableKeepsDraft(page, base) {
+  await enterShow(page, 0); await change(page, '#practice-project-name', 'Good show'); await storageSaved(page);
+  const good = await draftProject(page, base);
+  await page.route('**/sketches.json', r => r.fulfill({ json: [catalog[0], { ...catalog[1], title: 'x'.repeat(10001) }] }));
+  await page.reload(); await enterShow(page, 0);
+  assert.equal(await page.inputValue('#practice-project-name'), 'Good show');
+  await page.waitForFunction(() => /Not saved/.test(document.querySelector('#practice-storage').textContent));
+  assert.match(await page.locator('#practice-storage').textContent(), /10,000 characters/);
+  await page.waitForTimeout(800);
+  assert.deepEqual(await draftProject(page, base), good, 'the autosave does not write what would not load back');
+  await change(page, '#practice-project-name', 'Renamed'); await page.waitForTimeout(800);
+  assert.deepEqual(await draftProject(page, base), good, 'an explicit commit does not write it either');
+  await page.locator('#practice-save').click();
+  await page.waitForFunction(() => /Not saved/.test(document.querySelector('#dc-practice-status').textContent));
+  assert.deepEqual(await draftProject(page, base), good, 'saving a named project does not write it');
+  await page.locator('#practice-open-content').click(); await page.waitForTimeout(800);
+  assert.ok(!new URL(page.url()).pathname.endsWith('/project'), 'it does not open /project with sketches that were not saved');
+  assert.ok(await statusShown(page)); assert.match(await page.locator('#dc-practice-status').textContent(), /Not saved/);
+  assert.deepEqual(await draftProject(page, base), good);
+  // 読み込める並びに戻すと、残した下書きから開ける。
+  await page.unroute('**/sketches.json'); await page.reload(); await enterShow(page, 0);
+  assert.equal(await page.inputValue('#practice-project-name'), 'Good show');
 }
 // #173: 作品が 1 万件を超える下書きは再読み込みでは直らないので、/project は再読み込みを勧めず理由を出す。
 async function projectTooLarge(page, base) {
@@ -1946,7 +1971,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, projectTooLarge, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, slideshowUnsavableKeepsDraft, projectTooLarge, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

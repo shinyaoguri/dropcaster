@@ -59,7 +59,7 @@ const labels = {
   openErrorTitle: ['Could not open the saved project', '保存したプロジェクトを開けませんでした'],
   draftMissing: ['No working project is saved in this browser. Open a sketch and start mapping, or import a package.', 'このブラウザに作業中のプロジェクトが保存されていません。作品を開いてマッピングを始めるか、パッケージを読み込んでください。'],
   draftUnreadable: ['The project saved in this browser could not be read. Reload to try again, or import an exported package.', 'このブラウザに保存したプロジェクトを読み出せませんでした。再読み込みしてもう一度試すか、書き出したパッケージを読み込んでください。'],
-  draftTooLarge: ['The working project saved in this browser has more than 10,000 sketches, so it cannot be opened. Open a slideshow with fewer sketches, or import an exported package.', 'このブラウザに保存した作業中のプロジェクトは作品が10,000件を超えているため開けません。作品の少ないスライドショーから始めるか、書き出したパッケージを読み込んでください。'],
+  draftTooLarge: ['The working project saved in this browser has more than 10,000 sketches, so it cannot be opened. Start mapping from a slideshow with 10,000 sketches or fewer.', 'このブラウザに保存した作業中のプロジェクトは作品が10,000件を超えているため開けません。作品が10,000件以下のスライドショーからマッピングを始めてください。'],
   openError: ['The saved project could not be opened. Reload to try again.', '保存したプロジェクトを開く途中で失敗しました。再読み込みしてもう一度お試しください。'],
   imported: ['Project loaded. Open saved sketches or continue with the current sketch.', 'プロジェクトを読み込みました。保存した作品を開くか、現在の作品で続けられます。'],
   // 取り込み・開く・戻すは確定したが、裏で読み込んだ 3D で会場を表示できなかった (#169)。拒否 (invalid・size など) とは別の文言にする
@@ -80,7 +80,9 @@ const labels = {
   exportRefused: ['Not exported, because this file could not be loaded back. {reason}', '書き出したファイルを読み込み直せないため、書き出していません。{reason}'],
   unreadableValue: ['A value is outside the supported range (for example, a sketch title longer than 10,000 characters).', '扱える範囲を外れた値があります (10,000 文字を超える作品名など)。'],
   // 作業中のショーの作品参照が、保存しても読み込み直せない (#173)。{reason} は形式の文言か unreadableValue
-  contentUnsavable: ['These sketches cannot be saved in a form that loads back, so the working project will not reopen after a reload. Export is also refused. {reason}', 'この作品の並びは読み込み直せる形で保存できないため、再読み込みで作業中のプロジェクトを開けません。書き出しもできません。{reason}'],
+  contentUnsavable: ['These sketches would not load back, so the working project is not saved in this browser and cannot be exported as a package. Exporting the venue only still works. {reason}', 'この作品の並びは読み込み直せないため、作業中のプロジェクトをこのブラウザに保存せず、パッケージも書き出せません。会場だけの書き出しはできます。{reason}'],
+  // 書こうとした内容が読み込み直せないので、下書きに書かなかった (#173)。{reason} は形式の文言か unreadableValue
+  notSaved: ['Not saved, because it would not load back. The working project saved earlier is kept. {reason}', '読み込み直せない内容のため保存していません。前に保存した作業中のプロジェクトを残しています。{reason}'],
   busy: ['Loading venue…', '会場を読み込み中…'], ready: ['Open an output from the output list when ready to project.', '出力一覧の「開く」で投影を開始できます。'],
 } as const;
 type Dictionary = { [K in keyof typeof labels as `practice.${K}`]: string };
