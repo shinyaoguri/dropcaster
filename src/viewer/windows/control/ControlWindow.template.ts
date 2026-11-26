@@ -224,7 +224,7 @@ export function controlPanelHtml(): string {
             <div class="dc-tool-panel" id="dc-tool-panel-preview3d" role="tabpanel" aria-labelledby="dc-activity-preview3d" data-tool-panel="preview3d">
             </div>
 
-            <!-- プロジェクト: 保存・読込 (PracticePanel が先頭に入れる) と設定の入出力 -->
+            <!-- プロジェクト: 保存・読込 (ProjectPanel が先頭に入れる。3D は読み込まない) と設定の入出力 -->
             <div class="dc-tool-panel" id="dc-tool-panel-project" role="tabpanel" aria-labelledby="dc-activity-project" data-tool-panel="project">
               <div class="tool-section">
                 <h3 data-i18n="control.io.title">${t('control.io.title')}</h3>
