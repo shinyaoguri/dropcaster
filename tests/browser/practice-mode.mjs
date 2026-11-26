@@ -673,7 +673,8 @@ async function unavailable(page) {
   assert.equal(await page.locator('#dc-inline-editor').isHidden(), true);
 }
 // #169: WebGL が使えなくても、プロジェクトの節 (名前・保存・複製・開く・書き出し・取り込み・会場の書き出し・取り込み前に戻す) を
-// すべて使える。3D を開くまでは Three.js を読み込まず、WebGL も初期化しない。
+// すべて使える。節を開く・名前・保存・書き出しでは Three.js を読み込まず、WebGL も初期化しない。形のある会場を取り込む・開くときだけ
+// 3D を裏で読み込み (#169 の (b))、その失敗は知らせるが取り込みは確定したまま。
 async function projectWithoutWebgl(page, base) {
   await page.evaluate(() => {
     window.webglAttempts = 0; window.originalGetContext = HTMLCanvasElement.prototype.getContext;
@@ -687,53 +688,84 @@ async function projectWithoutWebgl(page, base) {
   await projectControls(page);
   const status = page.locator('#dc-practice-status'), failed = () => status.evaluate(e => e.classList.contains('is-error'));
   const name = () => page.locator('#practice-project-name').inputValue();
+  const attempts = () => page.evaluate(() => window.webglAttempts);
+  const threeLoaded = () => observedRequests.get(page).some(url => /three(?:\.js|\.module|_addons)|PracticePanel|ProjectionPreview|loadVenue/.test(url));
+  const saved = page.locator('#practice-saved-projects');
+  const openSaved = async label => {
+    await saved.selectOption({ label }); await page.locator('#practice-open-project').click();
+    await page.waitForFunction(label => document.querySelector('#practice-project-name').value === label, label);
+  };
+  /** 取り込み・開くの後の裏の読み込みが、WebGL を作れずに 3D の失敗として終わるのを待つ。 */
+  const backgroundLoadFails = async before => {
+    await page.waitForFunction(before => window.webglAttempts > before, before);
+    await page.waitForSelector('#practice-retry:not([hidden])');
+    assert.match(await status.textContent(), /3D is unavailable/); assert.equal(await failed(), true);
+    assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true', '2D editing continues');
+  };
+  // 名前・書き出し・名前を付けて保存・複製・保存済みを開く・会場の書き出し・形の無い会場の取り込みと戻すは、3D を読み込まない。
   await change(page, '#practice-project-name', 'No GPU show');
   const first = await exportProject(page);
   assert.equal(first.format, 'dropcaster-project'); assert.equal(first.name, 'No GPU show'); assert.equal(first.venue.scene.kind, 'sample');
-  // 会場 (GLB) とプロジェクタ付きのプロジェクトを取り込み、書き出し直しても会場・プロジェクタ・資産が保たれる。
-  const withVenue = structuredClone(first);
-  withVenue.assets = [{ id: 'wall-glb', name: 'wall.glb', mimeType: 'model/gltf-binary', data: Buffer.from(venueFixture()).toString('base64') }];
-  withVenue.venue.scene = { ...withVenue.venue.scene, kind: 'glb', assetId: 'wall-glb' };
-  Object.assign(withVenue.venue.projectors[0], { verticalFovDegrees: 50, lensShift: [0, -.07], position: [1.25, 2, 4] });
-  await importProject(page, withVenue);
-  assert.match(await status.textContent(), /Project loaded/); assert.equal(await failed(), false);
-  const round = await exportProject(page);
-  assert.deepEqual(round.assets, withVenue.assets); assert.deepEqual(round.venue.scene, withVenue.venue.scene);
-  assert.deepEqual(round.venue.projectors, withVenue.venue.projectors);
-  // 壊れた GLB は WebGL が無くても拒否し、作業中のプロジェクトを変えない。
-  await importProject(page, { ...round, assets: [{ ...round.assets[0], data: Buffer.from('broken').toString('base64') }] });
-  assert.match(await status.textContent(), /missing or damaged/); assert.equal(await failed(), true);
-  assert.deepEqual(await exportProject(page), round, 'a rejected import does not change the project');
-  // 名前を付けて保存・複製して保存・保存済み一覧から開く。
-  const saved = page.locator('#practice-saved-projects');
   await page.locator('#practice-save').click(); await page.waitForFunction(() => document.querySelector('#practice-saved-projects').options.length === 1);
   await change(page, '#practice-project-name', 'No GPU copy');
   await page.locator('#practice-duplicate').click(); await page.waitForFunction(() => document.querySelector('#practice-saved-projects').options.length === 2);
   assert.deepEqual((await saved.locator('option').allTextContents()).sort(), ['No GPU copy', 'No GPU show']);
-  await saved.selectOption({ label: 'No GPU show' }); await page.locator('#practice-open-project').click();
-  await page.waitForFunction(() => document.querySelector('#practice-project-name').value === 'No GPU show');
-  const reopened = await exportProject(page);
-  assert.equal(reopened.id, round.id); assert.deepEqual(reopened.assets, withVenue.assets); assert.deepEqual(reopened.venue.projectors, withVenue.venue.projectors);
-  // 会場だけを書き出し、会場ファイルを取り込み、取り込み前に戻す。
+  await openSaved('No GPU show');
+  assert.equal((await exportProject(page)).id, first.id);
+  const sampleVenue = await exportProject(page, '#practice-export-venue');
+  assert.equal(sampleVenue.format, 'dropcaster-venue'); assert.equal(sampleVenue.venue.scene.kind, 'sample');
+  const x = first.venue.projectors[0].position[0]; sampleVenue.venue.projectors[0].position[0] = x + 1;
+  await importProject(page, sampleVenue);
+  assert.match(await status.textContent(), /Venue loaded/); assert.equal(await failed(), false);
+  assert.equal((await exportProject(page)).venue.projectors[0].position[0], x + 1);
+  await page.locator('#practice-undo-import').click();
+  assert.equal((await exportProject(page)).venue.projectors[0].position[0], x);
+  assert.equal(await attempts(), 0, 'project operations without a venue shape do not initialize WebGL');
+  assert.equal(threeLoaded(), false, 'project operations without a venue shape do not load Three');
+  assert.equal(await page.locator('#practice-retry').isHidden(), true, 'no 3D failure is reported before 3D is needed');
+  // 会場 (GLB) とプロジェクタ付きのプロジェクトを取り込むと 3D を裏で読み込む。WebGL が無いのでその失敗を知らせるが、
+  // 取り込みは確定し、書き出し直しても会場・プロジェクタ・資産が保たれる。
+  const withVenue = structuredClone(first);
+  withVenue.assets = [{ id: 'wall-glb', name: 'wall.glb', mimeType: 'model/gltf-binary', data: Buffer.from(venueFixture()).toString('base64') }];
+  withVenue.venue.scene = { ...withVenue.venue.scene, kind: 'glb', assetId: 'wall-glb' };
+  Object.assign(withVenue.venue.projectors[0], { verticalFovDegrees: 50, lensShift: [0, -.07], position: [1.25, 2, 4] });
+  await importProject(page, withVenue); await backgroundLoadFails(0);
+  assert.equal(threeLoaded(), true, 'importing a venue shape loads 3D in the background');
+  const round = await exportProject(page);
+  assert.deepEqual(round.assets, withVenue.assets); assert.deepEqual(round.venue.scene, withVenue.venue.scene);
+  assert.deepEqual(round.venue.projectors, withVenue.venue.projectors);
+  // 3D を読み込んだ後も、名前・保存・書き出しは 3D を読み込み直さない。壊れた GLB は WebGL が無くても拒否し、作業中のプロジェクトを変えない。
+  const tried = await attempts();
+  await change(page, '#practice-project-name', 'No GPU venue');
+  await page.locator('#practice-save').click(); await page.waitForFunction(() => [...document.querySelector('#practice-saved-projects').options].some(o => o.text === 'No GPU venue'));
+  const named = await exportProject(page); assert.equal(named.name, 'No GPU venue');
   const venueFile = await exportProject(page, '#practice-export-venue');
   assert.equal(venueFile.format, 'dropcaster-venue'); assert.deepEqual(venueFile.assets, withVenue.assets);
   assert.deepEqual(venueFile.venue.projectors, withVenue.venue.projectors); assert.equal('content' in venueFile, false);
+  await importProject(page, { ...named, assets: [{ ...named.assets[0], data: Buffer.from('broken').toString('base64') }] });
+  assert.match(await status.textContent(), /missing or damaged/); assert.equal(await failed(), true);
+  assert.deepEqual(await exportProject(page), named, 'a rejected import does not change the project');
+  assert.equal(await attempts(), tried, 'naming, saving, exporting and a rejected import do not load 3D again');
+  // 保存済みを開く: 形の無い会場は読み込まず、形のある会場は裏で読み込む (失敗しても開いた内容は残る)。
+  await openSaved('No GPU copy'); assert.equal((await exportProject(page)).venue.scene.kind, 'sample');
+  assert.equal(await attempts(), tried, 'opening a saved project without a venue shape does not load 3D');
+  await openSaved('No GPU venue'); await backgroundLoadFails(tried);
+  const reopened = await exportProject(page);
+  assert.equal(reopened.id, first.id); assert.deepEqual(reopened.assets, withVenue.assets); assert.deepEqual(reopened.venue.projectors, withVenue.venue.projectors);
+  // 会場ファイルを取り込み、取り込み前に戻す。
   venueFile.venue.projectors[0].position[0] = 2.5;
-  await importProject(page, venueFile);
-  assert.match(await status.textContent(), /Venue loaded/); assert.equal(await failed(), false);
+  const beforeVenue = await attempts();
+  await importProject(page, venueFile); await backgroundLoadFails(beforeVenue);
   const received = await exportProject(page);
-  assert.equal(received.venue.projectors[0].position[0], 2.5); assert.equal(received.name, 'No GPU show'); assert.deepEqual(received.assets, withVenue.assets);
+  assert.equal(received.venue.projectors[0].position[0], 2.5); assert.equal(received.name, 'No GPU venue'); assert.deepEqual(received.assets, withVenue.assets);
   assert.equal(await page.locator('#practice-undo-import').isEnabled(), true);
   await page.locator('#practice-undo-import').click();
   assert.equal((await exportProject(page)).venue.projectors[0].position[0], 1.25, 'undo restores the project before the import');
-  assert.equal(await page.evaluate(() => window.webglAttempts), 0, 'project operations do not initialize WebGL');
-  assert.ok(!observedRequests.get(page).some(url => /three(?:\.js|\.module|_addons)|PracticePanel|ProjectionPreview|loadVenue/.test(url)), 'project operations do not load Three');
-  assert.equal(await page.locator('#practice-retry').isHidden(), true, 'no 3D failure is reported before 3D is opened');
-  // 3D を開くと失敗を知らせるが、プロジェクトの節はそのまま残る。
+  // 3D を開いても失敗を知らせるだけで、プロジェクトの節はそのまま残る。
   await page.locator('#preview-tab').click(); await page.waitForSelector('#practice-retry:not([hidden])');
   assert.match(await status.innerText(), /3D is unavailable/);
   assert.equal(await page.locator('#practice-export').count(), 1); assert.equal(await page.locator('#practice-export').isVisible(), true);
-  assert.equal(await name(), 'No GPU show');
+  assert.equal(await name(), 'No GPU venue');
   await change(page, '#practice-project-name', 'Still editable');
   assert.equal((await exportProject(page)).name, 'Still editable');
   // 「保存した作品を開く」(/project) も、3D の失敗を知らせるだけでプロジェクトの節を残す。
@@ -748,6 +780,59 @@ async function projectWithoutWebgl(page, base) {
   await page.waitForFunction(() => document.querySelector('#practice-dimensions')?.textContent === 'Venue size: 6.00 × 4.00 × 0.00 m');
   assert.equal(await page.evaluate(() => window.practicePreview.diagnostics().venueTriangles), 2);
   assert.equal(await page.evaluate(() => window.practicePreview.projector.fov), 50);
+  await closeEditor(page);
+}
+// #169 の (b): WebGL が使える環境で、「プロジェクト」パネルから形のある会場を取り込む・保存済みを開くと、3D のタブを開かなくても
+// 確定の後に 3D を裏で読み込み、2D 編集の背景 (プロジェクタ視点の会場) がすぐ出る。作れない会場の失敗は、取り込み前に戻せるうちに分かる。
+async function projectImport3d(page) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await projectControls(page);
+  const status = page.locator('#dc-practice-status'), failed = () => status.evaluate(e => e.classList.contains('is-error'));
+  const background = page.locator('.dc-practice-background');
+  const loaded = () => observedRequests.get(page).some(url => /PracticePanel/.test(url));
+  const onMapping = async () => assert.equal(await page.locator('#mapping-tab').getAttribute('aria-selected'), 'true', 'the mapping tab stays selected');
+  await change(page, '#practice-project-name', 'Background');
+  const first = await exportProject(page);
+  await page.locator('#practice-save').click(); await page.waitForFunction(() => document.querySelector('#practice-saved-projects').options.length === 1);
+  assert.equal(loaded(), false, 'opening the project panel, naming, saving and exporting do not load 3D');
+  const glb = (data, base = first) => {
+    const project = structuredClone(base);
+    project.assets = [{ id: 'wall-glb', name: 'wall.glb', mimeType: 'model/gltf-binary', data: Buffer.from(data).toString('base64') }];
+    project.venue.scene = { ...project.venue.scene, kind: 'glb', assetId: 'wall-glb' };
+    return project;
+  };
+  // 3D で作れない会場 (三角形 0) は、3D を開いていなくても取り込みの直後に理由と再試行が出る。取り込み前に戻せる。
+  const empty = glb(venueFixture(d => { d.scenes[0].nodes = []; }));
+  await importProject(page, empty);
+  await page.waitForSelector('#practice-retry:not([hidden])');
+  assert.match(await status.textContent(), /300,000 triangles/); assert.equal(await failed(), true);
+  assert.equal(await statusShown(page), true, 'the failure is on screen right after the import');
+  assert.equal(loaded(), true, 'importing a venue shape loads 3D in the background'); await onMapping();
+  assert.equal((await exportProject(page)).assets[0].data, empty.assets[0].data, 'the validated import is kept');
+  assert.equal(await page.locator('#practice-undo-import').isEnabled(), true, 'undo is still available when the failure shows');
+  await page.locator('#practice-undo-import').click();
+  const restored = await exportProject(page);
+  assert.deepEqual(restored.assets, first.assets); assert.deepEqual(restored.venue.scene, first.venue.scene);
+  // 作れる会場は、3D のタブを開かずに 2D 編集の背景が出る。取り込みの状態文は残り、3D の読み込みの文言で上書きしない。
+  const wall = glb(venueFixture());
+  await importProject(page, wall); await background.waitFor({ state: 'attached' });
+  await onMapping(); assert.equal(await page.locator('#practice-retry').isHidden(), true);
+  assert.match(await status.textContent(), /Project loaded/); assert.equal(await failed(), false);
+  assert.equal(await background.evaluate(img => img.complete && img.naturalWidth > 0), true, 'the projector view of the venue is drawn');
+  await page.locator('#practice-save').click(); await page.waitForTimeout(300);
+  // 編集を閉じて開き直すと背景は無い (3D を読み込まない)。保存済みを開くと、3D のタブを開かずに背景が出る。
+  await closeEditor(page); await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await projectControls(page);
+  assert.equal(await background.count(), 0, 'reopening the editor does not load 3D');
+  await page.locator('#practice-saved-projects').selectOption({ label: 'Background' }); await page.locator('#practice-open-project').click();
+  await background.waitFor({ state: 'attached' }); await onMapping();
+  assert.deepEqual((await exportProject(page)).assets, wall.assets);
+  // 出力レイアウトのタブにいるときに作れない会場を取り込んでも、失敗を知らせるだけでタブは動かさない。
+  await page.locator('#layout-tab').click();
+  await importProject(page, empty); await page.waitForSelector('#practice-retry:not([hidden])');
+  assert.equal(await page.locator('#layout-tab').getAttribute('aria-selected'), 'true');
   await closeEditor(page);
 }
 async function cancellation(page) {
@@ -1662,12 +1747,12 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);
         try {
-          const page = await setup(context, base, testName.toLowerCase().includes('slideshow') ? '/slideshow' : testName === 'recovery' ? '/w' : '/a', !testName.startsWith('workspace') && testName !== 'projectWithoutWebgl');
+          const page = await setup(context, base, testName.toLowerCase().includes('slideshow') ? '/slideshow' : testName === 'recovery' ? '/w' : '/a', !testName.startsWith('workspace') && !['projectWithoutWebgl', 'projectImport3d'].includes(testName));
           await run(page, base); assert.deepEqual(errors, [], `${name}/${testName}: browser errors`);
           console.log(`${name}/${testName}: PASS`);
         } finally { await context.close(); }

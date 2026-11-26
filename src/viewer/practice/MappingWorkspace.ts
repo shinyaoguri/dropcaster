@@ -20,6 +20,8 @@ export class MappingWorkspace {
   private session: ProjectSession | null = null;
   private panel: PracticePanel | null = null;
   private pendingPanel: Promise<void> | null = null;
+  /** 読み込み中の 3D を、取り込みの後に裏で始めたまま誰も表示を求めていない。状態文を変えず、タブも動かさない。 */
+  private quietPanel = false;
   /** プロジェクトの操作。3D の PracticePanel とは別に、編集を開いている間ずっと置く (ADR 0012)。 */
   private projectPanel: ProjectPanel | null = null;
   private editor: ControlWindow | null = null;
@@ -156,7 +158,8 @@ export class MappingWorkspace {
     const generation = this.generation, scope = this.scope;
     void session.ready.then(() => {
       if (!this.active || this.disposed || generation !== this.generation) return;
-      this.projectPanel = new ProjectPanel(scope, session, (key, error) => this.status(key, error));
+      // 取り込み・保存済みを開くで形のある会場が入ったら、/project から開くときと同じく 3D を読み込んで背景を作る (#169)。
+      this.projectPanel = new ProjectPanel(scope, session, (key, error) => this.status(key, error), () => void this.ensurePanel(true));
     });
     void this.connectSource();
   }
@@ -174,17 +177,22 @@ export class MappingWorkspace {
     }
   }
 
-  private ensurePanel(): Promise<void> {
+  /** `quiet` は取り込みの後の裏の読み込み。取り込みの結果の状態文を残し、失敗しても 3D 以外のタブは動かさない。 */
+  private ensurePanel(quiet = false): Promise<void> {
     if (!this.active || this.disposed) return Promise.resolve();
-    if (this.pendingPanel) return this.pendingPanel;
+    if (this.pendingPanel) {
+      if (!quiet && this.quietPanel) { this.quietPanel = false; this.status('practice.loading'); }
+      return this.pendingPanel;
+    }
     if (this.panel) return Promise.resolve();
-    const generation = this.generation;
+    const generation = this.generation; this.quietPanel = quiet;
     const pending = this.loadPanel(generation).finally(() => { if (this.pendingPanel === pending) this.pendingPanel = null; });
     this.pendingPanel = pending;
     return pending;
   }
   private async loadPanel(generation: number): Promise<void> {
-    this.status('practice.loading'); this.setRetry(false);
+    if (!this.quietPanel) this.status('practice.loading');
+    this.setRetry(false);
     try {
       const [{ PracticePanel }] = await Promise.all([import('./PracticePanel'), this.session!.ready]);
       if (!this.active || this.disposed || generation !== this.generation || !this.scope || !this.editor) return;
@@ -194,18 +202,20 @@ export class MappingWorkspace {
       await panel.initialize();
       if (!this.active || generation !== this.generation || this.panel !== panel) { panel.dispose(); return; }
       panel.setVisible(this.editor.selectedTab === 'preview');
-      this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting');
+      if (!this.quietPanel) this.status(this.options.wc.events.stream.get() ? 'practice.ready' : 'practice.waiting');
     } catch (error) {
       if (!this.active || this.disposed || generation !== this.generation) return;
       console.warn('3D preview unavailable', error);
       // 会場を作れなかったときはその理由を、WebGL が使えないなどそれ以外は 3D を表示できない旨を知らせる。
+      // 裏の読み込みでも知らせる。取り込みは確定したままで、取り込み前に戻せる (#169)。
       this.status(projectErrorKey(error) ?? 'practice.error', true); this.previewFailed();
     }
   }
+  /** 3D を表示しているときだけマッピングへ戻す。取り込みの後の裏の読み込み・作り直しの失敗で、出力レイアウトなどから動かさない。 */
   private previewFailed(): void {
     this.panel?.dispose(); this.panel = null;
     this.setRetry(true);
-    this.editor?.selectTab('mapping');
+    if (this.editor?.selectedTab === 'preview') this.editor.selectTab('mapping');
   }
   private setRetry(visible: boolean): void {
     this.notice?.querySelector('#practice-retry')?.toggleAttribute('hidden', !visible);
