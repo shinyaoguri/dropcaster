@@ -1,6 +1,7 @@
 import { readFile, readdir, stat } from 'fs/promises';
-import { join, resolve, sep } from 'path';
+import { join, relative, resolve, sep } from 'path';
 import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE, OP_METADATA_FILE } from './constants.js';
+import { brokenSymlinkError, readOptionalTextFile } from './file-manager.js';
 import { t } from '../../cli/i18n/index.js';
 
 /**
@@ -30,8 +31,9 @@ import { t } from '../../cli/i18n/index.js';
 /**
  * 作品のディレクトリを解析する。
  * index.html が無い (ファイルでない) ディレクトリは作品ではないので、警告して null を返す。
- * index.html があるのに読めない・解析できないときは例外を投げる。呼び出し側 (scan) が作品ごとの
- * 失敗として集計し、終了コードに反映する (#213)。
+ * index.html があるのに読めない・解析できないとき (リンク先の無い symlink を含む)、メタデータ
+ * (dropcaster.meta.json / _op-meta.json) があるのに読めない・壊れているときは例外を投げる。
+ * 呼び出し側 (scan) が作品ごとの失敗として集計し、終了コードに反映する (#213, #275)。
  * @param {string} dirName
  * @param {string} sketchPath
  * @returns {Promise<SketchInfo | null>} index.html が無ければ null
@@ -49,7 +51,7 @@ export async function analyzeSketch(dirName, sketchPath) {
   const htmlContent = await readFile(indexPath, 'utf-8');
   const metadata = extractMetadata(htmlContent, dirName);
   const manualMetadata = await loadManualMetadata(sketchPath, dirName);
-  const opMetadata = await loadOpMetadata(sketchPath, dirName);
+  const opMetadata = await loadOpMetadata(sketchPath);
 
   // インタラクティブ要素を検出
   const detectedInteractiveElements = await detectInteractiveElements(sketchPath, htmlContent);
@@ -86,7 +88,8 @@ export async function analyzeSketch(dirName, sketchPath) {
 
 /**
  * 作品の入口 (index.html) の stat。無い (ENOENT)・ファイルでないときは null。
- * それ以外の失敗 (権限が無くて確かめられないなど) は「無い」と区別できるよう例外のまま返す。
+ * それ以外の失敗 (権限が無くて確かめられない・リンク先の無い symlink など) は「無い」と区別できるよう
+ * 例外のまま返す。
  * @param {string} indexPath
  * @returns {Promise<import('fs').Stats | null>}
  */
@@ -95,52 +98,72 @@ async function statSketchEntry(indexPath) {
     const stats = await stat(indexPath);
     return stats.isFile() ? stats : null;
   } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-async function loadManualMetadata(sketchPath, dirName) {
-  const metadataPath = join(sketchPath, MANUAL_METADATA_FILE);
-
-  try {
-    const rawMetadata = await readFile(metadataPath, 'utf-8');
-    const parsedMetadata = JSON.parse(rawMetadata);
-    const normalizedMetadata = normalizeManualMetadata(parsedMetadata);
-    console.error(t('sketchAnalyzer.manualMetadataLoaded', { path: `${dirName}/${MANUAL_METADATA_FILE}` }));
-    return normalizedMetadata;
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      console.warn(`Warning: Could not load ${dirName}/${MANUAL_METADATA_FILE}:`, error.message);
-    }
-    return {};
+    if (error.code !== 'ENOENT') throw error;
+    const brokenLink = await brokenSymlinkError(indexPath);
+    if (brokenLink) throw brokenLink;
+    return null;
   }
 }
 
 /**
- * dropcaster fetch が書いた _op-meta.json からタイトル・説明を読む。空の値は「値なし」として返さない。
- * ファイルが無い・読めない・壊れているときは空 (読めない・壊れているときは警告する)。
+ * 作品のディレクトリにあるメタデータの JSON を読む。ファイルが無いときは null。
+ * 読めない・JSON として壊れている・オブジェクトでないときは、ファイル名を添えて例外を投げる
+ * (黙って空として扱うと、カタログの title / tags などが前触れなく別の値に変わるため。#275)。
+ * @param {string} sketchPath
+ * @param {string} fileName
+ * @returns {Promise<Record<string, unknown> | null>}
+ */
+async function loadMetadataFile(sketchPath, fileName) {
+  let raw;
+  try {
+    raw = await readOptionalTextFile(join(sketchPath, fileName));
+  } catch (error) {
+    throw new Error(`Could not read ${fileName}: ${error.message}`, { cause: error });
+  }
+  if (raw === null) return null;
+  let parsed;
+  try {
+    // 先頭の BOM (Windows のメモ帳などが付ける) は JSON の一部ではないので除く
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ''));
+  } catch (error) {
+    throw new Error(`${fileName} is not valid JSON: ${error.message}`, { cause: error });
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${fileName} must contain a JSON object`);
+  }
+  return parsed;
+}
+
+/**
+ * 手動メタデータ (dropcaster.meta.json) を読む。ファイルが無いときは空。
+ * 読めない・壊れているときは例外 (loadMetadataFile)。
  * @param {string} sketchPath
  * @param {string} dirName
+ */
+async function loadManualMetadata(sketchPath, dirName) {
+  const parsedMetadata = await loadMetadataFile(sketchPath, MANUAL_METADATA_FILE);
+  if (!parsedMetadata) return {};
+  const normalizedMetadata = normalizeManualMetadata(parsedMetadata);
+  console.error(t('sketchAnalyzer.manualMetadataLoaded', { path: `${dirName}/${MANUAL_METADATA_FILE}` }));
+  return normalizedMetadata;
+}
+
+/**
+ * dropcaster fetch が書いた _op-meta.json からタイトル・説明を読む。空の値は「値なし」として返さない。
+ * ファイルが無いときは空。読めない・壊れているときは例外 (loadMetadataFile)。
+ * @param {string} sketchPath
  * @returns {Promise<{ title?: string, description?: string }>}
  */
-async function loadOpMetadata(sketchPath, dirName) {
-  try {
-    const parsed = JSON.parse(await readFile(join(sketchPath, OP_METADATA_FILE), 'utf-8'));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    /** @type {{ title?: string, description?: string }} */
-    const result = {};
-    for (const field of /** @type {const} */ (['title', 'description'])) {
-      const value = normalizeString(parsed[field]);
-      if (value) result[field] = value;
-    }
-    return result;
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      console.warn(`Warning: Could not load ${dirName}/${OP_METADATA_FILE}:`, error.message);
-    }
-    return {};
+async function loadOpMetadata(sketchPath) {
+  const parsed = await loadMetadataFile(sketchPath, OP_METADATA_FILE);
+  /** @type {{ title?: string, description?: string }} */
+  const result = {};
+  if (!parsed) return result;
+  for (const field of /** @type {const} */ (['title', 'description'])) {
+    const value = normalizeString(parsed[field]);
+    if (value) result[field] = value;
   }
+  return result;
 }
 
 function normalizeManualMetadata(metadata) {
@@ -323,48 +346,57 @@ function detectSketchType(htmlContent, sketchPath) {
 }
 
 /**
- * インタラクティブ要素を検出
+ * インタラクティブ要素を検出する。
+ * 作品の JS (ディレクトリ直下の .js と、<script src> が指すローカルのファイル) が読めないとき
+ * (ENOENT 以外の失敗・リンク先の無い symlink)、作品のディレクトリを一覧できないときは、ファイル名を
+ * 添えて例外を投げる。黙って飛ばすと、カタログの interactiveElements が前触れなく変わるため (#275)。
+ * <script src> が指す先が無い (ENOENT など、ファイルを指していない) 参照は、今までどおり無視する。
+ * @param {string} sketchPath
+ * @param {string} htmlContent
+ * @returns {Promise<string[]>}
  */
 export async function detectInteractiveElements(sketchPath, htmlContent) {
   const elements = new Set();
 
-  try {
-    // HTMLファイル内のインラインスクリプトから検出
-    const scriptContent = extractInlineScripts(htmlContent);
-    detectInteractivePatterns(scriptContent, elements);
+  // HTMLファイル内のインラインスクリプトから検出
+  const scriptContent = extractInlineScripts(htmlContent);
+  detectInteractivePatterns(scriptContent, elements);
 
-    // 外部JavaScriptファイルを検索・解析
-    const jsFiles = await findJavaScriptFiles(sketchPath);
-    for (const jsFile of jsFiles) {
-      try {
-        const jsContent = await readFile(jsFile, 'utf-8');
-        detectInteractivePatterns(jsContent, elements);
-      } catch (error) {
-        console.warn(`Warning: Could not read JS file ${jsFile}:`, error.message);
-      }
-    }
+  // 外部JavaScriptファイルを検索・解析
+  const jsFiles = await findJavaScriptFiles(sketchPath);
+  for (const jsFile of jsFiles) {
+    const jsContent = await readSketchScript(sketchPath, jsFile);
+    if (jsContent !== null) detectInteractivePatterns(jsContent, elements);
+  }
 
-    // HTMLファイル内のスクリプトsrc属性から検出
-    const scriptSrcs = extractScriptSrcs(htmlContent);
-    for (const src of scriptSrcs) {
-      if (!src.startsWith('http')) { // 外部CDNは除外
-        try {
-          const jsPath = resolve(sketchPath, src);
-          // `../` を含む src でスケッチディレクトリ外を読まないようにする
-          if (!jsPath.startsWith(resolve(sketchPath) + sep)) continue;
-          const jsContent = await readFile(jsPath, 'utf-8');
-          detectInteractivePatterns(jsContent, elements);
-        } catch (error) {
-          // ファイルが見つからない場合は無視
-        }
-      }
-    }
-
-  } catch (error) {
-    console.warn(`Warning: Error detecting interactive elements:`, error.message);
+  // HTMLファイル内のスクリプトsrc属性から検出
+  const scriptSrcs = extractScriptSrcs(htmlContent);
+  for (const src of scriptSrcs) {
+    if (src.startsWith('http')) continue; // 外部CDNは除外
+    const jsPath = resolve(sketchPath, src);
+    // `../` を含む src でスケッチディレクトリ外を読まないようにする
+    if (!jsPath.startsWith(resolve(sketchPath) + sep)) continue;
+    const jsContent = await readSketchScript(sketchPath, jsPath);
+    if (jsContent !== null) detectInteractivePatterns(jsContent, elements);
   }
 
   return Array.from(elements);
+}
+
+/**
+ * 作品の JS を読む。ファイルを指していない (無い・途中がファイル・ディレクトリ) ときは null。
+ * 読めない (権限など)・リンク先の無い symlink のときは、作品内のパスを添えて例外を投げる。
+ * @param {string} sketchPath
+ * @param {string} jsPath
+ * @returns {Promise<string | null>}
+ */
+async function readSketchScript(sketchPath, jsPath) {
+  try {
+    return await readOptionalTextFile(jsPath);
+  } catch (error) {
+    if (error?.code === 'ENOTDIR' || error?.code === 'EISDIR') return null;
+    throw new Error(`Could not read ${relative(sketchPath, jsPath)}: ${error.message}`, { cause: error });
+  }
 }
 
 /**
@@ -393,23 +425,21 @@ function extractScriptSrcs(htmlContent) {
 }
 
 /**
- * スケッチディレクトリ内のJavaScriptファイルを検索
+ * スケッチディレクトリ直下の .js ファイル (ディレクトリを除く) を返す。
+ * ディレクトリを一覧できないときは例外を投げる (detectInteractiveElements)。
+ * @param {string} sketchPath
+ * @returns {Promise<string[]>}
  */
 async function findJavaScriptFiles(sketchPath) {
-  const jsFiles = [];
-
+  let entries;
   try {
-    const files = await readdir(sketchPath);
-    for (const file of files) {
-      if (file.endsWith('.js')) {
-        jsFiles.push(join(sketchPath, file));
-      }
-    }
+    entries = await readdir(sketchPath, { withFileTypes: true });
   } catch (error) {
-    // ディレクトリが読めない場合は空配列を返す
+    throw new Error(`Could not list the sketch directory: ${error.message}`, { cause: error });
   }
-
-  return jsFiles;
+  return entries
+    .filter(entry => entry.name.endsWith('.js') && !entry.isDirectory())
+    .map(entry => join(sketchPath, entry.name));
 }
 
 /**

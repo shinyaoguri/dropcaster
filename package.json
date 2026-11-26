@@ -62,21 +62,21 @@
     "test:slideshow": "node tests/browser/slideshow-prefetch.mjs"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261109.1",
+    "@cloudflare/workers-types": "^5.20261116.1",
     "@types/node": "^26.6.6",
     "@types/three": "0.187.0",
     "nodemon": "^3.0.2",
     "typescript": "^7.0.2",
-    "wrangler": "^4.158.0"
+    "wrangler": "^4.162.0"
   },
   "dependencies": {
     "chalk": "^6.0.1",
     "commander": "^15.1.0",
     "ora": "^10.0.0",
-    "playwright": "^1.65.0",
+    "playwright": "^1.65.1",
     "prompts": "^2.4.2",
     "terser": "^5.51.2",
-    "vite": "^8.3.6",
+    "vite": "^8.3.8",
     "three": "0.187.0"
   },
   "overrides": {
