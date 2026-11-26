@@ -8,6 +8,9 @@
  *   - drafting=false → 通常編集モード。頂点 / 辺中点（＋）/ 重心（✦）ハンドルを表示し、
  *     ドラッグや右クリック削除で編集する。
  *
+ * 編集ロック (#190): active mask がロック中なら、頂点は淡く出して位置だけ見せ、ドラッグ・追加・削除・平行移動を
+ * 受け付けない (辺中点と平行移動のハンドルは出さない)。
+ *
  * 描画は InactivePreviewPool.sync が canvas-mappings レイヤに行う（drafting で polyline /
  * commit 後 polygon の点列だけを与える）。ここは編集ハンドル群と pen mode 用 click 受けを
  * canvas-host / canvas-handles に張る。
@@ -130,6 +133,7 @@ export class MaskEditPanel {
   private refreshEditingHandles(layer: HTMLElement, points: Point[]): void {
     const doc = this.doc;
     if (!doc) return;
+    const locked = this.ctrl?.isItemLocked() ?? false;
 
     while (this.vertexHandles.length > points.length) {
       const v = this.vertexHandles.pop()!;
@@ -154,6 +158,7 @@ export class MaskEditPanel {
       const v = this.vertexHandles[i];
       v.el.style.left = `${points[i].x}px`;
       v.el.style.top = `${points[i].y}px`;
+      v.el.classList.toggle('locked', locked);
     }
     for (let i = 0; i < points.length; i++) {
       const a = points[i];
@@ -162,6 +167,7 @@ export class MaskEditPanel {
       const my = (a.y + b.y) / 2;
       this.edgeHandles[i].el.style.left = `${mx}px`;
       this.edgeHandles[i].el.style.top = `${my}px`;
+      this.edgeHandles[i].el.style.display = locked ? 'none' : '';
     }
 
     if (!this.translateHandle) {
@@ -174,6 +180,7 @@ export class MaskEditPanel {
     if (points.length > 0) { cx /= points.length; cy /= points.length; }
     this.translateHandle.style.left = `${cx}px`;
     this.translateHandle.style.top = `${cy}px`;
+    this.translateHandle.style.display = locked ? 'none' : '';
   }
 
   private clearEditingHandles(): void {
@@ -203,7 +210,7 @@ export class MaskEditPanel {
     const dispose = draggable<Snap>(el, doc, {
       onStart: (e) => {
         const ctrl = this.ctrl;
-        if (!ctrl) return null;
+        if (!ctrl || ctrl.isItemLocked()) return null; // ロック中は動かさない (#190)
         const state = ctrl.getState();
         const mask = state.mappings.find(m => m.id === state.activeId);
         if (!mask || !isMaskEntry(mask)) return null;
@@ -291,7 +298,7 @@ export class MaskEditPanel {
     const dispose = draggable<Snap>(el, doc, {
       onStart: (e) => {
         const ctrl = this.ctrl;
-        if (!ctrl) return null;
+        if (!ctrl || ctrl.isItemLocked()) return null; // ロック中は動かさない (#190)
         const state = ctrl.getState();
         const mask = state.mappings.find(m => m.id === state.activeId);
         if (!mask || !isMaskEntry(mask)) return null;
@@ -333,7 +340,7 @@ export class MaskEditPanel {
   private removeVertex(idx: number): void {
     const ctrl = this.ctrl;
     const opts = this.opts;
-    if (!ctrl || !opts) return;
+    if (!ctrl || !opts || ctrl.isItemLocked()) return; // ロック中は頂点を増減しない (#190)
     const state = ctrl.getState();
     const mask = state.mappings.find(m => m.id === state.activeId);
     if (!mask || !isMaskEntry(mask)) return;
@@ -350,7 +357,7 @@ export class MaskEditPanel {
   private insertVertexAfter(idx: number): void {
     const ctrl = this.ctrl;
     const opts = this.opts;
-    if (!ctrl || !opts) return;
+    if (!ctrl || !opts || ctrl.isItemLocked()) return; // ロック中は頂点を増減しない (#190)
     const state = ctrl.getState();
     const mask = state.mappings.find(m => m.id === state.activeId);
     if (!mask || !isMaskEntry(mask)) return;

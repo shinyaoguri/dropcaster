@@ -594,6 +594,114 @@ export const CONTROL_PANEL_CSS = `
         cursor: not-allowed;
       }
 
+      /* 編集ロック (#190)。鍵のボタン (一覧・出力一覧) と、ロック中の項目・出力の表示。
+         ロック中のハンドル・枠は位置の確認のため淡く残し、掴めないことをカーソルで示す。 */
+      .mapping-list-item .lock-btn,
+      .output-item .lock-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        border: 1px solid #555;
+        color: #888;
+        cursor: pointer;
+        padding: 2px 4px;
+        border-radius: 3px;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      .mapping-list-item .lock-btn:hover:not(:disabled),
+      .output-item .lock-btn:hover:not(:disabled) {
+        color: #fff;
+        border-color: #999;
+      }
+      .mapping-list-item .lock-btn.is-locked,
+      .output-item .lock-btn.is-locked {
+        background: rgba(251, 191, 36, 0.18);
+        border-color: #fbbf24;
+        color: #fbbf24;
+      }
+      .mapping-list-item .lock-btn:disabled {
+        color: #555;
+        border-color: #444;
+        cursor: not-allowed;
+      }
+      .output-item .remove-output-btn.is-blocked {
+        color: #555;
+        cursor: not-allowed;
+      }
+      .output-item .remove-output-btn.is-blocked:hover:not(:disabled) {
+        color: #555;
+        border-color: #555;
+        background: transparent;
+      }
+      .dc-lock-icon {
+        flex-shrink: 0;
+        width: 12px;
+        height: 12px;
+      }
+      .lock-reason {
+        margin: 0 0 8px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        background: rgba(251, 191, 36, 0.12);
+        color: #fcd34d;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      .lock-reason[hidden] {
+        display: none;
+      }
+      #cropped-container.locked {
+        cursor: not-allowed;
+      }
+      .quad-handle.locked,
+      .mask-vertex-handle.locked {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .mask-vertex-handle.locked:hover {
+        background: #fff;
+      }
+      #selection-box.locked {
+        border-style: dashed;
+        cursor: not-allowed;
+      }
+      #selection-box.locked .handle,
+      #selection-box.locked .edge {
+        display: none;
+      }
+      .dc-layout-canvas .dc-layout-output.locked {
+        border-style: dashed;
+        cursor: not-allowed;
+      }
+      .dc-layout-canvas .dc-layout-output.locked .dc-layout-resize {
+        display: none;
+      }
+      /* マッピング列のステージ上の「ロック中」表示。ペン描画のヒントと同じ位置 (ロック中のマスクは描画中にならない) */
+      .mapping-lock-hint {
+        position: absolute;
+        top: 12px; left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(0, 0, 0, 0.78);
+        color: #fbbf24;
+        font-size: 12px;
+        line-height: 1.4;
+        padding: 6px 10px;
+        border-radius: 4px;
+        border: 1px solid rgba(251, 191, 36, 0.5);
+        pointer-events: none;
+        z-index: 1100;
+        max-width: 90%;
+      }
+      .mapping-lock-hint .dc-lock-icon {
+        width: 14px;
+        height: 14px;
+      }
+
       /* drag-reorder のハンドルと drop-target インジケータ */
       .mapping-list-item .drag-handle {
         color: #666;

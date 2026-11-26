@@ -8,6 +8,10 @@
  *   - #add-mapping-btn  ← クリックで withAddedMapping
  *   - #duplicate-mapping-btn ← クリックで選択中の面・マスクを withDuplicatedItem
  *   - #export-settings-btn / #import-settings-btn ← 全設定 (MappingsState) の JSON 書出 / 読込
+ *   - #outputs-remove-reason ← ロックで出力を削除できなかった理由 (#190)
+ *
+ * 面・マスク・出力の行には鍵のボタン (.lock-btn) を置き、編集ロック (#190) を付け外しする。ロック中の項目・出力は
+ * 削除できない。ロック中の面・マスクが乗っている出力も削除できず、× を押すと理由を出す。
  *
  * 出力管理とマッピング管理は独立した存在として扱う。マッピングがどの出力に映るかは
  * 仮想キャンバス上の quad 座標と各出力の bounds の交差で自動的に決まるので、UI でも
@@ -23,10 +27,13 @@
 
 import {
   MAX_OUTPUTS,
+  isLocked as isEditLocked,
   isMappingEnabled,
   isMaskEntry,
+  lockedItemsOnOutput,
   mappingColor,
   mappingDisplayNames,
+  outputRemovalBlock,
   parseMappingsState,
   withActiveOutputSet,
   withActiveSet,
@@ -34,15 +41,18 @@ import {
   withAddedMask,
   withAddedOutput,
   withDuplicatedItem,
+  withItemLockSet,
   withMappingRenamed,
   withMappingReordered,
   withMappingToggled,
+  withOutputLockSet,
   withOutputRenamed,
   withRemovedMapping,
   withRemovedOutput,
 } from '../../../utils/mappingTransform';
 import type { MappingsController } from '../MappingsController';
 import { t } from '../../../i18n/index.js';
+import { createLockIcon } from '../utils/lockIcon';
 
 export interface MappingsListPanelAttachOptions {
   /** alert ダイアログを出す window（host の defaultView）。読み込み失敗の通知に使う。 */
@@ -107,8 +117,9 @@ export class MappingsListPanel {
     const opts = this.opts;
     if (!ctrl || !opts) return '';
     const state = ctrl.getState();
+    // ロックと削除できない理由 (#190) も含める — 面・マスクのロック・名前で出力の × の状態と説明が変わるため。
     const outputs = state.outputs
-      .map(o => `${o.id}:${o.name ?? ''}:${opts.isOutputWindowOpen(o.id) ? 1 : 0}`)
+      .map(o => `${o.id}:${o.name ?? ''}:${opts.isOutputWindowOpen(o.id) ? 1 : 0}:${isEditLocked(o) ? 1 : 0}:${outputRemovalBlock(state, o.id) ?? ''}:${this.outputRemovalReason(o.id) ?? ''}`)
       .join('|');
     return `${state.activeOutputId ?? ''}|${state.outputs.length}|${outputs}`;
   }
@@ -119,7 +130,7 @@ export class MappingsListPanel {
     const state = ctrl.getState();
     // drafting フラグも sig に含める — ペン描画開始 / 終了で行のロック表示が切替わる必要があるため。
     const mappings = state.mappings
-      .map(m => `${isMaskEntry(m) ? (m.drafting ? 'd' : 'k') : 'm'}:${m.id}:${m.name ?? ''}:${isMappingEnabled(m) ? 1 : 0}`)
+      .map(m => `${isMaskEntry(m) ? (m.drafting ? 'd' : 'k') : 'm'}:${m.id}:${m.name ?? ''}:${isMappingEnabled(m) ? 1 : 0}:${isEditLocked(m) ? 1 : 0}`)
       .join('|');
     return `${state.activeId}|${state.mappings.length}|${mappings}`;
   }
@@ -153,15 +164,17 @@ export class MappingsListPanel {
 
     const state = ctrl.getState();
     listEl.replaceChildren();
-
-    const canRemoveOutput = state.outputs.length > 1;
+    // 前の削除で出した理由は、一覧を作り直したら消す (ロックの付け外しで状況が変わっている)。
+    this.showOutputRemovalReason(null);
 
     for (const out of state.outputs) {
       const isActiveOutput = state.activeOutputId === out.id;
       const isOpen = opts.isOutputWindowOpen(out.id);
+      const locked = isEditLocked(out);
+      const block = outputRemovalBlock(state, out.id);
 
       const row = doc.createElement('div');
-      row.className = `output-item${isActiveOutput ? ' active' : ''}`;
+      row.className = `output-item${isActiveOutput ? ' active' : ''}${locked ? ' locked' : ''}`;
       row.dataset.outputId = out.id;
 
       const statusBadge = doc.createElement('span');
@@ -190,16 +203,30 @@ export class MappingsListPanel {
       });
       row.appendChild(openBtn);
 
+      row.appendChild(this.createLockButton(doc, locked, false, t('mappingsList.lock.output'), () => {
+        ctrl.replaceState(withOutputLockSet(ctrl.getState(), out.id, !locked));
+      }));
+
+      // 最後の 1 台は今までどおり押せない。ロックで削除できないときは押せる見た目のまま aria-disabled にし、
+      // 押したら理由を出す (#190)。
       const removeBtn = doc.createElement('button');
       removeBtn.className = 'remove-output-btn';
       removeBtn.textContent = '×';
-      removeBtn.title = canRemoveOutput
-        ? t('mappingsList.remove.output.title')
-        : t('mappingsList.remove.output.disabled');
-      removeBtn.disabled = !canRemoveOutput;
+      removeBtn.disabled = block === 'lastOutput';
+      if (block === 'lastOutput') removeBtn.title = t('mappingsList.remove.output.disabled');
+      else if (block) {
+        removeBtn.title = this.outputRemovalReason(out.id) ?? '';
+        removeBtn.setAttribute('aria-disabled', 'true');
+        removeBtn.classList.add('is-blocked');
+      } else removeBtn.title = t('mappingsList.remove.output.title');
       removeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        ctrl.replaceState(withRemovedOutput(ctrl.getState(), out.id));
+        const cur = ctrl.getState();
+        if (outputRemovalBlock(cur, out.id)) {
+          this.showOutputRemovalReason(this.outputRemovalReason(out.id));
+          return;
+        }
+        ctrl.replaceState(withRemovedOutput(cur, out.id));
       });
       row.appendChild(removeBtn);
 
@@ -223,6 +250,50 @@ export class MappingsListPanel {
     }
   }
 
+  /** ロックで出力を削除できない理由の文 (#190)。削除できる・最後の 1 台なら null。 */
+  private outputRemovalReason(outputId: string): string | null {
+    const ctrl = this.ctrl;
+    if (!ctrl) return null;
+    const state = ctrl.getState();
+    const out = state.outputs.find(o => o.id === outputId);
+    const block = outputRemovalBlock(state, outputId);
+    if (!out || !block || block === 'lastOutput') return null;
+    const output = out.name ?? out.id;
+    if (block === 'outputLocked') return t('mappingsList.remove.output.locked', { output });
+    const names = mappingDisplayNames(state.mappings);
+    const locked = new Set(lockedItemsOnOutput(state, outputId));
+    const listed = state.mappings.flatMap((m, i) => (locked.has(m.id) ? [names[i]] : [])).join(', ');
+    return t('mappingsList.remove.output.carriesLocked', { output, names: listed });
+  }
+
+  /** 出力一覧の下に、削除できなかった理由を出す (null で消す)。 */
+  private showOutputRemovalReason(message: string | null): void {
+    const box = this.scope?.querySelector<HTMLElement>('#outputs-remove-reason');
+    if (!box) return;
+    box.textContent = message ?? '';
+    box.hidden = message === null;
+  }
+
+  /**
+   * 行の鍵ボタン (#190)。aria-pressed がロック中を表す。押すとロックを付け外しする (Undo / Redo の 1 操作)。
+   * disabled のときは押せず、disabledTitle を説明に出す (描画中のマスク)。
+   */
+  private createLockButton(doc: Document, locked: boolean, disabled: boolean, lockTitle: string, onToggle: () => void, disabledTitle = ''): HTMLButtonElement {
+    const btn = doc.createElement('button');
+    btn.type = 'button';
+    btn.className = `lock-btn${locked ? ' is-locked' : ''}`;
+    btn.setAttribute('aria-pressed', String(locked));
+    btn.title = disabled ? disabledTitle : locked ? t('mappingsList.unlock') : lockTitle;
+    btn.setAttribute('aria-label', btn.title);
+    btn.disabled = disabled;
+    btn.appendChild(createLockIcon(doc, locked));
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onToggle();
+    });
+    return btn;
+  }
+
   // ── マッピングセクション ─────────────────────────────────────
 
   private renderMappingsSection(): void {
@@ -244,11 +315,12 @@ export class MappingsListPanel {
       const mask = isMaskEntry(m);
       const isActive = m.id === state.activeId;
       const enabled = isMappingEnabled(m);
+      const locked = isEditLocked(m);
       const displayName = displayNames[idx];
       const color = mappingColor(idx);
 
       const item = doc.createElement('div');
-      item.className = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}${mask ? ' is-mask' : ''}`;
+      item.className = `mapping-list-item${isActive ? ' active' : ''}${enabled ? '' : ' disabled'}${mask ? ' is-mask' : ''}${locked ? ' locked' : ''}`;
       item.dataset.id = m.id;
       item.dataset.index = String(idx);
       item.style.setProperty('--mapping-color', color);
@@ -291,11 +363,16 @@ export class MappingsListPanel {
       });
       item.appendChild(toggleBtn);
 
+      const drafting = mask && !!m.drafting;
+      item.appendChild(this.createLockButton(doc, locked, drafting, t('mappingsList.lock.item'), () => {
+        ctrl.replaceState(withItemLockSet(ctrl.getState(), m.id, !locked));
+      }, t('mappingsList.lock.drafting')));
+
       const removeBtn = doc.createElement('button');
       removeBtn.className = 'remove-btn';
-      removeBtn.title = t('mappingsList.remove');
+      removeBtn.title = locked ? t('mappingsList.remove.locked') : t('mappingsList.remove');
       removeBtn.textContent = '×';
-      removeBtn.disabled = !canRemoveMapping;
+      removeBtn.disabled = !canRemoveMapping || locked;
       removeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         ctrl.replaceState(withRemovedMapping(ctrl.getState(), m.id));
@@ -307,6 +384,7 @@ export class MappingsListPanel {
         const target = e.target as HTMLElement;
         if (target.classList.contains('remove-btn')) return;
         if (target.classList.contains('toggle-btn')) return;
+        if (target.closest('.lock-btn')) return;
         if (target.tagName === 'INPUT') return;
         if (this.isPenDrafting()) {
           const cur = ctrl.getState();

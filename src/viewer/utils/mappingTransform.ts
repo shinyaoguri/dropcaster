@@ -38,6 +38,8 @@ export interface MappingEntry {
   id: string;
   name?: string;
   enabled?: boolean;
+  /** 編集ロック (#190)。true の間は四隅・crop の編集・リセット・削除を受け付けない。省略 = 未ロック。 */
+  locked?: boolean;
   source: SourceRect;
   quad: Quad;
 }
@@ -60,6 +62,8 @@ export interface MaskEntry {
   points: Point[];
   /** ペンツールで描画中フラグ。true の間は出力に描画されず、プレビューはポリライン表示。 */
   drafting?: boolean;
+  /** 編集ロック (#190)。true の間は頂点の編集・削除を受け付けない。描画中 (drafting) のマスクはロックしない。 */
+  locked?: boolean;
 }
 
 /** mapping と mask を統一的に扱う union（state.mappings の要素型）。 */
@@ -75,6 +79,42 @@ export function isMappingEntry(item: MappingItem): item is MappingEntry {
 
 export function isMappingEnabled(m: MappingItem): boolean {
   return m.enabled !== false;
+}
+
+/**
+ * 面・マスク・出力がロックされているか (#190)。「幾何を編集してよいか」の判定はすべてここを通す。
+ *
+ * ロック中は幾何の編集 (四隅・移動・拡大縮小・回転・crop・マスク頂点・矢印キー・数値入力・出力の位置とサイズ) と
+ * 破壊的な操作 (リセット・削除) を受け付けない。選択・名前変更・表示 ON/OFF・解除は受け付ける。
+ * ペン描画中の一時的な UI ロック (`.mask-drafting`) とは別物。
+ * 保存形式は MappingsState v2 の任意フィールド `locked` で、無ければ未ロック。schemaVersion は変えない。
+ */
+export function isLocked(target: { locked?: boolean } | undefined): boolean {
+  return target?.locked === true;
+}
+
+/** `locked` を付け外しした写し。外すときはキーごと消す (保存ファイルに `locked: false` を残さない)。 */
+function withLockFlag<T extends { locked?: boolean }>(target: T, locked: boolean): T {
+  const { locked: _old, ...rest } = target;
+  return (locked ? { ...rest, locked: true } : rest) as T;
+}
+
+/**
+ * 面・マスクのロックを付け外しする (#190)。Undo / Redo の 1 操作になる (`locked` は履歴の比較対象)。
+ * 描画中 (drafting) のマスク・該当なし・変化なしなら state をそのまま返す。
+ */
+export function withItemLockSet(state: MappingsState, id: string, locked: boolean): MappingsState {
+  const target = state.mappings.find(m => m.id === id);
+  if (!target || isLocked(target) === locked) return state;
+  if (locked && isMaskEntry(target) && target.drafting) return state;
+  return { ...state, mappings: state.mappings.map(m => (m.id === id ? withLockFlag(m, locked) : m)) };
+}
+
+/** 出力のロックを付け外しする (#190)。該当なし・変化なしなら state をそのまま返す。 */
+export function withOutputLockSet(state: MappingsState, outputId: string, locked: boolean): MappingsState {
+  const target = state.outputs.find(o => o.id === outputId);
+  if (!target || isLocked(target) === locked) return state;
+  return { ...state, outputs: state.outputs.map(o => (o.id === outputId ? withLockFlag(o, locked) : o)) };
 }
 
 /**
@@ -96,6 +136,8 @@ export interface OutputDef {
   size: { width: number; height: number };
   screen?: { left: number; top: number; width: number; height: number; label?: string };
   pixelSize?: { width: number; height: number };
+  /** 編集ロック (#190)。true の間は position / size の編集と削除を受け付けない。省略 = 未ロック。 */
+  locked?: boolean;
 }
 
 /**
@@ -373,9 +415,10 @@ export function withMaskDraftingCommitted(state: MappingsState, id: string): Map
   };
 }
 
-/** 指定 id を削除（最後の1個は残す）。active が消えたら先頭を active に。 */
+/** 指定 id を削除（最後の1個・ロック中の項目は残す）。active が消えたら先頭を active に。 */
 export function withRemovedMapping(state: MappingsState, id: string): MappingsState {
   if (state.mappings.length <= 1) return state;
+  if (isLocked(state.mappings.find(m => m.id === id))) return state;
   const filtered = state.mappings.filter(m => m.id !== id);
   if (filtered.length === state.mappings.length) return state;
   const activeId = id === state.activeId ? filtered[0].id : state.activeId;
@@ -401,8 +444,9 @@ export function withMappingReordered(
   return { ...state, mappings: next };
 }
 
-/** mask の頂点列を差し替えた state を返す（rename 等と同様の純関数）。 */
+/** mask の頂点列を差し替えた state を返す（rename 等と同様の純関数）。ロック中のマスクは変えない。 */
 export function withMaskPointsSet(state: MappingsState, id: string, points: Point[]): MappingsState {
+  if (isLocked(state.mappings.find(m => m.id === id))) return state;
   return {
     ...state,
     mappings: state.mappings.map(m =>
@@ -475,11 +519,16 @@ export function withAddedOutput(state: MappingsState): MappingsState {
  *     同じだけ動くので、各出力から見た item の位置は変わらない＝投影結果は変わらない。
  *
  * activeOutputId がその出力を指していたら undefined に戻す。
+ *
+ * ロック (#190): outputRemovalBlock が理由を返す出力 (ロック中の出力・ロック中の面やマスクが乗っている出力) は
+ * 削除せず state をそのまま返す。ロック中の項目が乗っていない出力の削除は、詰め直しでロック中の項目と出力を
+ * 平行移動するが、各出力から見た位置は変わらないので投影結果は変わらない (2026-11-20 に決定)。
  */
 export function withRemovedOutput(state: MappingsState, outputId: string): MappingsState {
   if (state.outputs.length <= 1) return state;
   const removed = state.outputs.find(o => o.id === outputId);
   if (!removed) return state; // 該当なし
+  if (outputRemovalBlock(state, outputId)) return state;
   const remaining = state.outputs.filter(o => o.id !== outputId);
   const removedRect = outputRect(removed);
   const target = remaining[0];
@@ -536,6 +585,36 @@ export function withRemovedOutput(state: MappingsState, outputId: string): Mappi
     canvas: recomputeCanvasBounds(outputs),
     activeOutputId: state.activeOutputId === outputId ? undefined : state.activeOutputId,
   };
+}
+
+/** 出力を削除できない理由 (#190)。'lastOutput' は最後の 1 台、'outputLocked' はその出力のロック、
+ * 'carriesLockedItem' はロック中の面・マスクが乗っている (削除すると残りの出力へ移り、投影先が変わる)。 */
+export type OutputRemovalBlock = 'lastOutput' | 'outputLocked' | 'carriesLockedItem';
+
+/** 出力を削除できない理由。削除できるなら null。該当なしも null (withRemovedOutput が何もしない)。 */
+export function outputRemovalBlock(state: MappingsState, outputId: string): OutputRemovalBlock | null {
+  const output = state.outputs.find(o => o.id === outputId);
+  if (!output) return null;
+  if (state.outputs.length <= 1) return 'lastOutput';
+  if (isLocked(output)) return 'outputLocked';
+  return lockedItemsOnOutput(state, outputId).length > 0 ? 'carriesLockedItem' : null;
+}
+
+/**
+ * 出力に乗っているロック中の面・マスクの id (配列の順)。「乗っている」は withRemovedOutput が取り残しを
+ * 判定するのと同じ、AABB と出力の矩形が面積を持って重なること (辺が接しているだけは含めない)。
+ */
+export function lockedItemsOnOutput(state: MappingsState, outputId: string): string[] {
+  const output = state.outputs.find(o => o.id === outputId);
+  if (!output) return [];
+  const rect = outputRect(output);
+  return state.mappings
+    .filter(item => {
+      if (!isLocked(item)) return false;
+      const bounds = itemBounds(item);
+      return !!bounds && overlapArea(bounds, rect) > 0;
+    })
+    .map(item => item.id);
 }
 
 interface Rect {
@@ -606,12 +685,14 @@ function collapseShift(v: number, gaps: Array<[number, number]>): number {
 /**
  * 出力の position（仮想キャンバス内の左上座標）と size（同サイズ）を更新。
  * 負座標は 0 にクランプ（仮想キャンバスは原点 (0,0) から始まる）。canvas も再計算。
+ * ロック中の出力 (#190) は変えず、state をそのまま返す。
  */
 export function withOutputLayoutSet(
   state: MappingsState,
   outputId: string,
   patch: { position?: { x: number; y: number }; size?: { width: number; height: number } },
 ): MappingsState {
+  if (isLocked(state.outputs.find(o => o.id === outputId))) return state;
   const outputs = state.outputs.map(o => {
     if (o.id !== outputId) return o;
     const position = patch.position
@@ -701,6 +782,8 @@ export function parseMappingsState(data: unknown): MappingsState | null {
         size: { width: sz.width, height: sz.height },
         screen,
         pixelSize,
+        // ロック (#190)。true だけを拾う。旧版はこのキーを知らないので、旧版で開くと未ロックとして読まれる。
+        ...(o.locked === true ? { locked: true } : {}),
       });
     }
   }
@@ -724,6 +807,8 @@ export function parseMappingsState(data: unknown): MappingsState | null {
     if (typeof m.id !== 'string') return null;
     const name = typeof m.name === 'string' ? m.name : undefined;
     const enabled = typeof m.enabled === 'boolean' ? m.enabled : undefined;
+    // ロック (#190)。true だけを拾う (描画中のマスクはロックしない)。
+    const lock = m.locked === true && !(m.kind === 'mask' && m.drafting === true) ? { locked: true as const } : {};
 
     if (m.kind === 'mask') {
       const rawPoints = m.points;
@@ -736,7 +821,7 @@ export function parseMappingsState(data: unknown): MappingsState | null {
         if (!isPoint(p)) return null;
         points.push({ x: p.x, y: p.y });
       }
-      validMappings.push({ kind: 'mask', id: m.id, name, enabled, points, drafting: drafting || undefined });
+      validMappings.push({ kind: 'mask', id: m.id, name, enabled, points, drafting: drafting || undefined, ...lock });
       continue;
     }
 
@@ -763,6 +848,7 @@ export function parseMappingsState(data: unknown): MappingsState | null {
         bottomRight: { x: q.bottomRight.x, y: q.bottomRight.y },
         bottomLeft:  { x: q.bottomLeft.x,  y: q.bottomLeft.y },
       },
+      ...lock,
     });
   }
 

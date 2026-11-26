@@ -11,6 +11,8 @@
  *
  * このパネルはマッピングカラム内の「出力レイアウト」タブが active なときだけ refresh される
  * （非表示時は無駄な DOM 更新を避けるため、ControlWindow からの呼び出しでガード）。
+ *
+ * 編集ロック (#190): ロック中の出力はクリックで選べるが、ドラッグ・リサイズは受け付けない (右下のハンドルは出さない)。
  */
 
 import {
@@ -18,9 +20,11 @@ import {
   applyVideoCrop,
   isMappingEnabled,
   isMaskEntry,
+  isLocked,
   mappingColor,
   withActiveOutputSet,
   type MappingsState,
+  type OutputDef,
 } from '../../../utils/mappingTransform';
 import { CleanupStack } from '../../../utils/cleanupStack';
 import { createQuadOutline, syncQuadOutline } from '../../../utils/quadOutline';
@@ -197,8 +201,8 @@ export class LayoutPanel {
       entry.div.style.width = `${out.size.width}px`;
       entry.div.style.height = `${out.size.height}px`;
       entry.div.classList.toggle('is-active', out.id === activeId);
-      entry.label.textContent =
-        `${out.name ?? out.id}  ${Math.round(out.size.width)}×${Math.round(out.size.height)} @ (${Math.round(out.position.x)},${Math.round(out.position.y)})`;
+      entry.div.classList.toggle('locked', isLocked(out));
+      entry.label.textContent = outputLabel(out);
       // canvas-window: 仮想キャンバス全体を CSS px サイズで持ち、translate で出力位置を viewport (0,0) に持っていく。
       // 親（layout-output）が out.size の canvas-px サイズなので、scale は不要（canvas-host が全体を fitScale）。
       entry.canvasWindow.style.width = `${state.canvas.width}px`;
@@ -374,6 +378,7 @@ export class LayoutPanel {
         const out = state.outputs.find(o => o.id === outputId);
         if (!out) return null;
         this.setActiveOutput(outputId);
+        if (ctrl.isOutputLocked(outputId)) return null; // 選ぶだけで動かさない (#190)
         div.classList.add('dragging');
         this.isolateLayer(div, true);
         e.preventDefault();
@@ -423,6 +428,7 @@ export class LayoutPanel {
         const out = state.outputs.find(o => o.id === outputId);
         if (!out) return null;
         this.setActiveOutput(outputId);
+        if (ctrl.isOutputLocked(outputId)) return null; // 選ぶだけで大きさは変えない (#190)
         this.isolateLayer(div, true);
         e.preventDefault();
         e.stopPropagation();
@@ -484,8 +490,7 @@ export class LayoutPanel {
     entry.div.style.top = `${out.position.y}px`;
     entry.div.style.width = `${out.size.width}px`;
     entry.div.style.height = `${out.size.height}px`;
-    entry.label.textContent =
-      `${out.name ?? out.id}  ${Math.round(out.size.width)}×${Math.round(out.size.height)} @ (${Math.round(out.position.x)},${Math.round(out.position.y)})`;
+    entry.label.textContent = outputLabel(out);
     entry.canvasWindow.style.transform = `translate(${-out.position.x}px, ${-out.position.y}px)`;
   }
 
@@ -496,4 +501,10 @@ export class LayoutPanel {
     if (cur.activeOutputId === outputId) return;
     ctrl.replaceState(withActiveOutputSet(cur, outputId));
   }
+}
+
+/** 出力の枠のラベル: 名前・大きさ・位置 (ロック中はその旨も)。 */
+function outputLabel(out: OutputDef): string {
+  const text = `${out.name ?? out.id}  ${Math.round(out.size.width)}×${Math.round(out.size.height)} @ (${Math.round(out.position.x)},${Math.round(out.position.y)})`;
+  return isLocked(out) ? `${text}  · ${t('layout.locked')}` : text;
 }
