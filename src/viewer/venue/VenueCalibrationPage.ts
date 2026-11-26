@@ -197,12 +197,12 @@ export class VenueCalibrationPage {
       this.builder.element.open = true; this.get('venue-section-objects').append(this.builder.element);
       this.editor = new VenueEditor(this.preview, this.builder, object => {
         const scene = this.session.changes.get().venue.scene;
-        if (scene.kind === 'objects') this.editVenue({ ...scene, objects: scene.objects!.map(current => current.id === object.id ? object : current) }, false);
+        if (scene.kind === 'objects') this.editVenue({ ...scene, objects: scene.objects!.map(current => current.id === object.id ? object : current) }, false, true);
       }, () => this.undo());
       this.adjuster = new ProjectorAdjuster({
         current: () => this.committedProjector(),
         preview: projector => this.showProjector(projector),
-        commit: projector => this.commitProjector(projector),
+        commit: projector => this.commitProjector(projector, true),
         depth: projector => this.depth(projector),
         stepChanged: step => this.showStep(step),
       });
@@ -316,9 +316,10 @@ export class VenueCalibrationPage {
   private committedProjector(): Projector | null {
     return this.session.changes.get().venue.projectors.find(p=>p.outputId===this.selected) ?? null;
   }
-  private commitProjector(projector: Projector): void {
+  /** `continuous` は像の直接操作 (ドラッグ・キー・ホイール) の確定。下書きを復元できなかった間は書かない (#286)。 */
+  private commitProjector(projector: Projector, continuous = false): void {
     const project = this.session.changes.get();
-    this.commit({ ...project, venue: { ...project.venue, projectors: project.venue.projectors.map(p=>p.outputId===projector.outputId?projector:p) } });
+    this.commit({ ...project, venue: { ...project.venue, projectors: project.venue.projectors.map(p=>p.outputId===projector.outputId?projector:p) } }, undefined, false, undefined, continuous);
   }
   /** 表示だけを更新する (保存しない)。微調整の途中と確定後の両方で使う。 */
   private showProjector(projector: Projector): void {
@@ -408,8 +409,9 @@ export class VenueCalibrationPage {
   /**
    * 変更を検証して確定する。`prepared` は会場を読み込み直したときに渡す ('shown' は表示中のモデルを、'kept' は推定の一時表示で外したモデルをそのまま使うとき)。
    * 検証済みのアセット (既定は確定済みの会場のもの) と id・data が同じ GLB は復号し直さない (#171)。
+   * `continuous` は直接操作 (像・立体のドラッグ、キー・ホイールの微調整) の確定 (VenueSession.update)。
    */
-  private commit(project: Project, prepared?: PreparedVenue | 'shown' | 'kept', fit=false, verified?: Project['assets']): void {
+  private commit(project: Project, prepared?: PreparedVenue | 'shown' | 'kept', fit=false, verified?: Project['assets'], continuous=false): void {
     const discard = (): void => { if (prepared !== 'shown' && prepared !== 'kept') prepared?.dispose(); };
     if (this.disposed || this.failed) { discard(); return; }
     this.adjuster?.flush();
@@ -417,7 +419,7 @@ export class VenueCalibrationPage {
       const next=parseProject({...project,venue:{...project.venue,revision:project.venue.revision+1}},verified??this.session.changes.get().assets);
       this.editor?.cancel(); this.action++; this.previous=this.session.changes.get();
       if(prepared) { this.traceShown=null; this.traceRestore++; if(prepared==='kept') this.showVenue(this.keptGlb!.prepared,next); else if(prepared!=='shown') this.showVenue(prepared,next); }
-      this.session.update(next);
+      this.session.update(next, continuous);
       if(fit) { this.preview!.overview(); if(next.venue.scene.objects?.length===1) this.editor?.focusSelection(); }
       this.status('calibration.updated');
     } catch(error) { discard(); this.error(error); }
@@ -477,12 +479,12 @@ export class VenueCalibrationPage {
       this.status('calibration.traceApplied');
     } catch (error) { this.error(error); }
   }
-  private editVenue(scene: VenueScene, fit: boolean): void {
+  private editVenue(scene: VenueScene, fit: boolean, continuous = false): void {
     if(!this.preview || this.disposed || this.failed) return;
     const current=this.session.changes.get();
     try {
       const project=parseProject({...current,assets:[],venue:{...current.venue,scene}});
-      this.commit(project,prepareObjects(project.venue.scene.objects!),fit);
+      this.commit(project,prepareObjects(project.venue.scene.objects!),fit,undefined,continuous);
     } catch(error) { this.error(error); }
   }
   /**

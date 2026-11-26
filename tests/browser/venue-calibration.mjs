@@ -13,13 +13,17 @@ const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||u
 async function setup(context,base){
   await context.route('**/sketches.json',route=>route.fulfill({json:[]}));
   const page=await context.newPage();page.setDefaultTimeout(20000);
+  await openVenue(page,base);
+  return page;
+}
+/** ホームから /venue を開く。開いたページを `window.calibrationPage` で見られるようにする。 */
+async function openVenue(page,base){
   await page.goto(base.url);
   await page.evaluate(async modules=>{
     const {VenueCalibrationPage}=await import(`${modules}/venue/VenueCalibrationPage.ts`),initialize=VenueCalibrationPage.prototype.initialize;
     VenueCalibrationPage.prototype.initialize=function(){window.calibrationPage=this;return initialize.call(this)};
   },base.modules);
   await page.locator('a[href="/venue"]').click();await ready(page);
-  return page;
 }
 async function ready(page){
   await page.waitForSelector('#venue-canvas');await page.waitForFunction(()=>window.calibrationPage?.editor && !document.querySelector('#venue-model-pane').inert);
@@ -511,6 +515,27 @@ async function reload(page,base){
   await page.reload();await reloaded(page);
   assert.deepEqual(dialogs,['beforeunload','beforeunload'],'a saved draft reloads without asking');
   assert.equal(await page.inputValue('#venue-name'),'Third');
+  // #286: 復元できなかった下書きは、像の直接操作 (微調整) では上書きしない。保存欄は error のまま。名前のような明示的な確定では書く。
+  const newer={...(await draft(page,base)),schemaVersion:99};
+  await page.evaluate(async({modules,newer})=>(await import(`${modules}/practice/projectStore.ts`)).writeProject(newer,'venue-draft'),{modules:base.modules,newer});
+  await openVenue(page,base);await logged(page,/ProjectFormatError: version/);
+  const restored=(await current(page)).venue.projectors[0];
+  await page.locator('#venue-output-stage').focus();await page.keyboard.press('ArrowRight');await page.waitForTimeout(1200);
+  const nudged=(await current(page)).venue.projectors[0];assert.notDeepEqual(nudged.quaternion,restored.quaternion,'the nudge is committed on the page');
+  assert.deepEqual(await draft(page,base),newer,'a nudge does not replace a draft from a newer build');
+  assert.match(await page.locator('#venue-storage').textContent(),/Could not save/,'the storage label keeps the restore failure');
+  await change(page,'#venue-name','Fourth');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
+  const named=await draft(page,base);assert.equal(named.name,'Fourth','naming the venue is an explicit commit');
+  assert.deepEqual(named.venue.projectors[0].quaternion,nudged.quaternion,'the held nudge is written with it');
+  // 読み出しそのものが失敗したときも同じ。以降の読み込みすべてで読み出しを止めるので、この case の最後に置く。
+  await page.context().addInitScript(()=>{const real=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(...args){if(args[1]!=='readwrite')throw new DOMException('test venue read','InvalidStateError');return real.apply(this,args)}});
+  await openVenue(page,base);await logged(page,/test venue read/);
+  const stored=()=>page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('dropcaster.projects');request.onsuccess=()=>{const get=request.result.transaction('projects','readwrite').objectStore('projects').get('venue-draft');get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(get.error)}}));
+  assert.deepEqual(await stored(),named,'the read check sees the saved draft');
+  await page.locator('#venue-output-stage').focus();await page.keyboard.press('ArrowRight');await page.waitForTimeout(1200);
+  assert.notDeepEqual((await current(page)).venue.projectors[0].quaternion,restored.quaternion,'the nudge is committed on the page');
+  assert.deepEqual(await stored(),named,'a nudge after a failed read does not replace the draft');
+  assert.match(await page.locator('#venue-storage').textContent(),/Could not save/);
 }
 
 // #246: 壁に映した十字で実物の角をなぞり、会場とプロジェクタを推定して適用する (ADR 0023)。
