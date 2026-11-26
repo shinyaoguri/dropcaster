@@ -141,6 +141,9 @@ const en = {
   'control.mappings.title': 'Mappings',
   'control.mappings.add': '+ Add mapping',
   'control.mappings.addMask': '+ Add mask',
+  'control.mappings.duplicate': 'Duplicate selected',
+  'control.mappings.duplicate.title': 'Duplicate the selected mapping or mask, slightly offset and just in front of the original',
+  'control.mappings.duplicate.name': '{name} copy',
   'control.mappings.reorderHint': 'Drag a row to change order (top = front-most)',
 
   // ツール: 出力設定
@@ -181,6 +184,16 @@ const en = {
   'control.testPattern.grid': 'Grid',
   'control.testPattern.smpte': 'Color bars',
 
+  // ブラックアウト (#194): 全出力を一度に黒にする。編集の「確認」パネル・帯と、編集の外のボタンで共通
+  'control.blackout.title': 'Blackout',
+  'control.blackout.hint': 'Turn every output black at once (B key). Surface visibility and the test pattern are left unchanged',
+  'control.blackout.off': 'Black out all outputs',
+  'control.blackout.on': 'Blacked out — restore',
+  'control.blackout.banner': 'Blackout: every output is black.',
+  'control.blackout.release': 'Restore (B)',
+  'blackout.enter': 'Blackout: turn every output black (B)',
+  'blackout.leave': 'Blackout is on — restore the outputs (B)',
+
   // ツール: 開発モード
   'control.devMode.title': 'Dev mode',
   'control.devMode.hint':
@@ -192,7 +205,16 @@ const en = {
   'control.mappingSettings.title': 'Mapping settings',
   'control.mappingSettings.hint':
     'Click a corner handle to select → use arrow keys to nudge (Shift+arrow for 10px)',
-  'control.mappingSettings.corners': '4 corners (% / homography)',
+  'control.mappingSettings.corners': '4 corners (virtual canvas px · Enter applies, Esc cancels)',
+  'control.mappingSettings.corner.topLeft': 'Top left',
+  'control.mappingSettings.corner.topRight': 'Top right',
+  'control.mappingSettings.corner.bottomRight': 'Bottom right',
+  'control.mappingSettings.corner.bottomLeft': 'Bottom left',
+  'control.mappingSettings.reject.notNumber': '{corner} {axis}: enter a number. The corner was not moved.',
+  'control.mappingSettings.reject.notConvex':
+    '{corner} was not moved to ({x}, {y}): the surface would no longer be convex (dented, twisted or collapsed). The nearest position a drag can reach is ({nx}, {ny}).',
+  'control.mappingSettings.reject.tooSteep':
+    '{corner} was not moved to ({x}, {y}): the perspective would be stronger than 20×. The nearest position a drag can reach is ({nx}, {ny}).',
 
   // ツール: 設定 IO
   'control.io.title': 'Save / Load settings',
@@ -375,6 +397,9 @@ const ja: Record<keyof typeof en, string> = {
   'control.mappings.title': 'マッピング',
   'control.mappings.add': '＋ マッピングを追加',
   'control.mappings.addMask': '＋ マスクを追加',
+  'control.mappings.duplicate': '選択中を複製',
+  'control.mappings.duplicate.title': '選択中の面・マスクを、少しずらして元のすぐ前面に複製',
+  'control.mappings.duplicate.name': '{name} のコピー',
   'control.mappings.reorderHint': '行をドラッグで並び順を変更（一番上 = 最前面）',
 
   'control.outputSettings.title': '出力設定',
@@ -411,6 +436,15 @@ const ja: Record<keyof typeof en, string> = {
   'control.testPattern.grid': 'グリッド',
   'control.testPattern.smpte': 'カラーバー',
 
+  'control.blackout.title': 'ブラックアウト',
+  'control.blackout.hint': '全出力を一度に黒にします（B キー）。面の表示・テストパターンは変わりません',
+  'control.blackout.off': '全出力を黒にする',
+  'control.blackout.on': '黒の最中 — 解除する',
+  'control.blackout.banner': 'ブラックアウト中: 全出力を黒にしています。',
+  'control.blackout.release': '解除 (B)',
+  'blackout.enter': 'ブラックアウト: 全出力を黒にする (B)',
+  'blackout.leave': 'ブラックアウト中 — 押すと解除 (B)',
+
   'control.devMode.title': '開発モード',
   'control.devMode.hint':
     '出力ウィンドウに各 mapping の枠線とマウス追従クロスヘア（レーザー墨出し器風）を重ねます',
@@ -419,7 +453,16 @@ const ja: Record<keyof typeof en, string> = {
 
   'control.mappingSettings.title': 'マッピング設定',
   'control.mappingSettings.hint': '隅のハンドルをクリックで選択 → 矢印キーで微調整（Shift+矢印で10px）',
-  'control.mappingSettings.corners': '4隅 (% / ホモグラフィー)',
+  'control.mappingSettings.corners': '4隅（仮想キャンバス px・Enter で確定、Esc で取消）',
+  'control.mappingSettings.corner.topLeft': '左上',
+  'control.mappingSettings.corner.topRight': '右上',
+  'control.mappingSettings.corner.bottomRight': '右下',
+  'control.mappingSettings.corner.bottomLeft': '左下',
+  'control.mappingSettings.reject.notNumber': '{corner}の {axis} に数値を入力してください。隅は動かしていません。',
+  'control.mappingSettings.reject.notConvex':
+    '{corner}を ({x}, {y}) へは動かしません: 面が凸でなくなります（凹む・ねじれる・潰れる）。ドラッグで寄せられるいちばん近い位置は ({nx}, {ny}) です。',
+  'control.mappingSettings.reject.tooSteep':
+    '{corner}を ({x}, {y}) へは動かしません: 遠近の強さが 20 倍を超えます。ドラッグで寄せられるいちばん近い位置は ({nx}, {ny}) です。',
 
   'control.io.title': '設定の保存と読み込み',
   'control.io.hint':

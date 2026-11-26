@@ -872,6 +872,259 @@ async function mainHiddenCase(page, base) {
   await assertReleased('window closed by the app');
 }
 
+/** 出力ウィンドウの <video> に映像が届くまで待つ (届く前は、黒くしていなくても黒い)。 */
+const outputPlaying = popup => popup.waitForFunction(() =>
+  [...document.querySelectorAll('video')].some(video => video.readyState >= 2 && video.videoWidth > 0));
+
+/** 出力ウィンドウに実際に描かれている中央付近の画素。スクリーンショットを page 側でデコードして読む。 */
+async function outputPixel(page, popup) {
+  const png = (await popup.screenshot()).toString('base64');
+  return page.evaluate(async png => {
+    const bitmap = await createImageBitmap(await (await fetch(`data:image/png;base64,${png}`)).blob());
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    return [...ctx.getImageData(Math.round(bitmap.width * 0.45), Math.round(bitmap.height * 0.45), 1, 1).data].slice(0, 3);
+  }, png);
+}
+const isRed = ([r, g, b]) => r > 200 && g < 50 && b < 50;
+const isBlue = ([r, g, b]) => r < 50 && g < 50 && b > 200;
+const isWhite = ([r, g, b]) => r > 200 && g > 200 && b > 200;
+const blackedOut = popup => popup.evaluate(() => document.getElementById('dc-output-stage').classList.contains('dc-blackout'));
+/** 帯が出ていて、ほかの要素に覆われていないか (中央の点が帯の中に当たるか)。 */
+const bannerShown = page => page.evaluate(() => {
+  const banner = document.getElementById('dc-blackout-banner');
+  const rect = banner.getBoundingClientRect();
+  return !banner.hidden && rect.height > 0
+    && banner.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+});
+
+// #194: ブラックアウトは全出力の最終表示だけを黒にする。面の表示・テストパターン・保存内容は変えず、
+// 後から開いた出力も最初から黒で、解除すると下にあった表示 (テストパターンか通常映像) に戻る。
+async function blackoutCase(page) {
+  await addSource(page, fixture());
+  const popup = await start(page);
+  await click(page, '#add-output-btn');
+  const [second] = await Promise.all([page.waitForEvent('popup'), page.evaluate(() => {
+    const { wc } = window.runtimeRegression;
+    return void wc.openOutputWindowFor(wc.events.state.get().outputs.at(-1).id);
+  })]);
+  await second.waitForSelector('#dc-output-stage');
+  await outputPlaying(popup);
+  assert.ok(isRed(await outputPixel(page, popup)), 'the output shows the sketch before blackout');
+  await page.waitForTimeout(800); // 出力の追加による保存 (600 ms の debounce) が終わってから控える
+  const kept = () => page.evaluate(() => {
+    const h = window.runtimeRegression;
+    return { state: JSON.stringify(h.wc.events.state.get()), stateEvents: h.changes.length,
+      local: JSON.stringify(Object.entries(localStorage).sort()), session: JSON.stringify(Object.entries(sessionStorage).sort()) };
+  });
+  const ui = () => page.evaluate(() => ({
+    state: window.runtimeRegression.wc.events.blackout.get(),
+    pressed: document.getElementById('dc-blackout-toggle').getAttribute('aria-pressed'),
+  }));
+  const before = await kept();
+  assert.deepEqual([await ui(), await bannerShown(page)], [{ state: false, pressed: 'false' }, false], 'blackout starts off');
+
+  // 「確認」パネルのボタンで入れる: 開いている出力がすべて黒になる。
+  await click(page, '#dc-blackout-toggle');
+  assert.deepEqual([await blackedOut(popup), await blackedOut(second)], [true, true], 'every open output is covered');
+  assert.deepEqual(await outputPixel(page, popup), [0, 0, 0], 'the output is black');
+  assert.deepEqual(await ui(), { state: true, pressed: 'true' });
+  // 帯はどのパネルを開いていても、ツール列を畳んでいても見える。
+  for (const panel of ['outputs', 'check', 'preview3d', 'project', 'mappings']) {
+    await click(page, `#dc-activity-${panel}`);
+    assert.equal(await page.locator(`#dc-activity-${panel}`).getAttribute('aria-expanded'), 'true');
+    assert.equal(await bannerShown(page), true, `the banner shows with the ${panel} panel`);
+  }
+  await click(page, '#dc-activity-mappings'); // 選択中をもう一度押すと畳む
+  assert.equal(await page.locator('#dc-activity-mappings').getAttribute('aria-expanded'), 'false');
+  assert.equal(await bannerShown(page), true, 'the banner shows with the tool column collapsed');
+  // 編集を開き直しても (パネルの再マウント)、黒の最中の表示で始まる。
+  await page.evaluate(() => window.runtimeRegression.mount());
+  assert.deepEqual([await ui(), await bannerShown(page)], [{ state: true, pressed: 'true' }, true], 'a remounted editor shows the blackout');
+
+  // 黒の最中にテストパターンへ切り替えても黒のまま。帯から解除すると、選んだテストパターンが出る。
+  await click(page, '[data-pattern="white"]');
+  await waitVideo(page, 1920);
+  assert.deepEqual(await outputPixel(page, popup), [0, 0, 0], 'blackout wins over the test pattern');
+  await click(page, '#dc-blackout-release');
+  assert.deepEqual([await blackedOut(popup), await blackedOut(second)], [false, false]);
+  assert.deepEqual([await ui(), await bannerShown(page)], [{ state: false, pressed: 'false' }, false], 'the banner releases the blackout');
+  await popup.waitForFunction(() => [...document.querySelectorAll('video')].some(video => video.videoWidth === 1920));
+  assert.ok(isWhite(await outputPixel(page, popup)), 'release returns to the test pattern underneath');
+  assert.equal(await page.evaluate(() => window.runtimeRegression.wc.events.testPattern.get()), 'white', 'the selected test pattern is kept');
+  // 黒の最中にテストパターンをやめる。解除すると通常映像が出る。
+  await click(page, '#dc-blackout-toggle');
+  await click(page, '[data-pattern="off"]');
+  await waitVideo(page, 320);
+  assert.deepEqual(await outputPixel(page, popup), [0, 0, 0]);
+  await click(page, '#dc-blackout-toggle');
+  await popup.waitForFunction(() => [...document.querySelectorAll('video')].some(video => video.videoWidth === 320));
+  assert.ok(isRed(await outputPixel(page, popup)), 'release returns to the sketch underneath');
+  // 面の表示・出力・保存内容は、入切りの前後で 1 つも変わっていない (state の通知も出ていない)。
+  await page.waitForTimeout(800);
+  assert.deepEqual(await kept(), before, 'blackout changes neither the mapping state nor storage');
+
+  // 黒の最中に出力をすべて閉じると配信は止まるが、ブラックアウトは続く。開き直した出力は最初から黒。
+  await click(page, '#dc-blackout-toggle');
+  await second.close();
+  await popup.close();
+  await page.waitForFunction(() => window.runtimeRegression.modes.at(-1) === false);
+  assert.deepEqual([await ui(), await bannerShown(page)], [{ state: true, pressed: 'true' }, true], 'blackout outlives the last output');
+  const [reopened, blackAtOpen] = await Promise.all([page.waitForEvent('popup'), page.evaluate(async () => {
+    const h = window.runtimeRegression;
+    h.popup = h.wc.openOutputWindow();
+    // 開いた同じタスクの中で (映像を受け取る前に) 黒の覆いが付いている。
+    const black = h.popup.document.getElementById('dc-output-stage').classList.contains('dc-blackout');
+    await h.wc.startCanvasStreaming(h.source);
+    return black;
+  })]);
+  assert.equal(blackAtOpen, true, 'an output opened during blackout is covered from the start');
+  await outputPlaying(reopened);
+  assert.deepEqual(await outputPixel(page, reopened), [0, 0, 0], 'it stays black once the video arrives');
+  await page.evaluate(() => window.runtimeRegression.wc.setBlackout(false));
+  assert.ok(isRed(await outputPixel(page, reopened)), 'release shows the sketch on the reopened output');
+  assert.deepEqual((await kept()).state, before.state);
+}
+
+// #194: 実際のページ (単独作品・スライドショー) のボタン・B キー・帯が、同じ 1 つの状態を入切りする。
+async function blackoutPagesCase(page, base) {
+  const context = page.context();
+  const catalog = [
+    { id: 'a', title: 'Red keys', srcdoc: keyFixture() },
+    { id: 'b', title: 'Blue', srcdoc: fixture({ color: 'blue' }) },
+  ].map(s => ({ path: '', description: '', type: 'html', tags: [], interactiveElements: [], lastModified: '2026-11-25', ...s }));
+  const open = async route => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(15000);
+    await p.route('**/sketches.json', r => r.fulfill({ json: catalog }));
+    await p.goto(base.url + route);
+    await p.waitForSelector('#blackout-btn');
+    return p;
+  };
+  const pressed = (p, selector = '#blackout-btn') => p.locator(selector).getAttribute('aria-pressed');
+  const sourceReady = p => p.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 320);
+  const showPanel = async (p, name) => {
+    const button = p.locator(`#dc-activity-${name}`);
+    if (await button.getAttribute('aria-selected') !== 'true' || await button.getAttribute('aria-expanded') === 'false') await button.click();
+    await p.locator(`#dc-tool-panel-${name}`).waitFor();
+  };
+  const openOutput = async p => {
+    await showPanel(p, 'outputs');
+    const [popup] = await Promise.all([p.waitForEvent('popup'), p.locator('.open-btn').first().click()]);
+    await popup.waitForSelector('#dc-output-stage');
+    return popup;
+  };
+  /** メイン画面の、入力欄でない場所にフォーカスを置いてキーを押す。 */
+  const pressOnPage = async (p, key) => { await p.evaluate(() => document.activeElement?.blur()); await p.keyboard.press(key); };
+
+  // --- 単独作品ページ: 右上のボタン、B キー、「確認」パネル、帯 ---
+  const single = await open('/a');
+  assert.equal(await pressed(single), 'false', 'single page: blackout starts off');
+  await single.locator('#blackout-btn').click();
+  assert.equal(await pressed(single), 'true', 'single page: the button turns blackout on');
+  await pressOnPage(single, 'b');
+  assert.equal(await pressed(single), 'false', 'single page: B turns it off again');
+  await single.locator('#open-windows-btn').click();
+  await sourceReady(single);
+  const output = await openOutput(single);
+  await outputPlaying(output);
+  assert.ok(isRed(await outputPixel(single, output)), 'single page: the output shows the sketch');
+
+  await pressOnPage(single, 'b'); // 編集中も B は効く
+  assert.deepEqual([await blackedOut(output), await outputPixel(single, output), await pressed(single), await bannerShown(single)],
+    [true, [0, 0, 0], 'true', true], 'single page: B works while editing and shows the banner');
+  for (const panel of ['mappings', 'outputs', 'check']) {
+    await showPanel(single, panel);
+    assert.equal(await bannerShown(single), true, `single page: the banner shows with the ${panel} panel`);
+  }
+  assert.equal(await pressed(single, '#dc-blackout-toggle'), 'true', 'single page: the check panel shows the same state');
+  await single.locator('#dc-activity-check').click(); // 選択中をもう一度押してツール列を畳む
+  assert.equal(await single.locator('#dc-activity-check').getAttribute('aria-expanded'), 'false');
+  assert.equal(await bannerShown(single), true, 'single page: the banner shows with the tool column collapsed');
+  await single.locator('#dc-activity-check').click();
+
+  // 入力欄の中の B は文字入力のもの。修飾キー付き・押しっぱなしの連続入力でも切り替えない。
+  await showPanel(single, 'outputs');
+  await single.locator('#output-w-input:not([disabled])').focus();
+  await single.keyboard.press('b');
+  assert.equal(await pressed(single), 'true', 'single page: B inside an input does not toggle');
+  await single.evaluate(() => document.activeElement?.blur());
+  await single.keyboard.press('Control+b');
+  await single.keyboard.press('Alt+b');
+  assert.equal(await pressed(single), 'true', 'single page: B with a modifier does not toggle');
+  // 出力ウィンドウで押した B は作品へ渡り、ブラックアウトは切り替わらない (#176)。
+  await single.evaluate(() => document.querySelector('#sketch-iframe').contentWindow.keyLog.splice(0));
+  await output.keyboard.press('b');
+  assert.deepEqual(await single.evaluate(() => document.querySelector('#sketch-iframe').contentWindow.keyLog
+    .filter(k => k.type !== 'keypress').map(k => [k.type, k.key])), [['keydown', 'b'], ['keyup', 'b']], 'single page: B in the output reaches the sketch');
+  assert.deepEqual([await pressed(single), await blackedOut(output)], ['true', true], 'single page: B in the output does not toggle');
+
+  await single.locator('#dc-blackout-release').click();
+  assert.deepEqual([await blackedOut(output), await pressed(single), await pressed(single, '#dc-blackout-toggle'), await bannerShown(single)],
+    [false, 'false', 'false', false], 'single page: the banner releases every indicator');
+  assert.ok(isRed(await outputPixel(single, output)), 'single page: release returns to the sketch');
+  await showPanel(single, 'check');
+  await single.locator('#dc-blackout-toggle').click();
+  assert.deepEqual([await blackedOut(output), await pressed(single), await bannerShown(single)], [true, 'true', true], 'single page: the check panel button turns it on');
+  // 編集を閉じても出力は開いたまま黒で、右上のボタンが黒の最中を示す。ボタンで解除できる。
+  await single.locator('#practice-stop').click();
+  await single.locator('#practice-stop-confirm-btn').click();
+  await single.locator('#dc-inline-editor').waitFor({ state: 'hidden' });
+  assert.deepEqual([await blackedOut(output), await pressed(single)], [true, 'true'], 'single page: closing the editor keeps the blackout');
+  assert.equal(await single.locator('#blackout-btn').isVisible(), true);
+  await single.locator('#blackout-btn').click();
+  assert.equal(await blackedOut(output), false, 'single page: the button releases with the editor closed');
+  assert.ok(isRed(await outputPixel(single, output)));
+  await output.close();
+  await single.close();
+
+  // --- スライドショー: ヘッダのボタン、作品の切り替え、黒の最中に開く出力、再読み込み ---
+  const show = await open('/slideshow');
+  await show.locator('#play-pause-btn').click(); // 自動送りを止める
+  await show.locator('#blackout-btn').click();
+  assert.equal(await pressed(show), 'true', 'slideshow: the header button turns blackout on');
+  await show.locator('#mapping-btn').click();
+  await sourceReady(show);
+  const late = await openOutput(show);
+  assert.equal(await blackedOut(late), true, 'slideshow: an output opened during blackout is covered');
+  await outputPlaying(late);
+  assert.deepEqual(await outputPixel(show, late), [0, 0, 0], 'slideshow: it is black once the video arrives');
+  assert.deepEqual([await bannerShown(show), await show.locator('#blackout-btn').isVisible(), await pressed(show, '#blackout-btn')],
+    [true, true, 'true'], 'slideshow: the banner and the header button both show the blackout while editing');
+  // 入力欄 (切り替え間隔) の中の B では切り替わらない。
+  await show.locator('#interval-input').focus();
+  await show.keyboard.press('b');
+  assert.equal(await pressed(show), 'true', 'slideshow: B inside the interval input does not toggle');
+  // 作品を切り替えても黒のまま。解除すると切り替え先の作品が出る。
+  await show.locator('#next-btn').click();
+  await show.waitForFunction(() => document.getElementById('current-sketch-number').textContent === '2');
+  await late.waitForTimeout(500);
+  assert.deepEqual([await pressed(show), await blackedOut(late)], ['true', true], 'slideshow: switching sketches keeps the blackout');
+  await pressOnPage(show, 'Shift+B');
+  assert.deepEqual([await pressed(show), await blackedOut(late), await bannerShown(show)], ['false', false, false], 'slideshow: B releases while editing');
+  await show.waitForFunction(async () => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext('2d'); ctx.drawImage(document.getElementById('source-video'), 0, 0, 1, 1);
+    return ctx.getImageData(0, 0, 1, 1).data[2] > 200;
+  });
+  await late.waitForTimeout(300);
+  assert.ok(isBlue(await outputPixel(show, late)), 'slideshow: release shows the current sketch');
+  // 保存しない: 黒の最中に再読み込みすると、解除された状態から始まる。
+  await pressOnPage(show, 'b');
+  assert.equal(await pressed(show), 'true');
+  await show.waitForTimeout(800); // マッピングの保存 (debounce) が走っても、黒の状態は書かれない
+  await show.reload();
+  await show.waitForSelector('#blackout-btn');
+  assert.equal(await pressed(show), 'false', 'slideshow: a reload starts without blackout');
+  assert.doesNotMatch(await show.evaluate(() => JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage)])),
+    /blackout/i, 'slideshow: blackout is not written to storage');
+  await show.locator('#mapping-btn').click();
+  await show.locator('#dc-blackout-toggle').waitFor({ state: 'attached' });
+  assert.deepEqual([await pressed(show, '#dc-blackout-toggle'), await bannerShown(show)], ['false', false], 'slideshow: the reloaded editor shows no blackout');
+  await show.close();
+}
+
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
     const hosted = config.startsWith('apps/');
@@ -886,7 +1139,7 @@ try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`,
         modules: hosted ? `/@fs${root}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, keys: keysCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase, mainHidden: mainHiddenCase, correction: correctionCase })) {
+      for (const [testName, run] of Object.entries({ state: stateCase, pattern: patternCase, recovery: recoveryCase, keys: keysCase, layoutDrag: layoutDragCase, quadTiles: quadTilesCase, mainHidden: mainHiddenCase, blackout: blackoutCase, blackoutPages: blackoutPagesCase, correction: correctionCase })) {
         if (process.env.RUNTIME_CASE && process.env.RUNTIME_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = [];
