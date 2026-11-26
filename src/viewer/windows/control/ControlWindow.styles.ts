@@ -477,6 +477,15 @@ export const CONTROL_PANEL_CSS = `
       .mappings-add-buttons .tool-button {
         flex: 1;
       }
+      /* 選択中の項目に対する操作 (複製)。追加ボタンの行の下に置く。 */
+      .mappings-item-buttons {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .mappings-item-buttons .tool-button {
+        flex: 1;
+      }
 
       .io-buttons {
         display: flex;
@@ -739,6 +748,11 @@ export const CONTROL_PANEL_CSS = `
       :scope.mask-drafting #import-settings-btn,
       :scope.mask-drafting #reset-mapping-btn,
       :scope.mask-drafting #reset-source-btn {
+        opacity: 0.5;
+        pointer-events: none;
+      }
+      /* 複製も新しい項目を active にするので、描画中は無効にする (描画中のマスク自体も複製できない)。 */
+      :scope.mask-drafting #duplicate-mapping-btn {
         opacity: 0.5;
         pointer-events: none;
       }

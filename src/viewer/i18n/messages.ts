@@ -141,6 +141,9 @@ const en = {
   'control.mappings.title': 'Mappings',
   'control.mappings.add': '+ Add mapping',
   'control.mappings.addMask': '+ Add mask',
+  'control.mappings.duplicate': 'Duplicate selected',
+  'control.mappings.duplicate.title': 'Duplicate the selected mapping or mask, slightly offset and just in front of the original',
+  'control.mappings.duplicate.name': '{name} copy',
   'control.mappings.reorderHint': 'Drag a row to change order (top = front-most)',
 
   // ツール: 出力設定
@@ -377,6 +380,9 @@ const ja: Record<keyof typeof en, string> = {
   'control.mappings.title': 'マッピング',
   'control.mappings.add': '＋ マッピングを追加',
   'control.mappings.addMask': '＋ マスクを追加',
+  'control.mappings.duplicate': '選択中を複製',
+  'control.mappings.duplicate.title': '選択中の面・マスクを、少しずらして元のすぐ前面に複製',
+  'control.mappings.duplicate.name': '{name} のコピー',
   'control.mappings.reorderHint': '行をドラッグで並び順を変更（一番上 = 最前面）',
 
   'control.outputSettings.title': '出力設定',

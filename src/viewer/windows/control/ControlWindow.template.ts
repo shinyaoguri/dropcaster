@@ -97,6 +97,9 @@ export function controlPanelHtml(): string {
                   <button id="add-mapping-btn" class="tool-button" data-i18n="control.mappings.add">${t('control.mappings.add')}</button>
                   <button id="add-mask-btn" class="tool-button" data-i18n="control.mappings.addMask">${t('control.mappings.addMask')}</button>
                 </div>
+                <div class="mappings-item-buttons">
+                  <button id="duplicate-mapping-btn" class="tool-button" data-i18n="control.mappings.duplicate" data-i18n-title="control.mappings.duplicate.title" title="${t('control.mappings.duplicate.title')}">${t('control.mappings.duplicate')}</button>
+                </div>
               </div>
 
               <div class="tool-section">
