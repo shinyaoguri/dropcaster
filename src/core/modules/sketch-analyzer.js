@@ -1,6 +1,7 @@
 import { readFile, readdir, stat } from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { DEFAULT_DESCRIPTION_SUFFIX, DEFAULT_PATH_PREFIX, MANUAL_METADATA_FILE, OP_METADATA_FILE } from './constants.js';
+import { brokenSymlinkError, readOptionalTextFile } from './file-manager.js';
 import { t } from '../../cli/i18n/index.js';
 
 /**
@@ -30,8 +31,9 @@ import { t } from '../../cli/i18n/index.js';
 /**
  * 作品のディレクトリを解析する。
  * index.html が無い (ファイルでない) ディレクトリは作品ではないので、警告して null を返す。
- * index.html があるのに読めない・解析できないときは例外を投げる。呼び出し側 (scan) が作品ごとの
- * 失敗として集計し、終了コードに反映する (#213)。
+ * index.html があるのに読めない・解析できないとき (リンク先の無い symlink を含む)、メタデータ
+ * (dropcaster.meta.json / _op-meta.json) があるのに読めない・壊れているときは例外を投げる。
+ * 呼び出し側 (scan) が作品ごとの失敗として集計し、終了コードに反映する (#213, #275)。
  * @param {string} dirName
  * @param {string} sketchPath
  * @returns {Promise<SketchInfo | null>} index.html が無ければ null
@@ -49,7 +51,7 @@ export async function analyzeSketch(dirName, sketchPath) {
   const htmlContent = await readFile(indexPath, 'utf-8');
   const metadata = extractMetadata(htmlContent, dirName);
   const manualMetadata = await loadManualMetadata(sketchPath, dirName);
-  const opMetadata = await loadOpMetadata(sketchPath, dirName);
+  const opMetadata = await loadOpMetadata(sketchPath);
 
   // インタラクティブ要素を検出
   const detectedInteractiveElements = await detectInteractiveElements(sketchPath, htmlContent);
@@ -86,7 +88,8 @@ export async function analyzeSketch(dirName, sketchPath) {
 
 /**
  * 作品の入口 (index.html) の stat。無い (ENOENT)・ファイルでないときは null。
- * それ以外の失敗 (権限が無くて確かめられないなど) は「無い」と区別できるよう例外のまま返す。
+ * それ以外の失敗 (権限が無くて確かめられない・リンク先の無い symlink など) は「無い」と区別できるよう
+ * 例外のまま返す。
  * @param {string} indexPath
  * @returns {Promise<import('fs').Stats | null>}
  */
@@ -95,52 +98,71 @@ async function statSketchEntry(indexPath) {
     const stats = await stat(indexPath);
     return stats.isFile() ? stats : null;
   } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-async function loadManualMetadata(sketchPath, dirName) {
-  const metadataPath = join(sketchPath, MANUAL_METADATA_FILE);
-
-  try {
-    const rawMetadata = await readFile(metadataPath, 'utf-8');
-    const parsedMetadata = JSON.parse(rawMetadata);
-    const normalizedMetadata = normalizeManualMetadata(parsedMetadata);
-    console.error(t('sketchAnalyzer.manualMetadataLoaded', { path: `${dirName}/${MANUAL_METADATA_FILE}` }));
-    return normalizedMetadata;
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      console.warn(`Warning: Could not load ${dirName}/${MANUAL_METADATA_FILE}:`, error.message);
-    }
-    return {};
+    if (error.code !== 'ENOENT') throw error;
+    const brokenLink = await brokenSymlinkError(indexPath);
+    if (brokenLink) throw brokenLink;
+    return null;
   }
 }
 
 /**
- * dropcaster fetch が書いた _op-meta.json からタイトル・説明を読む。空の値は「値なし」として返さない。
- * ファイルが無い・読めない・壊れているときは空 (読めない・壊れているときは警告する)。
+ * 作品のディレクトリにあるメタデータの JSON を読む。ファイルが無いときは null。
+ * 読めない・JSON として壊れている・オブジェクトでないときは、ファイル名を添えて例外を投げる
+ * (黙って空として扱うと、カタログの title / tags などが前触れなく別の値に変わるため。#275)。
+ * @param {string} sketchPath
+ * @param {string} fileName
+ * @returns {Promise<Record<string, unknown> | null>}
+ */
+async function loadMetadataFile(sketchPath, fileName) {
+  let raw;
+  try {
+    raw = await readOptionalTextFile(join(sketchPath, fileName));
+  } catch (error) {
+    throw new Error(`Could not read ${fileName}: ${error.message}`, { cause: error });
+  }
+  if (raw === null) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${fileName} is not valid JSON: ${error.message}`, { cause: error });
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${fileName} must contain a JSON object`);
+  }
+  return parsed;
+}
+
+/**
+ * 手動メタデータ (dropcaster.meta.json) を読む。ファイルが無いときは空。
+ * 読めない・壊れているときは例外 (loadMetadataFile)。
  * @param {string} sketchPath
  * @param {string} dirName
+ */
+async function loadManualMetadata(sketchPath, dirName) {
+  const parsedMetadata = await loadMetadataFile(sketchPath, MANUAL_METADATA_FILE);
+  if (!parsedMetadata) return {};
+  const normalizedMetadata = normalizeManualMetadata(parsedMetadata);
+  console.error(t('sketchAnalyzer.manualMetadataLoaded', { path: `${dirName}/${MANUAL_METADATA_FILE}` }));
+  return normalizedMetadata;
+}
+
+/**
+ * dropcaster fetch が書いた _op-meta.json からタイトル・説明を読む。空の値は「値なし」として返さない。
+ * ファイルが無いときは空。読めない・壊れているときは例外 (loadMetadataFile)。
+ * @param {string} sketchPath
  * @returns {Promise<{ title?: string, description?: string }>}
  */
-async function loadOpMetadata(sketchPath, dirName) {
-  try {
-    const parsed = JSON.parse(await readFile(join(sketchPath, OP_METADATA_FILE), 'utf-8'));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    /** @type {{ title?: string, description?: string }} */
-    const result = {};
-    for (const field of /** @type {const} */ (['title', 'description'])) {
-      const value = normalizeString(parsed[field]);
-      if (value) result[field] = value;
-    }
-    return result;
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      console.warn(`Warning: Could not load ${dirName}/${OP_METADATA_FILE}:`, error.message);
-    }
-    return {};
+async function loadOpMetadata(sketchPath) {
+  const parsed = await loadMetadataFile(sketchPath, OP_METADATA_FILE);
+  /** @type {{ title?: string, description?: string }} */
+  const result = {};
+  if (!parsed) return result;
+  for (const field of /** @type {const} */ (['title', 'description'])) {
+    const value = normalizeString(parsed[field]);
+    if (value) result[field] = value;
   }
+  return result;
 }
 
 function normalizeManualMetadata(metadata) {

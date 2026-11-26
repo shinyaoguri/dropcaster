@@ -1,4 +1,4 @@
-import { readdir, stat, cp, mkdir, rm } from 'fs/promises';
+import { readdir, stat, cp, mkdir, rm, readFile, readlink } from 'fs/promises';
 import { basename, join } from 'path';
 import { MANUAL_METADATA_FILE, MANUAL_METADATA_TEMPLATE_FILE } from './constants.js';
 import { isReplacementResidue, replaceDirectory } from './directory-replacement.js';
@@ -192,6 +192,41 @@ export async function getLatestMtime(path) {
   return mtimes.reduce((latest, current) => {
     return current > latest ? current : latest;
   }, stats.mtime);
+}
+
+/**
+ * あってもなくてもよいファイルをテキストで読む。無いとき (ENOENT で、リンク先の無い symlink でもない) だけ null。
+ * それ以外 (読めない・ディレクトリ・リンク先の無い symlink) は例外を投げる。「無い」と「読めない」を
+ * 区別し、読めない入力を「無い」として黙って扱わないため (#275)。
+ * @param {string} path
+ * @returns {Promise<string | null>}
+ */
+export async function readOptionalTextFile(path) {
+  try {
+    return await readFile(path, 'utf-8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    const brokenLink = await brokenSymlinkError(path);
+    if (brokenLink) throw brokenLink;
+    return null;
+  }
+}
+
+/**
+ * stat が ENOENT だったパスが、リンク先の無い symlink か確かめる。そうならその旨の Error を返し、
+ * 本当に無い (symlink でもない) ときは null を返す。
+ * @param {string} path
+ * @returns {Promise<Error | null>}
+ */
+export async function brokenSymlinkError(path) {
+  let target;
+  try {
+    target = await readlink(path);
+  } catch {
+    // 無い (ENOENT)・symlink でない (EINVAL): リンク切れではない
+    return null;
+  }
+  return new Error(`${basename(path)} is a broken symbolic link (target not found: ${target})`);
 }
 
 /** stat ベースの存在チェック（fs.access より readable）。 */

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import { readdir, writeFile, stat, readFile, rm } from 'fs/promises';
+import { readdir, writeFile, stat, rm } from 'fs/promises';
 import { resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { fetchUserDataForSketches } from './modules/op-api-client.js';
 import { analyzeSketch } from './modules/sketch-analyzer.js';
-import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists, fileExists, isServableSketchCopy } from './modules/file-manager.js';
+import { cleanupRemovedSketches, copySketchToPublic, ensureDirectoryExists, fileExists, isServableSketchCopy, readOptionalTextFile } from './modules/file-manager.js';
 import { isReplacementResidue } from './modules/directory-replacement.js';
 import { generateSketchPreview } from './modules/preview-generator.js';
 import { checkPreviewTools } from './check-env.js';
@@ -54,25 +54,30 @@ async function scanSketches(options = {}) {
   } = options;
 
   try {
-    // 既存の sketches.json を読み込む（userData / title / previewGif を保持するため）
-    let existingSketchList = [];
+    // 既存の sketches.json を読み込む（userData / title / previewGif を保持するため）。
+    // 無ければ新規作成。読めない・壊れているときは、何も変えずに失敗で止める (空として扱って書き出すと、
+    // 前回の項目と userData などが黙って消えるため。--sketch では、ほかの作品の項目がすべて消える。#275)
+    let existingSketchList;
+    try {
+      existingSketchList = await readExistingCatalog(sketchesJsonPath);
+    } catch (error) {
+      console.error(t('scan.catalogUnreadable', { error: error.message }));
+      console.error(t('scan.catalogUnreadableHint'));
+      process.exitCode = 1;
+      return null;
+    }
     const existingSketchData = {};
     const existingPreviewData = {};
-    try {
-      existingSketchList = JSON.parse(await readFile(sketchesJsonPath, 'utf-8'));
-      existingSketchList.forEach(sketch => {
-        existingSketchData[sketch.id] = {
-          userData: sketch.userData,
-          title: sketch.title,
-          description: sketch.description,
-          sketchUrl: sketch.sketchUrl,
-          previewGif: sketch.previewGif,
-        };
-        if (sketch.previewGif) existingPreviewData[sketch.id] = sketch.previewGif;
-      });
-    } catch {
-      // 無ければ新規作成
-    }
+    existingSketchList.forEach(sketch => {
+      existingSketchData[sketch.id] = {
+        userData: sketch.userData,
+        title: sketch.title,
+        description: sketch.description,
+        sketchUrl: sketch.sketchUrl,
+        previewGif: sketch.previewGif,
+      };
+      if (sketch.previewGif) existingPreviewData[sketch.id] = sketch.previewGif;
+    });
     const existingSketches = new Set(existingSketchList.map(s => s.id));
 
     // プレビュー生成に必要なツール（FFmpeg / Chromium）が無ければスキップ（メタデータ収集は続行）
@@ -142,21 +147,24 @@ async function scanSketches(options = {}) {
       if (isReplacementResidue(entry.name)) continue;
       if (targetSketch && entry.name !== targetSketch) continue;
 
-      currentSketchNames.add(entry.name);
       const sketchPath = resolve(sketchesDir, entry.name);
       // index.html があるのに読めない・解析できない作品は、失敗として数える（黙って飛ばすと、
-      // 前回の項目がカタログから消えたまま成功終了する）。index.html が無いディレクトリ (null) は
-      // 作品ではないので、analyzeSketch の警告だけで飛ばす
+      // 前回の項目がカタログから消えたまま成功終了する）。失敗した作品は前回のコピーを残すので、
+      // 下の cleanupRemovedSketches の対象から外す (currentSketchNames に入れる)。
+      // index.html が無いディレクトリ (null) は作品ではないので、analyzeSketch の警告だけで飛ばす。
+      // カタログに載らないので、全件走査では public の前回のコピーも消す (#275)
       let sketchInfo;
       try {
         sketchInfo = await analyzeSketch(entry.name, sketchPath);
       } catch (error) {
+        currentSketchNames.add(entry.name);
         console.error(t('scan.analyzeFailed', { name: entry.name, error: error.message }));
         await keepPreviousEntryOrDrop(entry.name);
         analysisFailures.push(entry.name);
         continue;
       }
       if (!sketchInfo) continue;
+      currentSketchNames.add(entry.name);
 
       // 既存の情報を復元（手動メタデータで明示指定されていないフィールドのみ）。
       // title / description は、作品のディレクトリの情報源 (手動メタデータ・_op-meta.json・HTML) の
@@ -343,6 +351,27 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     },
   };
   scanSketches(options);
+}
+
+/**
+ * 既存の public/sketches.json を読む。ファイルが無いときは空のリスト (新規作成)。
+ * 読めない・JSON として壊れている・項目 (オブジェクト) の配列でないときは例外を投げる。
+ * @param {string} path
+ * @returns {Promise<Array<Record<string, any>>>}
+ */
+async function readExistingCatalog(path) {
+  const raw = await readOptionalTextFile(path);
+  if (raw === null) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`not valid JSON: ${error.message}`, { cause: error });
+  }
+  if (!Array.isArray(parsed) || !parsed.every(item => item && typeof item === 'object' && !Array.isArray(item))) {
+    throw new Error('expected a JSON array of sketch entries');
+  }
+  return parsed;
 }
 
 /**
