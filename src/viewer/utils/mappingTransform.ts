@@ -1028,6 +1028,38 @@ export function constrainQuadCorner(quad: Quad, corner: CornerKey, target: Point
 }
 
 /**
+ * 数値入力で隅を置けなかった理由。
+ * - `notNumber`: 数値でない（空欄・NaN・Infinity）
+ * - `notConvex`: その位置では quad が凸でなくなる（凹む・ねじれる・潰れる）
+ * - `tooSteep`: 凸ではあるが、遠近の強さが上限（MAX_PERSPECTIVE_RATIO）を超える
+ */
+export type QuadCornerRejection = 'notNumber' | 'notConvex' | 'tooSteep';
+
+export type QuadCornerPlacement =
+  | { ok: true; quad: Quad }
+  /** `nearest` はドラッグなら寄せられるいちばん近い位置（目標が数値でないときは今の位置）。 */
+  | { ok: false; reason: QuadCornerRejection; nearest: Point };
+
+/**
+ * 隅 `corner` を `target` へちょうど置けるかを判定する（四隅の数値入力用。#192）。
+ *
+ * ドラッグ・矢印キーと同じ `constrainQuadCorner` の条件で判定する（ADR 0007）。ただし入力した値を
+ * 黙って別の値へ寄せることはせず、寄せが要る位置なら置かずに理由を返す。元の quad がそもそも凸で
+ * ない（古い設定など）なら、`constrainQuadCorner` と同じく制限しない（直すために動かせるように）。
+ */
+export function placeQuadCorner(quad: Quad, corner: CornerKey, target: Point): QuadCornerPlacement {
+  if (!Number.isFinite(target.x) || !Number.isFinite(target.y)) {
+    return { ok: false, reason: 'notNumber', nearest: { x: quad[corner].x, y: quad[corner].y } };
+  }
+  const nearest = constrainQuadCorner(quad, corner, target);
+  if (nearest.x === target.x && nearest.y === target.y) {
+    return { ok: true, quad: { ...cloneQuad(quad), [corner]: { x: target.x, y: target.y } } };
+  }
+  const reason = isConvexQuad({ ...quad, [corner]: target }) ? 'tooSteep' : 'notConvex';
+  return { ok: false, reason, nearest };
+}
+
+/**
  * 行優先の 3×3 射影行列。CSS / WebGL の column-major への変換は利用側で行う。
  * 最後の係数も保持する（逆行列では 0 になり得るため、1 に固定しない）。
  */

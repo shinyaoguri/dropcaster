@@ -13,6 +13,7 @@ import { OutputSettingsPanel } from './panels/OutputSettingsPanel';
 import { SourceCropPanel } from './panels/SourceCropPanel';
 import { MappingAreaPanel } from './panels/MappingAreaPanel';
 import { MaskEditPanel } from './panels/MaskEditPanel';
+import { CornerInputPanel } from './panels/CornerInputPanel';
 import { MappingsController } from './MappingsController';
 import {
   isMaskEntry,
@@ -64,6 +65,7 @@ export class ControlWindow extends BaseWindow {
   private maskEdit = new MaskEditPanel();
   private layoutPanel = new LayoutPanel();
   private outputSettings = new OutputSettingsPanel();
+  private cornerInputs = new CornerInputPanel();
   /** 現在 active なタブ（'mapping' / 'layout'）。タブ切替時に LayoutPanel.refresh() を駆動。 */
   private activeTab: ControlTab = 'mapping';
   private tabListeners = new Set<(tab: ControlTab) => void>();
@@ -318,6 +320,7 @@ export class ControlWindow extends BaseWindow {
     this.maskEdit.destroy();
     this.layoutPanel.destroy();
     this.outputSettings.destroy();
+    this.cornerInputs.destroy();
     this.tabListeners.clear(); this.activeTab = 'mapping';
     this.activityBar.destroy();
   }
@@ -467,6 +470,12 @@ ${CONTROL_PANEL_CSS}
 
     // 出力設定（X/Y/幅/高さ）入力欄 — outputs[*] のアクティブな 1 件の position/size を編集
     this.outputSettings.attach(scope, this.ctrl);
+
+    // マッピング設定の四隅の数値入力（#192）。置いた後は refreshTransform → onQuadChanged で各表示が追従する
+    this.cornerInputs.attach(scope, this.ctrl, {
+      onBeforeCommit: () => this.keyboardNudge.endNudge(),
+      onQuadCommitted: () => this.mappingArea.refreshTransform(),
+    });
 
     // 出力レイアウト編集タブ（仮想キャンバス上で各 output を 2D ドラッグ・リサイズで配置 + マッピング preview）
     if (this.hostDoc && this.controlHost) {
@@ -629,7 +638,6 @@ ${CONTROL_PANEL_CSS}
     if (!scope) return;
 
     const source = this.ctrl.getActiveSource();
-    const quad = this.ctrl.getActiveQuad();
 
     // ソース値の更新
     const sourceX = scope.querySelector('#source-x-value');
@@ -642,16 +650,8 @@ ${CONTROL_PANEL_CSS}
     if (sourceW) sourceW.textContent = source.width.toFixed(1);
     if (sourceH) sourceH.textContent = source.height.toFixed(1);
 
-    // マッピング: 4隅の値を更新
-    const fmt = (p: { x: number; y: number }) => `${p.x.toFixed(1)}, ${p.y.toFixed(1)}`;
-    const tl = scope.querySelector('#mapping-tl-value');
-    const tr = scope.querySelector('#mapping-tr-value');
-    const bl = scope.querySelector('#mapping-bl-value');
-    const br = scope.querySelector('#mapping-br-value');
-    if (tl) tl.textContent = fmt(quad.topLeft);
-    if (tr) tr.textContent = fmt(quad.topRight);
-    if (bl) bl.textContent = fmt(quad.bottomLeft);
-    if (br) br.textContent = fmt(quad.bottomRight);
+    // マッピング: 4隅の数値入力欄を更新（focus 中の欄は CornerInputPanel が上書きしない）
+    this.cornerInputs.refresh();
 
     // 出力設定: アクティブ出力の position/size を入力欄に反映
     this.outputSettings.refresh();
