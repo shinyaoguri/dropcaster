@@ -61,6 +61,9 @@ const labels = {
   draftUnreadable: ['The project saved in this browser could not be read. Reload to try again, or import an exported package.', 'このブラウザに保存したプロジェクトを読み出せませんでした。再読み込みしてもう一度試すか、書き出したパッケージを読み込んでください。'],
   openError: ['The saved project could not be opened. Reload to try again.', '保存したプロジェクトを開く途中で失敗しました。再読み込みしてもう一度お試しください。'],
   imported: ['Project loaded. Open saved sketches or continue with the current sketch.', 'プロジェクトを読み込みました。保存した作品を開くか、現在の作品で続けられます。'],
+  // 取り込み・開く・戻すは確定したが、裏で読み込んだ 3D で会場を表示できなかった (#169)。拒否 (invalid・size など) とは別の文言にする
+  importedUnbuildable: ['Loaded, but the venue cannot be shown in 3D. {reason} You can keep editing in 2D, or use “Return to previous project”.', '読み込みました。ただし会場を3Dで表示できません。{reason}2D編集はそのまま続けられ、「読込前のプロジェクトに戻す」で戻せます。'],
+  importedNo3d: ['Loaded. 3D is unavailable here, so the venue is not shown in 3D or behind the mapping. You can keep editing, saving and exporting in 2D.', '読み込みました。3Dを表示できないため、会場は3Dにもマッピングの背景にも出ません。2Dでの編集・保存・書き出しはそのまま続けられます。'],
   modelLoaded: ['Venue loaded. Check its size, orientation and position.', '会場を読み込みました。寸法・向き・位置を確認してください。'],
   invalid: ['Invalid settings. The current project has been kept.', '設定が正しくありません。現在のプロジェクトは保持しています。'],
   // 形式の検証以外の失敗 (保存済みの読み出しなど)。設定の誤りとは言わない (#198)
