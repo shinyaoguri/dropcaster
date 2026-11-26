@@ -1,5 +1,6 @@
 import { randomId } from '../utils/randomId.ts';
 import { defaultMappingsState, parseMappingsState, CORNER_KEYS, type MappingsState } from '../utils/mappingTransform.ts';
+import type { Sketch } from '../types/sketch.ts';
 
 export type Vec3 = [number, number, number];
 export type Quaternion = [number, number, number, number];
@@ -35,6 +36,13 @@ export const MAX_VENUE_OBJECTS = 128;
  * 文言 `practice.contentLimit` の件数も合わせる。
  */
 export const MAX_SHOW_ITEMS = 10_000;
+/** 作品参照の id・ref の最大長。ローカル作品の id はディレクトリ名なので、ファイルシステムの上限 (255 バイト) より長くとる (#173)。 */
+export const MAX_REFERENCE_LENGTH = 1000;
+const OP_REF = /^\d+$/, GIST_REF = /^[a-f0-9]{20,64}$/i;
+/** 作品参照の path に書けるか。URL・プロトコル相対・`..` を含むものは読み込まない。 */
+export function isReferencePath(path: string): boolean {
+  return path.trim().length > 0 && path.length <= 2000 && !/^[a-z]+:/i.test(path) && !path.startsWith('//') && !path.includes('..');
+}
 export interface VenuePackage {
   format: 'dropcaster-venue'; schemaVersion: 2; name: string;
   venue: Project['venue']; assets: Project['assets'];
@@ -245,23 +253,7 @@ export function parseProject(value: unknown, verified: Project['assets'] = [], d
   // Authored objects are already in physical metres: never hide another scale/rotation above their dimensions.
   if (objects && (transform.metersPerUnit !== 1 || transform.position.some(v => v !== 0) || transform.scale.some(v => v !== 1)
     || transform.quaternion.some((v, i) => v !== (i === 3 ? 1 : 0)) || color.toLowerCase() !== '#ffffff')) fail();
-  const content = showList(root.content).map(value => {
-    const c = record(value), kind = c.kind;
-    if (kind !== 'local' && kind !== 'op' && kind !== 'gist' && kind !== 'builtin') fail();
-    const ref = str(c.ref);
-    if (kind === 'builtin' && ref !== 'checkerboard') fail('reference');
-    if ((kind === 'op' && !/^\d+$/.test(ref)) || (kind === 'gist' && !/^[a-f0-9]{20,64}$/i.test(ref))) fail('reference');
-    const path = c.path === undefined ? undefined : str(c.path, 2000);
-    if (path && (/^[a-z]+:/i.test(path) || path.startsWith('//') || path.includes('..'))) fail('reference');
-    if (c.revisionPinned !== false) fail('version');
-    return { id: str(c.id), kind: kind as ContentReference['kind'], ref, title: str(c.title, 10000), path,
-      revision: c.revision === null ? null : str(c.revision), revisionPinned: false as const };
-  });
-  unique(content.map(c => c.id));
-  const contentIds = showList(show.contentIds).map(id => str(id));
-  // 件数の 2 乗にならないよう、参照先は Set で引く。
-  const contentIdSet = new Set(content.map(c => c.id));
-  if (contentIds.some(id => !contentIdSet.has(id))) fail('reference');
+  const { content, contentIds } = parseShowReferences(root.content, show.contentIds);
   const currentIndex = num(show.currentIndex, 0, Math.max(0, contentIds.length - 1));
   if (!Number.isInteger(currentIndex)) fail();
   const createdAt = str(root.createdAt), updatedAt = str(root.updatedAt);
@@ -272,6 +264,56 @@ export function parseProject(value: unknown, verified: Project['assets'] = [], d
     venue: { id: str(venue.id), revision, layout,
       scene: { kind: scene.kind as VenueScene['kind'], assetId, ...(objects ? { objects } : {}), ...transform }, projectors },
     content, show: { contentIds, intervalSeconds: num(show.intervalSeconds, 5, 300), currentIndex }, assets };
+}
+
+/**
+ * 作品参照 (`content`) と再生順 (`show.contentIds`) を検証する。parseProject の一部で、作業中のショーが
+ * 保存して読み込み直せるかを確かめるのにも使う (#173)。contentIds は同じ作品を何度含んでもよい。
+ */
+export function parseShowReferences(contentValue: unknown, contentIdsValue: unknown): { content: ContentReference[]; contentIds: string[] } {
+  const content = showList(contentValue).map(value => {
+    const c = record(value), kind = c.kind;
+    if (kind !== 'local' && kind !== 'op' && kind !== 'gist' && kind !== 'builtin') fail();
+    const ref = str(c.ref, MAX_REFERENCE_LENGTH);
+    if (kind === 'builtin' && ref !== 'checkerboard') fail('reference');
+    if ((kind === 'op' && !OP_REF.test(ref)) || (kind === 'gist' && !GIST_REF.test(ref))) fail('reference');
+    const path = c.path === undefined ? undefined : str(c.path, 2000);
+    if (path && !isReferencePath(path)) fail('reference');
+    if (c.revisionPinned !== false) fail('version');
+    return { id: str(c.id, MAX_REFERENCE_LENGTH), kind: kind as ContentReference['kind'], ref, title: str(c.title, 10000), path,
+      revision: c.revision === null ? null : str(c.revision), revisionPinned: false as const };
+  });
+  unique(content.map(c => c.id));
+  const contentIds = showList(contentIdsValue).map(id => str(id, MAX_REFERENCE_LENGTH));
+  // 件数の 2 乗にならないよう、参照先は Set で引く。
+  const contentIdSet = new Set(content.map(c => c.id));
+  if (contentIds.some(id => !contentIdSet.has(id))) fail('reference');
+  return { content, contentIds };
+}
+
+/**
+ * 作品を、保存して読み込み直せる作品参照にする (#173)。
+ * - 取り込み元 (OP・Gist・内蔵) の作品は path を持たない。ローカル作品は id が `op-` / `gist-` で始まってもローカル
+ * - 空白だけの作品名は id で表す
+ * - path は読み込みに使わない記録なので、書けない形 (`..` を含むディレクトリ名など) なら書かない
+ */
+export function contentReference(sketch: Sketch): ContentReference {
+  const remote = !sketch.path;
+  const kind = remote && sketch.id === 'builtin-checkerboard' ? 'builtin'
+    : remote && /^op-\d+$/.test(sketch.id) ? 'op' : remote && /^gist-[a-f0-9]{20,64}$/i.test(sketch.id) ? 'gist' : 'local';
+  const path = kind === 'local' && sketch.path ? sketch.path.replace(/^(\.\.\/|\.\/|\/)+/, '') : '';
+  return { id: sketch.id, kind, ref: kind === 'local' ? sketch.id : sketch.id.slice(kind.length + 1),
+    title: sketch.title?.trim() ? sketch.title : sketch.id, ...(path && isReferencePath(path) ? { path } : {}),
+    revision: sketch.lastModified?.trim() ? sketch.lastModified : null, revisionPinned: false };
+}
+/**
+ * ショーの作品参照。カタログに同じ id が重なっても content は最初の 1 件にし、contentIds は並びのまま残す
+ * (再生位置 `currentIndex` を変えない)。
+ */
+export function showReferences(sketches: Sketch[]): { content: ContentReference[]; contentIds: string[] } {
+  const content = new Map<string, ContentReference>();
+  for (const sketch of sketches) if (!content.has(sketch.id)) content.set(sketch.id, contentReference(sketch));
+  return { content: [...content.values()], contentIds: sketches.map(sketch => sketch.id) };
 }
 
 /** Portable package: device screen placement and transient editor selection are not shared. */
@@ -308,6 +350,8 @@ export function importVenue(value: unknown, current: Project, decoded?: DecodedA
  */
 export function exportText(project: Project, venueOnly: boolean): string {
   const text = JSON.stringify(venueOnly ? portableVenue(project) : portableProject(project), null, 2);
+  // 取り込みはファイルの大きさ (バイト数) で先に拒否する。同じ基準で、取り込めない大きさなら書き出さない。
+  if (new TextEncoder().encode(text).length > MAX_PACKAGE_BYTES) fail('size');
   const written: unknown = JSON.parse(text);
   if (venueOnly) importVenue(written, createProject(), undefined, project.assets);
   else parseProject(written, project.assets);

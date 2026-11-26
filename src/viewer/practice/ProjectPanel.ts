@@ -1,5 +1,5 @@
 import { randomId } from '../utils/randomId';
-import { parseProject, exportText, importVenue, ProjectFormatError,
+import { parseProject, parseShowReferences, exportText, importVenue, ProjectFormatError,
   MAX_PACKAGE_BYTES, type Project } from './project';
 import { listProjects, readProject } from './projectStore';
 import type { ProjectSession } from './ProjectSession';
@@ -31,6 +31,8 @@ export class ProjectPanel {
   private action = 0;
   private previous: Project | null = null;
   private previousMode: 'project' | 'venue' = 'project';
+  /** 保存して読み込み直せるかを最後に確かめた作品参照。作品が変わったときだけ確かめ直す (#173)。 */
+  private checkedContent: Project['content'] | null = null;
   private session: ProjectSession;
   private status: (key: MessageKey, error?: boolean, reason?: MessageKey | null) => void;
   private venueChanged: (shaped: boolean) => void;
@@ -83,7 +85,22 @@ export class ProjectPanel {
       contents.dataset.content = text;
     }
     this.get<HTMLButtonElement>('practice-open-content').disabled = !project.content.length;
+    this.checkContent(project);
     this.get<HTMLButtonElement>('practice-undo-import').disabled = !this.previous;
+  }
+  /** 保存しても読み込み直せない作品参照 (1 万件を超える・長すぎる作品名など) があれば、黙って保存せず理由を出す (#173)。 */
+  private checkContent(project: Project): void {
+    if (project.content === this.checkedContent) return;
+    this.checkedContent = project.content;
+    try { parseShowReferences(project.content, project.show.contentIds); } catch (error) {
+      if (!(error instanceof ProjectFormatError)) throw error;
+      this.status('practice.contentUnsavable', true, this.reason(error));
+    }
+  }
+  /** 書き出し・保存できない理由。形式の検証の汎用の失敗は、値の範囲の文言にする。 */
+  private reason(error: ProjectFormatError): MessageKey {
+    const key = projectErrorKey(error);
+    return key === 'practice.invalid' || !key ? 'practice.unreadableValue' : key;
   }
   private wireControls(): void {
     const click = (id: string, run: () => void) => this.get(id).addEventListener('click', run);
@@ -165,8 +182,7 @@ export class ProjectPanel {
     // 自分で読み込めないファイルは書き出さず、理由を出す (#173)。
     try { text = exportText(project, venueOnly); } catch (error) {
       if (!(error instanceof ProjectFormatError)) throw error;
-      const reason = projectErrorKey(error);
-      this.status('practice.exportRefused', true, reason === 'practice.invalid' || !reason ? 'practice.unreadableValue' : reason);
+      this.status('practice.exportRefused', true, this.reason(error));
       return;
     }
     const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));

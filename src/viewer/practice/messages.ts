@@ -77,7 +77,9 @@ const labels = {
   contentLimit: ['A project can hold up to 10,000 sketches.', '1つのプロジェクトに入る作品は10,000件までです。'],
   // 書き出そうとしたファイルを自分の検証が通さなかった (#173)。{reason} は上の形式の文言か unreadableValue
   exportRefused: ['Not exported, because this file could not be loaded back. {reason}', '書き出したファイルを読み込み直せないため、書き出していません。{reason}'],
-  unreadableValue: ['A value is outside the supported range (for example, a sketch title made only of spaces).', '扱える範囲を外れた値があります (空白だけの作品名など)。'],
+  unreadableValue: ['A value is outside the supported range (for example, a sketch title longer than 10,000 characters).', '扱える範囲を外れた値があります (10,000 文字を超える作品名など)。'],
+  // 作業中のショーの作品参照が、保存しても読み込み直せない (#173)。{reason} は形式の文言か unreadableValue
+  contentUnsavable: ['These sketches cannot be saved in a form that loads back, so the working project will not reopen after a reload. Export is also refused. {reason}', 'この作品の並びは読み込み直せる形で保存できないため、再読み込みで作業中のプロジェクトを開けません。書き出しもできません。{reason}'],
   busy: ['Loading venue…', '会場を読み込み中…'], ready: ['Open an output from the output list when ready to project.', '出力一覧の「開く」で投影を開始できます。'],
 } as const;
 type Dictionary = { [K in keyof typeof labels as `practice.${K}`]: string };

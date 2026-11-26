@@ -1,17 +1,11 @@
 import type { WindowController } from '../components/WindowController';
 import type { Sketch } from '../types/sketch';
 import { Emitter } from '../utils/emitter';
-import { createProject, parseProject, reconcileProjectLayout, type Project, type Projector, type ContentReference } from './project';
+import { createProject, parseProject, reconcileProjectLayout, showReferences, type Project, type Projector } from './project';
 import { readProject, writeProject } from './projectStore';
 import { DraftSaver, type StorageState } from './draftSaver';
 
 export interface ShowContext { sketches: Sketch[]; currentIndex: number; intervalSeconds: number }
-export function contentReference(sketch: Sketch): ContentReference {
-  const kind = sketch.id === 'builtin-checkerboard' ? 'builtin' : sketch.id.startsWith('op-') ? 'op' : sketch.id.startsWith('gist-') ? 'gist' : 'local';
-  return { id: sketch.id, kind, ref: kind === 'local' ? sketch.id : sketch.id.slice(kind.length + 1), title: sketch.title || sketch.id,
-    path: kind === 'local' && sketch.path ? sketch.path.replace(/^(\.\.\/|\.\/|\/)+/, '') : undefined,
-    revision: sketch.lastModified || null, revisionPinned: false };
-}
 
 /** Working Project; WindowController remains the sole owner of the live 2D layout. */
 export class ProjectSession {
@@ -59,8 +53,8 @@ export class ProjectSession {
     if (!this.followContext) return;
     const context = this.getContext();
     if (!context.sketches.length) return;
-    const content = context.sketches.map(contentReference);
-    this.changes.set({ ...this.changes.get(), content, show: { contentIds: content.map(c => c.id),
+    const { content, contentIds } = showReferences(context.sketches);
+    this.changes.set({ ...this.changes.get(), content, show: { contentIds,
       currentIndex: context.currentIndex, intervalSeconds: context.intervalSeconds } });
     // 作品の自動送り・連打のたびに資産ごと書かないよう、まとめて書く。参照は再表示時に表示中の作品から作り直す。
     if (this.initialized) this.saver.schedule();

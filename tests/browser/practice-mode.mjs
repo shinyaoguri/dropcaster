@@ -513,15 +513,75 @@ async function slideshowLarge(page, base) {
     }
   }
 }
-// #173: 自分の parser を通らないプロジェクトは書き出さず、理由を出す。会場だけの書き出しは作品参照で止めない。
+// #173: ローカル作品のディレクトリ名・カタログの形がそのまま保存されても、再読み込み・書き出し・取り込み・/project で読み込める。
+// CLI の id はディレクトリ名なので、どれも実際のギャラリーで起こりうる。形ごとに結果を集め、最後にまとめて確かめる。
+const longId = 'l'.repeat(201);
+const catalogShapes = {
+  blankTitle: [{ id: 'blank', title: '   ' }],
+  longId: [{ id: longId, title: 'Long directory name' }],
+  dotsInPath: [{ id: 'a..b', title: 'Dots in the name' }],
+  opPrefix: [{ id: 'op-art', title: 'Local op-art' }],
+  gistPrefix: [{ id: 'gist-0123456789abcdef0123', title: 'Local gist-like' }],
+  duplicateId: [{ id: 'twice', title: 'First copy' }, { id: 'twice', title: 'Second copy' }],
+};
+async function clearDraft(page) {
+  await page.evaluate(() => new Promise((resolve, reject) => {
+    const open = indexedDB.open('dropcaster.projects', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('projects');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction('projects', 'readwrite'); tx.objectStore('projects').delete('draft');
+      tx.oncomplete = () => { open.result.close(); resolve(); }; tx.onerror = () => reject(tx.error);
+    };
+  }));
+}
+function shapeCatalog(shape) {
+  return [catalog[0], ...shape.map(s => ({ ...catalog[0], ...s, path: `sketches/${s.id}/index.html` }))];
+}
+async function slideshowCatalogShapes(page, base) {
+  await page.context().route('**/sketches/**/index.html', r => r.fulfill({ contentType: 'text/html', body: sketchHtml() }));
+  const failures = [];
+  for (const [name, shape] of Object.entries(catalogShapes)) {
+    const items = shapeCatalog(shape), index = items.length - 1;
+    await page.unroute('**/sketches.json'); await page.route('**/sketches.json', r => r.fulfill({ json: items }));
+    await page.goto(`${base.url}/slideshow?index=${index}`); await clearDraft(page); await page.reload(); await enterShow(page, index);
+    await change(page, '#practice-project-name', `Shape ${name}`); await storageSaved(page);
+    await page.reload(); await enterShow(page, index);
+    const reloaded = await page.inputValue('#practice-project-name');
+    if (reloaded !== `Shape ${name}`) failures.push(`${name}: the name after a reload is ${JSON.stringify(reloaded)}`);
+    let downloads = 0; const count = () => downloads++; page.on('download', count);
+    await page.locator('#practice-export').click(); await page.waitForTimeout(500); page.off('download', count);
+    if (downloads !== 1) { failures.push(`${name}: export refused (${await page.locator('#dc-practice-status').textContent()})`); continue; }
+    const exported = await exportProject(page);
+    await importProject(page, exported);
+    const imported = await page.locator('#dc-practice-status').textContent();
+    if (!/Project loaded/.test(imported)) failures.push(`${name}: import says ${JSON.stringify(imported)}`);
+    else if (JSON.stringify(exported.show.contentIds) !== JSON.stringify(items.map(s => s.id))) failures.push(`${name}: order ${JSON.stringify(exported.show.contentIds)}`);
+  }
+  assert.deepEqual(failures, [], 'every catalog shape is saved in a form this app loads back');
+  // まとめたカタログを /project で開くと、ローカル作品は id が op- / gist- で始まっても手元の作品として開く。
+  const items = shapeCatalog(Object.values(catalogShapes).flat()), index = items.length - 1;
+  await page.unroute('**/sketches.json'); await page.route('**/sketches.json', r => r.fulfill({ json: items }));
+  const outside = []; page.on('request', r => { const url = new URL(r.url()); if (/openprocessing\.org|github\.com$/.test(url.hostname) || url.pathname.startsWith('/gist-api/')) outside.push(r.url()); });
+  await page.goto(`${base.url}/slideshow?index=${index}`); await enterShow(page, index);
+  await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
+  await page.waitForFunction(n => document.querySelector('#current-sketch-number')?.textContent === n, String(items.length));
+  assert.match(await page.locator('#current-sketch-number').evaluate(e => e.parentElement.textContent), new RegExp(`${items.length}\\s*/\\s*${items.length}`));
+  assert.deepEqual(outside, [], 'local sketches are not fetched from OpenProcessing or GitHub');
+}
+// #173: 保存して読み込み直せない作品の並び (10,000 文字を超える作品名) は、開いた時点で理由を出し、書き出さない。
+// 会場だけの書き出しは作品参照で止めない。
 async function slideshowExportRefused(page, base) {
-  await page.route('**/sketches.json', r => r.fulfill({ json: [catalog[0], { ...catalog[1], title: '   ' }] }));
+  await page.route('**/sketches.json', r => r.fulfill({ json: [catalog[0], { ...catalog[1], title: 'x'.repeat(10001) }] }));
   await page.reload(); await enterShow(page, 0);
+  await page.waitForFunction(() => /cannot be saved/.test(document.querySelector('#dc-practice-status').textContent));
+  assert.ok(await statusShown(page), 'the unsavable sketches are reported when the editor opens');
+  assert.match(await page.locator('#dc-practice-status').textContent(), /10,000 characters/);
   let downloads = 0; page.on('download', () => downloads++);
   await page.locator('#practice-export').click();
   await page.waitForFunction(() => /Not exported/.test(document.querySelector('#dc-practice-status').textContent));
   assert.ok(await statusShown(page), 'the refusal is shown');
-  assert.match(await page.locator('#dc-practice-status').textContent(), /only of spaces/);
+  assert.match(await page.locator('#dc-practice-status').textContent(), /10,000 characters/);
   await page.waitForTimeout(500); assert.equal(downloads, 0, 'nothing is downloaded');
   const venue = await exportProject(page, '#practice-export-venue');
   assert.equal(venue.format, 'dropcaster-venue'); assert.equal(downloads, 1);
@@ -1844,7 +1904,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowExportRefused, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);
