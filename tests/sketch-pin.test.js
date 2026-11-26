@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { sha256Hex } from '../src/viewer/utils/sha256.ts';
 import { snapshotHash, createSnapshot } from '../src/viewer/practice/sketchSnapshot.ts';
-import { createProject, parseProject, portableProject, keepPins, ProjectFormatError } from '../src/viewer/practice/project.ts';
+import { createProject, parseProject, portableProject, keepPins, showReferences, ProjectFormatError } from '../src/viewer/practice/project.ts';
 
 test('sha256Hex matches the published test vectors', () => {
   // FIPS 180-2 / NIST の例。
@@ -87,4 +87,19 @@ test('rebuilding references from the shown sketches keeps the same sketch pinned
   ];
   assert.deepEqual(keepPins(next, previous), [{ ...next[0], revisionPinned: true, hash: HASH }, next[1]]);
   assert.deepEqual(keepPins([{ ...next[0], ref: '778' }], previous), [{ ...next[0], ref: '778' }], 'a different sketch under the same id is not pinned');
+});
+
+test('a pin survives the shown list repeating the same sketch (#173 dedupes the references)', () => {
+  // 取り込み元の作品は path を持たない。同じ id が 2 回並ぶと content は 1 件、contentIds は並びのまま。
+  const shown = id => ({ id, title: 'Shown', description: '', path: '', type: 'html', tags: [], interactiveElements: [], lastModified: '' });
+  const previous = /** @type {ContentReference[]} */ ([{ id: 'op-777', kind: 'op', ref: '777', title: 'Old', revision: null, revisionPinned: true, hash: HASH }]);
+  const { content, contentIds } = showReferences([shown('op-777'), shown('op-1'), shown('op-777')]);
+  const kept = keepPins(content, previous);
+  assert.deepEqual(contentIds, ['op-777', 'op-1', 'op-777']);
+  assert.deepEqual(kept.map(c => [c.id, c.revisionPinned, c.hash]), [['op-777', true, HASH], ['op-1', false, undefined]]);
+  const p = createProject();
+  p.content = kept; p.show.contentIds = contentIds; p.show.currentIndex = 2;
+  const copy = parseProject(JSON.parse(JSON.stringify(portableProject(p))));
+  assert.deepEqual(copy.content.map(c => [c.id, c.revisionPinned, c.hash]), [['op-777', true, HASH], ['op-1', false, undefined]]);
+  assert.deepEqual(copy.show.contentIds, contentIds);
 });
