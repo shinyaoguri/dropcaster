@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import { existsSync, watch } from 'fs'
 import { resolve } from 'path'
 import { resolveBuildInfo } from './src/core/build-info.js'
+import { devServiceWorker } from './src/cli/utils/dev-service-worker.js'
 
 // Viteプラグイン: sketches.jsonの変更を監視して自動リロード
 const sketchesJsonWatcher = () => ({
@@ -59,6 +60,8 @@ export default defineConfig({
     modulePreload: false
   },
   plugins: [
-    sketchesJsonWatcher()
+    sketchesJsonWatcher(),
+    // dev サーバでは Service Worker を使わない (#180)
+    devServiceWorker()
   ]
 }) 
