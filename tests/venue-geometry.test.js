@@ -49,3 +49,15 @@ test('guide follows shifted/rotated optics and is excluded from projector camera
   }
   let disposed=0;guide.range.addEventListener('dispose',()=>disposed++);guide.dispose();assert.equal(disposed,1);
 });
+
+test('guides of the other projectors look different and stay out of projector cameras (#129)', () => {
+  const selected = new ProjectorGuide(), other = new ProjectorGuide('other'), projector = new PerspectiveCamera(43, 16/9, .1, 30);
+  /** @param {ProjectorGuide} guide @param {number} index */
+  const material = (guide, index) => /** @type {import('three').MeshBasicMaterial} */ (/** @type {import('three').Mesh} */ (guide.group.children[index]).material);
+  const accent = (/** @type {ProjectorGuide} */ guide) => material(guide, 1).color.getHex();
+  assert.equal(selected.group.userData.role, 'selected'); assert.equal(other.group.userData.role, 'other');
+  assert.notEqual(accent(other), accent(selected));
+  assert.ok(material(other, 3).opacity < material(selected, 3).opacity, 'the other range is fainter');
+  other.group.traverse(object => assert.equal(projector.layers.test(object.layers), false));
+  selected.dispose(); other.dispose();
+});

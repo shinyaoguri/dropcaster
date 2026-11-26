@@ -170,6 +170,7 @@ export class PracticePanel {
     const opticsKey = JSON.stringify(projector), venueKey = JSON.stringify(project.venue.scene);
     const backgroundChanged = this.opticsKey !== opticsKey || this.venueKey !== venueKey;
     if (this.opticsKey !== opticsKey) { this.preview.setProjector(projector); this.opticsKey = opticsKey; }
+    this.preview.setOtherProjectors(project.venue.projectors.filter(p => p.outputId !== this.selected));
     if (this.venueKey !== venueKey) { this.preview.setVenueTransform(project.venue.scene); this.venueKey = venueKey; }
     this.preview.setState(layout, this.selected);
     if (backgroundChanged) this.background = this.preview.backgroundImage();
