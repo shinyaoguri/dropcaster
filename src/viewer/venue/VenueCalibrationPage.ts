@@ -7,7 +7,7 @@ import { prepareVenue, prepareObjects, type PreparedVenue } from '../practice/lo
 import { TracePanel, type TraceEstimate, type TracePreview } from './TracePanel';
 import { collectVertices, isVertexVisible } from './venueVertices';
 import { createProject, defaultProjector, defaultScene, encodeAsset, importVenue, parseProject, portableVenue, ProjectFormatError,
-  MAX_GLB_BYTES, MAX_PACKAGE_BYTES, type Project, type Projector, type VenueScene, type Vec3 } from '../practice/project';
+  MAX_GLB_BYTES, MAX_PACKAGE_BYTES, type DecodedAssets, type Project, type Projector, type VenueScene, type Vec3 } from '../practice/project';
 import { readProject } from '../practice/projectStore';
 import { button, field, label, quaternion, rotation, vectorFields } from '../practice/controls';
 import { activityButtonHtml, activityIcon, applyControlTranslations } from '../windows/control/ControlWindow.template';
@@ -70,8 +70,10 @@ export class VenueCalibrationPage {
   private failed = false;
   private selected = '';
   private previous: Project | null = null;
-  /** 3D に表示中のモデルを作った GLB (base64)。立体・サンプル・なぞった推定を表示している間は null。 */
-  private shownGlb: string | null = null;
+  /** 3D に表示中の、GLB (base64) から作ったモデル。立体・サンプル・なぞった推定を表示している間は null。 */
+  private shownGlb: { prepared: PreparedVenue; data: string } | null = null;
+  /** なぞった推定を一時表示している間、表示から外して持っておく確定済みの GLB のモデル。推定をやめたら作り直さずに戻す (#297)。 */
+  private keptGlb: { prepared: PreparedVenue; data: string } | null = null;
   private statusKey: MessageKey = 'practice.loading';
   private errorStatus = false;
   private outputSize: [number, number] = [1920, 1080];
@@ -387,22 +389,34 @@ export class VenueCalibrationPage {
     this.builder?.update(scene,!!this.previous); this.editor?.update(scene,this.builder?.selectedId??'',!!this.previous); this.projection?.render();
     this.get<HTMLButtonElement>('venue-undo-projector').disabled = !this.previous;
   }
-  /** 会場の表示を差し替える。`source` の GLB から作ったモデルなら覚えておき、同じ GLB へ戻すときに作り直さない。 */
+  /**
+   * 会場の表示を差し替える。`source` の GLB から作ったモデルなら覚えておき、同じ GLB へ戻すときに作り直さない。
+   * `source` が null (なぞった推定の一時表示) なら、表示中の GLB のモデルは解放せずに外して持っておく。
+   */
   private showVenue(prepared: PreparedVenue, source: Project | null): void {
-    this.preview!.setVenue(prepared.group, prepared.dispose); this.shownGlb = source ? glbOf(source) : null;
+    if (!source && this.shownGlb) { this.preview!.releaseVenue(); this.keptGlb = this.shownGlb; }
+    if (source && this.keptGlb) { if (this.keptGlb.prepared !== prepared) this.keptGlb.prepared.dispose(); this.keptGlb = null; }
+    this.preview!.setVenue(prepared.group, prepared.dispose);
+    const data = source ? glbOf(source) : null;
+    this.shownGlb = data === null ? null : { prepared, data };
+  }
+  /** `project` の GLB のモデルを作り直さずに使えるか。表示中なら 'shown'、推定の一時表示で外してあるなら 'kept'。 */
+  private reusable(project: Project): 'shown' | 'kept' | null {
+    const data = glbOf(project);
+    return data === null ? null : this.shownGlb?.data === data ? 'shown' : this.keptGlb?.data === data ? 'kept' : null;
   }
   /**
-   * 変更を検証して確定する。`prepared` は会場を読み込み直したときに渡す ('shown' は、表示中のモデルをそのまま使うとき)。
+   * 変更を検証して確定する。`prepared` は会場を読み込み直したときに渡す ('shown' は表示中のモデルを、'kept' は推定の一時表示で外したモデルをそのまま使うとき)。
    * 検証済みのアセット (既定は確定済みの会場のもの) と id・data が同じ GLB は復号し直さない (#171)。
    */
-  private commit(project: Project, prepared?: PreparedVenue | 'shown', fit=false, verified?: Project['assets']): void {
-    const discard = (): void => { if (prepared !== 'shown') prepared?.dispose(); };
+  private commit(project: Project, prepared?: PreparedVenue | 'shown' | 'kept', fit=false, verified?: Project['assets']): void {
+    const discard = (): void => { if (prepared !== 'shown' && prepared !== 'kept') prepared?.dispose(); };
     if (this.disposed || this.failed) { discard(); return; }
     this.adjuster?.flush();
     try {
       const next=parseProject({...project,venue:{...project.venue,revision:project.venue.revision+1}},verified??this.session.changes.get().assets);
       this.editor?.cancel(); this.action++; this.previous=this.session.changes.get();
-      if(prepared) { this.traceShown=null; this.traceRestore++; if(prepared!=='shown') this.showVenue(prepared,next); }
+      if(prepared) { this.traceShown=null; this.traceRestore++; if(prepared==='kept') this.showVenue(this.keptGlb!.prepared,next); else if(prepared!=='shown') this.showVenue(prepared,next); }
       this.session.update(next);
       if(fit) { this.preview!.overview(); if(next.venue.scene.objects?.length===1) this.editor?.focusSelection(); }
       this.status('calibration.updated');
@@ -434,6 +448,7 @@ export class VenueCalibrationPage {
     this.traceShown = estimate;
     if (!replacedVenue) { this.update(this.session.changes.get()); return; }
     const committed = this.session.changes.get();
+    if (this.reusable(committed) === 'kept') { this.showVenue(this.keptGlb!.prepared, committed); this.update(this.session.changes.get()); return; }
     void prepareVenue(committed).then(prepared => {
       if (this.disposed || this.failed || token !== this.traceRestore) { prepared.dispose(); return; }
       this.showVenue(prepared, committed); this.update(this.session.changes.get());
@@ -472,14 +487,15 @@ export class VenueCalibrationPage {
   }
   /**
    * 会場を読み込み直す。`verified` は呼び出し側が検証を終えたアセットで、渡さなければ GLB をすべて検証する。
-   * 表示中のモデルと同じ GLB なら作り直さず、違うときだけ表示のために 1 回復号する。
+   * `decoded` は呼び出し側が検証で復号したバイト列。表示中 (または推定の一時表示で外してある) モデルと同じ GLB なら作り直さず、
+   * 違うときは検証で復号したものからモデルを作る。復号は合わせて 1 回まで (#297)。
    */
-  private async apply(project: Project, verified: Project['assets'] = []): Promise<void> {
+  private async apply(project: Project, verified: Project['assets'] = [], decoded: DecodedAssets = new Map()): Promise<void> {
     const action=++this.action; this.editor?.cancel(); this.adjuster?.cancel(); this.status('practice.busy');
     try {
-      const next=parseProject(project,verified);
-      const prepared=this.shownGlb!==null && glbOf(next)===this.shownGlb ? 'shown' : await prepareVenue(next);
-      if(this.disposed || this.failed || action!==this.action) { if(prepared!=='shown') prepared.dispose(); return; }
+      const next=parseProject(project,verified,decoded);
+      const prepared=this.reusable(next) ?? await prepareVenue(next,decoded);
+      if(this.disposed || this.failed || action!==this.action) { if(typeof prepared!=='string') prepared.dispose(); return; }
       this.commit(next,prepared,true,next.assets); this.status('calibration.loaded');
     } catch(error) { if(!this.disposed && action===this.action) this.error(error); }
   }
@@ -496,8 +512,9 @@ export class VenueCalibrationPage {
         await this.apply({...current,assets:[{id,name:file.name,mimeType:'model/gltf-binary',data:encodeAsset(new Uint8Array(bytes))}],venue:{...current.venue,scene:{...defaultScene(),kind:'glb',assetId:id}}});
       } else {
         const text=await file.text(); if(this.disposed || action!==this.action)return;
-        const value=JSON.parse(text), project=value?.format==='dropcaster-venue'?{...importVenue(value,createProject()),name:value.name}:parseProject(value);
-        await this.apply(project,project.assets);
+        const decoded: DecodedAssets = new Map();
+        const value=JSON.parse(text), project=value?.format==='dropcaster-venue'?{...importVenue(value,createProject(),decoded),name:value.name}:parseProject(value,[],decoded);
+        await this.apply(project,project.assets,decoded);
       }
     } catch(error) { if(!this.disposed && action===this.action) this.error(error); }
   }
@@ -506,7 +523,7 @@ export class VenueCalibrationPage {
     try {
       const project=await readProject(); if(this.disposed || action!==this.action)return;
       if(!project) { this.status('calibration.noMapping',true);return; }
-      const mapping=parseProject(project); await this.apply(mapping,mapping.assets);
+      const decoded: DecodedAssets = new Map(), mapping=parseProject(project,[],decoded); await this.apply(mapping,mapping.assets,decoded);
     } catch(error) { if(!this.disposed && action===this.action)this.error(error); }
   }
   private export(): void {
@@ -577,5 +594,7 @@ export class VenueCalibrationPage {
     window.removeEventListener('blur',this.settle);window.removeEventListener('pagehide',this.settle);
     this.canvas.removeEventListener('webglcontextlost',this.graphicsLost);this.projection?.canvas.removeEventListener('webglcontextlost',this.graphicsLost);
     this.adjuster?.dispose();this.trace?.dispose();this.output?.dispose();this.editor?.dispose();this.projection?.dispose();this.preview?.dispose();this.session.dispose();this.root.remove();
+    // なぞった推定を表示したまま離れたときは、外して持っていた確定済みの GLB のモデルも解放する。
+    this.keptGlb?.prepared.dispose(); this.keptGlb = null;
   }
 }
