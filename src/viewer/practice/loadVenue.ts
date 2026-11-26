@@ -1,15 +1,17 @@
 import * as THREE from 'three';
 import { venueGeometry } from './venueGeometry';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { decodeAsset, validateGlb, ProjectFormatError, type Project, type VenueObject } from './project';
+import { decodeAsset, validateGlb, ProjectFormatError, type DecodedAssets, type Project, type VenueObject } from './project';
 
 export interface PreparedVenue { group: THREE.Group | null; dispose: () => void }
-export async function prepareVenue(project: Project): Promise<PreparedVenue> {
+/** `decoded` は検証済みのバイト列 (`parseProject` が集めたもの)。そこにある GLB は復号し直さない。 */
+export async function prepareVenue(project: Project, decoded?: DecodedAssets): Promise<PreparedVenue> {
   if (project.venue.scene.kind === 'sample') return { group: null, dispose() {} };
   if (project.venue.scene.kind === 'objects') return prepareObjects(project.venue.scene.objects!);
   const asset = project.assets.find(a => a.id === project.venue.scene.assetId);
   if (!asset) throw new ProjectFormatError('asset');
-  const bytes = decodeAsset(asset.data); validateGlb(bytes);
+  let bytes = decoded?.get(asset.data);
+  if (!bytes) { bytes = decodeAsset(asset.data); validateGlb(bytes); }
   const manager = new THREE.LoadingManager();
   manager.setURLModifier(url => {
     if (!url.startsWith('blob:')) throw new ProjectFormatError('externalAsset');
