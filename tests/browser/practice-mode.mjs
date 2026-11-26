@@ -12,7 +12,9 @@ const artifactDir = process.env.PRACTICE_ARTIFACT_DIR;
 const entryButton = '#open-windows-btn, #mapping-btn';
 const observedRequests = new WeakMap();
 if (artifactDir) await mkdir(artifactDir, { recursive: true });
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--enable-unsafe-swiftshader'] });
+// LAN の http://<IP>:<port> (secure context でない、#170) を、ループバックでない名前を 127.0.0.1 へ向けて作る。作品のコードの固定 (#197) に使う。
+const INSECURE_HOST = 'insecure.test';
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--enable-unsafe-swiftshader', `--host-resolver-rules=MAP ${INSECURE_HOST} 127.0.0.1`] });
 function sketchHtml(width = 640, color = '#dc9030', webgl = false, delay = 0) {
   return `<!doctype html><body><script>
     let frame; window.createCanvas = () => {
@@ -902,6 +904,56 @@ async function outputUndo(page) {
   await page.waitForTimeout(300);
   assert.equal(page.context().pages().length, 1, 'undo does not reopen the output window');
   await closeEditor(page);
+}
+/** 3D プレビューは選んだ台だけでなく全台のガイドを出し、選んだ台とそれ以外を見分けられる。出力の追加・削除・校正値に追従する (#129)。 */
+const guideState = page => page.evaluate(() => window.practicePreview.scene.children.filter(o => o.name === 'projector-guide')
+  .map(g => ({ role: g.userData.role, outputId: g.userData.outputId, visible: g.visible, position: g.position.toArray().map(v => Number(v.toFixed(4))),
+    accent: g.children[1].material.color.getHexString() })));
+const yawed = (() => { const q = [-0.07, -0.26, -0.02, 0.96], n = Math.hypot(...q); return q.map(v => v / n); })();
+async function multiProjectorGuides(page, base) {
+  await start(page);
+  await showPanel(page, 'outputs'); await page.locator('#add-output-btn').click();
+  const [first, second] = (await state(page)).outputs.map(o => o.id);
+  const calibrated = await exportProject(page);
+  Object.assign(calibrated.venue.projectors.find(p => p.outputId === second), { position: [3, 2.2, 3.5], quaternion: yawed });
+  await importProject(page, calibrated);
+  await showPanel(page, 'preview3d'); await page.locator('#practice-overview').click(); await page.waitForTimeout(400);
+  await snapshot(page, base.name + '-multi-projector-guides');
+  let guides = await guideState(page);
+  assert.equal(guides.length, 2, 'one guide per projector');
+  const selected = guides.find(g => g.role === 'selected'), other = guides.find(g => g.role === 'other');
+  assert.equal(selected?.outputId, first, 'the chosen output keeps the selected guide');
+  assert.equal(other?.outputId, second, 'the other output gets its own guide');
+  assert.deepEqual(other.position, [3, 2.2, 3.5], 'the other guide uses its saved calibration');
+  assert.notEqual(selected.accent, other.accent, 'the selected guide is distinguishable from the others');
+  assert.ok(guides.every(g => g.visible));
+  // 選ぶ台を替えると役割が入れ替わる。保存した校正値は変わらない。
+  const saved = (await exportProject(page)).venue.projectors;
+  await showPanel(page, 'preview3d'); await page.locator('#practice-output').selectOption(second);
+  guides = await guideState(page);
+  assert.deepEqual(guides.map(g => [g.role, g.outputId]).sort(), [['other', first], ['selected', second]]);
+  assert.deepEqual((await exportProject(page)).venue.projectors, saved, 'switching the guide does not rewrite calibration');
+  // 既存のチェックで全台をまとめて隠す・出す。ガイドは固定背景に入らない。
+  await showPanel(page, 'preview3d');
+  const background = await page.evaluate(() => window.practicePreview.backgroundImage());
+  await page.locator('#practice-guides').uncheck();
+  assert.ok((await guideState(page)).every(g => !g.visible), 'the existing checkbox hides every guide');
+  assert.equal(await page.evaluate(() => window.practicePreview.backgroundImage()), background, 'guides never enter the projector background');
+  await page.locator('#practice-guides').check();
+  assert.ok((await guideState(page)).every(g => g.visible));
+  // 校正値の変更に追従する。
+  const moved = await exportProject(page);
+  moved.venue.projectors.find(p => p.outputId === first).position = [-2.5, 2, 4];
+  await importProject(page, moved);
+  assert.deepEqual((await guideState(page)).find(g => g.outputId === first)?.position, [-2.5, 2, 4], 'the other guide follows a calibration change');
+  // 出力を足すと増え、消すと減る。
+  await showPanel(page, 'outputs'); await page.locator('#add-output-btn').click();
+  assert.equal((await guideState(page)).length, 3, 'adding an output adds its guide');
+  await page.locator(`#outputs-list [data-output-id="${first}"] .remove-output-btn`).click();
+  await page.locator(`#outputs-list [data-output-id="${second}"] .remove-output-btn`).click();
+  guides = await guideState(page);
+  assert.deepEqual(guides.map(g => g.role), ['selected'], 'removing outputs removes their guides');
+  assert.equal(guides[0].outputId, (await state(page)).outputs[0].id);
 }
 async function unavailable(page) {
   await page.evaluate(() => {
@@ -2536,16 +2588,166 @@ async function activityBar(page, base) {
   await closeEditor(page);
 }
 
+// #197: OP / Gist 作品のコードを固定し、取得元が更新されても固定時のコードで開く。取得元は route で差し替え、外へ出ない。
+// LAN の http (secure context でない) で動かし、crypto.subtle に頼らずに固定・照合できることも確かめる。
+const PIN_OP = '7197', PIN_GIST = 'c0ffee'.padEnd(32, '0');
+const pinHtml = marker => `<!doctype html><body data-marker="${marker}" style="margin:0"><script>addEventListener('load',()=>{const c=document.createElement('canvas');
+  c.width=640;c.height=360;document.body.append(c);const x=c.getContext('2d');(function d(){x.fillStyle='#dc9030';x.fillRect(0,0,640,360);requestAnimationFrame(d)})()})</script>`;
+async function pinSources(context, versions, hits) {
+  await context.route('**/sketches.json', r => r.fulfill({ json: catalog }));
+  await context.route('**/sketches/a/index.html', r => r.fulfill({ contentType: 'text/html', body: sketchHtml() }));
+  await context.route(`https://openprocessing.org/api/sketch/${PIN_OP}`, r => {
+    hits.push('op'); if (versions.opFails) return r.fulfill({ status: 500, json: { message: 'test outage' } });
+    // 閲覧数のような変わりやすいメタデータは、版の照合に入らない。
+    return r.fulfill({ json: { visualID: Number(PIN_OP), title: 'Rehearsal sketch', mode: 'html', engineURL: '', libraries: [], license: 'CC BY-SA 3.0',
+      username: 'artist', views: hits.length, fileBase: `https://deckard.openprocessing.org/user1/visual${PIN_OP}/habc/` } });
+  });
+  await context.route(`https://openprocessing.org/api/sketch/${PIN_OP}/code`, r => {
+    hits.push('op'); if (versions.opFails) return r.fulfill({ status: 500, json: { message: 'test outage' } });
+    return r.fulfill({ json: [{ orderID: 0, title: 'index.html', code: pinHtml(`op-${versions.op}`) }] });
+  });
+  await context.route(`https://api.github.com/gists/${PIN_GIST}`, r => {
+    hits.push('gist');
+    return r.fulfill({ json: { id: PIN_GIST, description: 'pin test', owner: { login: 'tester' }, html_url: `https://gist.github.com/${PIN_GIST}`,
+      updated_at: '2026-11-16T00:00:00Z', files: { 'index.html': { filename: 'index.html', content: pinHtml(`gist-${versions.gist}`), truncated: false } } } });
+  });
+}
+async function shownMarkers(page) { return page.evaluate(() => [...document.querySelectorAll('iframe')].map(f => f.srcdoc.match(/data-marker="([^"]+)"/)?.[1]).filter(Boolean)); }
+async function openPinPage(page, url, path) {
+  await page.goto(url + path); await page.waitForSelector(entryButton);
+  assert.equal(await page.evaluate(() => isSecureContext), false, 'pinning runs on a non-secure origin (LAN http)');
+  await page.locator(entryButton).click(); await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await projectControls(page);
+}
+async function pinItem(page) { return page.locator('#practice-content-list > li').first(); }
+/** 「保存した作品を開く」。/project から開き直しても URL は変わらないので、作り直された編集画面を待つ。 */
+async function openSaved(page) {
+  await projectControls(page); await page.evaluate(() => { window.previousVideo = document.querySelector('#source-video'); });
+  await page.locator('#practice-open-content').click();
+  await page.waitForURL('**/project');
+  await page.waitForFunction(() => { const video = document.querySelector('#source-video'); return video && video !== window.previousVideo && video.videoWidth === 640; });
+  await projectControls(page);
+}
+async function pinning(_page, base) {
+  const url = base.url.replace('127.0.0.1', INSECURE_HOST), versions = { op: 'A', gist: 'A', opFails: false }, hits = [];
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
+  const errors = []; context.on('page', p => p.on('pageerror', e => errors.push(e.message))); observeConsole(context);
+  let exported;
+  try {
+    await pinSources(context, versions, hits);
+    const page = await context.newPage(); page.setDefaultTimeout(20000);
+    await openPinPage(page, url, `/op/${PIN_OP}`);
+    let item = await pinItem(page);
+    assert.equal(await item.locator('[data-action]').evaluateAll(b => b.map(x => x.dataset.action)).then(a => a.join()), 'pin', 'an unpinned OP sketch offers to pin');
+    const fetchesBeforePin = hits.length;
+    await item.locator('[data-action="pin"]').click();
+    await item.locator('[data-action="refresh"]').waitFor();
+    assert.equal(hits.length, fetchesBeforePin, 'pinning keeps the version on screen without fetching again');
+    assert.match(await item.innerText(), /Pinned: code fetched .+\n[^]*Assets load from the source \(not pinned\)\./);
+    const pinnedA = (await draftProject(page, base)).content[0];
+    assert.equal(pinnedA.revisionPinned, true); assert.match(pinnedA.hash, /^[0-9a-f]{64}$/);
+    await snapshot(page, base.name + '-pinned');
+
+    // 作者が作品を更新しても、固定時のコードで開く。取得元へ問い合わせない。
+    versions.op = 'B'; hits.length = 0;
+    await openSaved(page);
+    assert.deepEqual(await shownMarkers(page), ['op-A'], 'the pinned code opens although the source changed');
+    assert.deepEqual(hits, [], 'a pinned sketch opens without asking the source');
+    item = await pinItem(page);
+    await item.locator('[data-action="refresh"]').waitFor();
+    assert.doesNotMatch(await item.innerText(), /not the pinned code/, 'the pinned version is the one on screen');
+
+    // 書き出しは参照と hash だけ。第三者のコードは含めない。
+    exported = await exportProject(page);
+    assert.deepEqual({ pinned: exported.content[0].revisionPinned, hash: exported.content[0].hash }, { pinned: true, hash: pinnedA.hash });
+    assert.doesNotMatch(JSON.stringify(exported), /op-A|createElement\('canvas'\)/, 'the package carries no sketch code');
+
+    // 最新版の取得に失敗したら、直前の固定を保つ。
+    versions.opFails = true;
+    await item.locator('[data-action="refresh"]').click();
+    await page.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.includes('Could not fetch the latest version'));
+    assert.equal((await draftProject(page, base)).content[0].hash, pinnedA.hash, 'a failed refresh keeps the pin');
+    await logged(page, /Latest sketch code could not be fetched/);
+    versions.opFails = false;
+    await item.locator('[data-action="refresh"]:not([disabled])').click();
+    await page.waitForFunction(() => document.querySelector('#dc-practice-status').textContent.includes('Pinned the latest version'));
+    const pinnedB = (await draftProject(page, base)).content[0].hash;
+    assert.notEqual(pinnedB, pinnedA.hash, 'getting the latest version pins the updated code');
+    await page.waitForFunction(() => document.querySelector('#practice-content-list').innerText.includes('not the pinned code'));
+    await openSaved(page);
+    assert.deepEqual(await shownMarkers(page), ['op-B'], 'the refreshed pin opens');
+
+    // 固定を解除すると、取得元の最新のコードで開く。
+    versions.op = 'C';
+    await (await pinItem(page)).locator('[data-action="unpin"]').click();
+    assert.equal((await draftProject(page, base)).content[0].revisionPinned, false);
+    await openSaved(page);
+    assert.deepEqual(await shownMarkers(page), ['op-C'], 'an unpinned sketch opens the latest code');
+
+    // Gist も同じく固定時のファイルで開く。
+    await openPinPage(page, url, `/gist/${PIN_GIST}`);
+    await (await pinItem(page)).locator('[data-action="pin"]').click();
+    await (await pinItem(page)).locator('[data-action="refresh"]').waitFor();
+    versions.gist = 'B';
+    await openSaved(page);
+    assert.deepEqual(await shownMarkers(page), ['gist-A'], 'a pinned Gist opens its pinned files');
+    const gistPinned = (await draftProject(page, base)).content[0];
+
+    // スライドショーでも、固定した作品はそれぞれ固定時のコードで開く。
+    const both = structuredClone(exported);
+    both.content = [{ ...both.content[0], hash: pinnedB }, gistPinned]; both.show = { ...both.show, contentIds: both.content.map(c => c.id), currentIndex: 0 };
+    await importProject(page, both);
+    hits.length = 0;
+    await openSaved(page);
+    assert.ok((await shownMarkers(page)).includes('op-B'), 'the slideshow opens the pinned OP code');
+    await page.locator('#next-btn').click();
+    await page.waitForFunction(() => [...document.querySelectorAll('iframe')].some(f => f.srcdoc.includes('data-marker="gist-A"')));
+    assert.deepEqual((await shownMarkers(page)).filter(m => m === 'op-C' || m === 'gist-B'), [], 'no sketch in the slideshow uses the latest code');
+    assert.deepEqual(hits, [], 'the slideshow resolves pinned sketches without the network');
+    assert.deepEqual(errors, [], 'no browser errors while pinning');
+  } finally { await context.close(); }
+
+  // 受け取った側 (固定時のコードが無いブラウザ)。今の内容が同じなら黙って固定時のコードとして残し、違えば知らせて固定し直せる。
+  for (const latest of ['A', 'C']) {
+    const other = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
+    try {
+      observeConsole(other); versions.op = latest;
+      await pinSources(other, versions, hits);
+      const page = await other.newPage(); page.setDefaultTimeout(20000);
+      await openPinPage(page, url, '/a');
+      await importProject(page, exported);
+      const item = await pinItem(page);
+      if (latest === 'A') {
+        await item.locator('[data-action="refresh"]').waitFor();
+        await page.waitForFunction(() => /Pinned: code fetched/.test(document.querySelector('#practice-content-list').innerText));
+        const stored = await page.evaluate(async ({ modules, hash }) => (await import(`${modules}/practice/snapshotStore.ts`)).readSnapshot(hash), { modules: base.modules, hash: exported.content[0].hash });
+        assert.equal(stored?.hash, exported.content[0].hash, 'unchanged content is kept as the pinned code in the receiving browser');
+      } else {
+        await item.locator('[data-action="repin"]').waitFor();
+        assert.match(await item.innerText(), /The content has changed since it was pinned/);
+        await snapshot(page, base.name + '-pin-changed');
+        assert.equal((await draftProject(page, base)).content[0].hash, exported.content[0].hash, 'the mismatch alone changes nothing');
+        await item.locator('[data-action="repin"]').click();
+        await item.locator('[data-action="refresh"]').waitFor();
+        const repinned = (await draftProject(page, base)).content[0];
+        assert.equal(repinned.revisionPinned, true); assert.notEqual(repinned.hash, exported.content[0].hash, 'pinning again uses the current content');
+        await openSaved(page);
+        assert.deepEqual(await shownMarkers(page), ['op-C']);
+      }
+    } finally { await other.close(); }
+  }
+}
+
 try {
   for (const config of ['vite.config.ts', 'apps/web/vite.config.ts']) {
     const hosted = config.startsWith('apps/'), name = hosted ? 'hosted' : 'gallery';
     if (process.env.PRACTICE_ENTRY && name !== process.env.PRACTICE_ENTRY) continue;
     const server = await createServer({ configFile: resolve(root, config), root: hosted ? resolve(root, 'apps/web') : root,
-      server: { host: '127.0.0.1', port: 0, strictPort: false, open: false, watch: null, hmr: false }, logLevel: 'error' });
+      server: { host: '127.0.0.1', port: 0, strictPort: false, open: false, watch: null, hmr: false, allowedHosts: [INSECURE_HOST] }, logLevel: 'error' });
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, duplicate, mappingLock, maskSelect, maskDraftKeys, nudgeSelectKeys, cornerInput, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, slideshowUnsavableKeepsDraft, sketchCatalogLookup, projectTooLarge, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, duplicate, mappingLock, maskSelect, maskDraftKeys, nudgeSelectKeys, cornerInput, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, slideshowUnsavableKeepsDraft, sketchCatalogLookup, projectTooLarge, fullscreenMapping, multiProjectorGuides, pinning})) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

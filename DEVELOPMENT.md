@@ -238,6 +238,9 @@ pause・resume・先読み、`SlideshowView` の切替を変えたら実行す�
 作品切替、WebGL ロストからの復旧とキャンセル、メイン画面が隠れたときの出力ウィンドウの案内 (#185) を
 検証する。実際の UI / popup / captureStream と
 決定的な作品 fixture を使い、CI でも実行する。既存 Chromium は同じく `CHROMIUM_PATH` で指定する。
+`diagnosis` は投影が映らない原因の表示 (#196) を、canvas を作らない作品・CORS の許可なしに画像を描いた canvas
+(captureStream の SecurityError)・track の終了・canvas の追加・静止した canvas・テストパターン・出力の `play()` の拒否で再現して確かめる。
+track の終了は `ended` イベントの送出で、`play()` の拒否は出力ウィンドウの `HTMLMediaElement.prototype.play` の差し替えで再現する。
 `RUNTIME_CASE=<ケース名>` で 1 件だけ流せ、`RUNTIME_ARTIFACT_DIR=/tmp/runtime-images` で案内の出た出力を保存できる。
 Playwright の Chromium は自動化中のページを常に visible に保つため、メイン画面の hidden は
 `tests/browser/lib/main-hidden-notice.mjs` が `visibilityState` と `visibilitychange` を差し替えて再現する。
@@ -246,8 +249,12 @@ Playwright の Chromium は自動化中のページを常に visible に保つ�
 `npm run test:practice` は製品の個別作品／スライドショー UI からマッピングを起動し、実出力との併用、
 3Dの遅延初期化・タブ非表示中の描画休止・明示的な実出力開始、投影ガイドの分離、既存編集、GLB／パッケージ保存、異常 import、容量不足、描画復旧・終了を両エントリで検証する。
 `projects` は `/project` を開けなかったときの案内が原因 (下書きが無い・読み出せない・作品を取得できない・開く途中の失敗) ごとに分かれ、保存・読み出しの元の例外が console に残ること (#198) も確かめる。
+`pinning` は OP / Gist 作品のコードの固定 (#197) を LAN の http（secure context でない、`--host-resolver-rules` で作る）で確かめる。
+取得元 (OpenProcessing API・Gist API) を route で差し替えて内容を変えても固定時のコードで開き、取得元へ問い合わせないこと、
+最新版の取得の失敗で固定を保つこと、書き出しにコードが入らないこと、受け取った側の照合と固定し直し、スライドショーでの解決を見る。
+`src/viewer/practice/sketchSnapshot.ts`・`snapshotStore.ts`、`ProjectPanel` の作品一覧、`App.ts` の `/project` の解決を変えたら実行する。
 `PRACTICE_ARTIFACT_DIR=/tmp/practice-images` でスクリーンショットを保存できる。
-`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=workspace|workspaceSlideshow|lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample|slideshowDraft`
+`PRACTICE_ENTRY=gallery|hosted`、`PRACTICE_CASE=workspace|workspaceSlideshow|lifecycle|projects|slideshow|recovery|outputs|unavailable|cancellation|loading|sample|slideshowDraft|pinning`
 で失敗箇所だけを再実行できる。内蔵サンプルの実 UI は `/mapping`（`/practice` も互換 URL として維持）。GLB サンプルは `docs/samples/`。
 
 ## 注意点 / 既知の TODO

@@ -1,5 +1,15 @@
 import * as THREE from 'three';
 
+/**
+ * 選んだ台は水色、他の出力の台は橙で淡く描き、同時に表示しても見分けられるようにする (#129)。
+ * 色だけに頼らないよう、他の台は本体も暗く、範囲面も薄くする。
+ */
+const STYLES = {
+  selected: { body: 0x566577, accent: 0x67d5ff, line: .75, beam: .045 },
+  other: { body: 0x3b4350, accent: 0xffb454, line: .5, beam: .02 },
+} as const;
+export type ProjectorGuideRole = keyof typeof STYLES;
+
 /** Observer-only layer. Never rendered by the projector camera (background or depth pass). */
 export class ProjectorGuide {
   readonly group = new THREE.Group();
@@ -7,8 +17,10 @@ export class ProjectorGuide {
   private rays = new THREE.BufferGeometry();
   private geometries: THREE.BufferGeometry[] = [this.range, this.rays];
   private materials: THREE.Material[] = [];
-  constructor() {
-    this.group.name = 'projector-guide'; this.group.visible = false;
+  readonly role: ProjectorGuideRole;
+  constructor(role: ProjectorGuideRole = 'selected') {
+    this.role = role; const style = STYLES[role];
+    this.group.name = 'projector-guide'; this.group.visible = false; this.group.userData.role = role;
     this.rays.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(48), 3));
     this.range.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(36), 3));
     const body = new THREE.BoxGeometry(.38, .18, .28);
@@ -16,10 +28,10 @@ export class ProjectorGuide {
     lens.rotateX(Math.PI / 2); lens.translate(0, 0, -.04);
     body.translate(0, 0, .16);
     this.geometries.push(body, lens);
-    const bodyMaterial = new THREE.MeshBasicMaterial({ color:0x566577 });
-    const lensMaterial = new THREE.MeshBasicMaterial({ color:0x67d5ff });
-    const lineMaterial = new THREE.LineBasicMaterial({ color:0x67d5ff, transparent:true, opacity:.75, depthWrite:false });
-    const beamMaterial = new THREE.MeshBasicMaterial({ color:0x67d5ff, transparent:true, opacity:.045, side:THREE.DoubleSide, depthWrite:false });
+    const bodyMaterial = new THREE.MeshBasicMaterial({ color:style.body });
+    const lensMaterial = new THREE.MeshBasicMaterial({ color:style.accent });
+    const lineMaterial = new THREE.LineBasicMaterial({ color:style.accent, transparent:true, opacity:style.line, depthWrite:false });
+    const beamMaterial = new THREE.MeshBasicMaterial({ color:style.accent, transparent:true, opacity:style.beam, side:THREE.DoubleSide, depthWrite:false });
     this.materials.push(bodyMaterial, lensMaterial, lineMaterial, beamMaterial);
     this.group.add(new THREE.Mesh(body, bodyMaterial), new THREE.Mesh(lens, lensMaterial),
       new THREE.LineSegments(this.rays, lineMaterial), new THREE.Mesh(this.range, beamMaterial));

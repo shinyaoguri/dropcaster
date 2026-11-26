@@ -9,6 +9,7 @@ import { assembleOpSketchHtml, assembleHtmlModeOpSketchHtml, hasExternalDeckardA
 import { getConfig } from '../config.js';
 import { API_CONFIG } from '../../core/modules/constants.js';
 import type { Sketch } from '../types/sketch.js';
+import { createSnapshot, shownSnapshots, type SketchSnapshot } from '../practice/sketchSnapshot.js';
 
 export class UnsupportedEngineModeError extends Error {
   readonly mode: string;
@@ -39,16 +40,33 @@ export class OpenProcessingSource {
    * UnsupportedEngineModeError を throw する。
    */
   async resolve(sketchId: string): Promise<Sketch> {
+    return this.fromSnapshot(await this.fetchSnapshot(sketchId));
+  }
+
+  /** 最新のメタデータとコードを取得する (#197 の「固定」「最新版を取得」もこれを使う)。組み立てはしない。 */
+  async fetchSnapshot(sketchId: string): Promise<SketchSnapshot> {
     const id = normalizeId(sketchId);
     if (!/^\d+$/.test(id)) throw new Error(`invalid OpenProcessing sketch id: "${sketchId}"`);
-
-    const cfg = getConfig();
-    const supportedModes = cfg.supportedOpModes ?? ['p5js', 'html'];
-
     const [meta, codeTabs] = await Promise.all([
       this.client.getSketch(id),
       this.client.getSketchCode(id),
     ]);
+    return createSnapshot({ kind: 'op', ref: id, meta, codeTabs });
+  }
+
+  /** 取得した (または固定した) コードから作品を組み立て、いま表示している版として覚える。ネットワークは使わない。 */
+  fromSnapshot(snapshot: SketchSnapshot): Sketch {
+    const sketch = this.build(snapshot);
+    shownSnapshots.set(sketch.id, snapshot);
+    return sketch;
+  }
+
+  /** 組み立てるだけ。開けない作品 (未対応の mode など) かを確かめるのにも使う。 */
+  build(snapshot: SketchSnapshot): Sketch {
+    if (snapshot.payload.kind !== 'op') throw new Error('not an OpenProcessing snapshot');
+    const { ref: id, meta, codeTabs } = snapshot.payload;
+    const cfg = getConfig();
+    const supportedModes = cfg.supportedOpModes ?? ['p5js', 'html'];
 
     const mode = meta.mode ?? '';
     if (!supportedModes.includes(mode)) {

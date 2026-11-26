@@ -19,6 +19,7 @@ import type {
   WebglContextStatus,
 } from './ControlHost';
 import type { Listener } from '../../utils/emitter';
+import type { OutputDiagnosisMap, SourceDiagnosis } from '../../runtime/projectionDiagnosis';
 import type { WindowController } from '../../components/WindowController';
 
 export class InlineControlHost implements ControlHost {
@@ -57,6 +58,16 @@ export class InlineControlHost implements ControlHost {
   }
   requestTestPattern(kind: TestPatternKindOrOff): void {
     this.wc.setTestPattern(kind);
+  }
+
+  // --- blackout ---
+
+  getBlackout(): boolean { return this.wc.events.blackout.get(); }
+  onBlackoutChange(handler: Listener<boolean>): Unsubscribe {
+    return this.wc.events.blackout.subscribe(handler);
+  }
+  requestBlackout(on: boolean): void {
+    this.wc.setBlackout(on);
   }
 
   // --- output bounds ---
@@ -102,5 +113,16 @@ export class InlineControlHost implements ControlHost {
 
   onWebglContextChange(handler: Listener<WebglContextStatus>): Unsubscribe {
     return this.wc.events.webglContext.subscribe(handler);
+  }
+
+  // --- 投影が映らないときの原因 (#196) ---
+
+  getSourceDiagnosis(): SourceDiagnosis { return this.wc.events.sourceDiagnosis.get(); }
+  onSourceDiagnosisChange(handler: Listener<SourceDiagnosis>): Unsubscribe {
+    return this.wc.events.sourceDiagnosis.subscribe(handler);
+  }
+  getOutputDiagnosis(): OutputDiagnosisMap { return this.wc.events.outputDiagnosis.get(); }
+  onOutputDiagnosisChange(handler: Listener<OutputDiagnosisMap>): Unsubscribe {
+    return this.wc.events.outputDiagnosis.subscribe(handler);
   }
 }

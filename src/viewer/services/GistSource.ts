@@ -10,6 +10,7 @@ import { fetchGist } from '../../core/modules/gist-api-client.js';
 import { assembleGistSketchHtml, resolveGistTitle } from '../../core/modules/gist-sketch-builder.js';
 import { getConfig } from '../config.js';
 import type { Sketch } from '../types/sketch.js';
+import { createSnapshot, shownSnapshots, type SketchSnapshot } from '../practice/sketchSnapshot.js';
 
 export class GistSource {
   /**
@@ -18,7 +19,26 @@ export class GistSource {
    * (GistNotFoundError / GistRateLimitError / GistFormatError)。
    */
   async resolve(gistId: string): Promise<Sketch> {
+    return this.fromSnapshot(await this.fetchSnapshot(gistId));
+  }
+
+  /** 最新のファイル一式を取得する (#197 の「固定」「最新版を取得」もこれを使う)。組み立てはしない。 */
+  async fetchSnapshot(gistId: string): Promise<SketchSnapshot> {
     const gist = await fetchGist(gistId, { proxyBaseUrl: getConfig().gistApiBaseUrl });
+    return createSnapshot({ kind: 'gist', ref: gist.id, gist: { ...gist, files: [...gist.files] } });
+  }
+
+  /** 取得した (または固定した) ファイルから作品を組み立て、いま表示している版として覚える。ネットワークは使わない。 */
+  fromSnapshot(snapshot: SketchSnapshot): Sketch {
+    const sketch = this.build(snapshot);
+    shownSnapshots.set(sketch.id, snapshot);
+    return sketch;
+  }
+
+  /** 組み立てるだけ。開けない Gist (index.html が無いなど) かを確かめるのにも使う。 */
+  build(snapshot: SketchSnapshot): Sketch {
+    if (snapshot.payload.kind !== 'gist') throw new Error('not a Gist snapshot');
+    const gist = { ...snapshot.payload.gist, files: new Map(snapshot.payload.gist.files) };
     const html = assembleGistSketchHtml({ gist });
     const title = resolveGistTitle(gist);
 

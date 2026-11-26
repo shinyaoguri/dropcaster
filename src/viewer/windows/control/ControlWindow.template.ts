@@ -59,6 +59,12 @@ export function controlPanelHtml(): string {
         <span class="dc-banner-icon">⚠</span>
         <span class="dc-banner-text" data-i18n-html="control.banner.webglLost">${t('control.banner.webglLost')}</span>
       </div>
+      <!-- ブラックアウト中の帯 (#194)。どのパネルを開いていても (畳んでいても) 見え、ここからも解除できる -->
+      <div id="dc-blackout-banner" class="dc-banner" hidden role="status">
+        <span class="dc-banner-icon" aria-hidden="true">■</span>
+        <span class="dc-banner-text" data-i18n="control.blackout.banner">${t('control.blackout.banner')}</span>
+        <button type="button" id="dc-blackout-release" class="dc-banner-action" data-i18n="control.blackout.release">${t('control.blackout.release')}</button>
+      </div>
       <div class="control-container">
         <!-- アクティビティバー: ツールカラムの中身 (パネル) を切り替える。選択中を再度押すとツールカラムを畳む -->
         <div class="dc-activity-bar">
@@ -184,6 +190,33 @@ export function controlPanelHtml(): string {
                     </div>
                   </div>
                 </div>
+                <div class="tool-item output-correction">
+                  <h4 data-i18n="control.outputCorrection.title">${t('control.outputCorrection.title')}</h4>
+                  <p class="section-hint" data-i18n="control.outputCorrection.hint">${t('control.outputCorrection.hint')}</p>
+                  <div class="output-correction-rows">
+                    <div class="output-correction-row">
+                      <label class="label" for="output-correction-brightness-range" data-i18n="control.outputCorrection.brightness">${t('control.outputCorrection.brightness')}</label>
+                      <input id="output-correction-brightness-range" class="output-correction-range" data-correction="brightness" type="range" min="0" max="2" step="0.01" value="1" disabled />
+                      <input id="output-correction-brightness-input" class="num-input output-correction-num" data-correction="brightness" type="number" min="0" max="2" step="0.01" inputmode="decimal" disabled />
+                    </div>
+                    <div class="output-correction-row">
+                      <label class="label" for="output-correction-r-range" data-i18n="control.outputCorrection.r">${t('control.outputCorrection.r')}</label>
+                      <input id="output-correction-r-range" class="output-correction-range" data-correction="r" type="range" min="0" max="2" step="0.01" value="1" disabled />
+                      <input id="output-correction-r-input" class="num-input output-correction-num" data-correction="r" type="number" min="0" max="2" step="0.01" inputmode="decimal" disabled />
+                    </div>
+                    <div class="output-correction-row">
+                      <label class="label" for="output-correction-g-range" data-i18n="control.outputCorrection.g">${t('control.outputCorrection.g')}</label>
+                      <input id="output-correction-g-range" class="output-correction-range" data-correction="g" type="range" min="0" max="2" step="0.01" value="1" disabled />
+                      <input id="output-correction-g-input" class="num-input output-correction-num" data-correction="g" type="number" min="0" max="2" step="0.01" inputmode="decimal" disabled />
+                    </div>
+                    <div class="output-correction-row">
+                      <label class="label" for="output-correction-b-range" data-i18n="control.outputCorrection.b">${t('control.outputCorrection.b')}</label>
+                      <input id="output-correction-b-range" class="output-correction-range" data-correction="b" type="range" min="0" max="2" step="0.01" value="1" disabled />
+                      <input id="output-correction-b-input" class="num-input output-correction-num" data-correction="b" type="number" min="0" max="2" step="0.01" inputmode="decimal" disabled />
+                    </div>
+                  </div>
+                  <button id="output-correction-reset" class="tool-button" data-i18n="control.outputCorrection.reset" disabled>${t('control.outputCorrection.reset')}</button>
+                </div>
               </div>
             </div>
 
@@ -198,6 +231,16 @@ export function controlPanelHtml(): string {
                   <button class="tool-button test-pattern-btn" data-pattern="grid" data-i18n="control.testPattern.grid">${t('control.testPattern.grid')}</button>
                   <button class="tool-button test-pattern-btn" data-pattern="smpte" data-i18n="control.testPattern.smpte">${t('control.testPattern.smpte')}</button>
                 </div>
+              </div>
+
+              <!-- ブラックアウト (#194): 全出力を一度に黒にする。状態は実行中だけで、保存しない -->
+              <div class="tool-section">
+                <h3 data-i18n="control.blackout.title">${t('control.blackout.title')}</h3>
+                <p class="section-hint" data-i18n="control.blackout.hint">${t('control.blackout.hint')}</p>
+                <button type="button" id="dc-blackout-toggle" class="tool-button dc-blackout-toggle" aria-pressed="false">
+                  <span class="dc-blackout-dot" aria-hidden="true"></span>
+                  <span class="dc-blackout-label" data-i18n="control.blackout.off">${t('control.blackout.off')}</span>
+                </button>
               </div>
 
               <div class="tool-section">
@@ -239,6 +282,11 @@ export function controlPanelHtml(): string {
         <div class="column source-column" data-resize-target="source">
           <div class="column-header">
             <h2 data-i18n="control.column.source">${t('control.column.source')}</h2>
+          </div>
+          <!-- 投影が映らないときの作品側の原因と対処 (#196)。文言は ProjectionDiagnosisPanel が入れる -->
+          <div id="dc-source-status" class="dc-source-status" role="status" aria-live="polite" hidden>
+            <span class="dc-source-status-text"></span>
+            <span class="dc-source-status-hint" hidden></span>
           </div>
           <div class="video-container">
             <div class="source-preview-wrapper">

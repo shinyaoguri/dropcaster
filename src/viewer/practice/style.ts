@@ -68,6 +68,11 @@ export function installPracticeStyles(): void {
     .dc-practice-vector label { font-size:11px; color:#aaa; }
     .dc-practice-check { display:flex; align-items:center; gap:6px; font-size:12px; color:#ccc; line-height:1.4; margin:10px 0; }
     .dc-practice-settings ul { padding-left:18px; font-size:12px; color:#ccc; overflow-wrap:anywhere; }
+    /* 作品の一覧。OP / Gist は固定の状態と操作を作品ごとに並べる (#197)。 */
+    #practice-content-list > li { margin:0 0 8px; }
+    #practice-content-list .dc-content-pin { margin:3px 0; }
+    .dc-content-actions { display:flex; gap:5px; flex-wrap:wrap; }
+    .dc-practice-settings .dc-content-actions .tool-button { width:auto; flex:1; min-width:90px; margin:2px 0; padding:5px 8px; font-size:12px; }
     .dc-practice-settings .tool-button { margin:4px 0; }
     .dc-practice-object-actions { display:flex; gap:5px; flex-wrap:wrap; }
     .dc-practice-object-actions .dc-practice-field { flex:1; min-width:110px; margin:4px 0; }

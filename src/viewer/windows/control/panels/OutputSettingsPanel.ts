@@ -11,6 +11,10 @@
  *   - Enter: blur を発火させて change を経由
  *   - Escape: 確定済みの値に戻して blur（その blur の change は commit しない = 取消）
  *
+ * 明るさ・色のゲイン (#199): #output-correction-{brightness,r,g,b}-{range,input} と
+ * #output-correction-reset。スライダーは押してから離すまでを beginGesture / endGesture で囲み、
+ * ドラッグ 1 回を Undo 1 件にする。数値欄は位置・サイズと同じく change で確定、Escape で取消。
+ *
  * 値の表示更新は refresh() で行う。ControlWindow から、
  *  - refreshAllFromState (= replaceState) のフローで呼ばれる
  *  - LayoutPanel の drag/resize 中の onOutputLayoutMutated callback でも呼ばれる
@@ -20,7 +24,13 @@
  * 対象の出力がロック中 (#190) なら値は出したまま無効にし、確定も受け付けない。
  */
 
-import { withOutputLayoutSet } from '../../../utils/mappingTransform';
+import {
+  identityOutputCorrection,
+  OUTPUT_CORRECTION_KEYS,
+  withOutputCorrectionSet,
+  withOutputLayoutSet,
+  type OutputCorrectionKey,
+} from '../../../utils/mappingTransform';
 import type { MappingsController } from '../MappingsController';
 import { t } from '../../../i18n/index.js';
 
@@ -31,6 +41,8 @@ export class OutputSettingsPanel {
   private ctrl: MappingsController | null = null;
   /** Escape の取消で blur している間。その blur で飛ぶ change を commit させない。 */
   private cancelling = false;
+  /** スライダーのドラッグ中 (beginGesture 済み)。離したときの後始末。 */
+  private endCorrectionGesture: (() => void) | null = null;
 
   attach(scope: HTMLElement, ctrl: MappingsController): void {
     this.scope = scope;
@@ -61,6 +73,8 @@ export class OutputSettingsPanel {
     if (!out) {
       if (label) label.textContent = '—';
       [xi, yi, wi, hi].forEach(el => { if (el) { el.disabled = true; el.value = ''; } });
+      scope.querySelectorAll<HTMLInputElement | HTMLButtonElement>('[data-correction], #output-correction-reset')
+        .forEach(el => { el.disabled = true; });
       return;
     }
     if (label) label.textContent = out.name ?? out.id;
@@ -73,9 +87,20 @@ export class OutputSettingsPanel {
     setIfNotFocused(yi, String(Math.round(out.position.y)));
     setIfNotFocused(wi, String(Math.round(out.size.width)));
     setIfNotFocused(hi, String(Math.round(out.size.height)));
+    const correction = out.correction ?? identityOutputCorrection();
+    for (const key of OUTPUT_CORRECTION_KEYS) {
+      const range = scope.querySelector<HTMLInputElement>(`#output-correction-${key}-range`);
+      const num = scope.querySelector<HTMLInputElement>(`#output-correction-${key}-input`);
+      if (range) { range.disabled = false; range.value = String(correction[key]); }
+      if (num) num.disabled = false;
+      setIfNotFocused(num, formatGain(correction[key]));
+    }
+    const reset = scope.querySelector<HTMLButtonElement>('#output-correction-reset');
+    if (reset) reset.disabled = !out.correction;
   }
 
   destroy(): void {
+    this.endCorrectionGesture?.();
     // listener は <input> 要素に直接付いており、scope ごと outerHTML 置換で消えるため
     // 明示的な off は不要。参照だけ落とす。
     this.scope = null;
@@ -91,6 +116,86 @@ export class OutputSettingsPanel {
     this.bind(scope.querySelector<HTMLInputElement>('#output-y-input'), 'y');
     this.bind(scope.querySelector<HTMLInputElement>('#output-w-input'), 'w');
     this.bind(scope.querySelector<HTMLInputElement>('#output-h-input'), 'h');
+    for (const key of OUTPUT_CORRECTION_KEYS) {
+      this.bindCorrectionRange(scope.querySelector<HTMLInputElement>(`#output-correction-${key}-range`), key);
+      this.bindCorrectionInput(scope.querySelector<HTMLInputElement>(`#output-correction-${key}-input`), key);
+    }
+    scope.querySelector<HTMLButtonElement>('#output-correction-reset')?.addEventListener('click', () => {
+      const ctrl = this.ctrl;
+      const target = this.activeOutputId();
+      if (!ctrl || !target) return;
+      ctrl.replaceState(withOutputCorrectionSet(ctrl.getState(), target, undefined));
+    });
+  }
+
+  /**
+   * スライダー。押してから離すまで (pointerup / pointercancel / change の早いほう) を 1 ジェスチャにし、
+   * その間の input は出力へ即時に反映しつつ履歴は 1 件にまとめる。キーボードの操作は 1 段ごとに 1 件。
+   */
+  private bindCorrectionRange(input: HTMLInputElement | null, key: OutputCorrectionKey): void {
+    if (!input) return;
+    input.addEventListener('pointerdown', () => {
+      const ctrl = this.ctrl;
+      if (!ctrl || this.endCorrectionGesture) return;
+      const view = input.ownerDocument.defaultView;
+      ctrl.beginGesture();
+      const end = () => {
+        if (this.endCorrectionGesture !== end) return;
+        this.endCorrectionGesture = null;
+        view?.removeEventListener('pointerup', end, true);
+        view?.removeEventListener('pointercancel', end, true);
+        input.removeEventListener('change', end);
+        ctrl.endGesture();
+        this.refresh();
+      };
+      this.endCorrectionGesture = end;
+      view?.addEventListener('pointerup', end, true);
+      view?.addEventListener('pointercancel', end, true);
+      input.addEventListener('change', end);
+    });
+    input.addEventListener('input', () => this.commitCorrection(key, parseFloat(input.value)));
+  }
+
+  private bindCorrectionInput(input: HTMLInputElement | null, key: OutputCorrectionKey): void {
+    if (!input) return;
+    input.addEventListener('change', () => {
+      if (this.cancelling) return;
+      const raw = parseFloat(input.value);
+      if (!Number.isFinite(raw)) { this.refresh(); return; }
+      this.commitCorrection(key, raw);
+      // 範囲外を丸めたときも、確定した値を欄に出す (blur 済みなので refresh が書く)。
+      this.refresh();
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      else if (e.key === 'Escape') {
+        e.preventDefault();
+        const out = this.activeOutput();
+        if (out) input.value = formatGain((out.correction ?? identityOutputCorrection())[key]);
+        this.cancelling = true;
+        try { input.blur(); } finally { this.cancelling = false; }
+      }
+    });
+  }
+
+  /** 対象出力の補正の 1 項目を変える。値が変わらなければ何もしない (履歴を積まない)。 */
+  private commitCorrection(key: OutputCorrectionKey, value: number): void {
+    const ctrl = this.ctrl;
+    const target = this.activeOutputId();
+    if (!ctrl || !target || !Number.isFinite(value)) return;
+    const cur = ctrl.getState();
+    const out = cur.outputs.find(o => o.id === target);
+    if (!out) return;
+    const base = out.correction ?? identityOutputCorrection();
+    const next = withOutputCorrectionSet(cur, target, { ...base, [key]: value });
+    const after = next.outputs.find(o => o.id === target)?.correction ?? identityOutputCorrection();
+    if (OUTPUT_CORRECTION_KEYS.every(k => after[k] === base[k])) return;
+    ctrl.replaceState(next);
+  }
+
+  private activeOutput() {
+    const target = this.activeOutputId();
+    return target ? this.ctrl?.getState().outputs.find(o => o.id === target) : undefined;
   }
 
   private bind(input: HTMLInputElement | null, field: Field): void {
@@ -162,4 +267,9 @@ export class OutputSettingsPanel {
     }
     return state.outputs[0]?.id;
   }
+}
+
+/** ゲインの表示 (小数 2 桁まで、末尾の 0 は落とす)。 */
+function formatGain(value: number): string {
+  return String(Math.round(value * 100) / 100);
 }

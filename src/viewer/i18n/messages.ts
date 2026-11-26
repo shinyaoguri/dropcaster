@@ -150,6 +150,13 @@ const en = {
   'control.outputSettings.title': 'Output settings',
   'control.outputSettings.hint': 'Edit the position and size of the active output (virtual canvas px)',
   'control.outputSettings.target': 'Target:',
+  'control.outputCorrection.title': 'Brightness / color',
+  'control.outputCorrection.hint': 'Multiply this output only, to match projectors. Black stays black; above 1 can clip highlights.',
+  'control.outputCorrection.brightness': 'Brightness',
+  'control.outputCorrection.r': 'R',
+  'control.outputCorrection.g': 'G',
+  'control.outputCorrection.b': 'B',
+  'control.outputCorrection.reset': 'Reset brightness / color',
   'control.label.x': 'X:',
   'control.label.y': 'Y:',
   'control.label.w': 'W:',
@@ -176,6 +183,16 @@ const en = {
   'control.testPattern.white': 'White',
   'control.testPattern.grid': 'Grid',
   'control.testPattern.smpte': 'Color bars',
+
+  // ブラックアウト (#194): 全出力を一度に黒にする。編集の「確認」パネル・帯と、編集の外のボタンで共通
+  'control.blackout.title': 'Blackout',
+  'control.blackout.hint': 'Turn every output black at once (B key). Surface visibility and the test pattern are left unchanged',
+  'control.blackout.off': 'Black out all outputs',
+  'control.blackout.on': 'Blacked out — restore',
+  'control.blackout.banner': 'Blackout: every output is black.',
+  'control.blackout.release': 'Restore (B)',
+  'blackout.enter': 'Blackout: turn every output black (B)',
+  'blackout.leave': 'Blackout is on — restore the outputs (B)',
 
   // ツール: 開発モード
   'control.devMode.title': 'Dev mode',
@@ -212,6 +229,20 @@ const en = {
 
   // コントロール: ソース video placeholder
   'control.source.loading': 'Loading MediaStream…',
+
+  // 投影が映らないときの原因 (#196)。ソース列に作品側、出力一覧の各行に出力側の状態を出す
+  'diagnosis.source.waiting': 'Waiting for the sketch to create its canvas…',
+  'diagnosis.source.noCanvas': 'No canvas found in the sketch.',
+  'diagnosis.source.noCanvasHint': 'The sketch may not be creating a canvas (for example, it draws only with HTML elements). Check the sketch. Projection starts as soon as a canvas appears.',
+  'diagnosis.source.captureFailed': 'Could not capture video from the sketch canvas ({error}).',
+  'diagnosis.source.captureFailedHint': 'Reload the page. If it keeps happening, see the browser console for details.',
+  'diagnosis.source.securityHint': 'The canvas has drawn an image or video from another site without CORS permission, so the browser does not allow capturing it. Put the file next to the sketch, or load it from a server that allows CORS.',
+  'diagnosis.source.recapturing': 'The video from the canvas stopped. Capturing it again…',
+  'diagnosis.source.multipleCanvases': 'The sketch has {count} canvases. The first one ({width}×{height}) is projected.',
+  'diagnosis.output.notOpen': 'Not open: press “Open” to project on this output.',
+  'diagnosis.output.playError': 'The output window could not play the video ({error}).',
+  'diagnosis.output.playErrorHint': 'Close this output and open it again.',
+  'diagnosis.output.notAllowedHint': 'The browser is blocking autoplay for this site. Allow autoplay in the site settings, then close this output and open it again.',
 
   // MappingsListPanel
   'mappingsList.name.title': 'Output name (click to select / double-click to edit)',
@@ -401,6 +432,13 @@ const ja: Record<keyof typeof en, string> = {
   'control.outputSettings.title': '出力設定',
   'control.outputSettings.hint': 'アクティブな出力の位置とサイズを数値で編集（仮想キャンバス px）',
   'control.outputSettings.target': '対象:',
+  'control.outputCorrection.title': '明るさ・色',
+  'control.outputCorrection.hint': 'この出力だけに掛け算で掛け、プロジェクタの差を揃える。黒は黒のまま。1 より上げると白飛びしうる',
+  'control.outputCorrection.brightness': '明るさ',
+  'control.outputCorrection.r': 'R',
+  'control.outputCorrection.g': 'G',
+  'control.outputCorrection.b': 'B',
+  'control.outputCorrection.reset': '明るさ・色をリセット',
   'control.label.x': 'X:',
   'control.label.y': 'Y:',
   'control.label.w': '幅:',
@@ -424,6 +462,15 @@ const ja: Record<keyof typeof en, string> = {
   'control.testPattern.white': '白',
   'control.testPattern.grid': 'グリッド',
   'control.testPattern.smpte': 'カラーバー',
+
+  'control.blackout.title': 'ブラックアウト',
+  'control.blackout.hint': '全出力を一度に黒にします（B キー）。面の表示・テストパターンは変わりません',
+  'control.blackout.off': '全出力を黒にする',
+  'control.blackout.on': '黒の最中 — 解除する',
+  'control.blackout.banner': 'ブラックアウト中: 全出力を黒にしています。',
+  'control.blackout.release': '解除 (B)',
+  'blackout.enter': 'ブラックアウト: 全出力を黒にする (B)',
+  'blackout.leave': 'ブラックアウト中 — 押すと解除 (B)',
 
   'control.devMode.title': '開発モード',
   'control.devMode.hint':
@@ -454,6 +501,19 @@ const ja: Record<keyof typeof en, string> = {
   'control.resizer.source': 'ドラッグでソース／マッピング欄の比率を変更',
 
   'control.source.loading': 'MediaStreamの読み込み中...',
+
+  'diagnosis.source.waiting': '作品が canvas を作るのを待っています…',
+  'diagnosis.source.noCanvas': '作品に canvas が見つかりません。',
+  'diagnosis.source.noCanvasHint': '作品が canvas を作っていない可能性があります (HTML の要素だけで描いているなど)。作品を確認してください。canvas が現れればすぐに映ります。',
+  'diagnosis.source.captureFailed': '作品の canvas から映像を取り出せませんでした ({error})。',
+  'diagnosis.source.captureFailedHint': 'ページを再読み込みしてください。続く場合は、ブラウザのコンソールで詳細を確認してください。',
+  'diagnosis.source.securityHint': '別のサイトの画像・動画を CORS の許可なしに canvas へ描いているため、ブラウザが映像の取り出しを禁じています。素材を作品と同じ場所に置くか、CORS を許可するサーバーから読み込んでください。',
+  'diagnosis.source.recapturing': 'canvas からの映像が途切れたため、取り直しています…',
+  'diagnosis.source.multipleCanvases': '作品に canvas が {count} 枚あり、最初の 1 枚 ({width}×{height}) を映しています。',
+  'diagnosis.output.notOpen': '未起動: 「開く」で出力ウィンドウを開くと、この出力に映ります。',
+  'diagnosis.output.playError': '出力ウィンドウで映像を再生できませんでした ({error})。',
+  'diagnosis.output.playErrorHint': 'この出力を閉じて、開き直してください。',
+  'diagnosis.output.notAllowedHint': 'ブラウザがこのサイトの自動再生を止めています。サイトの設定で自動再生を許可してから、この出力を閉じて開き直してください。',
 
   'mappingsList.name.title': '出力名（クリックで選択 / ダブルクリックで編集）',
   'mappingsList.open': '開く',
