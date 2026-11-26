@@ -533,6 +533,181 @@ async function slideshowDraft(page, base) {
   await page.reload(); await reopen(page, base);
   assert.equal(await page.inputValue('#practice-project-name'), 'Fourth', 'the sketch page keeps a commit made 100 ms before reloading');
 }
+// #173: 101 件以上のショーも、再読み込み・書き出し・取り込み・/project で名前・会場・プロジェクタ・作品の順序・再生位置を保つ。
+function largeCatalog(count) {
+  // 並びが id の順と違っても保たれることを見るため、逆順に並べる。
+  return Array.from({ length: count }, (_, i) => ({ id: `s${count - i}`, title: `Sketch ${count - i}`, path: `sketches/s${count - i}/index.html`,
+    description: '', type: 'html', tags: [], interactiveElements: [], lastModified: '2026-11-11' }));
+}
+async function enterShow(page, index) {
+  await page.waitForSelector(entryButton);
+  await page.waitForFunction(n => document.querySelector('#current-sketch-number')?.textContent === n, String(index + 1));
+  await page.locator('#play-pause-btn').click(); // 自動送りで再生位置が動かないよう止める
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await projectControls(page);
+}
+async function slideshowLarge(page, base) {
+  await page.context().route('**/sketches/s*/index.html', r => r.fulfill({ contentType: 'text/html', body: sketchHtml() }));
+  for (const count of [100, 101, 1000]) {
+    const items = largeCatalog(count), ids = items.map(s => s.id), index = count - 1, name = `Show ${count}`;
+    await page.unroute('**/sketches.json'); await page.route('**/sketches.json', r => r.fulfill({ json: items }));
+    await page.goto(`${base.url}/slideshow?index=${index}`); await enterShow(page, index);
+    await change(page, '#practice-project-name', name); await storageSaved(page);
+    const before = await draftProject(page, base);
+    assert.equal(before.name, name); assert.deepEqual(before.show.contentIds, ids); assert.equal(before.show.currentIndex, index);
+    await page.reload(); await enterShow(page, index);
+    assert.equal(await page.inputValue('#practice-project-name'), name, `${count}: the name survives a reload`);
+    await page.waitForTimeout(800); // 自動保存が走るなら、それが終わってから下書きを見る
+    const after = await draftProject(page, base);
+    assert.equal(after.name, name, `${count}: the draft is not saved over with defaults`);
+    assert.equal(after.id, before.id); assert.equal(after.venue.id, before.venue.id);
+    assert.deepEqual(after.venue.projectors, before.venue.projectors);
+    assert.deepEqual(after.show.contentIds, ids); assert.equal(after.show.currentIndex, index);
+    const exported = await exportProject(page);
+    assert.equal(exported.content.length, count); assert.deepEqual(exported.show.contentIds, ids); assert.equal(exported.show.currentIndex, index);
+    await importProject(page, exported);
+    assert.match(await page.locator('#dc-practice-status').textContent(), /Project loaded/, `${count}: the exported file imports as is`);
+    // 保存した作品を開き (/project)、そこで再読み込みしても同じ順序・同じ再生位置で開く。
+    await projectControls(page); await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
+    for (const reload of [false, true]) {
+      if (reload) await page.reload();
+      await page.waitForFunction(n => document.querySelector('#current-sketch-number')?.textContent === n, String(count));
+      assert.match(await page.locator('#current-sketch-number').evaluate(e => e.parentElement.textContent), new RegExp(`${count}\\s*/\\s*${count}`));
+      const opened = await draftProject(page, base);
+      assert.equal(opened.name, name); assert.deepEqual(opened.show.contentIds, ids); assert.equal(opened.show.currentIndex, index);
+    }
+  }
+}
+// #173: ローカル作品のディレクトリ名・カタログの形がそのまま保存されても、再読み込み・書き出し・取り込み・/project で読み込める。
+// CLI の id はディレクトリ名なので、どれも実際のギャラリーで起こりうる。形ごとに結果を集め、最後にまとめて確かめる。
+const longId = 'l'.repeat(201);
+const catalogShapes = {
+  blankTitle: [{ id: 'blank', title: '   ' }],
+  longId: [{ id: longId, title: 'Long directory name' }],
+  dotsInPath: [{ id: 'a..b', title: 'Dots in the name' }],
+  opPrefix: [{ id: 'op-art', title: 'Local op-art' }],
+  gistPrefix: [{ id: 'gist-0123456789abcdef0123', title: 'Local gist-like' }],
+  duplicateId: [{ id: 'twice', title: 'First copy' }, { id: 'twice', title: 'Second copy' }],
+  // 手書きの sketches.json や scan が残した前の値で、文字列でない値が入ることがある。
+  numericTitle: [{ id: 'numeric', title: 2024, lastModified: 20261111 }],
+};
+async function clearDraft(page) {
+  await page.evaluate(() => new Promise((resolve, reject) => {
+    const open = indexedDB.open('dropcaster.projects', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('projects');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction('projects', 'readwrite'); tx.objectStore('projects').delete('draft');
+      tx.oncomplete = () => { open.result.close(); resolve(); }; tx.onerror = () => reject(tx.error);
+    };
+  }));
+}
+function shapeCatalog(shape) {
+  return [catalog[0], ...shape.map(s => ({ ...catalog[0], ...s, path: `sketches/${s.id}/index.html` }))];
+}
+async function slideshowCatalogShapes(page, base) {
+  await page.context().route('**/sketches/**/index.html', r => r.fulfill({ contentType: 'text/html', body: sketchHtml() }));
+  const failures = [];
+  for (const [name, shape] of Object.entries(catalogShapes)) {
+    const items = shapeCatalog(shape), index = items.length - 1;
+    await page.unroute('**/sketches.json'); await page.route('**/sketches.json', r => r.fulfill({ json: items }));
+    await page.goto(`${base.url}/slideshow?index=${index}`); await clearDraft(page); await page.reload(); await enterShow(page, index);
+    await change(page, '#practice-project-name', `Shape ${name}`); await storageSaved(page);
+    await page.reload(); await enterShow(page, index);
+    const reloaded = await page.inputValue('#practice-project-name');
+    if (reloaded !== `Shape ${name}`) failures.push(`${name}: the name after a reload is ${JSON.stringify(reloaded)}`);
+    let downloads = 0; const count = () => downloads++; page.on('download', count);
+    await page.locator('#practice-export').click(); await page.waitForTimeout(500); page.off('download', count);
+    if (downloads !== 1) { failures.push(`${name}: export refused (${await page.locator('#dc-practice-status').textContent()})`); continue; }
+    const exported = await exportProject(page);
+    await importProject(page, exported);
+    const imported = await page.locator('#dc-practice-status').textContent();
+    if (!/Project loaded/.test(imported)) failures.push(`${name}: import says ${JSON.stringify(imported)}`);
+    else if (JSON.stringify(exported.show.contentIds) !== JSON.stringify(items.map(s => s.id))) failures.push(`${name}: order ${JSON.stringify(exported.show.contentIds)}`);
+  }
+  assert.deepEqual(failures, [], 'every catalog shape is saved in a form this app loads back');
+  // まとめたカタログを /project で開くと、ローカル作品は id が op- / gist- で始まっても手元の作品として開く。
+  const items = shapeCatalog(Object.values(catalogShapes).flat()), index = items.length - 1;
+  await page.unroute('**/sketches.json'); await page.route('**/sketches.json', r => r.fulfill({ json: items }));
+  const outside = []; page.on('request', r => { const url = new URL(r.url()); if (/openprocessing\.org|github\.com$/.test(url.hostname) || url.pathname.startsWith('/gist-api/')) outside.push(r.url()); });
+  await page.goto(`${base.url}/slideshow?index=${index}`); await enterShow(page, index);
+  await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
+  await page.waitForFunction(n => document.querySelector('#current-sketch-number')?.textContent === n, String(items.length));
+  assert.match(await page.locator('#current-sketch-number').evaluate(e => e.parentElement.textContent), new RegExp(`${items.length}\\s*/\\s*${items.length}`));
+  assert.deepEqual(outside, [], 'local sketches are not fetched from OpenProcessing or GitHub');
+}
+// #173: 保存して読み込み直せない作品の並び (10,000 文字を超える作品名) は、開いた時点で理由を出し、書き出さない。
+// 会場だけの書き出しは作品参照で止めない。
+async function slideshowExportRefused(page, base) {
+  await page.route('**/sketches.json', r => r.fulfill({ json: [catalog[0], { ...catalog[1], title: 'x'.repeat(10001) }] }));
+  await page.reload(); await enterShow(page, 0);
+  await page.waitForFunction(() => /would not load back/.test(document.querySelector('#dc-practice-status').textContent));
+  assert.ok(await statusShown(page), 'the unsavable sketches are reported when the editor opens');
+  assert.match(await page.locator('#dc-practice-status').textContent(), /10,000 characters/);
+  let downloads = 0; page.on('download', () => downloads++);
+  await page.locator('#practice-export').click();
+  await page.waitForFunction(() => /Not exported/.test(document.querySelector('#dc-practice-status').textContent));
+  assert.ok(await statusShown(page), 'the refusal is shown');
+  assert.match(await page.locator('#dc-practice-status').textContent(), /10,000 characters/);
+  await page.waitForTimeout(500); assert.equal(downloads, 0, 'nothing is downloaded');
+  const venue = await exportProject(page, '#practice-export-venue');
+  assert.equal(venue.format, 'dropcaster-venue'); assert.equal(downloads, 1);
+  await snapshot(page, base.name + '-export-refused');
+}
+// #173: 読み込み直せない作品の並びは、自動保存でも明示的な保存でも下書きに書かず、前の良い下書きを残す。
+// 保存した作品を開く (/project) へも移らない。
+async function slideshowUnsavableKeepsDraft(page, base) {
+  await enterShow(page, 0); await change(page, '#practice-project-name', 'Good show'); await storageSaved(page);
+  const good = await draftProject(page, base);
+  await page.route('**/sketches.json', r => r.fulfill({ json: [catalog[0], { ...catalog[1], title: 'x'.repeat(10001) }] }));
+  await page.reload(); await enterShow(page, 0);
+  assert.equal(await page.inputValue('#practice-project-name'), 'Good show');
+  await page.waitForFunction(() => /Not saved/.test(document.querySelector('#practice-storage').textContent));
+  assert.match(await page.locator('#practice-storage').textContent(), /10,000 characters/);
+  await page.waitForTimeout(800);
+  assert.deepEqual(await draftProject(page, base), good, 'the autosave does not write what would not load back');
+  await change(page, '#practice-project-name', 'Renamed'); await page.waitForTimeout(800);
+  assert.deepEqual(await draftProject(page, base), good, 'an explicit commit does not write it either');
+  await page.locator('#practice-save').click();
+  await page.waitForFunction(() => /Not saved/.test(document.querySelector('#dc-practice-status').textContent));
+  assert.deepEqual(await draftProject(page, base), good, 'saving a named project does not write it');
+  await page.locator('#practice-open-content').click(); await page.waitForTimeout(800);
+  assert.ok(!new URL(page.url()).pathname.endsWith('/project'), 'it does not open /project with sketches that were not saved');
+  assert.ok(await statusShown(page)); assert.match(await page.locator('#dc-practice-status').textContent(), /Not saved/);
+  assert.deepEqual(await draftProject(page, base), good);
+  // 読み込める並びに戻すと、残した下書きから開ける。
+  await page.unroute('**/sketches.json'); await page.reload(); await enterShow(page, 0);
+  assert.equal(await page.inputValue('#practice-project-name'), 'Good show');
+}
+// #173: sketches.json に不正な要素 (null・文字列でない id) があっても、ほかの作品は id で引ける。
+async function sketchCatalogLookup(page, base) {
+  const found = await page.evaluate(async modules => {
+    const { SketchServiceImpl } = await import(`${modules}/services/sketchService.ts`);
+    const original = window.fetch;
+    window.fetch = async () => new Response(JSON.stringify([null, { id: 7 }, { id: 'a', title: 'First' }, { id: 'a', title: 'Second' }]),
+      { headers: { 'content-type': 'application/json' } });
+    try {
+      const service = new SketchServiceImpl(); const all = await service.loadSketches();
+      return { count: all.length, title: service.getSketchById('a')?.title ?? null };
+    } finally { window.fetch = original; }
+  }, base.modules);
+  assert.deepEqual(found, { count: 4, title: 'First' });
+}
+// #173: 作品が 1 万件を超える下書きは再読み込みでは直らないので、/project は再読み込みを勧めず理由を出す。
+async function projectTooLarge(page, base) {
+  await page.evaluate(async modules => {
+    const { createProject } = await import(`${modules}/practice/project.ts`), store = await import(`${modules}/practice/projectStore.ts`);
+    const project = createProject();
+    project.content = Array.from({ length: 10001 }, (_, i) => ({ id: `s${i}`, kind: 'local', ref: `s${i}`, title: `Sketch ${i}`, revision: null, revisionPinned: false }));
+    project.show.contentIds = project.content.map(c => c.id);
+    await store.writeProject(project);
+  }, base.modules);
+  await page.goto(base.url + '/project'); await page.waitForSelector('.sketch-error');
+  assert.match(await page.locator('.sketch-error').innerText(), /more than 10,000 sketches/);
+  assert.equal(await page.locator('.sketch-error [data-reload]').count(), 0, 'a reload does not help, so it is not offered');
+  await logged(page, /practice\.draftTooLarge/);
+}
 async function slideshow(page, base) {
   await snapshot(page, base.name + '-slideshow-entry');
   await start(page); await page.locator('#play-pause-btn').click();
@@ -1850,7 +2025,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, slideshowUnsavableKeepsDraft, sketchCatalogLookup, projectTooLarge, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);
