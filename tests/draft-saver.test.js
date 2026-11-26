@@ -110,3 +110,19 @@ test('hiding the page or disposing starts a waiting write; dispose stops observi
   assert.equal(leave(), false, 'a disposed saver no longer holds leaving');
   writes[1].resolve(); await settle();
 });
+
+// #286: 下書きを復元できなかった間に、持ち主が書かずに保留した変更。書かないが、離脱の前には確認する。
+test('a held change writes nothing but asks before leaving until the next save', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { saver, writes, states, leave } = harness();
+  saver.hold();
+  assert.equal(saver.holding, true);
+  assert.equal(leave(), true, 'leaving with a held change asks first');
+  t.mock.timers.tick(DRAFT_DEBOUNCE_MS);
+  assert.equal(writes.length, 0, 'neither holding nor leaving writes it');
+  assert.deepEqual(states, [], 'the state the owner reported (the restore error) is kept');
+  const saved = saver.save();
+  assert.equal(saver.holding, false, 'a save takes the held change with it');
+  writes[0].resolve(); await saved;
+  assert.equal(leave(), false);
+});
