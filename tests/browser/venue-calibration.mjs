@@ -290,6 +290,7 @@ async function glbDecodes(page,run){
   return page.evaluate(()=>window.glbDecodes);
 }
 // #171: 取り込んだ GLB は、校正値を確定したり戻したりするたびに復号し直さない。ファイルから入るものは毎回検証する。
+// #297: 取り込みは検証で復号したものからモデルを作る (1 回)。なぞった推定の一時表示をやめても、確定済みの GLB を復号し直さない。
 async function assets(page,base){
   const revised=run=>async()=>{const r=(await current(page)).venue.revision;await run();await page.waitForFunction(r=>window.calibrationPage.session.changes.get().venue.revision===r+1,r)};
   const importGlb=(name,buffer)=>async()=>{
@@ -303,9 +304,11 @@ async function assets(page,base){
   const remember=()=>page.evaluate(()=>{window.shownMesh=window.calibrationPage.preview.venueMeshes()[0]});
   const shown=()=>page.evaluate(()=>{const meshes=window.calibrationPage.preview.venueMeshes();return {kept:meshes[0]===window.shownMesh,authored:meshes.filter(m=>m.userData.venueObjectId).length,imported:meshes.filter(m=>!m.userData.venueObjectId).length}});
   const failed=()=>page.locator('#venue-status').evaluate(e=>e.classList.contains('is-error'));
+  // 3D の見た目: 視点を全体表示にそろえてから撮る (戻すと全体表示に戻るので、視点の違いを比べない)
+  const modelView=async()=>{await page.evaluate(()=>window.calibrationPage.preview.overview());return (await page.locator('#venue-canvas').screenshot()).toString('base64')};
   const other=venueFixture(d=>{d.nodes[0].scale=[.5,.5,.5]});
 
-  assert.equal(await glbDecodes(page,importGlb('wall.glb',venueFixture())),2,'a new GLB is validated once and decoded once more to build its model');
+  assert.equal(await glbDecodes(page,importGlb('wall.glb',venueFixture())),1,'a new GLB is decoded once, to validate it and build its model');
   const wall=(await current(page)).assets[0];await remember();assert.deepEqual(await shown(),{kept:true,authored:0,imported:1});
   // 校正値の確定: プロジェクタの数値・会場の位置・名前・キーでの微調整・リセット
   assert.equal(await glbDecodes(page,revised(()=>change(page,'#practice-p-position-0',1.25))),0,'committing a projector field does not decode the GLB');
@@ -322,24 +325,39 @@ async function assets(page,base){
   assert.equal((await pixels(page)).hash,image.hash,'undo restores the projected image');
   assert.deepEqual((await current(page)).assets,[wall]);assert.deepEqual((await current(page)).venue.scene,nudged.venue.scene);
   // 別の GLB を取り込んで戻す: 表示するモデルが変わるので、作り直しの 1 回だけ復号する
-  assert.equal(await glbDecodes(page,importGlb('other.glb',other)),2);
+  assert.equal(await glbDecodes(page,importGlb('other.glb',other)),1);
   assert.equal((await shown()).kept,false);assert.notEqual((await pixels(page)).hash,image.hash);
   assert.equal(await glbDecodes(page,async()=>{await undo(nudged)();await page.waitForFunction(id=>window.calibrationPage.session.changes.get().assets[0].id===id,wall.id)}),1,'undoing an import decodes the restored GLB once, to build its model');
   assert.equal((await pixels(page)).hash,image.hash,'the restored GLB is the one projected');
-  // なぞった推定を一時表示している間は、表示中のモデルが GLB ではない。戻すときに GLB を作り直す
+  // なぞった推定を一時表示している間も、確定済みの GLB のモデルを持ち続ける。同じ GLB へ戻すときは作り直さない
   const estimate=()=>page.evaluate(async modules=>{
     const {venueObject}=await import(`${modules}/practice/venueObjects.ts`),page=window.calibrationPage;
     page.showTraceEstimate({objects:[venueObject('box','Traced')],projector:page.session.changes.get().venue.projectors[0]});
   },base.modules);
   await revised(()=>change(page,'#practice-p-position-0',1.5))();const before=await current(page);
   await revised(()=>change(page,'#practice-p-position-0',1.75))();
+  await remember();const committedImage=await pixels(page),model=await modelView();
   await estimate();assert.deepEqual(await shown(),{kept:false,authored:1,imported:0});
-  assert.equal(await glbDecodes(page,async()=>{await undo(before)();await page.waitForFunction(()=>window.calibrationPage.preview.venueMeshes().every(m=>!m.userData.venueObjectId))}),1,'undo rebuilds the GLB model that the estimate replaced');
-  assert.deepEqual(await shown(),{kept:false,authored:0,imported:1});
-  // 一時表示をやめると確定済みの GLB に戻る (表示のための 1 回)。その後の戻すは復号しない
+  assert.equal(await glbDecodes(page,async()=>{await undo(before)();await page.waitForFunction(()=>window.calibrationPage.preview.venueMeshes().every(m=>!m.userData.venueObjectId))}),0,'undo to the same GLB shows the model kept during the estimate');
+  assert.deepEqual(await shown(),{kept:true,authored:0,imported:1});
+  // 一時表示をやめると、持っていた確定済みの GLB のモデルに戻る (復号しない)。見た目は推定の前と同じ
+  const restore=run=>glbDecodes(page,async()=>{await run();await page.waitForFunction(()=>window.calibrationPage.preview.venueMeshes().every(m=>!m.userData.venueObjectId))});
+  await revised(()=>change(page,'#practice-p-position-0',1.75))();
   await estimate();
-  assert.equal(await glbDecodes(page,async()=>{await page.evaluate(()=>window.calibrationPage.showTraceEstimate(null));await page.waitForFunction(()=>window.calibrationPage.preview.venueMeshes().every(m=>!m.userData.venueObjectId))}),1);
-  await remember();const latest=await current(page);
+  assert.equal(await restore(()=>page.evaluate(()=>window.calibrationPage.showTraceEstimate(null))),0,'ending the estimate does not decode the committed GLB');
+  assert.deepEqual(await shown(),{kept:true,authored:0,imported:1});
+  assert.equal((await pixels(page)).hash,committedImage.hash,'the committed venue is projected as before the estimate');
+  assert.equal(await modelView(),model,'the committed model is drawn as before the estimate');
+  // パネルを閉じる・合わせるモードへ切り替える: TracePanel が推定の一時表示をやめる経路
+  await page.locator('#dc-activity-trace').click();await estimate();
+  assert.equal(await restore(()=>page.locator('#dc-activity-objects').click()),0,'closing the trace panel does not decode the committed GLB');
+  assert.deepEqual(await shown(),{kept:true,authored:0,imported:1});
+  await page.locator('#dc-activity-trace').click();await estimate();
+  assert.equal(await restore(()=>page.locator('#venue-trace-mode-match').click()),0,'switching to match mode does not decode the committed GLB');
+  assert.deepEqual(await shown(),{kept:true,authored:0,imported:1});
+  await page.locator('#dc-activity-objects').click();
+  assert.equal((await pixels(page)).hash,committedImage.hash,'the venue kept through the trace panel is projected as before');
+  const latest=await current(page);
   await revised(()=>change(page,'#practice-p-position-0',2))();
   assert.equal(await glbDecodes(page,undo(latest)),0);assert.deepEqual(await shown(),{kept:true,authored:0,imported:1});
   // 会場ファイルは毎回検証する。確定済みのアセットと同じ id でも、中身が違えば拒否する
@@ -351,7 +369,7 @@ async function assets(page,base){
   }
   assert.equal(await glbDecodes(page,()=>load(page,shared)),1,'a venue file with the GLB on screen is validated once; its model is kept');
   assert.equal(await failed(),false);assert.deepEqual(await shown(),{kept:true,authored:0,imported:1});
-  assert.equal(await glbDecodes(page,()=>load(page,withData(other))),2,'a venue file with another GLB is validated once and decoded once more to build its model');
+  assert.equal(await glbDecodes(page,()=>load(page,withData(other))),1,'a venue file with another GLB is decoded once, to validate it and build its model');
   assert.equal(await failed(),false);assert.equal((await shown()).kept,false);assert.equal((await current(page)).assets[0].data,other.toString('base64'));
   // マッピングの下書きから写す: 保存されていたものなので検証する。壊れていれば写さない
   const mapping=await current(page);
@@ -359,7 +377,7 @@ async function assets(page,base){
     await page.evaluate(async([modules,project])=>(await import(`${modules}/practice/projectStore.ts`)).writeProject(project),[base.modules,{...mapping,assets:[asset]}]);
     await reveal(page,'#venue-copy-mapping');await page.locator('#venue-copy-mapping').click();await page.waitForFunction(done,asset.data);
   };
-  assert.equal(await glbDecodes(page,copyMapping(wall,data=>window.calibrationPage.session.changes.get().assets[0].data===data)),2,'a GLB copied from the mapping draft is validated once and decoded once more to build its model');
+  assert.equal(await glbDecodes(page,copyMapping(wall,data=>window.calibrationPage.session.changes.get().assets[0].data===data)),1,'a GLB copied from the mapping draft is decoded once, to validate it and build its model');
   assert.equal(await failed(),false);
   assert.equal(await glbDecodes(page,copyMapping({...wall,data:venueFixture(d=>{d.buffers[0].uri='../secret.bin'}).toString('base64')},()=>document.querySelector('#venue-status').classList.contains('is-error'))),1,'a mapping draft is decoded and validated even under a verified asset id');
   assert.deepEqual((await current(page)).assets,[wall],'a rejected mapping draft changes nothing');
@@ -368,6 +386,23 @@ async function assets(page,base){
   const saved=await current(page);
   assert.equal(await glbDecodes(page,async()=>{await page.locator('#venue-close').click();await page.locator('a[href="/venue"]').click();await ready(page)}),2,'reopening the saved draft validates the GLB and builds its model');
   assert.deepEqual((await current(page)).assets,saved.assets);assert.equal((await shown()).imported,1);
+  // ルートを離れると GLB のモデルを解放する。推定の一時表示で外して持っているモデルも同じ
+  const watchDisposal=()=>page.evaluate(()=>{const geometries=new Set(window.calibrationPage.preview.venueMeshes().map(m=>m.geometry));window.venueGeometries=geometries.size;window.venueDisposed=new Set();geometries.forEach(g=>g.addEventListener('dispose',()=>window.venueDisposed.add(g.uuid)));return geometries.size});
+  const disposed=()=>page.evaluate(()=>window.venueDisposed.size);
+  const leave=async()=>{await page.locator('#venue-close').click();await page.locator('#venue-canvas').waitFor({state:'detached'})};
+  assert.ok(await watchDisposal()>0);await leave();
+  assert.equal(await disposed(),await page.evaluate(()=>window.venueGeometries),'leaving disposes the GLB model on screen');
+  await page.locator('a[href="/venue"]').click();await ready(page);
+  assert.ok(await watchDisposal()>0);await estimate();
+  assert.equal(await disposed(),0,'the committed model is kept, not disposed, while the estimate is shown');
+  await leave();
+  assert.equal(await disposed(),await page.evaluate(()=>window.venueGeometries),'leaving during the estimate disposes the model kept for it');
+  // 推定を確定すると、持っていた GLB のモデルはもう戻らないので解放する
+  await page.locator('a[href="/venue"]').click();await ready(page);
+  assert.ok(await watchDisposal()>0);await estimate();
+  await revised(()=>page.evaluate(()=>{const page=window.calibrationPage;page.applyTrace(page.traceShown)}))();
+  assert.equal(await disposed(),await page.evaluate(()=>window.venueGeometries),'applying the estimate disposes the model kept for it');
+  assert.deepEqual(await shown(),{kept:false,authored:1,imported:0});assert.equal((await current(page)).venue.scene.kind,'objects');
 }
 
 async function isolation(page,base){

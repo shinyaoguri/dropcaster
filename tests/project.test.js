@@ -128,6 +128,25 @@ test('an asset already verified under the same id and data is not decoded again;
   assert.throws(() => parseProject({ ...moved, assets: [stored.assets[0], stored.assets[0]] }, stored.assets));
 });
 
+test('a parse hands over the bytes of each GLB it decoded and validated, keyed by its data (#297)', () => {
+  const glb = venueFixture(), p = createProject();
+  p.assets = [{ id: 'wall', name: 'wall.glb', mimeType: 'model/gltf-binary', data: glb.toString('base64') }];
+  p.venue.scene.kind = 'glb'; p.venue.scene.assetId = 'wall';
+  const decoded = new Map(), stored = parseProject(p, [], decoded);
+  assert.deepEqual([...decoded.keys()], [p.assets[0].data]);
+  assert.deepEqual(decoded.get(p.assets[0].data), new Uint8Array(glb), 'the bytes are the GLB file itself');
+  // An asset that is not decoded (already verified) is not handed over.
+  const skipped = new Map(); parseProject(stored, stored.assets, skipped);
+  assert.equal(skipped.size, 0);
+  // A GLB that fails validation is not handed over, even though it was decoded.
+  const rejected = new Map(), bad = venueFixture(d => d.images[0].uri = 'https://example.com/image.png').toString('base64');
+  assert.throws(() => parseProject({ ...stored, assets: [{ ...stored.assets[0], data: bad }] }, [], rejected));
+  assert.equal(rejected.size, 0);
+  // A venue package passes them through the same way.
+  const imported = new Map(); importVenue(portableVenue(stored), createProject(), imported);
+  assert.deepEqual(imported.get(p.assets[0].data), new Uint8Array(glb));
+});
+
 test('v1 projects migrate without changing calibrated geometry or embedded assets', () => {
   const p = createProject();
   p.assets = [{ id:'wall', name:'wall.glb', mimeType:'model/gltf-binary', data:encodeAsset(venueFixture()) }];

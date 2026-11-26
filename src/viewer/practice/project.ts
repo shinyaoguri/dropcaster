@@ -181,12 +181,16 @@ export function encodeAsset(bytes: Uint8Array): string {
   return btoa(raw);
 }
 
+/** GLB の中身 (base64) → それを復号して検証を通したバイト列。検証で復号したものを、モデルを作るときに使い回す (#297)。 */
+export type DecodedAssets = Map<string, Uint8Array>;
+
 /**
  * Validate everything before mutating the live controller; legacy v2 uses the existing parser.
  * `verified` are assets this session has already validated: one with the same id and the same data is not
  * decoded again, so re-validating an edit does not cost a GLB decode. Leave it empty for anything read from outside.
+ * `decoded` receives the bytes of every GLB this call decoded and validated, so building its model need not decode it again.
  */
-export function parseProject(value: unknown, verified: Project['assets'] = []): Project {
+export function parseProject(value: unknown, verified: Project['assets'] = [], decoded?: DecodedAssets): Project {
   const root = record(value);
   if (root.version === 2 && root.format === undefined) {
     return createProject(parseLayout(root));
@@ -210,7 +214,7 @@ export function parseProject(value: unknown, verified: Project['assets'] = []): 
     const a = record(value);
     if (a.mimeType !== 'model/gltf-binary') fail('asset');
     const data = str(a.data, Math.ceil(MAX_GLB_BYTES / 3) * 4);
-    if (!verified.some(v => v.id === a.id && v.data === data)) validateGlb(decodeAsset(data));
+    if (!verified.some(v => v.id === a.id && v.data === data)) { const bytes = decodeAsset(data); validateGlb(bytes); decoded?.set(data, bytes); }
     return { id: str(a.id), name: str(a.name), mimeType: 'model/gltf-binary' as const, data };
   });
   unique(assets.map(a => a.id));
@@ -277,10 +281,10 @@ export function portableVenue(project: Project): VenuePackage {
 }
 
 /** Validate the entire venue before replacing anything; preserve the receiving show. */
-export function importVenue(value: unknown, current: Project): Project {
+export function importVenue(value: unknown, current: Project, decoded?: DecodedAssets): Project {
   const root = record(value);
   if (root.format !== 'dropcaster-venue') fail();
   if (root.schemaVersion !== 1 && root.schemaVersion !== 2) fail('version');
   str(root.name);
-  return parseProject({ ...current, schemaVersion: root.schemaVersion === 1 ? 2 : 3, venue: root.venue, assets: root.assets });
+  return parseProject({ ...current, schemaVersion: root.schemaVersion === 1 ? 2 : 3, venue: root.venue, assets: root.assets }, [], decoded);
 }

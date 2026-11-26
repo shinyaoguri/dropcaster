@@ -52,6 +52,8 @@ export class ProjectionPreview {
   private venue: THREE.Group | null = null;
   private importedMaterials: THREE.ShaderMaterial[] = [];
   private venueCleanup: (() => void) | null = null;
+  /** 表示用の材質に差し替える前の、会場のメッシュの材質。外した会場を表示し直すときは、これから作り直す。 */
+  private sourceMaterials = new WeakMap<THREE.Mesh, THREE.Material | THREE.Material[]>();
   private projectionEnabled = true;
   private previewWidth = 640;
   private readonly depthTarget = new THREE.WebGLRenderTarget(1024, 1024);
@@ -225,13 +227,19 @@ export class ProjectionPreview {
           this.importedMaterials.push(material);
           return material;
         };
-        object.material = Array.isArray(object.material) ? object.material.map(convert) : convert(object.material);
+        const source = this.sourceMaterials.get(object) ?? object.material; this.sourceMaterials.set(object, source);
+        object.material = Array.isArray(source) ? source.map(convert) : convert(source);
       });
       this.scene.add(group);
     }
     this.setProjectionEnabled(this.projectionEnabled);
     this.depthDirty = true;
     this.updateGuide();
+  }
+
+  /** 表示中の会場を外す。後始末は呼ばずに呼び出し側へ任せる。外した group は setVenue に渡せば同じ見た目で表示し直せる。 */
+  releaseVenue(): void {
+    this.venueCleanup = null; this.setVenue(null);
   }
 
   setVenueTransform(config: VenueScene): void {

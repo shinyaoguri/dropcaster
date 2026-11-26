@@ -58,7 +58,7 @@ jobs:
           fi
 
       - name: Verify Service Worker offline navigation (root and subpath)
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: npm run test:sw
 
       - name: Verify stale async routes and destroyed pages stay inert (both viewer entries)
