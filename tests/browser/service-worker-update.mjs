@@ -11,6 +11,8 @@
 //
 // 絞り込み: SW_UPDATE_ENTRY=gallery|hosted|cli-subpath、SW_UPDATE_CASE=<ケース名>。
 // SW_UPDATE_ARTIFACT_DIR=<dir> で通知の表示を保存する (SW_UPDATE_LOCALE=ja-JP で日本語の表示)。
+// 失敗したケースは、経過の記録 (createTrace) を FAIL の後ろに出す。SW_UPDATE_TRACE=1 で成功したケースも出す (#231)。
+// SW_UPDATE_REPEAT=<n> で各ケースを n 回続けて実行する (不安定さの回数の記録用。既定 1)。
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -28,6 +30,11 @@ if (artifactDir) await mkdir(artifactDir, { recursive: true });
 const TIMEOUT_MS = 20_000;
 // 自動の再読み込みや出力の close が起きうる間だけ待つ (正しければ何も起きずに待ち切る)
 const SETTLE_MS = 1_500;
+// ナビゲーションの確定からブラウザ自身の更新確認が届くまでの下限とみなす時間 (settleBrowserUpdateCheck)。
+// 実測 (Chromium rev 1243、Linux): 作品の iframe の確定から 1.53〜1.55 秒。前のナビゲーション (操作画面) の
+// 確認が iframe の確定の後に届いた例は、確定から 18〜131ms。その間で、両側に 0.5 秒ほどの余裕を取る
+const BROWSER_CHECK_MIN_MS = 1_000;
+const REPEAT = Math.max(1, Number(process.env.SW_UPDATE_REPEAT) || 1);
 const entryButton = '#open-windows-btn, #mapping-btn';
 const notice = '#dc-update-notice';
 // 会場ページの遅延チャンク。Vite 既定は name-hash.js、dropcaster build は name.hash.js
@@ -36,6 +43,23 @@ const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
 };
+
+/**
+ * ケースの経過を、ケース開始からの ms を付けて貯める。待ちの後の検査やページ読み込みのタイムアウトで
+ * 落ちたときに、何がいつ起きたかを追うための記録 (#231)。載せるのは、サーバが sw.js を返した時刻と版、
+ * 操作画面の読み込み、SW の更新 (updatefound / statechange)、テストの節目、ケースを閉じる直前の状態。
+ */
+function createTrace() {
+  const start = Date.now();
+  const lines = [];
+  return {
+    add(what, at = Date.now()) { lines.push({ at, text: `  +${String(at - start).padStart(6)}ms ${what}` }); },
+    // ページ側の出来事は起きた時刻で届く (届く順は前後する) ので、時刻で並べ直す
+    text: () => lines.toSorted((a, b) => a.at - b.at).map(l => l.text).join('\n'),
+  };
+}
+let trace = createTrace();
+const swVersion = (source) => source.match(/const CACHE_VERSION = "([^"]*)"/)?.[1] ?? '?';
 
 const sketchHtml = (id) => `<!doctype html><html><body style="margin:0"><p id="marker" hidden>${id}</p><canvas width="640" height="360"></canvas><script>
   const x = document.querySelector('canvas').getContext('2d'); let n = 0;
@@ -66,6 +90,8 @@ function startServer(dir, state, basePath) {
     const pathname = full.slice(basePath.length);
     if (pathname === '/sw.js') {
       state.swFetches = (state.swFetches ?? 0) + 1;
+      (state.swFetchTimes ??= []).push(Date.now());
+      trace.add(`server: sw.js を返す (${swVersion(state.sw)}、${state.swFetches} 回目)`);
       res.writeHead(200, { 'Content-Type': CONTENT_TYPES['.js'], 'Cache-Control': 'no-cache' }).end(state.sw);
       return;
     }
@@ -116,16 +142,57 @@ async function bucketNames(page) {
   const names = (await cacheNames(page)).filter(n => n.startsWith('dropcaster-')).sort();
   return { shell: names.filter(n => n.startsWith('dropcaster-shell-')), content: names.filter(n => !n.startsWith('dropcaster-shell-')) };
 }
+/**
+ * ページの URL・readyState と、SW の登録の状態・キャッシュ名。記録用なので、取れない項目は理由を入れて返す。
+ * キャッシュは名前だけを見る (caches.open は、install の後始末が消したキャッシュを作り直してしまう)。
+ */
+const pageState = (page) => page.evaluate(async () => {
+  const state = { readyState: document.readyState };
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    Object.assign(state, {
+      controller: navigator.serviceWorker.controller?.state ?? null,
+      installing: reg?.installing?.state ?? null, waiting: reg?.waiting?.state ?? null, active: reg?.active?.state ?? null,
+      caches: (await caches.keys()).sort(),
+    });
+  } catch (err) { state.sw = String(err); }
+  return JSON.stringify(state);
+});
+/** 記録用の pageState。ページの再読み込み中などで取れなくても、記録が失敗の原因にならないよう文字列で返す。 */
+const pageStateForTrace = (page) => Promise.race([pageState(page), sleep(2_000).then(() => '(2 秒待っても応答なし)')])
+  .catch((err) => `(取れない: ${err.message.split('\n')[0]})`);
 const cachedIn = (page, bucket, url) => page.evaluate(async ([b, u]) => !!(await (await caches.open(b)).match(u)), [bucket, url]);
 
 /** 新しい版を配信して update() し、その install が終わる (待機に入るか失敗する) まで待つ。 */
 async function publishAndSettle(page, state, version) {
   state.sw = await swSource(version);
   const before = state.swFetches ?? 0;
+  trace.add(`test: ${version} を配信して update() を呼ぶ`);
   await until(() => page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration()).update().catch(() => {}); return true; }), 'registration.update()');
   await until(async () => (state.swFetches ?? 0) > before, `新しい版 ${version} の sw.js が取られる`);
+  trace.add(`test: ${version} の update() が返り、sw.js が取られた`);
   await until(() => page.evaluate(async () => !(await navigator.serviceWorker.getRegistration()).installing), `新しい版 ${version} の install が終わる`);
+  trace.add(`test: installing が無い ${await pageStateForTrace(page)}`);
   await sleep(SETTLE_MS);
+  trace.add(`test: ${SETTLE_MS}ms 待った ${await pageStateForTrace(page)}`);
+}
+
+/**
+ * ブラウザは SW が制御するナビゲーション (操作画面と作品の iframe) の後に、少し遅れて自分でも sw.js を
+ * 取りにいく (更新確認)。待っている間に次のナビゲーションが確定すれば 1 回にまとまるが、待ちが明けた後に
+ * 確定したナビゲーションには、もう 1 回の確認が来る。新しい版を配信した後にこれが来ると、テストの
+ * update() とは別に同じ版の install がもう 1 度走る (#231)。そこで、作品の iframe まで読み込み終えて
+ * ナビゲーションが出尽くしてから、最後のナビゲーションの確認がサーバに届くまで待ち、旧版を配信している
+ * 間に済ませる。
+ * 最後のナビゲーションの確認かどうかは、確定 (またはリクエストの遅いほう) から BROWSER_CHECK_MIN_MS 以上
+ * 後に届いたかで分ける。前のナビゲーションの確認は、その待ちが明けた直後に届くので、最後のナビゲーションの
+ * すぐ後にしか重ならない。
+ */
+async function settleBrowserUpdateCheck(page, context, state) {
+  await page.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.querySelector('canvas'));
+  await until(() => (state.swFetchTimes ?? []).some(t => t - (lastNavigationAt.get(context) ?? Infinity) >= BROWSER_CHECK_MIN_MS),
+    '最後のナビゲーションの後の、ブラウザ自身の更新確認');
+  trace.add('test: 最後のナビゲーションの後の、ブラウザ自身の更新確認が済んだ');
 }
 
 /** 全ウィンドウを閉じて開き直し、version の shell だけが残る (= その版が有効になる) まで待つ。 */
@@ -143,17 +210,67 @@ function navigateInApp(page, base, route) {
     base.path + route);
 }
 
+/** 応答が終わっていないリクエスト (コンテキストごと)。値は出した時刻。 */
+const pendingRequests = new WeakMap();
+/** 最後のナビゲーション (操作画面と作品の iframe) のリクエストか確定の、遅いほうの時刻 (コンテキストごと)。 */
+const lastNavigationAt = new WeakMap();
+
 async function newContext(browser, options = {}) {
   const context = await browser.newContext({ locale: process.env.SW_UPDATE_LOCALE || 'en-US', viewport: { width: 1280, height: 800 }, ...options });
   context.setDefaultTimeout(TIMEOUT_MS);
+  await context.exposeBinding('dcTrace', (_source, what, at) => trace.add(`page: ${what}`, at));
   // 操作画面の読み込み回数をタブごとに数える (作品の iframe と about:blank の出力ウィンドウは数えない)
   await context.addInitScript(() => {
     if (window.top !== window || !location.protocol.startsWith('http')) return;
     sessionStorage.setItem('dcLoads', String(Number(sessionStorage.getItem('dcLoads') || 0) + 1));
+    // 経過の記録 (#231): このページが見た SW の更新。初回登録の install は ready より前なので載らない
+    const say = (what) => { try { void window.dcTrace?.(what, Date.now())?.catch(() => {}); } catch { /* 記録だけなので捨てる */ } };
+    void navigator.serviceWorker?.ready.then((reg) => {
+      say(`SW ready ${location.pathname}`);
+      reg.addEventListener('updatefound', () => {
+        const worker = reg.installing;
+        say('SW updatefound');
+        worker?.addEventListener('statechange', () => say(`SW statechange ${worker.state}`));
+      });
+    });
   });
   const errors = [];
-  context.on('page', (p) => p.on('pageerror', (e) => errors.push(e.message)));
+  context.on('page', (p) => {
+    p.on('pageerror', (e) => errors.push(e.message));
+    p.on('load', () => trace.add(`page: load ${p.url()}`));
+    // 作品の iframe を含む、ナビゲーションの確定 (commit)。ブラウザ自身の更新確認の起点 (settleBrowserUpdateCheck)
+    p.on('framenavigated', (f) => {
+      if (!f.url().startsWith('http')) return;
+      lastNavigationAt.set(context, Date.now());
+      trace.add(`page: framenavigated ${f.url()}`);
+    });
+  });
+  const pending = new Map();
+  pendingRequests.set(context, pending);
+  context.on('request', (r) => {
+    pending.set(r, Date.now());
+    if (r.isNavigationRequest()) {
+      lastNavigationAt.set(context, Date.now());
+      trace.add(`request: ナビゲーション ${r.url()}`);
+    }
+  });
+  context.on('requestfinished', (r) => pending.delete(r));
+  context.on('requestfailed', (r) => { pending.delete(r); trace.add(`request: 失敗 ${r.url()} (${r.failure()?.errorText})`); });
+  context.on('response', (res) => { if (res.status() >= 400) trace.add(`response: ${res.status()} ${res.url()}${res.request().serviceWorker() ? ' (SW から)' : ''}`); });
   return { context, errors };
+}
+
+/**
+ * ケースを閉じる直前の、各ページの状態と応答が終わっていないリクエストを記録に足してから閉じる。
+ * 失敗したケースは finally へ直行するので、失敗した時点の状態になる (#231)。
+ */
+async function closeContext(context) {
+  for (const page of context.pages()) {
+    trace.add(`閉じる直前: ${page.url()} ${await pageStateForTrace(page)}`);
+  }
+  const now = Date.now();
+  for (const [request, since] of pendingRequests.get(context) ?? []) trace.add(`閉じる直前: 応答が終わっていない ${request.method()} ${request.url()} (${now - since}ms 前から)`);
+  await context.close();
 }
 
 /** 初回訪問で SW の制御を得てから (初回登録の切替が終わるまで待って) path を開き直す。 */
@@ -245,7 +362,7 @@ function keepsShow(path, open) {
       await assertNoticeOnlyInControl(page, popup, 'update', '新しい版の配信後');
       await snapshot(page, `${base.name}${path.replaceAll('/', '-')}-update-notice`);
       assert.deepEqual(errors, []);
-    } finally { await context.close(); }
+    } finally { await closeContext(context); }
   };
 }
 
@@ -268,7 +385,7 @@ const cases = {
       assert.equal(await loads(page), 1, '初回訪問のページが自動で再読み込みされた');
       assert.equal(await page.locator(notice).isVisible(), false, '初回訪問で更新通知が出た');
       assert.deepEqual(errors, []);
-    } finally { await context.close(); }
+    } finally { await closeContext(context); }
   },
 
   // 全ウィンドウを閉じて開き直すと、新しい版の SW とキャッシュで動き、通知は出ない。
@@ -306,7 +423,7 @@ const cases = {
       assert.equal(await next.locator(notice).isVisible(), false, '新しい版で開いたページに更新通知が出た');
       await openVenue(next, base);
       assert.deepEqual(errors, []);
-    } finally { await context.close(); }
+    } finally { await closeContext(context); }
   },
 
   // 通知のボタンを押したときだけ、新しい版を有効にして 1 度だけ再読み込みする
@@ -323,7 +440,7 @@ const cases = {
       assert.equal(await loads(page), before + 1, '再読み込みが 1 度で止まらない');
       assert.equal(await page.locator(notice).isVisible(), false, '適用後も更新通知が残った');
       assert.deepEqual(errors, []);
-    } finally { await context.close(); }
+    } finally { await closeContext(context); }
   },
 
   // この修正より前の版のページは、新しい版が installed になると自動で SKIP_WAITING を送っていた。
@@ -341,7 +458,7 @@ const cases = {
       assert.equal(await loads(page), before, '操作画面が再読み込みされた');
       assert.equal(await page.locator(notice).getAttribute('data-state'), 'update', '通知の種類が変わった');
       assert.deepEqual(errors, []);
-    } finally { await context.close(); }
+    } finally { await closeContext(context); }
   },
 
   // 新しい版の install 中にシェルの資産が 1 つでも取れなければ、新しい版は待機に入らず旧版のまま動く。
@@ -351,6 +468,10 @@ const cases = {
     try {
       const page = await openControlled(context, base, '/a');
       const before = await loads(page);
+      // 失敗する install はやり直しの対象になる (待機中の同じ版が無いので、ブラウザ自身の更新確認でも
+      // install が走る)。その install が下の検査の最中に重ならないよう、先に済ませる。成功する install の
+      // ケースでは、更新確認は待機中の版と比べる (Service Worker 仕様の Update) ので 2 度目の install は起きない
+      await settleBrowserUpdateCheck(page, context, state);
       state.blocked = VENUE_CHUNK;
       await publishAndSettle(page, state, 'v2');
       assert.equal(await hasWaiting(page), false, '資産が取れないまま新しい版が待機に入った');
@@ -367,7 +488,7 @@ const cases = {
       const iconServed = iconRes.ok && !iconRes.headers.get('content-type').includes('text/html');
       assert.equal(await cachedIn(page, 'dropcaster-shell-v2', icon), iconServed, `アイコン (配信 ${iconServed}) の事前キャッシュ`);
       assert.deepEqual(errors, []);
-    } finally { await context.close(); }
+    } finally { await closeContext(context); }
   },
 
   // 中身のバケットは版を持たず、2 回更新しても 1 組だけで中身が引き継がれる。入れ替わるのは shell だけ。
@@ -398,7 +519,7 @@ const cases = {
         assert.equal(await cachedIn(page, 'dropcaster-runtime', legacy.asset), false, `${version}: runtime の assets/ が移った`);
       }
       assert.deepEqual(errors, []);
-    } finally { await context.close(); }
+    } finally { await closeContext(context); }
   },
 
   // 会場ページの遅延チャンクが取れない (SW が無い環境で、デプロイで消えた) ときは、
@@ -423,7 +544,7 @@ const cases = {
       await page.locator(`${notice} button[data-action="reload"]`).click();
       await until(async () => await loads(page) === before + 1, '案内のボタンで再読み込みする');
       await page.waitForSelector('#venue-canvas');
-    } finally { await context.close(); }
+    } finally { await closeContext(context); }
   },
 
   // オフラインで遅延チャンクが取れないときは、新しい版ではなく接続を確かめるよう案内する
@@ -446,7 +567,7 @@ const cases = {
       await page.locator(`${notice} button[data-action="reload"]`).click();
       await until(async () => await loads(page) === before + 1, '案内のボタンで再読み込みする');
       await page.waitForSelector('#venue-canvas');
-    } finally { await context.close(); }
+    } finally { await closeContext(context); }
   },
 };
 
@@ -471,28 +592,33 @@ const entries = [
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--enable-unsafe-swiftshader'] });
 const failures = [];
+let passes = 0;
 try {
   for (const entry of entries) {
     if (process.env.SW_UPDATE_ENTRY && process.env.SW_UPDATE_ENTRY !== entry.name) continue;
     const outDir = await mkdtemp(join(tmpdir(), `dc-sw-update-${entry.name}-`));
     try {
       await entry.build(outDir);
-      for (const [caseName, run] of Object.entries(cases)) {
+      for (const [caseName, run] of Object.entries(cases).flatMap(c => Array(REPEAT).fill(c))) {
         if (process.env.SW_UPDATE_CASE && process.env.SW_UPDATE_CASE !== caseName) continue;
         const state = { sw: await swSource('v1'), blocked: null };
         const server = await startServer(outDir, state, entry.basePath);
         const base = { name: entry.name, path: entry.basePath, url: `http://127.0.0.1:${server.address().port}${entry.basePath}` };
+        trace = createTrace();
         try {
           await run({ browser, base, state, server });
+          passes++;
           console.log(`${entry.name}/${caseName}: PASS`);
+          if (process.env.SW_UPDATE_TRACE) console.log(trace.text());
         } catch (err) {
           failures.push(`${entry.name}/${caseName}`);
-          console.error(`${entry.name}/${caseName}: FAIL\n${err.stack}`);
+          console.error(`${entry.name}/${caseName}: FAIL\n${err.stack}\n経過 (ケース開始からの時間):\n${trace.text()}`);
         } finally { await stopServer(server); }
       }
     } finally { await rm(outDir, { recursive: true, force: true }); }
   }
 } finally { await browser.close(); }
+console.log(`${passes} passed, ${failures.length} failed`);
 if (failures.length) {
   console.error(`failed: ${failures.join(', ')}`);
   process.exitCode = 1;
