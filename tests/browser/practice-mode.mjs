@@ -640,6 +640,20 @@ async function slideshowUnsavableKeepsDraft(page, base) {
   await page.unroute('**/sketches.json'); await page.reload(); await enterShow(page, 0);
   assert.equal(await page.inputValue('#practice-project-name'), 'Good show');
 }
+// #173: sketches.json に不正な要素 (null・文字列でない id) があっても、ほかの作品は id で引ける。
+async function sketchCatalogLookup(page, base) {
+  const found = await page.evaluate(async modules => {
+    const { SketchServiceImpl } = await import(`${modules}/services/sketchService.ts`);
+    const original = window.fetch;
+    window.fetch = async () => new Response(JSON.stringify([null, { id: 7 }, { id: 'a', title: 'First' }, { id: 'a', title: 'Second' }]),
+      { headers: { 'content-type': 'application/json' } });
+    try {
+      const service = new SketchServiceImpl(); const all = await service.loadSketches();
+      return { count: all.length, title: service.getSketchById('a')?.title ?? null };
+    } finally { window.fetch = original; }
+  }, base.modules);
+  assert.deepEqual(found, { count: 4, title: 'First' });
+}
 // #173: 作品が 1 万件を超える下書きは再読み込みでは直らないので、/project は再読み込みを勧めず理由を出す。
 async function projectTooLarge(page, base) {
   await page.evaluate(async modules => {
@@ -1971,7 +1985,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, slideshowUnsavableKeepsDraft, projectTooLarge, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, slideshowUnsavableKeepsDraft, sketchCatalogLookup, projectTooLarge, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

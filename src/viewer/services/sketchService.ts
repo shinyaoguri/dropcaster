@@ -37,7 +37,8 @@ export class SketchServiceImpl implements SketchService {
 
       this.sketches = sketches;
       this.byId = new Map();
-      for (const sketch of sketches) if (!this.byId.has(sketch.id)) this.byId.set(sketch.id, sketch);
+      // 不正な要素 (null・id が文字列でない) は引けないだけにし、カタログ全体は捨てない。
+      for (const sketch of sketches) if (typeof sketch?.id === 'string' && !this.byId.has(sketch.id)) this.byId.set(sketch.id, sketch);
       this.isInitialized = true;
       return this.sketches;
     } catch (error) {
