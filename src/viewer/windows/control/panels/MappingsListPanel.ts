@@ -6,6 +6,7 @@
  *   - #add-output-btn   ← クリックで withAddedOutput
  *   - #mappings-list    ← mapping を全件フラットに列挙（色 / 名前 / enable / 削除）
  *   - #add-mapping-btn  ← クリックで withAddedMapping
+ *   - #duplicate-mapping-btn ← クリックで選択中の面・マスクを withDuplicatedItem
  *   - #export-settings-btn / #import-settings-btn ← 全設定 (MappingsState) の JSON 書出 / 読込
  *
  * 出力管理とマッピング管理は独立した存在として扱う。マッピングがどの出力に映るかは
@@ -32,6 +33,7 @@ import {
   withAddedMapping,
   withAddedMask,
   withAddedOutput,
+  withDuplicatedItem,
   withMappingRenamed,
   withMappingReordered,
   withMappingToggled,
@@ -41,6 +43,7 @@ import {
 } from '../../../utils/mappingTransform';
 import type { MappingsController } from '../MappingsController';
 import { t } from '../../../i18n/index.js';
+import { outputDiagnosisMessage, type OutputDiagnosis } from '../../../runtime/projectionDiagnosis';
 
 export interface MappingsListPanelAttachOptions {
   /** alert ダイアログを出す window（host の defaultView）。読み込み失敗の通知に使う。 */
@@ -51,6 +54,8 @@ export interface MappingsListPanelAttachOptions {
   closeOutputWindow: (outputId: string) => void;
   /** 出力ウィンドウが開いているかの問い合わせ（ヘッダの「開く／閉じる」表示用）。 */
   isOutputWindowOpen: (outputId: string) => boolean;
+  /** 出力側の状態 (#196)。行の下に未起動・再生エラーと対処を出す。 */
+  getOutputDiagnosis?: (outputId: string) => OutputDiagnosis | undefined;
 }
 
 export class MappingsListPanel {
@@ -106,7 +111,7 @@ export class MappingsListPanel {
     if (!ctrl || !opts) return '';
     const state = ctrl.getState();
     const outputs = state.outputs
-      .map(o => `${o.id}:${o.name ?? ''}:${opts.isOutputWindowOpen(o.id) ? 1 : 0}`)
+      .map(o => `${o.id}:${o.name ?? ''}:${opts.isOutputWindowOpen(o.id) ? 1 : 0}:${JSON.stringify(this.outputDiagnosis(o.id))}`)
       .join('|');
     return `${state.activeOutputId ?? ''}|${state.outputs.length}|${outputs}`;
   }
@@ -120,6 +125,17 @@ export class MappingsListPanel {
       .map(m => `${isMaskEntry(m) ? (m.drafting ? 'd' : 'k') : 'm'}:${m.id}:${m.name ?? ''}:${isMappingEnabled(m) ? 1 : 0}`)
       .join('|');
     return `${state.activeId}|${state.mappings.length}|${mappings}`;
+  }
+
+  /**
+   * 行に出す出力側の状態 (#196)。開閉は行の ●/○ と「開く／閉じる」と同じ判定に揃え、
+   * 開いているときだけ WindowController が観測した再生エラーを使う。
+   */
+  private outputDiagnosis(outputId: string): OutputDiagnosis {
+    const opts = this.opts;
+    if (!opts?.isOutputWindowOpen(outputId)) return { kind: 'notOpen' };
+    const diagnosis = opts.getOutputDiagnosis?.(outputId);
+    return diagnosis?.kind === 'playError' ? diagnosis : { kind: 'open' };
   }
 
   /** ペン描画（drafting マスクが active）中かを返す。 */
@@ -200,6 +216,25 @@ export class MappingsListPanel {
         ctrl.replaceState(withRemovedOutput(ctrl.getState(), out.id));
       });
       row.appendChild(removeBtn);
+
+      // 出力側の状態と対処 (#196)。開いていて再生の失敗が無ければ何も出さない。
+      const diagnosis = this.outputDiagnosis(out.id);
+      const message = outputDiagnosisMessage(diagnosis);
+      if (message) {
+        row.classList.add('has-status');
+        const status = doc.createElement('div');
+        status.className = 'output-status';
+        status.dataset.kind = diagnosis.kind;
+        status.setAttribute('role', 'status');
+        status.textContent = message.text;
+        if (message.hint) {
+          const hint = doc.createElement('span');
+          hint.className = 'output-status-hint';
+          hint.textContent = message.hint;
+          status.appendChild(hint);
+        }
+        row.appendChild(status);
+      }
 
       // 行全体クリック / 名前クリックで activeOutputId 切替
       nameSpan.addEventListener('click', (e) => {
@@ -408,6 +443,21 @@ export class MappingsListPanel {
     if (addMaskBtn) {
       addMaskBtn.addEventListener('click', () => {
         ctrl.replaceState(withAddedMask(ctrl.getState()));
+      });
+    }
+
+    // 選択中の面・マスクを複製する (#191)。複製した側が active になる。ペン描画中のマスクは複製されない
+    // (withDuplicatedItem が同じ state を返す)。名前は表示名 (name が無ければ通し番号) を元に作る。
+    const duplicateBtn = scope.querySelector('#duplicate-mapping-btn');
+    if (duplicateBtn) {
+      duplicateBtn.addEventListener('click', () => {
+        const before = ctrl.getState();
+        const index = before.mappings.findIndex(m => m.id === before.activeId);
+        if (index < 0) return;
+        const copyName = t('control.mappings.duplicate.name', { name: mappingDisplayNames(before.mappings)[index] });
+        const next = withDuplicatedItem(before, before.activeId, copyName);
+        if (next === before) return;
+        ctrl.replaceState(next);
       });
     }
 

@@ -2,6 +2,7 @@ export class UIElementController {
   private readonly elements = {
     fullscreenBtn: () => document.getElementById('fullscreen-btn') as HTMLButtonElement,
     openWindowsBtn: () => document.getElementById('open-windows-btn') as HTMLButtonElement,
+    blackoutBtn: () => document.getElementById('blackout-btn') as HTMLButtonElement,
     overlayInfo: () => document.querySelector('.fullscreen-sketch-container .dc-info-panel') as HTMLDivElement
   };
 
@@ -41,7 +42,7 @@ export class UIElementController {
   }
 
   setFullscreenActiveState(isFullscreen: boolean): void {
-    [this.elements.fullscreenBtn(), this.elements.openWindowsBtn()].forEach(btn => {
+    [this.elements.fullscreenBtn(), this.elements.openWindowsBtn(), this.elements.blackoutBtn()].forEach(btn => {
       btn?.classList.toggle('fullscreen-active', isFullscreen);
     });
   }

@@ -40,6 +40,17 @@ export function activityButtonHtml(panel: string, labelKey: MessageKey, icon: Ac
           </button>`;
 }
 
+/**
+ * 「マッピング設定」の 1 隅ぶんの数値入力 (x, y)。CornerInputPanel が配線する (#192)。
+ * 欄の名前は「隅の名前 + x / y」(aria-labelledby で、言語切替に追従する隅の名前と軸の隠しラベルを読む)。
+ */
+function cornerInputs(abbr: string, corner: string, short: string): string {
+  const nameKey = `control.mappingSettings.corner.${corner}` as MessageKey;
+  const input = (axis: 'x' | 'y') =>
+    `<input id="mapping-${abbr}-${axis}-input" class="num-input corner-input" type="number" step="any" inputmode="decimal" data-quad-corner="${corner}" data-quad-axis="${axis}" aria-labelledby="mapping-${abbr}-label mapping-corner-axis-${axis}" disabled />`;
+  return `<div class="tool-value corner-value"><span class="label" id="mapping-${abbr}-label" data-i18n-title="${nameKey}" title="${t(nameKey)}" data-i18n-aria-label="${nameKey}" aria-label="${t(nameKey)}">${short}</span>${input('x')}<span class="corner-sep" aria-hidden="true">,</span>${input('y')}</div>`;
+}
+
 export function controlPanelHtml(): string {
   const buildInfoMarkup = buildInfoHtml();
   return `
@@ -47,6 +58,12 @@ export function controlPanelHtml(): string {
       <div id="dc-webgl-lost-banner" class="dc-banner dc-banner-warn" hidden role="status">
         <span class="dc-banner-icon">⚠</span>
         <span class="dc-banner-text" data-i18n-html="control.banner.webglLost">${t('control.banner.webglLost')}</span>
+      </div>
+      <!-- ブラックアウト中の帯 (#194)。どのパネルを開いていても (畳んでいても) 見え、ここからも解除できる -->
+      <div id="dc-blackout-banner" class="dc-banner" hidden role="status">
+        <span class="dc-banner-icon" aria-hidden="true">■</span>
+        <span class="dc-banner-text" data-i18n="control.blackout.banner">${t('control.blackout.banner')}</span>
+        <button type="button" id="dc-blackout-release" class="dc-banner-action" data-i18n="control.blackout.release">${t('control.blackout.release')}</button>
       </div>
       <div class="control-container">
         <!-- アクティビティバー: ツールカラムの中身 (パネル) を切り替える。選択中を再度押すとツールカラムを畳む -->
@@ -86,6 +103,9 @@ export function controlPanelHtml(): string {
                   <button id="add-mapping-btn" class="tool-button" data-i18n="control.mappings.add">${t('control.mappings.add')}</button>
                   <button id="add-mask-btn" class="tool-button" data-i18n="control.mappings.addMask">${t('control.mappings.addMask')}</button>
                 </div>
+                <div class="mappings-item-buttons">
+                  <button id="duplicate-mapping-btn" class="tool-button" data-i18n="control.mappings.duplicate" data-i18n-title="control.mappings.duplicate.title" title="${t('control.mappings.duplicate.title')}">${t('control.mappings.duplicate')}</button>
+                </div>
               </div>
 
               <div class="tool-section">
@@ -123,11 +143,13 @@ export function controlPanelHtml(): string {
                 <div class="tool-item">
                   <label data-i18n="control.mappingSettings.corners">${t('control.mappingSettings.corners')}</label>
                   <div class="tool-values quad-values">
-                    <div class="tool-value"><span class="label">TL:</span><span id="mapping-tl-value">25, 25</span></div>
-                    <div class="tool-value"><span class="label">TR:</span><span id="mapping-tr-value">75, 25</span></div>
-                    <div class="tool-value"><span class="label">BL:</span><span id="mapping-bl-value">25, 75</span></div>
-                    <div class="tool-value"><span class="label">BR:</span><span id="mapping-br-value">75, 75</span></div>
+                    ${cornerInputs('tl', 'topLeft', 'TL')}
+                    ${cornerInputs('tr', 'topRight', 'TR')}
+                    ${cornerInputs('bl', 'bottomLeft', 'BL')}
+                    ${cornerInputs('br', 'bottomRight', 'BR')}
                   </div>
+                  <span id="mapping-corner-axis-x" hidden>x</span><span id="mapping-corner-axis-y" hidden>y</span>
+                  <p id="mapping-corner-error" class="corner-input-error" role="alert" hidden></p>
                 </div>
                 <button id="reset-mapping-btn" class="tool-button" data-i18n="control.reset">
                   ${t('control.reset')}
@@ -183,6 +205,16 @@ export function controlPanelHtml(): string {
                 </div>
               </div>
 
+              <!-- ブラックアウト (#194): 全出力を一度に黒にする。状態は実行中だけで、保存しない -->
+              <div class="tool-section">
+                <h3 data-i18n="control.blackout.title">${t('control.blackout.title')}</h3>
+                <p class="section-hint" data-i18n="control.blackout.hint">${t('control.blackout.hint')}</p>
+                <button type="button" id="dc-blackout-toggle" class="tool-button dc-blackout-toggle" aria-pressed="false">
+                  <span class="dc-blackout-dot" aria-hidden="true"></span>
+                  <span class="dc-blackout-label" data-i18n="control.blackout.off">${t('control.blackout.off')}</span>
+                </button>
+              </div>
+
               <div class="tool-section">
                 <h3 data-i18n="control.devMode.title">${t('control.devMode.title')}</h3>
                 <p class="section-hint" data-i18n="control.devMode.hint">${t('control.devMode.hint')}</p>
@@ -222,6 +254,11 @@ export function controlPanelHtml(): string {
         <div class="column source-column" data-resize-target="source">
           <div class="column-header">
             <h2 data-i18n="control.column.source">${t('control.column.source')}</h2>
+          </div>
+          <!-- 投影が映らないときの作品側の原因と対処 (#196)。文言は ProjectionDiagnosisPanel が入れる -->
+          <div id="dc-source-status" class="dc-source-status" role="status" aria-live="polite" hidden>
+            <span class="dc-source-status-text"></span>
+            <span class="dc-source-status-hint" hidden></span>
           </div>
           <div class="video-container">
             <div class="source-preview-wrapper">

@@ -470,6 +470,22 @@ body {
   top: 5rem;
 }
 
+/* ブラックアウト (#194)。黒の最中は赤で示す */
+.blackout-button {
+  top: 9rem;
+}
+
+.top-right-button.blackout-active {
+  background: #b91c1c;
+  border-color: #fca5a5;
+}
+
+/* 黒の最中は、作品の全画面で右上のボタンを隠すとき (UIElementController の inline style) も出したままにする */
+.top-right-button.blackout-active {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
 /* 美術館の壁掛けラベル風の情報パネル。スライドショーと個別スケッチ表示で共用。
    位置決め・透明度（フェード）は各 View 側で上書きする。 */
 .dc-info-panel {
