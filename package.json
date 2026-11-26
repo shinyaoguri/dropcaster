@@ -73,7 +73,7 @@
     "chalk": "^6.0.1",
     "commander": "^15.1.0",
     "ora": "^10.0.0",
-    "playwright": "^1.65.0",
+    "playwright": "^1.65.1",
     "prompts": "^2.4.2",
     "terser": "^5.51.2",
     "vite": "^8.3.6",
