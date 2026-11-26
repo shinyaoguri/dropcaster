@@ -29,6 +29,12 @@ export interface Project {
 export const MAX_GLB_BYTES = 20 * 1024 * 1024;
 export const MAX_PACKAGE_BYTES = 30 * 1024 * 1024;
 export const MAX_VENUE_OBJECTS = 128;
+/**
+ * 1 つのプロジェクトに入る作品参照 (`content`・`show.contentIds`) の上限。スライドショーはカタログ全体を参照にするので、
+ * 授業のギャラリーでも数百件になる。ファイル全体は MAX_PACKAGE_BYTES で頭打ちになる (#173)。
+ * 文言 `practice.contentLimit` の件数も合わせる。
+ */
+export const MAX_SHOW_ITEMS = 10_000;
 export interface VenuePackage {
   format: 'dropcaster-venue'; schemaVersion: 2; name: string;
   venue: Project['venue']; assets: Project['assets'];
@@ -50,6 +56,7 @@ const quat = (v: unknown): Quaternion => {
   return q;
 };
 const list = (v: unknown, max: number): unknown[] => Array.isArray(v) && v.length <= max ? v : fail();
+const showList = (v: unknown): unknown[] => { if (Array.isArray(v) && v.length > MAX_SHOW_ITEMS) fail('contentLimit'); return list(v, MAX_SHOW_ITEMS); };
 const unique = (ids: string[]) => { if (new Set(ids).size !== ids.length) fail('reference'); };
 
 /** Keep the v2 parser's compatibility defaults, but reject partial/unsafe imports. */
@@ -238,7 +245,7 @@ export function parseProject(value: unknown, verified: Project['assets'] = [], d
   // Authored objects are already in physical metres: never hide another scale/rotation above their dimensions.
   if (objects && (transform.metersPerUnit !== 1 || transform.position.some(v => v !== 0) || transform.scale.some(v => v !== 1)
     || transform.quaternion.some((v, i) => v !== (i === 3 ? 1 : 0)) || color.toLowerCase() !== '#ffffff')) fail();
-  const content = list(root.content, 100).map(value => {
+  const content = showList(root.content).map(value => {
     const c = record(value), kind = c.kind;
     if (kind !== 'local' && kind !== 'op' && kind !== 'gist' && kind !== 'builtin') fail();
     const ref = str(c.ref);
@@ -251,8 +258,10 @@ export function parseProject(value: unknown, verified: Project['assets'] = [], d
       revision: c.revision === null ? null : str(c.revision), revisionPinned: false as const };
   });
   unique(content.map(c => c.id));
-  const contentIds = list(show.contentIds, 100).map(id => str(id));
-  if (contentIds.some(id => !content.some(c => c.id === id))) fail('reference');
+  const contentIds = showList(show.contentIds).map(id => str(id));
+  // 件数の 2 乗にならないよう、参照先は Set で引く。
+  const contentIdSet = new Set(content.map(c => c.id));
+  if (contentIds.some(id => !contentIdSet.has(id))) fail('reference');
   const currentIndex = num(show.currentIndex, 0, Math.max(0, contentIds.length - 1));
   if (!Number.isInteger(currentIndex)) fail();
   const createdAt = str(root.createdAt), updatedAt = str(root.updatedAt);
@@ -280,11 +289,27 @@ export function portableVenue(project: Project): VenuePackage {
   return { format: 'dropcaster-venue', schemaVersion: 2, name, venue, assets };
 }
 
-/** Validate the entire venue before replacing anything; preserve the receiving show. */
-export function importVenue(value: unknown, current: Project, decoded?: DecodedAssets): Project {
+/**
+ * Validate the entire venue before replacing anything; preserve the receiving show.
+ * `verified` is the same as parseProject's: leave it empty for anything read from outside.
+ */
+export function importVenue(value: unknown, current: Project, decoded?: DecodedAssets, verified: Project['assets'] = []): Project {
   const root = record(value);
   if (root.format !== 'dropcaster-venue') fail();
   if (root.schemaVersion !== 1 && root.schemaVersion !== 2) fail('version');
   str(root.name);
-  return parseProject({ ...current, schemaVersion: root.schemaVersion === 1 ? 2 : 3, venue: root.venue, assets: root.assets }, [], decoded);
+  return parseProject({ ...current, schemaVersion: root.schemaVersion === 1 ? 2 : 3, venue: root.venue, assets: root.assets }, verified, decoded);
+}
+
+/**
+ * 書き出すファイルの中身。受け取る側と同じ検証 (parseProject / importVenue) を通らないものは書き出さず、
+ * ProjectFormatError を投げる (#173)。作業中の GLB は取り込みのときに検証済みなので、書き出しのたびに復号し直さない。
+ * 会場だけの書き出しは送る側の作品参照を含まないので、作品参照の検証で止めない。
+ */
+export function exportText(project: Project, venueOnly: boolean): string {
+  const text = JSON.stringify(venueOnly ? portableVenue(project) : portableProject(project), null, 2);
+  const written: unknown = JSON.parse(text);
+  if (venueOnly) importVenue(written, createProject(), undefined, project.assets);
+  else parseProject(written, project.assets);
+  return text;
 }

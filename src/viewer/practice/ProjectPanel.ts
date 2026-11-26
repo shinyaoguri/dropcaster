@@ -1,5 +1,5 @@
 import { randomId } from '../utils/randomId';
-import { parseProject, portableProject, portableVenue, importVenue, ProjectFormatError,
+import { parseProject, exportText, importVenue, ProjectFormatError,
   MAX_PACKAGE_BYTES, type Project } from './project';
 import { listProjects, readProject } from './projectStore';
 import type { ProjectSession } from './ProjectSession';
@@ -11,7 +11,7 @@ import { routeHref } from '../utils/paths';
 const label = (key: MessageKey) => `<span data-i18n="${key}">${t(key)}</span>`;
 const button = (id: string, key: MessageKey) => `<button type="button" id="${id}" class="tool-button">${label(key)}</button>`;
 
-const FORMAT_ERRORS = ['invalid', 'version', 'asset', 'reference', 'externalAsset', 'unsupportedAsset', 'size'];
+const FORMAT_ERRORS = ['invalid', 'version', 'asset', 'reference', 'externalAsset', 'unsupportedAsset', 'size', 'contentLimit'];
 /** 取り込み・会場の構築で投げられた失敗を、利用者に見せる文言のキーにする。 */
 export function projectErrorKey(error: unknown): MessageKey | null {
   return error instanceof ProjectFormatError && FORMAT_ERRORS.includes(error.message) ? `practice.${error.message}` as MessageKey : null;
@@ -32,10 +32,10 @@ export class ProjectPanel {
   private previous: Project | null = null;
   private previousMode: 'project' | 'venue' = 'project';
   private session: ProjectSession;
-  private status: (key: MessageKey, error?: boolean) => void;
+  private status: (key: MessageKey, error?: boolean, reason?: MessageKey | null) => void;
   private venueChanged: (shaped: boolean) => void;
 
-  constructor(scope: HTMLElement, session: ProjectSession, status: (key: MessageKey, error?: boolean) => void, venueChanged: (shaped: boolean) => void) {
+  constructor(scope: HTMLElement, session: ProjectSession, status: (key: MessageKey, error?: boolean, reason?: MessageKey | null) => void, venueChanged: (shaped: boolean) => void) {
     this.session = session; this.status = status; this.venueChanged = venueChanged;
     this.root.className = 'dc-practice-settings';
     this.root.innerHTML = `<section id="dc-practice-project" class="tool-section"><h3>${label('practice.project')}</h3>
@@ -75,7 +75,9 @@ export class ProjectPanel {
     const name = this.get<HTMLInputElement>('practice-project-name');
     if (document.activeElement !== name) name.value = project.name === 'Untitled' ? t('practice.untitled') : project.name;
     const contents = this.get('practice-content-list');
-    const text = project.show.contentIds.map(id => project.content.find(c => c.id === id)?.title ?? id).join('\n');
+    // 変更 (ドラッグ中は毎フレーム) のたびに通るので、作品数の 2 乗にならないよう引く (#173)。
+    const titles = new Map(project.content.map(c => [c.id, c.title]));
+    const text = project.show.contentIds.map(id => titles.get(id) ?? id).join('\n');
     if (contents.dataset.content !== text) {
       contents.replaceChildren(...text.split('\n').filter(Boolean).map(title => { const li = document.createElement('li'); li.textContent = title; return li; }));
       contents.dataset.content = text;
@@ -159,7 +161,15 @@ export class ProjectPanel {
   }
   private export(venueOnly = false): void {
     const project = this.session.changes.get();
-    const url = URL.createObjectURL(new Blob([JSON.stringify(venueOnly ? portableVenue(project) : portableProject(project), null, 2)], { type: 'application/json' }));
+    let text: string;
+    // 自分で読み込めないファイルは書き出さず、理由を出す (#173)。
+    try { text = exportText(project, venueOnly); } catch (error) {
+      if (!(error instanceof ProjectFormatError)) throw error;
+      const reason = projectErrorKey(error);
+      this.status('practice.exportRefused', true, reason === 'practice.invalid' || !reason ? 'practice.unreadableValue' : reason);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
     const link = document.createElement('a'); link.href = url; link.download = `${project.name.replace(/[^\p{L}\p{N}._-]/gu, '_')}.${venueOnly ? 'venue' : 'dropcaster'}.json`;
     link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }

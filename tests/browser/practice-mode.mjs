@@ -467,6 +467,66 @@ async function slideshowDraft(page, base) {
   await page.reload(); await reopen(page, base);
   assert.equal(await page.inputValue('#practice-project-name'), 'Fourth', 'the sketch page keeps a commit made 100 ms before reloading');
 }
+// #173: 101 件以上のショーも、再読み込み・書き出し・取り込み・/project で名前・会場・プロジェクタ・作品の順序・再生位置を保つ。
+function largeCatalog(count) {
+  // 並びが id の順と違っても保たれることを見るため、逆順に並べる。
+  return Array.from({ length: count }, (_, i) => ({ id: `s${count - i}`, title: `Sketch ${count - i}`, path: `sketches/s${count - i}/index.html`,
+    description: '', type: 'html', tags: [], interactiveElements: [], lastModified: '2026-11-11' }));
+}
+async function enterShow(page, index) {
+  await page.waitForSelector(entryButton);
+  await page.waitForFunction(n => document.querySelector('#current-sketch-number')?.textContent === n, String(index + 1));
+  await page.locator('#play-pause-btn').click(); // 自動送りで再生位置が動かないよう止める
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await projectControls(page);
+}
+async function slideshowLarge(page, base) {
+  await page.context().route('**/sketches/s*/index.html', r => r.fulfill({ contentType: 'text/html', body: sketchHtml() }));
+  for (const count of [100, 101, 1000]) {
+    const items = largeCatalog(count), ids = items.map(s => s.id), index = count - 1, name = `Show ${count}`;
+    await page.unroute('**/sketches.json'); await page.route('**/sketches.json', r => r.fulfill({ json: items }));
+    await page.goto(`${base.url}/slideshow?index=${index}`); await enterShow(page, index);
+    await change(page, '#practice-project-name', name); await storageSaved(page);
+    const before = await draftProject(page, base);
+    assert.equal(before.name, name); assert.deepEqual(before.show.contentIds, ids); assert.equal(before.show.currentIndex, index);
+    await page.reload(); await enterShow(page, index);
+    assert.equal(await page.inputValue('#practice-project-name'), name, `${count}: the name survives a reload`);
+    await page.waitForTimeout(800); // 自動保存が走るなら、それが終わってから下書きを見る
+    const after = await draftProject(page, base);
+    assert.equal(after.name, name, `${count}: the draft is not saved over with defaults`);
+    assert.equal(after.id, before.id); assert.equal(after.venue.id, before.venue.id);
+    assert.deepEqual(after.venue.projectors, before.venue.projectors);
+    assert.deepEqual(after.show.contentIds, ids); assert.equal(after.show.currentIndex, index);
+    const exported = await exportProject(page);
+    assert.equal(exported.content.length, count); assert.deepEqual(exported.show.contentIds, ids); assert.equal(exported.show.currentIndex, index);
+    await importProject(page, exported);
+    assert.match(await page.locator('#dc-practice-status').textContent(), /Project loaded/, `${count}: the exported file imports as is`);
+    // 保存した作品を開き (/project)、そこで再読み込みしても同じ順序・同じ再生位置で開く。
+    await projectControls(page); await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
+    for (const reload of [false, true]) {
+      if (reload) await page.reload();
+      await page.waitForFunction(n => document.querySelector('#current-sketch-number')?.textContent === n, String(count));
+      assert.match(await page.locator('#current-sketch-number').evaluate(e => e.parentElement.textContent), new RegExp(`${count}\\s*/\\s*${count}`));
+      const opened = await draftProject(page, base);
+      assert.equal(opened.name, name); assert.deepEqual(opened.show.contentIds, ids); assert.equal(opened.show.currentIndex, index);
+    }
+  }
+}
+// #173: 自分の parser を通らないプロジェクトは書き出さず、理由を出す。会場だけの書き出しは作品参照で止めない。
+async function slideshowExportRefused(page, base) {
+  await page.route('**/sketches.json', r => r.fulfill({ json: [catalog[0], { ...catalog[1], title: '   ' }] }));
+  await page.reload(); await enterShow(page, 0);
+  let downloads = 0; page.on('download', () => downloads++);
+  await page.locator('#practice-export').click();
+  await page.waitForFunction(() => /Not exported/.test(document.querySelector('#dc-practice-status').textContent));
+  assert.ok(await statusShown(page), 'the refusal is shown');
+  assert.match(await page.locator('#dc-practice-status').textContent(), /only of spaces/);
+  await page.waitForTimeout(500); assert.equal(downloads, 0, 'nothing is downloaded');
+  const venue = await exportProject(page, '#practice-export-venue');
+  assert.equal(venue.format, 'dropcaster-venue'); assert.equal(downloads, 1);
+  await snapshot(page, base.name + '-export-refused');
+}
 async function slideshow(page, base) {
   await snapshot(page, base.name + '-slideshow-entry');
   await start(page); await page.locator('#play-pause-btn').click();
@@ -1784,7 +1844,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowExportRefused, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

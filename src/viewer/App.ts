@@ -173,8 +173,9 @@ export class App {
         if (!stored) { failure = 'practice.draftMissing'; throw new Error('No project draft is saved'); }
         const project = parseProject(stored);
         failure = 'practice.contentMissing';
+        const refs = new Map(project.content.map(c => [c.id, c])); // 作品数の 2 乗にならないよう引く (#173)
         const sketches = await Promise.all(project.show.contentIds.map(async id => {
-          const ref = project.content.find(c => c.id === id)!;
+          const ref = refs.get(id)!;
           if (ref.kind === 'op') return this.opSource.resolve(ref.ref);
           if (ref.kind === 'gist') return this.gistSource.resolve(ref.ref);
           if (ref.kind === 'builtin') return sampleSketch();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createProject, parseProject, portableProject, portableVenue, importVenue, reconcileProjectLayout, encodeAsset, decodeAsset, validateGlb } from '../src/viewer/practice/project.ts';
+import { createProject, parseProject, portableProject, portableVenue, importVenue, exportText, reconcileProjectLayout, encodeAsset, decodeAsset, validateGlb } from '../src/viewer/practice/project.ts';
 import { roomScene, venueObject } from '../src/viewer/practice/venueObjects.ts';
 import { withAddedOutput, withRemovedOutput } from '../src/viewer/utils/mappingTransform.ts';
 import { venueFixture } from './fixtures/venue-glb.mjs';
@@ -213,4 +213,58 @@ test('v2 projects and v1 venues migrate while new solid types roundtrip in versi
   assert.throws(() => importVenue({ ...shared, schemaVersion: 1 }, createProject()), /version/);
   const bad = JSON.parse(JSON.stringify(shared)); bad.venue.scene.objects[0].kind = 'sphere';
   assert.throws(() => importVenue(bad, createProject()));
+});
+
+// #173: スライドショーはカタログ全体を作品参照にする。保存した件数のショーを、そのまま読み込み直せる。
+function showOf(count, currentIndex) {
+  const p = createProject(); p.name = `Show ${count}`; p.show.currentIndex = currentIndex; p.show.intervalSeconds = 45;
+  // 並びが id の昇順と違っても保たれることを見るため、逆順に並べる。
+  p.content = Array.from({ length: count }, (_, i) => ({ id: `s${count - i}`, kind: 'local', ref: `s${count - i}`, title: `Sketch ${count - i}`,
+    path: `sketches/s${count - i}/index.html`, revision: null, revisionPinned: false }));
+  p.show.contentIds = p.content.map(c => c.id);
+  return p;
+}
+test('shows of 100, 101, 1,000 and 10,000 sketches roundtrip with their order and current index (#173)', () => {
+  for (const count of [100, 101, 1000, 10000]) {
+    const p = showOf(count, count - 1);
+    const copy = parseProject(JSON.parse(exportText(p, false)));
+    assert.equal(copy.name, `Show ${count}`); assert.equal(copy.venue.id, p.venue.id);
+    assert.deepEqual(copy.venue.projectors, p.venue.projectors);
+    assert.equal(copy.content.length, count); assert.equal(copy.show.contentIds.length, count);
+    assert.equal(copy.show.contentIds[0], `s${count}`); assert.equal(copy.show.contentIds.at(-1), 's1');
+    assert.deepEqual(copy.show.contentIds, p.show.contentIds);
+    assert.equal(copy.show.currentIndex, count - 1); assert.equal(copy.show.intervalSeconds, 45);
+  }
+});
+test('more than 10,000 sketch references are rejected with their own reason, on import and on export (#173)', () => {
+  const p = showOf(10001, 0);
+  assert.throws(() => parseProject(p), /contentLimit/);
+  assert.throws(() => exportText(p, false), /contentLimit/);
+  const ids = showOf(3, 0); ids.show.contentIds = Array.from({ length: 10001 }, () => 's1');
+  assert.throws(() => parseProject(ids), /contentLimit/);
+  // 会場だけの書き出しは作品参照を含まないので、件数では止めない。
+  assert.equal(JSON.parse(exportText(p, true)).format, 'dropcaster-venue');
+});
+test('a project the parser would reject is not exported; a venue export ignores the sender\'s sketches (#173)', () => {
+  const p = showOf(2, 0); p.content[1].title = '   ';
+  assert.throws(() => exportText(p, false), /invalid/);
+  const venue = JSON.parse(exportText(p, true));
+  assert.equal(JSON.stringify(venue).includes('Sketch'), false);
+  assert.deepEqual(importVenue(venue, createProject()).venue.projectors, p.venue.projectors);
+  const long = showOf(1, 0); long.content[0].ref = 'x'.repeat(201);
+  assert.throws(() => exportText(long, false), /invalid/);
+  const broken = createProject(); broken.venue.projectors[0].outputId = 'missing';
+  assert.throws(() => exportText(broken, true), /reference/);
+});
+test('export checks a GLB this session already verified without decoding it again (#173)', () => {
+  const p = createProject();
+  p.assets = [{ id: 'wall', name: 'wall.glb', mimeType: 'model/gltf-binary', data: encodeAsset(venueFixture()) }];
+  p.venue.scene.kind = 'glb'; p.venue.scene.assetId = 'wall';
+  const atob = globalThis.atob; let decodes = 0;
+  globalThis.atob = value => { decodes++; return atob(value); };
+  try {
+    assert.deepEqual(parseProject(JSON.parse(exportText(p, false)), p.assets).assets, p.assets);
+    assert.equal(JSON.parse(exportText(p, true)).assets[0].data, p.assets[0].data);
+    assert.equal(decodes, 0);
+  } finally { globalThis.atob = atob; }
 });
