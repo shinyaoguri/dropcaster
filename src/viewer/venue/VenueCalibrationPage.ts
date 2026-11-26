@@ -193,16 +193,16 @@ export class VenueCalibrationPage {
         key: event => this.keydown(event), screen: (width, height) => this.setOutputSize(width, height, 'fullscreen'),
         pointer: (pixel, kind) => this.trace?.outputPointer(pixel, kind),
       });
-      this.builder = new VenueBuilder((scene, fit) => this.editVenue(scene, fit), () => this.undo(), () => this.export(), () => this.get<HTMLInputElement>('venue-file').click());
+      this.builder = new VenueBuilder((scene, fit) => this.editVenue(scene, fit, true), () => this.undo(), () => this.export(), () => this.get<HTMLInputElement>('venue-file').click());
       this.builder.element.open = true; this.get('venue-section-objects').append(this.builder.element);
       this.editor = new VenueEditor(this.preview, this.builder, object => {
         const scene = this.session.changes.get().venue.scene;
-        if (scene.kind === 'objects') this.editVenue({ ...scene, objects: scene.objects!.map(current => current.id === object.id ? object : current) }, false, true);
+        if (scene.kind === 'objects') this.editVenue({ ...scene, objects: scene.objects!.map(current => current.id === object.id ? object : current) }, false);
       }, () => this.undo());
       this.adjuster = new ProjectorAdjuster({
         current: () => this.committedProjector(),
         preview: projector => this.showProjector(projector),
-        commit: projector => this.commitProjector(projector, true),
+        commit: projector => this.commitProjector(projector),
         depth: projector => this.depth(projector),
         stepChanged: step => this.showStep(step),
       });
@@ -211,7 +211,7 @@ export class VenueCalibrationPage {
         projector: () => this.committedProjector(),
         showEstimate: estimate => this.showTraceEstimate(estimate),
         apply: estimate => this.applyTrace(estimate),
-        applyProjector: projector => { this.commitProjector(projector); this.status('calibration.traceMatchApplied'); },
+        applyProjector: projector => { this.commitProjector(projector, true); if (!this.session.holding) this.status('calibration.traceMatchApplied'); },
         vertices: () => this.venueVertices(),
         vertexVisible: (world, projector) => !!this.preview && isVertexVisible(this.preview.venueMeshes(), projector, world),
         displayedProjector: () => this.traceShown?.projector ?? this.adjuster?.pending ?? this.committedProjector(),
@@ -284,23 +284,23 @@ export class VenueCalibrationPage {
       this.commitProjector({ ...projector,
         position:this.vector('practice-p-position'),quaternion:quaternion(this.vector('practice-p-rotation')),verticalFovDegrees:this.input('practice-fov').valueAsNumber,
         lensShift:[this.input('practice-shift-0').valueAsNumber/100,this.input('practice-shift-1').valueAsNumber/100],
-        near:this.input('practice-near').valueAsNumber,far:this.input('practice-far').valueAsNumber });
+        near:this.input('practice-near').valueAsNumber,far:this.input('practice-far').valueAsNumber }, true);
     });
     this.click('practice-reset-projector',()=>{
       const projector = this.committedProjector(); if (!projector) return;
-      this.commitProjector({ ...defaultProjector(this.selected), id: projector.id, aspect: projector.aspect });
+      this.commitProjector({ ...defaultProjector(this.selected), id: projector.id, aspect: projector.aspect }, true);
     });
     this.get('practice-venue-form').addEventListener('change',()=>{
       if (!this.get<HTMLFormElement>('practice-venue-form').reportValidity()) return;
       const project=this.session.changes.get(); this.commit({...project,venue:{...project.venue,scene:{...project.venue.scene,
-        position:this.vector('practice-v-position'),quaternion:quaternion(this.vector('practice-v-rotation')),scale:this.vector('practice-v-scale'),metersPerUnit:this.input('practice-unit').valueAsNumber,color:this.input('practice-color').value}}});
+        position:this.vector('practice-v-position'),quaternion:quaternion(this.vector('practice-v-rotation')),scale:this.vector('practice-v-scale'),metersPerUnit:this.input('practice-unit').valueAsNumber,color:this.input('practice-color').value}}},undefined,false,undefined,true);
     });
-    this.get('venue-name').addEventListener('change',()=>{ const name=this.input('venue-name').value.trim(); if(name) this.commit({...this.session.changes.get(),name}); });
+    this.get('venue-name').addEventListener('change',()=>{ const name=this.input('venue-name').value.trim(); if(name) this.commit({...this.session.changes.get(),name},undefined,false,undefined,true); });
     this.click('venue-export',()=>this.export()); this.click('venue-load',()=>this.input('venue-file').click());
     this.click('practice-load-glb',()=>this.input('venue-glb-file').click());
     this.get('venue-file').addEventListener('change',()=>void this.readFile(false)); this.get('venue-glb-file').addEventListener('change',()=>void this.readFile(true));
     this.click('venue-copy-mapping',()=>void this.copyMapping());
-    this.click('practice-sample',()=>{ const project=this.session.changes.get(); void this.apply({...project,assets:[],venue:{...project.venue,scene:defaultScene()}}); });
+    this.click('practice-sample',()=>{ const project=this.session.changes.get(); void this.apply({...project,assets:[],venue:{...project.venue,scene:defaultScene()}},[],new Map(),true); });
     this.click('venue-reload',()=>window.location.reload());
   }
   private settle = (): void => { this.adjuster?.flush(); };
@@ -316,10 +316,10 @@ export class VenueCalibrationPage {
   private committedProjector(): Projector | null {
     return this.session.changes.get().venue.projectors.find(p=>p.outputId===this.selected) ?? null;
   }
-  /** `continuous` は像の直接操作 (ドラッグ・キー・ホイール) の確定。下書きを復元できなかった間は書かない (#286)。 */
-  private commitProjector(projector: Projector, continuous = false): void {
+  /** `explicit` は利用者がフォーム・ボタンで確定したとき (VenueSession.update)。 */
+  private commitProjector(projector: Projector, explicit = false): void {
     const project = this.session.changes.get();
-    this.commit({ ...project, venue: { ...project.venue, projectors: project.venue.projectors.map(p=>p.outputId===projector.outputId?projector:p) } }, undefined, false, undefined, continuous);
+    this.commit({ ...project, venue: { ...project.venue, projectors: project.venue.projectors.map(p=>p.outputId===projector.outputId?projector:p) } }, undefined, false, undefined, explicit);
   }
   /** 表示だけを更新する (保存しない)。微調整の途中と確定後の両方で使う。 */
   private showProjector(projector: Projector): void {
@@ -354,7 +354,8 @@ export class VenueCalibrationPage {
     }
     if (source === 'venue') return;
     const projector = this.committedProjector(), aspect = THREE.MathUtils.clamp(width / height, MIN_ASPECT, MAX_ASPECT);
-    if (projector && Math.abs(projector.aspect - aspect) > 1e-6) this.commitProjector({ ...projector, aspect });
+    // 解像度プリセットを選ぶのは明示的な確定。全画面の大きさに合わせるのは、利用者の確定ではない (#286)。
+    if (projector && Math.abs(projector.aspect - aspect) > 1e-6) this.commitProjector({ ...projector, aspect }, source === 'preset');
   }
   private showResolution(): void {
     const select = this.get<HTMLSelectElement>('venue-resolution'), [width, height] = this.outputSize, value = `${width}x${height}`;
@@ -409,9 +410,10 @@ export class VenueCalibrationPage {
   /**
    * 変更を検証して確定する。`prepared` は会場を読み込み直したときに渡す ('shown' は表示中のモデルを、'kept' は推定の一時表示で外したモデルをそのまま使うとき)。
    * 検証済みのアセット (既定は確定済みの会場のもの) と id・data が同じ GLB は復号し直さない (#171)。
-   * `continuous` は直接操作 (像・立体のドラッグ、キー・ホイールの微調整) の確定 (VenueSession.update)。
+   * `explicit` は利用者がフォーム・ボタン・ファイルで確定したとき。下書きを復元できなかった間は、explicit でない変更を
+   * 書かずに保留する (VenueSession.update、#286)。直接操作・全画面の大きさへの追従・直前の変更を戻すは explicit でない。
    */
-  private commit(project: Project, prepared?: PreparedVenue | 'shown' | 'kept', fit=false, verified?: Project['assets'], continuous=false): void {
+  private commit(project: Project, prepared?: PreparedVenue | 'shown' | 'kept', fit=false, verified?: Project['assets'], explicit=false): void {
     const discard = (): void => { if (prepared !== 'shown' && prepared !== 'kept') prepared?.dispose(); };
     if (this.disposed || this.failed) { discard(); return; }
     this.adjuster?.flush();
@@ -419,9 +421,10 @@ export class VenueCalibrationPage {
       const next=parseProject({...project,venue:{...project.venue,revision:project.venue.revision+1}},verified??this.session.changes.get().assets);
       this.editor?.cancel(); this.action++; this.previous=this.session.changes.get();
       if(prepared) { this.traceShown=null; this.traceRestore++; if(prepared==='kept') this.showVenue(this.keptGlb!.prepared,next); else if(prepared!=='shown') this.showVenue(prepared,next); }
-      this.session.update(next, continuous);
+      this.session.update(next, explicit);
       if(fit) { this.preview!.overview(); if(next.venue.scene.objects?.length===1) this.editor?.focusSelection(); }
-      this.status('calibration.updated');
+      // 保留したときは「更新しました」と出さず、保存していないことを伝える。
+      this.status(this.session.holding ? 'practice.storageError' : 'calibration.updated', this.session.holding);
     } catch(error) { discard(); this.error(error); }
   }
   /** なぞるパネルを開いている間は、像の直接操作と立体の編集を止める (十字の操作と取り合わない)。 */
@@ -475,30 +478,31 @@ export class VenueCalibrationPage {
       const project = parseProject({ ...current, assets: [], venue: { ...current.venue,
         scene: { ...defaultScene(), kind: 'objects', objects: estimate.objects },
         projectors: current.venue.projectors.map(p => p.outputId === estimate.projector.outputId ? estimate.projector : p) } });
-      this.commit(project, prepareObjects(project.venue.scene.objects!), false);
+      this.commit(project, prepareObjects(project.venue.scene.objects!), false, undefined, true);
       this.status('calibration.traceApplied');
     } catch (error) { this.error(error); }
   }
-  private editVenue(scene: VenueScene, fit: boolean, continuous = false): void {
+  private editVenue(scene: VenueScene, fit: boolean, explicit = false): void {
     if(!this.preview || this.disposed || this.failed) return;
     const current=this.session.changes.get();
     try {
       const project=parseProject({...current,assets:[],venue:{...current.venue,scene}});
-      this.commit(project,prepareObjects(project.venue.scene.objects!),fit,undefined,continuous);
+      this.commit(project,prepareObjects(project.venue.scene.objects!),fit,undefined,explicit);
     } catch(error) { this.error(error); }
   }
   /**
    * 会場を読み込み直す。`verified` は呼び出し側が検証を終えたアセットで、渡さなければ GLB をすべて検証する。
    * `decoded` は呼び出し側が検証で復号したバイト列。表示中 (または推定の一時表示で外してある) モデルと同じ GLB なら作り直さず、
    * 違うときは検証で復号したものからモデルを作る。復号は合わせて 1 回まで (#297)。
+   * `explicit` は読み込み・写す・サンプルのような利用者の確定。直前の変更を戻すは explicit でない (#286)。
    */
-  private async apply(project: Project, verified: Project['assets'] = [], decoded: DecodedAssets = new Map()): Promise<void> {
+  private async apply(project: Project, verified: Project['assets'] = [], decoded: DecodedAssets = new Map(), explicit = false): Promise<void> {
     const action=++this.action; this.editor?.cancel(); this.adjuster?.cancel(); this.status('practice.busy');
     try {
       const next=parseProject(project,verified,decoded);
       const prepared=this.reusable(next) ?? await prepareVenue(next,decoded);
       if(this.disposed || this.failed || action!==this.action) { if(typeof prepared!=='string') prepared.dispose(); return; }
-      this.commit(next,prepared,true,next.assets); this.status('calibration.loaded');
+      this.commit(next,prepared,true,next.assets,explicit); if(!this.session.holding) this.status('calibration.loaded');
     } catch(error) { if(!this.disposed && action===this.action) this.error(error); }
   }
   /** 戻る先は確定済みだった会場なので、そのアセットは検証済み。 */
@@ -511,12 +515,12 @@ export class VenueCalibrationPage {
       if(model) {
         const bytes=await file.arrayBuffer(); if(this.disposed || action!==this.action)return;
         const current=this.session.changes.get(), id=randomId();
-        await this.apply({...current,assets:[{id,name:file.name,mimeType:'model/gltf-binary',data:encodeAsset(new Uint8Array(bytes))}],venue:{...current.venue,scene:{...defaultScene(),kind:'glb',assetId:id}}});
+        await this.apply({...current,assets:[{id,name:file.name,mimeType:'model/gltf-binary',data:encodeAsset(new Uint8Array(bytes))}],venue:{...current.venue,scene:{...defaultScene(),kind:'glb',assetId:id}}},[],new Map(),true);
       } else {
         const text=await file.text(); if(this.disposed || action!==this.action)return;
         const decoded: DecodedAssets = new Map();
         const value=JSON.parse(text), project=value?.format==='dropcaster-venue'?{...importVenue(value,createProject(),decoded),name:value.name}:parseProject(value,[],decoded);
-        await this.apply(project,project.assets,decoded);
+        await this.apply(project,project.assets,decoded,true);
       }
     } catch(error) { if(!this.disposed && action===this.action) this.error(error); }
   }
@@ -525,7 +529,7 @@ export class VenueCalibrationPage {
     try {
       const project=await readProject(); if(this.disposed || action!==this.action)return;
       if(!project) { this.status('calibration.noMapping',true);return; }
-      const decoded: DecodedAssets = new Map(), mapping=parseProject(project,[],decoded); await this.apply(mapping,mapping.assets,decoded);
+      const decoded: DecodedAssets = new Map(), mapping=parseProject(project,[],decoded); await this.apply(mapping,mapping.assets,decoded,true);
     } catch(error) { if(!this.disposed && action===this.action)this.error(error); }
   }
   private export(): void {

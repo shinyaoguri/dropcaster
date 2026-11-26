@@ -524,6 +524,20 @@ async function reload(page,base){
   const nudged=(await current(page)).venue.projectors[0];assert.notDeepEqual(nudged.quaternion,restored.quaternion,'the nudge is committed on the page');
   assert.deepEqual(await draft(page,base),newer,'a nudge does not replace a draft from a newer build');
   assert.match(await page.locator('#venue-storage').textContent(),/Could not save/,'the storage label keeps the restore failure');
+  assert.match(await page.locator('#venue-status').textContent(),/Could not save/,'the status does not say the held change was saved');
+  // 出力窓を全画面にして、画面のアスペクト比 (16:10) にプロジェクタを合わせても書かない。直前の変更を戻しても書かない。
+  await page.evaluate(()=>window.calibrationPage.setOutputSize(1920,1200,'fullscreen'));
+  assert.equal((await current(page)).venue.projectors[0].aspect,1.6,'the projector follows the fullscreen aspect on the page');
+  assert.deepEqual(await draft(page,base),newer,'following the fullscreen aspect does not replace the draft');
+  await reveal(page,'#venue-undo-projector');await page.locator('#venue-undo-projector').click();
+  await page.waitForFunction(aspect=>window.calibrationPage.session.changes.get().venue.projectors[0].aspect===aspect,nudged.aspect);await page.waitForTimeout(200);
+  assert.deepEqual(await draft(page,base),newer,'undoing a change does not replace the draft');
+  assert.match(await page.locator('#venue-storage').textContent(),/Could not save/);
+  // 書かずに保留した変更があれば、離脱の前に確認する (#168)。キャンセルすれば保留した変更は残る。
+  answer='dismiss';await reveal(page,'#venue-name');await page.locator('#venue-name').click();await leaving(page);
+  assert.deepEqual(dialogs,['beforeunload','beforeunload','beforeunload'],'a held change asks before leaving');
+  assert.deepEqual((await current(page)).venue.projectors[0].quaternion,nudged.quaternion,'cancelling keeps the held change');
+  answer='accept';
   await change(page,'#venue-name','Fourth');await page.waitForFunction(()=>document.querySelector('#venue-storage').textContent.includes('saved'));
   const named=await draft(page,base);assert.equal(named.name,'Fourth','naming the venue is an explicit commit');
   assert.deepEqual(named.venue.projectors[0].quaternion,nudged.quaternion,'the held nudge is written with it');

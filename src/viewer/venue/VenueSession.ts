@@ -13,8 +13,8 @@ export class VenueSession {
   private saver: DraftSaver;
   private disposed = false;
   /**
-   * 下書きを復元できなかった。連続操作 (`update(project, true)`) では書かず、明示的な確定が書くまで待つ。
-   * ProjectSession の自動保存と同じ扱い (#286, ADR 0010)。
+   * 下書きを復元できなかった。明示的な確定 (`update(project, true)` / `save()`) が書くまで、ほかの変更は書かずに保留する
+   * (離脱の前には確認が出る)。ProjectSession の自動保存と同じ扱い (#286, ADR 0010)。
    */
   private unrestored = false;
   /** `beforeLeave` commits an adjustment the page still holds, so leaving cannot skip it. */
@@ -40,15 +40,17 @@ export class VenueSession {
   }
   /**
    * Every caller commits a finished change (the page settles drags and nudges first), so saving starts now.
-   * `continuous` marks the end of a direct manipulation (dragging the image or an object, nudging with keys or the wheel):
-   * the counterpart of ProjectSession's autosave, so it is held while the draft could not be restored.
+   * While the draft could not be restored, only an `explicit` commit (the user naming, importing, confirming a form…)
+   * writes; any other change is held: not written, the storage label keeps the error, and leaving asks first.
    */
-  update(project: Project, continuous = false): void {
+  update(project: Project, explicit = false): void {
     if (this.disposed) return;
     this.changes.set(this.document({ ...project, updatedAt: new Date().toISOString() }));
-    if (continuous && this.unrestored) return; // The storage label keeps showing the restore error.
+    if (this.unrestored && !explicit) { this.saver.hold(); return; }
     void this.save();
   }
+  /** A change was held instead of written (see `update`). */
+  get holding(): boolean { return this.saver.holding; }
   async save(): Promise<void> {
     this.unrestored = false;
     try { await this.saver.save(); } catch (error) { console.warn('Venue draft could not be saved', error); /* the state is reported through storage */ }
