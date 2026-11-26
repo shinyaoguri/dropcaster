@@ -549,6 +549,8 @@ const catalogShapes = {
   opPrefix: [{ id: 'op-art', title: 'Local op-art' }],
   gistPrefix: [{ id: 'gist-0123456789abcdef0123', title: 'Local gist-like' }],
   duplicateId: [{ id: 'twice', title: 'First copy' }, { id: 'twice', title: 'Second copy' }],
+  // 手書きの sketches.json や scan が残した前の値で、文字列でない値が入ることがある。
+  numericTitle: [{ id: 'numeric', title: 2024, lastModified: 20261111 }],
 };
 async function clearDraft(page) {
   await page.evaluate(() => new Promise((resolve, reject) => {

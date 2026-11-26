@@ -324,3 +324,14 @@ test('a package larger than the import limit is not exported, counting UTF-8 byt
   p.content.forEach(c => { c.title = 'あ'.repeat(900); });
   assert.ok(Buffer.byteLength(exportText(p, false)) <= MAX_PACKAGE_BYTES, 'under the limit it is exported');
 });
+
+test('catalog values that are not strings do not throw while building references (#173)', () => {
+  const numeric = contentReference({ ...sketch('numeric'), title: 2024, lastModified: 20261111, path: 7 });
+  assert.equal(numeric.title, 'numeric'); assert.equal(numeric.revision, null); assert.equal(numeric.kind, 'local');
+  assert.equal('path' in numeric, false);
+  assert.equal(showFrom([sketch('a'), { ...sketch('numeric'), title: 2024, lastModified: 20261111 }]).content[1].title, 'numeric');
+  // id が文字列でない参照は読み込めないので、形式の検証で止まる (TypeError にしない)。
+  const p = createProject(), refs = showReferences([{ ...sketch('x'), id: 42 }]);
+  p.content = refs.content; p.show.contentIds = refs.contentIds;
+  assert.throws(() => parseProject(p), error => error.name === 'ProjectFormatError');
+});

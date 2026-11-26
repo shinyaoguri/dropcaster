@@ -298,13 +298,15 @@ export function parseShowReferences(contentValue: unknown, contentIdsValue: unkn
  * - path は読み込みに使わない記録なので、書けない形 (`..` を含むディレクトリ名など) なら書かない
  */
 export function contentReference(sketch: Sketch): ContentReference {
-  const remote = !sketch.path;
-  const kind = remote && sketch.id === 'builtin-checkerboard' ? 'builtin'
-    : remote && /^op-\d+$/.test(sketch.id) ? 'op' : remote && /^gist-[a-f0-9]{20,64}$/i.test(sketch.id) ? 'gist' : 'local';
-  const path = kind === 'local' && sketch.path ? sketch.path.replace(/^(\.\.\/|\.\/|\/)+/, '') : '';
-  return { id: sketch.id, kind, ref: kind === 'local' ? sketch.id : sketch.id.slice(kind.length + 1),
-    title: sketch.title?.trim() ? sketch.title : sketch.id, ...(path && isReferencePath(path) ? { path } : {}),
-    revision: sketch.lastModified?.trim() ? sketch.lastModified : null, revisionPinned: false };
+  // カタログは手書きもできるので、文字列でない値は無いものとして扱う。id が文字列でなければ参照は読み込めず、保存の前の検証で止まる。
+  const text = (value: unknown): string => typeof value === 'string' && value.trim() ? value : '';
+  const id = sketch.id, sketchPath = text(sketch.path), remote = !sketchPath, named = typeof id === 'string';
+  const kind = remote && id === 'builtin-checkerboard' ? 'builtin'
+    : remote && named && /^op-\d+$/.test(id) ? 'op' : remote && named && /^gist-[a-f0-9]{20,64}$/i.test(id) ? 'gist' : 'local';
+  const path = kind === 'local' ? sketchPath.replace(/^(\.\.\/|\.\/|\/)+/, '') : '';
+  return { id, kind, ref: kind === 'local' ? id : id.slice(kind.length + 1),
+    title: text(sketch.title) || id, ...(path && isReferencePath(path) ? { path } : {}),
+    revision: text(sketch.lastModified) || null, revisionPinned: false };
 }
 /**
  * ショーの作品参照。カタログに同じ id が重なっても content は最初の 1 件にし、contentIds は並びのまま残す
