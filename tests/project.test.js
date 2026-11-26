@@ -326,12 +326,14 @@ test('a package larger than the import limit is not exported, counting UTF-8 byt
 });
 
 test('catalog values that are not strings do not throw while building references (#173)', () => {
-  const numeric = contentReference({ ...sketch('numeric'), title: 2024, lastModified: 20261111, path: 7 });
+  // 手書きの sketches.json の形を、型の上でも文字列でない値として渡す。
+  const loose = (/** @type {Record<string, unknown>} */ values) => /** @type {any} */ ({ ...sketch('numeric'), ...values });
+  const numeric = contentReference(loose({ title: 2024, lastModified: 20261111, path: 7 }));
   assert.equal(numeric.title, 'numeric'); assert.equal(numeric.revision, null); assert.equal(numeric.kind, 'local');
   assert.equal('path' in numeric, false);
-  assert.equal(showFrom([sketch('a'), { ...sketch('numeric'), title: 2024, lastModified: 20261111 }]).content[1].title, 'numeric');
+  assert.equal(showFrom([sketch('a'), loose({ title: 2024, lastModified: 20261111 })]).content[1].title, 'numeric');
   // id が文字列でない参照は読み込めないので、形式の検証で止まる (TypeError にしない)。
-  const p = createProject(), refs = showReferences([{ ...sketch('x'), id: 42 }]);
+  const p = createProject(), refs = showReferences([loose({ id: 42 })]);
   p.content = refs.content; p.show.contentIds = refs.contentIds;
-  assert.throws(() => parseProject(p), error => error.name === 'ProjectFormatError');
+  assert.throws(() => parseProject(p), /** @param {Error} error */ error => error.name === 'ProjectFormatError');
 });
