@@ -81,10 +81,50 @@ async function inProjectPanel(page, run) {
   await projectControls(page);
   try { return await run(); } finally { await showPanel(page, previous); }
 }
+/**
+ * 書き出しの download が来なかったとき (CI でだけ再現する)、どこで途切れたかを失敗に残す。
+ * - 押下と離しの的・書き出しの <a download> の click が呼ばれたか (ページ側)
+ * - Chrome が download を始めたか (CDP の Page.downloadWillBegin と、その frameId が主フレームか)
+ */
+const exportTraces = new WeakMap();
+async function exportTrace(page) {
+  let trace = exportTraces.get(page);
+  if (!trace) {
+    const cdp = await page.context().newCDPSession(page), begun = [];
+    await cdp.send('Page.enable');
+    cdp.on('Page.downloadWillBegin', e => begun.push({ at: Date.now(), frameId: e.frameId, name: e.suggestedFilename }));
+    trace = { cdp, begun }; exportTraces.set(page, trace);
+  }
+  await page.evaluate(() => {
+    if (window.__exportTrace) { window.__exportTrace.length = 0; return; }
+    const log = window.__exportTrace = [], push = m => { log.push(`${Math.round(performance.now())} ${m}`); if (log.length > 40) log.shift(); };
+    const describe = t => t instanceof Element ? `${t.tagName.toLowerCase()}${t.id ? '#' + t.id : ''}${t.closest('button')?.id ? ' in #' + t.closest('button').id : ''}` : String(t);
+    for (const type of ['pointerdown', 'pointerup', 'click']) addEventListener(type, e => { if (e.isTrusted) push(`${type} ${describe(e.target)} @${Math.round(e.clientX)},${Math.round(e.clientY)}`); }, true);
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (...args) { if (this.download) push(`a.click download=${this.download}`); return click.apply(this, args); };
+  });
+  const sinceDownloads = trace.begun.length;
+  return {
+    async report(selector) {
+      const { frameTree } = await trace.cdp.send('Page.getFrameTree');
+      const pageSide = await page.evaluate(selector => {
+        const button = document.querySelector(selector), box = button?.getBoundingClientRect();
+        const hit = box && document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        return { events: window.__exportTrace?.splice(0), button: box && { box: [box.x, box.y, box.width, box.height].map(Math.round), disabled: button.disabled, hit: hit?.id || hit?.tagName },
+          active: document.activeElement?.id || document.activeElement?.tagName, status: document.querySelector('#dc-practice-status')?.textContent };
+      }, selector);
+      return { ...pageSide, mainFrameId: frameTree.frame.id, chromeDownloads: trace.begun.slice(sinceDownloads) };
+    },
+  };
+}
 async function exportProject(page, selector = '#practice-export') {
   return inProjectPanel(page, async () => {
-    const promise = page.waitForEvent('download'); await page.locator(selector).click();
-    const stream = await (await promise).createReadStream(); const chunks = [];
+    const trace = await exportTrace(page);
+    let download;
+    try { [download] = await Promise.all([page.waitForEvent('download'), page.locator(selector).click()]); } catch (error) {
+      throw new Error(`${error.message}\nexport trace: ${JSON.stringify(await trace.report(selector).catch(e => String(e)))}`, { cause: error });
+    }
+    const stream = await download.createReadStream(); const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
     return JSON.parse(Buffer.concat(chunks).toString());
   });
