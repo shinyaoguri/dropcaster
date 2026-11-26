@@ -1,5 +1,6 @@
 import { randomId } from '../utils/randomId.ts';
-import { defaultMappingsState, parseMappingsState, CORNER_KEYS, type MappingsState } from '../utils/mappingTransform.ts';
+import { defaultMappingsState, parseMappingsState, CORNER_KEYS, OUTPUT_CORRECTION_KEYS, OUTPUT_CORRECTION_MAX, type MappingsState } from '../utils/mappingTransform.ts';
+import type { Sketch } from '../types/sketch.ts';
 
 export type Vec3 = [number, number, number];
 export type Quaternion = [number, number, number, number];
@@ -35,6 +36,19 @@ export interface Project {
 export const MAX_GLB_BYTES = 20 * 1024 * 1024;
 export const MAX_PACKAGE_BYTES = 30 * 1024 * 1024;
 export const MAX_VENUE_OBJECTS = 128;
+/**
+ * 1 つのプロジェクトに入る作品参照 (`content`・`show.contentIds`) の上限。スライドショーはカタログ全体を参照にするので、
+ * 授業のギャラリーでも数百件になる。ファイル全体は MAX_PACKAGE_BYTES で頭打ちになる (#173)。
+ * 文言 `practice.contentLimit` の件数も合わせる。
+ */
+export const MAX_SHOW_ITEMS = 10_000;
+/** 作品参照の id・ref の最大長。ローカル作品の id はディレクトリ名なので、ファイルシステムの上限 (255 バイト) より長くとる (#173)。 */
+export const MAX_REFERENCE_LENGTH = 1000;
+const OP_REF = /^\d+$/, GIST_REF = /^[a-f0-9]{20,64}$/i;
+/** 作品参照の path に書けるか。URL・プロトコル相対・`..` を含むものは読み込まない。 */
+export function isReferencePath(path: string): boolean {
+  return path.trim().length > 0 && path.length <= 2000 && !/^[a-z]+:/i.test(path) && !path.startsWith('//') && !path.includes('..');
+}
 export interface VenuePackage {
   format: 'dropcaster-venue'; schemaVersion: 2; name: string;
   venue: Project['venue']; assets: Project['assets'];
@@ -56,6 +70,7 @@ const quat = (v: unknown): Quaternion => {
   return q;
 };
 const list = (v: unknown, max: number): unknown[] => Array.isArray(v) && v.length <= max ? v : fail();
+const showList = (v: unknown): unknown[] => { if (Array.isArray(v) && v.length > MAX_SHOW_ITEMS) fail('contentLimit'); return list(v, MAX_SHOW_ITEMS); };
 const unique = (ids: string[]) => { if (new Set(ids).size !== ids.length) fail('reference'); };
 
 /** Keep the v2 parser's compatibility defaults, but reject partial/unsafe imports. */
@@ -70,6 +85,13 @@ function parseLayout(value: unknown): MappingsState {
     str(output.id); point(output.position); size(output.size);
     if (output.pixelSize) size(output.pixelSize);
     if (output.screen) { size(output.screen); num(output.screen.left, -1_000_000, 1_000_000); num(output.screen.top, -1_000_000, 1_000_000); }
+  }
+  // 出力の補正 (#199) は省略できる。書いてあるなら、v2 パーサが黙って丸める前に範囲外・数でない値を拒む。
+  for (const original of outputs) {
+    const correction = record(original).correction;
+    if (correction === undefined) continue;
+    const c = record(correction);
+    for (const key of OUTPUT_CORRECTION_KEYS) if (c[key] !== undefined) num(c[key], 0, OUTPUT_CORRECTION_MAX);
   }
   for (const [index, item] of layout.mappings.entries()) {
     const original = record(mappings[index]);
@@ -244,27 +266,7 @@ export function parseProject(value: unknown, verified: Project['assets'] = [], d
   // Authored objects are already in physical metres: never hide another scale/rotation above their dimensions.
   if (objects && (transform.metersPerUnit !== 1 || transform.position.some(v => v !== 0) || transform.scale.some(v => v !== 1)
     || transform.quaternion.some((v, i) => v !== (i === 3 ? 1 : 0)) || color.toLowerCase() !== '#ffffff')) fail();
-  const content = list(root.content, 100).map(value => {
-    const c = record(value), kind = c.kind;
-    if (kind !== 'local' && kind !== 'op' && kind !== 'gist' && kind !== 'builtin') fail();
-    const ref = str(c.ref);
-    if (kind === 'builtin' && ref !== 'checkerboard') fail('reference');
-    if ((kind === 'op' && !/^\d+$/.test(ref)) || (kind === 'gist' && !/^[a-f0-9]{20,64}$/i.test(ref))) fail('reference');
-    const path = c.path === undefined ? undefined : str(c.path, 2000);
-    if (path && (/^[a-z]+:/i.test(path) || path.startsWith('//') || path.includes('..'))) fail('reference');
-    if (c.revisionPinned !== false && c.revisionPinned !== true) fail('version');
-    const pin = c.revisionPinned === true
-      ? { revisionPinned: true as const, hash: typeof c.hash === 'string' && PIN_HASH.test(c.hash) ? c.hash : fail() }
-      : { revisionPinned: false as const };
-    // 固定できるのは取得元から取り直す作品だけ。ローカル作品はギャラリーのファイルで版が決まる。
-    if (pin.revisionPinned && kind !== 'op' && kind !== 'gist') fail('reference');
-    if (!pin.revisionPinned && c.hash !== undefined) fail();
-    return { id: str(c.id), kind: kind as ContentReference['kind'], ref, title: str(c.title, 10000), path,
-      revision: c.revision === null ? null : str(c.revision), ...pin };
-  });
-  unique(content.map(c => c.id));
-  const contentIds = list(show.contentIds, 100).map(id => str(id));
-  if (contentIds.some(id => !content.some(c => c.id === id))) fail('reference');
+  const { content, contentIds } = parseShowReferences(root.content, show.contentIds);
   const currentIndex = num(show.currentIndex, 0, Math.max(0, contentIds.length - 1));
   if (!Number.isInteger(currentIndex)) fail();
   const createdAt = str(root.createdAt), updatedAt = str(root.updatedAt);
@@ -279,13 +281,72 @@ export function parseProject(value: unknown, verified: Project['assets'] = [], d
 
 /**
  * 表示中の作品から作り直した参照に、前の参照の固定を引き継ぐ。作品の送り・開き直しで参照を作り直しても、
- * 同じ作品 (id・種類・参照先が同じ) の固定を外さない (#197)。
+ * 同じ作品 (id・種類・参照先が同じ) の固定を外さない (#197)。件数の 2 乗にならないよう、前の参照は id で引く。
  */
 export function keepPins(next: ContentReference[], previous: ContentReference[]): ContentReference[] {
+  const pinned = new Map(previous.filter(p => p.revisionPinned).map(p => [p.id, p]));
   return next.map(item => {
-    const old = previous.find(p => p.id === item.id && p.kind === item.kind && p.ref === item.ref);
-    return old?.revisionPinned ? { ...item, revisionPinned: true, hash: old.hash } : item;
+    const old = pinned.get(item.id);
+    return old?.revisionPinned && old.kind === item.kind && old.ref === item.ref ? { ...item, revisionPinned: true, hash: old.hash } : item;
   });
+}
+
+/**
+ * 作品参照 (`content`) と再生順 (`show.contentIds`) を検証する。parseProject の一部で、作業中のショーが
+ * 保存して読み込み直せるかを確かめるのにも使う (#173)。contentIds は同じ作品を何度含んでもよい。
+ */
+export function parseShowReferences(contentValue: unknown, contentIdsValue: unknown): { content: ContentReference[]; contentIds: string[] } {
+  const content = showList(contentValue).map(value => {
+    const c = record(value), kind = c.kind;
+    if (kind !== 'local' && kind !== 'op' && kind !== 'gist' && kind !== 'builtin') fail();
+    const ref = str(c.ref, MAX_REFERENCE_LENGTH);
+    if (kind === 'builtin' && ref !== 'checkerboard') fail('reference');
+    if ((kind === 'op' && !OP_REF.test(ref)) || (kind === 'gist' && !GIST_REF.test(ref))) fail('reference');
+    const path = c.path === undefined ? undefined : str(c.path, 2000);
+    if (path && !isReferencePath(path)) fail('reference');
+    if (c.revisionPinned !== false && c.revisionPinned !== true) fail('version');
+    const pin = c.revisionPinned === true
+      ? { revisionPinned: true as const, hash: typeof c.hash === 'string' && PIN_HASH.test(c.hash) ? c.hash : fail() }
+      : { revisionPinned: false as const };
+    // 固定できるのは取得元から取り直す作品だけ。ローカル作品はギャラリーのファイルで版が決まる。
+    if (pin.revisionPinned && kind !== 'op' && kind !== 'gist') fail('reference');
+    if (!pin.revisionPinned && c.hash !== undefined) fail();
+    return { id: str(c.id, MAX_REFERENCE_LENGTH), kind: kind as ContentReference['kind'], ref, title: str(c.title, 10000), path,
+      revision: c.revision === null ? null : str(c.revision), ...pin };
+  });
+  unique(content.map(c => c.id));
+  const contentIds = showList(contentIdsValue).map(id => str(id, MAX_REFERENCE_LENGTH));
+  // 件数の 2 乗にならないよう、参照先は Set で引く。
+  const contentIdSet = new Set(content.map(c => c.id));
+  if (contentIds.some(id => !contentIdSet.has(id))) fail('reference');
+  return { content, contentIds };
+}
+
+/**
+ * 作品を、保存して読み込み直せる作品参照にする (#173)。
+ * - 取り込み元 (OP・Gist・内蔵) の作品は path を持たない。ローカル作品は id が `op-` / `gist-` で始まってもローカル
+ * - 空白だけの作品名は id で表す
+ * - path は読み込みに使わない記録なので、書けない形 (`..` を含むディレクトリ名など) なら書かない
+ */
+export function contentReference(sketch: Sketch): ContentReference {
+  // カタログは手書きもできるので、文字列でない値は無いものとして扱う。id が文字列でなければ参照は読み込めず、保存の前の検証で止まる。
+  const text = (value: unknown): string => typeof value === 'string' && value.trim() ? value : '';
+  const id = sketch.id, sketchPath = text(sketch.path), remote = !sketchPath, named = typeof id === 'string';
+  const kind = remote && id === 'builtin-checkerboard' ? 'builtin'
+    : remote && named && /^op-\d+$/.test(id) ? 'op' : remote && named && /^gist-[a-f0-9]{20,64}$/i.test(id) ? 'gist' : 'local';
+  const path = kind === 'local' ? sketchPath.replace(/^(\.\.\/|\.\/|\/)+/, '') : '';
+  return { id, kind, ref: kind === 'local' ? id : id.slice(kind.length + 1),
+    title: text(sketch.title) || id, ...(path && isReferencePath(path) ? { path } : {}),
+    revision: text(sketch.lastModified) || null, revisionPinned: false };
+}
+/**
+ * ショーの作品参照。カタログに同じ id が重なっても content は最初の 1 件にし、contentIds は並びのまま残す
+ * (再生位置 `currentIndex` を変えない)。
+ */
+export function showReferences(sketches: Sketch[]): { content: ContentReference[]; contentIds: string[] } {
+  const content = new Map<string, ContentReference>();
+  for (const sketch of sketches) if (!content.has(sketch.id)) content.set(sketch.id, contentReference(sketch));
+  return { content: [...content.values()], contentIds: sketches.map(sketch => sketch.id) };
 }
 
 /** Portable package: device screen placement and transient editor selection are not shared. */
@@ -303,11 +364,29 @@ export function portableVenue(project: Project): VenuePackage {
   return { format: 'dropcaster-venue', schemaVersion: 2, name, venue, assets };
 }
 
-/** Validate the entire venue before replacing anything; preserve the receiving show. */
-export function importVenue(value: unknown, current: Project, decoded?: DecodedAssets): Project {
+/**
+ * Validate the entire venue before replacing anything; preserve the receiving show.
+ * `verified` is the same as parseProject's: leave it empty for anything read from outside.
+ */
+export function importVenue(value: unknown, current: Project, decoded?: DecodedAssets, verified: Project['assets'] = []): Project {
   const root = record(value);
   if (root.format !== 'dropcaster-venue') fail();
   if (root.schemaVersion !== 1 && root.schemaVersion !== 2) fail('version');
   str(root.name);
-  return parseProject({ ...current, schemaVersion: root.schemaVersion === 1 ? 2 : 3, venue: root.venue, assets: root.assets }, [], decoded);
+  return parseProject({ ...current, schemaVersion: root.schemaVersion === 1 ? 2 : 3, venue: root.venue, assets: root.assets }, verified, decoded);
+}
+
+/**
+ * 書き出すファイルの中身。受け取る側と同じ検証 (parseProject / importVenue) を通らないものは書き出さず、
+ * ProjectFormatError を投げる (#173)。作業中の GLB は取り込みのときに検証済みなので、書き出しのたびに復号し直さない。
+ * 会場だけの書き出しは送る側の作品参照を含まないので、作品参照の検証で止めない。
+ */
+export function exportText(project: Project, venueOnly: boolean): string {
+  const text = JSON.stringify(venueOnly ? portableVenue(project) : portableProject(project), null, 2);
+  // 取り込みはファイルの大きさ (バイト数) で先に拒否する。同じ基準で、取り込めない大きさなら書き出さない。
+  if (new TextEncoder().encode(text).length > MAX_PACKAGE_BYTES) fail('size');
+  const written: unknown = JSON.parse(text);
+  if (venueOnly) importVenue(written, createProject(), undefined, project.assets);
+  else parseProject(written, project.assets);
+  return text;
 }

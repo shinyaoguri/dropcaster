@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createProject, parseProject, portableProject, portableVenue, importVenue, reconcileProjectLayout, encodeAsset, decodeAsset, validateGlb } from '../src/viewer/practice/project.ts';
+import { createProject, parseProject, portableProject, portableVenue, importVenue, exportText, contentReference, showReferences, MAX_PACKAGE_BYTES, reconcileProjectLayout, encodeAsset, decodeAsset, validateGlb } from '../src/viewer/practice/project.ts';
 import { roomScene, venueObject } from '../src/viewer/practice/venueObjects.ts';
 import { withAddedOutput, withRemovedOutput } from '../src/viewer/utils/mappingTransform.ts';
 import { venueFixture } from './fixtures/venue-glb.mjs';
@@ -213,4 +213,127 @@ test('v2 projects and v1 venues migrate while new solid types roundtrip in versi
   assert.throws(() => importVenue({ ...shared, schemaVersion: 1 }, createProject()), /version/);
   const bad = JSON.parse(JSON.stringify(shared)); bad.venue.scene.objects[0].kind = 'sphere';
   assert.throws(() => importVenue(bad, createProject()));
+});
+
+// #173: スライドショーはカタログ全体を作品参照にする。保存した件数のショーを、そのまま読み込み直せる。
+function showOf(count, currentIndex) {
+  const p = createProject(); p.name = `Show ${count}`; p.show.currentIndex = currentIndex; p.show.intervalSeconds = 45;
+  // 並びが id の昇順と違っても保たれることを見るため、逆順に並べる。
+  p.content = Array.from({ length: count }, (_, i) => ({ id: `s${count - i}`, kind: 'local', ref: `s${count - i}`, title: `Sketch ${count - i}`,
+    path: `sketches/s${count - i}/index.html`, revision: null, revisionPinned: false }));
+  p.show.contentIds = p.content.map(c => c.id);
+  return p;
+}
+test('shows of 100, 101, 1,000 and 10,000 sketches roundtrip with their order and current index (#173)', () => {
+  for (const count of [100, 101, 1000, 10000]) {
+    const p = showOf(count, count - 1);
+    const copy = parseProject(JSON.parse(exportText(p, false)));
+    assert.equal(copy.name, `Show ${count}`); assert.equal(copy.venue.id, p.venue.id);
+    assert.deepEqual(copy.venue.projectors, p.venue.projectors);
+    assert.equal(copy.content.length, count); assert.equal(copy.show.contentIds.length, count);
+    assert.equal(copy.show.contentIds[0], `s${count}`); assert.equal(copy.show.contentIds.at(-1), 's1');
+    assert.deepEqual(copy.show.contentIds, p.show.contentIds);
+    assert.equal(copy.show.currentIndex, count - 1); assert.equal(copy.show.intervalSeconds, 45);
+  }
+});
+test('more than 10,000 sketch references are rejected with their own reason, on import and on export (#173)', () => {
+  const p = showOf(10001, 0);
+  assert.throws(() => parseProject(p), /contentLimit/);
+  assert.throws(() => exportText(p, false), /contentLimit/);
+  const ids = showOf(3, 0); ids.show.contentIds = Array.from({ length: 10001 }, () => 's1');
+  assert.throws(() => parseProject(ids), /contentLimit/);
+  // 会場だけの書き出しは作品参照を含まないので、件数では止めない。
+  assert.equal(JSON.parse(exportText(p, true)).format, 'dropcaster-venue');
+});
+test('a project the parser would reject is not exported; a venue export ignores the sender\'s sketches (#173)', () => {
+  const p = showOf(2, 0); p.content[1].title = '   ';
+  assert.throws(() => exportText(p, false), /invalid/);
+  const venue = JSON.parse(exportText(p, true));
+  assert.equal(JSON.stringify(venue).includes('Sketch'), false);
+  assert.deepEqual(importVenue(venue, createProject()).venue.projectors, p.venue.projectors);
+  const long = showOf(1, 0); long.content[0].ref = 'x'.repeat(1001);
+  assert.throws(() => exportText(long, false), /invalid/);
+  const broken = createProject(); broken.venue.projectors[0].outputId = 'missing';
+  assert.throws(() => exportText(broken, true), /reference/);
+});
+test('export checks a GLB this session already verified without decoding it again (#173)', () => {
+  const p = createProject();
+  p.assets = [{ id: 'wall', name: 'wall.glb', mimeType: 'model/gltf-binary', data: encodeAsset(venueFixture()) }];
+  p.venue.scene.kind = 'glb'; p.venue.scene.assetId = 'wall';
+  const atob = globalThis.atob; let decodes = 0;
+  globalThis.atob = value => { decodes++; return atob(value); };
+  try {
+    assert.deepEqual(parseProject(JSON.parse(exportText(p, false)), p.assets).assets, p.assets);
+    assert.equal(JSON.parse(exportText(p, true)).assets[0].data, p.assets[0].data);
+    assert.equal(decodes, 0);
+  } finally { globalThis.atob = atob; }
+});
+
+// #173: CLI の id はディレクトリ名。カタログの作品がどんな名前でも、保存したショーをこのアプリが読み込み直せる。
+const sketch = (id, extra = {}) => ({ id, title: `Title ${id}`, description: '', path: `sketches/${id}/`, type: 'html', tags: [],
+  interactiveElements: [], lastModified: '2026-11-11T00:00:00.000Z', ...extra });
+function showFrom(sketches) {
+  const p = createProject(), { content, contentIds } = showReferences(sketches);
+  p.content = content; p.show.contentIds = contentIds; p.show.currentIndex = contentIds.length - 1;
+  return parseProject(JSON.parse(exportText(p, false)));
+}
+test('local sketches whose catalog shape the parser used to reject are saved in a form that loads back (#173)', () => {
+  const blank = showFrom([sketch('a'), sketch('blank', { title: '   ' })]);
+  assert.equal(blank.content[1].title, 'blank', 'a blank title is replaced by the id');
+  const long = 'l'.repeat(255);
+  assert.deepEqual(showFrom([sketch(long)]).content[0], { id: long, kind: 'local', ref: long, title: `Title ${long}`,
+    path: `sketches/${long}/`, revision: '2026-11-11T00:00:00.000Z', revisionPinned: false });
+  const dots = showFrom([sketch('a..b')]).content[0];
+  assert.equal(dots.ref, 'a..b'); assert.equal(dots.path, undefined, 'a path the parser would reject is not written');
+  assert.equal('path' in showReferences([sketch('a..b')]).content[0], false);
+  for (const id of ['op-art', 'op-123', 'gist-0123456789abcdef0123']) {
+    const ref = showFrom([sketch(id)]).content[0];
+    assert.equal(ref.kind, 'local', `${id} in the catalog is a local sketch`); assert.equal(ref.ref, id);
+  }
+  const twice = showFrom([sketch('a'), sketch('twice', { title: 'First' }), sketch('twice', { title: 'Second' })]);
+  assert.deepEqual(twice.content.map(c => c.title), ['Title a', 'First']);
+  assert.deepEqual(twice.show.contentIds, ['a', 'twice', 'twice'], 'the playing order and position keep the duplicate');
+  assert.equal(twice.show.currentIndex, 2);
+  assert.equal(showFrom([sketch('blankDate', { lastModified: ' ' })]).content[0].revision, null);
+});
+test('OpenProcessing, Gist and built-in sketches keep their kind (#173)', () => {
+  const remote = (id) => sketch(id, { path: '' });
+  assert.deepEqual(['op-123', 'gist-0123456789abcdef0123', 'builtin-checkerboard'].map(id => {
+    const { kind, ref, path } = contentReference(remote(id)); return { kind, ref, path };
+  }), [{ kind: 'op', ref: '123', path: undefined }, { kind: 'gist', ref: '0123456789abcdef0123', path: undefined },
+    { kind: 'builtin', ref: 'checkerboard', path: undefined }]);
+  // 取り込み元の形でない id は、path が無くても手元の作品として扱う (例: srcdoc だけのカタログ項目)。
+  assert.equal(contentReference(remote('op-art')).kind, 'local');
+});
+test('reference ids and refs up to 1,000 characters load; longer ones are rejected (#173)', () => {
+  const ok = showReferences([sketch('x'.repeat(1000))]), p = createProject();
+  p.content = ok.content; p.show.contentIds = ok.contentIds;
+  assert.equal(parseProject(p).content[0].id.length, 1000);
+  const tooLong = showReferences([sketch('x'.repeat(1001))]);
+  p.content = tooLong.content; p.show.contentIds = tooLong.contentIds;
+  assert.throws(() => parseProject(p), /invalid/);
+  assert.throws(() => exportText(p, false), /invalid/);
+});
+test('a package larger than the import limit is not exported, counting UTF-8 bytes (#173)', () => {
+  // 10,000 件 × 1,100 文字の「あ」= 1,100 万文字。文字数では 30 MiB 未満だが、UTF-8 では 3 バイトずつで超える。
+  const p = createProject();
+  p.content = Array.from({ length: 10000 }, (_, i) => ({ id: `s${i}`, kind: 'local', ref: `s${i}`, title: 'あ'.repeat(1100), revision: null, revisionPinned: false }));
+  p.show.contentIds = p.content.map(c => c.id);
+  assert.ok(JSON.stringify(portableProject(p), null, 2).length < MAX_PACKAGE_BYTES);
+  assert.throws(() => exportText(p, false), /size/);
+  p.content.forEach(c => { c.title = 'あ'.repeat(900); });
+  assert.ok(Buffer.byteLength(exportText(p, false)) <= MAX_PACKAGE_BYTES, 'under the limit it is exported');
+});
+
+test('catalog values that are not strings do not throw while building references (#173)', () => {
+  // 手書きの sketches.json の形を、型の上でも文字列でない値として渡す。
+  const loose = (/** @type {Record<string, unknown>} */ values) => /** @type {any} */ ({ ...sketch('numeric'), ...values });
+  const numeric = contentReference(loose({ title: 2024, lastModified: 20261111, path: 7 }));
+  assert.equal(numeric.title, 'numeric'); assert.equal(numeric.revision, null); assert.equal(numeric.kind, 'local');
+  assert.equal('path' in numeric, false);
+  assert.equal(showFrom([sketch('a'), loose({ title: 2024, lastModified: 20261111 })]).content[1].title, 'numeric');
+  // id が文字列でない参照は読み込めないので、形式の検証で止まる (TypeError にしない)。
+  const p = createProject(), refs = showReferences([loose({ id: 42 })]);
+  p.content = refs.content; p.show.contentIds = refs.contentIds;
+  assert.throws(() => parseProject(p), /** @param {Error} error */ error => error.name === 'ProjectFormatError');
 });

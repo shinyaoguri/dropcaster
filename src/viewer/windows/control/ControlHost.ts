@@ -6,6 +6,7 @@
 
 import type { TestPatternKind } from '../../runtime/TestPatternSource';
 import type { MappingsState } from '../../utils/mappingTransform';
+import type { OutputDiagnosisMap, SourceDiagnosis } from '../../runtime/projectionDiagnosis';
 // MediaStream の bind は WindowController がホスト要素配下の <video> を id で見つけて
 // 直接 srcObject に差すので、ControlHost には stream API を持たせない（ホスト側の責務外）。
 
@@ -84,6 +85,13 @@ export interface ControlHost {
   /** ユーザ操作で別パターンへ切替を要求（test-pattern-set 相当）。 */
   requestTestPattern(kind: TestPatternKindOrOff): void;
 
+  // --- ブラックアウト（全出力を黒にする。#194） ---
+
+  getBlackout(): boolean;
+  onBlackoutChange(handler: (on: boolean) => void): Unsubscribe;
+  /** UI からブラックアウトの入切りを要求。 */
+  requestBlackout(on: boolean): void;
+
   // --- 出力ウィンドウの寸法・全画面状態（出力 id ごと） ---
 
   getOutputBounds(): OutputBoundsMap;
@@ -126,6 +134,15 @@ export interface ControlHost {
   // --- 一時的な警告（WebGL context lost） ---
 
   onWebglContextChange(handler: (status: WebglContextStatus) => void): Unsubscribe;
+
+  // --- 投影が映らないときの原因 (#196) ---
+
+  /** 作品側 (ソース) の状態。canvas の有無・captureStream の成否・取り直し中など。 */
+  getSourceDiagnosis(): SourceDiagnosis;
+  onSourceDiagnosisChange(handler: (diagnosis: SourceDiagnosis) => void): Unsubscribe;
+  /** 出力ごとの出力側の状態 (未起動・再生エラー)。 */
+  getOutputDiagnosis(): OutputDiagnosisMap;
+  onOutputDiagnosisChange(handler: (diagnosis: OutputDiagnosisMap) => void): Unsubscribe;
 
   /**
    * host 自身が抱える window listener や保留中の rAF を片付ける。実装によっては no-op。

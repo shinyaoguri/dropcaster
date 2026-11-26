@@ -25,6 +25,21 @@ export const CONTROL_PANEL_CSS = `
       .dc-banner .dc-banner-icon { font-size: 18px; flex: 0 0 auto; }
       .dc-banner .dc-banner-text { flex: 1 1 auto; }
       #dc-webgl-lost-banner { background: #ca8a04; }
+      /* ブラックアウト中の帯 (#194)。出ている間も編集を続けるので、見出し・タブを覆わないよう
+         シェルの先頭に場所を取って置く (固定配置にしない)。 */
+      #dc-blackout-banner { position: static; flex: 0 0 auto; box-shadow: none; }
+      .dc-banner .dc-banner-action {
+        flex: 0 0 auto;
+        padding: 4px 12px;
+        border: 1px solid rgba(255,255,255,0.75);
+        border-radius: 4px;
+        background: rgba(0,0,0,0.25);
+        color: #fff;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .dc-banner .dc-banner-action:hover { background: rgba(0,0,0,0.45); }
+      .dc-banner .dc-banner-action:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
 
       /* 左端のアクティビティバー。ツールカラムのパネルを切り替え、選択中の再押下でツールカラムを畳む。 */
       .dc-activity-bar {
@@ -352,10 +367,86 @@ export const CONTROL_PANEL_CSS = `
         color: #666;
         cursor: not-allowed;
       }
+      /* マッピング設定の四隅の数値入力 (#192)。1 セルに「TL x , y」を並べる。 */
+      .corner-value .corner-sep {
+        color: #888;
+        margin: 0 2px;
+      }
+      .corner-value .num-input[aria-invalid="true"] {
+        box-shadow: inset 0 0 0 1px #f87171;
+        border-radius: 2px;
+      }
+      .corner-input-error {
+        margin: 8px 0 0;
+        padding: 6px 8px;
+        border-radius: 4px;
+        background: rgba(248, 113, 113, 0.12);
+        color: #fca5a5;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      .corner-input-error[hidden] {
+        display: none;
+      }
       #output-settings-target {
         color: #fff;
         font-weight: 500;
       }
+      /* 出力ごとの明るさ・色のゲイン (#199)。行 = 名前 | スライダー | 数値。 */
+      .output-correction h4 {
+        margin: 0 0 6px 0;
+        font-size: 12px;
+        color: #aaa;
+        font-weight: 500;
+      }
+      .output-correction-rows {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      .output-correction-row {
+        display: grid;
+        grid-template-columns: 4.5em minmax(0, 1fr) 4em;
+        align-items: center;
+        gap: 8px;
+      }
+      .tool-item .output-correction-row .label {
+        display: block;
+        margin: 0;
+        font-size: 12px;
+        color: #888;
+      }
+      .output-correction-range {
+        width: 100%;
+        min-width: 0;
+        margin: 0;
+        accent-color: #3b82f6;
+      }
+      .output-correction-range:disabled { opacity: .45; cursor: not-allowed; }
+      .output-correction-num {
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
+        padding: 4px 6px;
+        background: #333;
+        border: 0;
+        border-radius: 4px;
+        color: #fff;
+        font: inherit;
+        font-size: 12px;
+        text-align: right;
+        -moz-appearance: textfield;
+      }
+      .output-correction-num::-webkit-outer-spin-button,
+      .output-correction-num::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      .output-correction-num:focus {
+        outline: 0;
+        box-shadow: inset 0 0 0 1px #3b82f6;
+      }
+      .output-correction-num:disabled { color: #666; cursor: not-allowed; }
 
       .tool-button {
         width: 100%;
@@ -412,6 +503,34 @@ export const CONTROL_PANEL_CSS = `
         border-color: #2563eb;
       }
 
+      /* ブラックアウトの入切り (#194) — aria-pressed=true が黒の最中。帯と同じ赤で示す */
+      .dc-blackout-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        justify-content: center;
+      }
+      .dc-blackout-toggle .dc-blackout-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        background: #555;
+        box-shadow: inset 0 0 0 1px #777;
+      }
+      .dc-blackout-toggle[aria-pressed="true"] {
+        background: #b91c1c;
+        border-color: #ef4444;
+        color: #fff;
+      }
+      .dc-blackout-toggle[aria-pressed="true"]:hover {
+        background: #991b1b;
+        border-color: #dc2626;
+      }
+      .dc-blackout-toggle[aria-pressed="true"] .dc-blackout-dot {
+        background: #000;
+        box-shadow: inset 0 0 0 1px #fff;
+      }
+
       /* 開発モードトグル — aria-pressed=true で active 表示に切替 */
       .dev-mode-toggle {
         display: flex;
@@ -454,6 +573,15 @@ export const CONTROL_PANEL_CSS = `
         gap: 6px;
       }
       .mappings-add-buttons .tool-button {
+        flex: 1;
+      }
+      /* 選択中の項目に対する操作 (複製)。追加ボタンの行の下に置く。 */
+      .mappings-item-buttons {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .mappings-item-buttons .tool-button {
         flex: 1;
       }
 
@@ -721,6 +849,11 @@ export const CONTROL_PANEL_CSS = `
         opacity: 0.5;
         pointer-events: none;
       }
+      /* 複製も新しい項目を active にするので、描画中は無効にする (描画中のマスク自体も複製できない)。 */
+      :scope.mask-drafting #duplicate-mapping-btn {
+        opacity: 0.5;
+        pointer-events: none;
+      }
 
       /* 描画済み頂点のドット（pen-mode）。最初の頂点は close ターゲットとして強調する。 */
       .mask-pen-dot {
@@ -926,6 +1059,20 @@ export const CONTROL_PANEL_CSS = `
         color: #ff5555;
         border-color: #ff5555;
       }
+      /* 出力側の状態と対処 (#196)。行の下に 1 段で出す */
+      .output-item.has-status { flex-wrap: wrap; }
+      .output-item .output-status {
+        flex: 1 0 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding-top: 4px;
+        color: #999;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      .output-item .output-status[data-kind="playError"] { color: #fca5a5; font-weight: 600; }
+      .output-item .output-status-hint { font-weight: 400; color: #ccc; }
       #add-output-btn {
         margin-top: 4px;
       }
@@ -1244,6 +1391,28 @@ export const CONTROL_PANEL_CSS = `
         color: #ccc;
         font-weight: 500;
       }
+
+      /* 投影が映らないときの作品側の原因と対処 (#196)。ソース列の見出しの下に置く。
+         失敗は WebGL ロストの帯と同じ系統の色、注意・未確認は控えめにする */
+      .dc-source-status {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 12px;
+        border-bottom: 1px solid #333;
+        border-left: 3px solid #666;
+        background: #262626;
+        color: #ddd;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .dc-source-status[hidden] { display: none; }
+      .dc-source-status[data-level="error"] { border-left-color: #ef4444; background: #3a1d1d; color: #fecaca; }
+      .dc-source-status[data-level="notice"] { border-left-color: #ca8a04; }
+      .dc-source-status-text { font-weight: 600; }
+      .dc-source-status-hint { color: #bbb; }
+      .dc-source-status[data-level="error"] .dc-source-status-hint { color: #fca5a5; }
 
       /* ソースカラムのスタイル */
       .video-container {

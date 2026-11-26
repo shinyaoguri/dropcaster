@@ -1,5 +1,5 @@
 import { randomId } from '../utils/randomId';
-import { parseProject, portableProject, portableVenue, importVenue, ProjectFormatError,
+import { parseProject, parseShowReferences, exportText, importVenue, ProjectFormatError,
   MAX_PACKAGE_BYTES, type Project } from './project';
 import { listProjects, readProject } from './projectStore';
 import { readSnapshot, storeSnapshot } from './snapshotStore';
@@ -15,7 +15,7 @@ import { routeHref } from '../utils/paths';
 const label = (key: MessageKey) => `<span data-i18n="${key}">${t(key)}</span>`;
 const button = (id: string, key: MessageKey) => `<button type="button" id="${id}" class="tool-button">${label(key)}</button>`;
 
-const FORMAT_ERRORS = ['invalid', 'version', 'asset', 'reference', 'externalAsset', 'unsupportedAsset', 'size'];
+const FORMAT_ERRORS = ['invalid', 'version', 'asset', 'reference', 'externalAsset', 'unsupportedAsset', 'size', 'contentLimit'];
 /** 取り込み・会場の構築で投げられた失敗を、利用者に見せる文言のキーにする。 */
 export function projectErrorKey(error: unknown): MessageKey | null {
   return error instanceof ProjectFormatError && FORMAT_ERRORS.includes(error.message) ? `practice.${error.message}` as MessageKey : null;
@@ -47,15 +47,17 @@ export class ProjectPanel {
   private action = 0;
   private previous: Project | null = null;
   private previousMode: 'project' | 'venue' = 'project';
+  /** 保存して読み込み直せるかを最後に確かめた作品参照。作品が変わったときだけ確かめ直す (#173)。 */
+  private checkedContent: Project['content'] | null = null;
   private session: ProjectSession;
-  private status: (key: MessageKey, error?: boolean) => void;
+  private status: (key: MessageKey, error?: boolean, reason?: MessageKey | null) => void;
   private venueChanged: (shaped: boolean) => void;
   private pins = new Map<string, PinState>();
   /** 固定・最新版の取得・固定し直しを実行中の作品の id。 */
   private pinning = new Set<string>();
   private sources?: { op: OpenProcessingSource; gist: GistSource };
 
-  constructor(scope: HTMLElement, session: ProjectSession, status: (key: MessageKey, error?: boolean) => void, venueChanged: (shaped: boolean) => void) {
+  constructor(scope: HTMLElement, session: ProjectSession, status: (key: MessageKey, error?: boolean, reason?: MessageKey | null) => void, venueChanged: (shaped: boolean) => void) {
     this.session = session; this.status = status; this.venueChanged = venueChanged;
     this.root.className = 'dc-practice-settings';
     this.root.innerHTML = `<section id="dc-practice-project" class="tool-section"><h3>${label('practice.project')}</h3>
@@ -88,7 +90,9 @@ export class ProjectPanel {
   }
   private storageStatus(): void {
     const state = this.session.storage.get();
-    this.get('practice-storage').textContent = t(state === 'error' ? 'practice.storageError' : state === 'saving' ? 'practice.saving' : 'practice.saved');
+    const unwritable = state === 'error' ? this.session.unwritable : null;
+    this.get('practice-storage').textContent = unwritable ? t('practice.notSaved', { reason: t(this.reason(unwritable)) })
+      : t(state === 'error' ? 'practice.storageError' : state === 'saving' ? 'practice.saving' : 'practice.saved');
   }
   private update(project: Project): void {
     if (this.disposed) return;
@@ -96,13 +100,16 @@ export class ProjectPanel {
     if (document.activeElement !== name) name.value = project.name === 'Untitled' ? t('practice.untitled') : project.name;
     this.renderContent(project);
     this.get<HTMLButtonElement>('practice-open-content').disabled = !project.content.length;
+    this.checkContent(project);
     this.get<HTMLButtonElement>('practice-undo-import').disabled = !this.previous;
   }
   /** 作品の一覧。OP / Gist は固定の状態と操作を並べる (#197)。題名は第三者の文字列なので textContent で入れる。 */
   private renderContent(project = this.session.changes.get(), force = false): void {
     if (this.disposed) return;
     const contents = this.get('practice-content-list');
-    const items = project.show.contentIds.map(id => project.content.find(c => c.id === id)
+    // 変更 (ドラッグ中は毎フレーム) のたびに通るので、作品数の 2 乗にならないよう引く (#173)。
+    const refs = new Map(project.content.map(c => [c.id, c]));
+    const items = project.show.contentIds.map(id => refs.get(id)
       ?? { id, kind: 'local' as const, ref: id, title: id, revision: null, revisionPinned: false as const });
     const view = items.map(item => {
       const state = item.revisionPinned ? this.pins.get(pinKey(item)) : undefined;
@@ -220,6 +227,20 @@ export class ProjectPanel {
       if (!this.disposed) this.status('practice.pinFailed', true);
     } finally { this.pinning.delete(id); this.renderContent(); }
   }
+  /** 保存しても読み込み直せない作品参照 (1 万件を超える・長すぎる作品名など) があれば、黙って保存せず理由を出す (#173)。 */
+  private checkContent(project: Project): void {
+    if (project.content === this.checkedContent) return;
+    this.checkedContent = project.content;
+    try { parseShowReferences(project.content, project.show.contentIds); } catch (error) {
+      if (!(error instanceof ProjectFormatError)) throw error;
+      this.status('practice.contentUnsavable', true, this.reason(error));
+    }
+  }
+  /** 書き出し・保存できない理由。形式の検証の汎用の失敗は、値の範囲の文言にする。 */
+  private reason(error: ProjectFormatError): MessageKey {
+    const key = projectErrorKey(error);
+    return key === 'practice.invalid' || !key ? 'practice.unreadableValue' : key;
+  }
   private wireControls(): void {
     const click = (id: string, run: () => void) => this.get(id).addEventListener('click', run);
     click('practice-import', () => this.chooseFile());
@@ -286,7 +307,10 @@ export class ProjectPanel {
     try {
       if (copy) this.session.update({ ...this.session.changes.get(), id: randomId(), createdAt: new Date().toISOString() });
       await this.session.save(true); await this.refreshSaved();
-    } catch (error) { console.warn('Named project could not be saved', error); this.status('practice.storageError', true); }
+    } catch (error) {
+      if (error instanceof ProjectFormatError) { this.status('practice.notSaved', true, this.reason(error)); return; }
+      console.warn('Named project could not be saved', error); this.status('practice.storageError', true);
+    }
   }
   private async openSaved(): Promise<void> {
     const action = ++this.action;
@@ -300,12 +324,25 @@ export class ProjectPanel {
   }
   private export(venueOnly = false): void {
     const project = this.session.changes.get();
-    const url = URL.createObjectURL(new Blob([JSON.stringify(venueOnly ? portableVenue(project) : portableProject(project), null, 2)], { type: 'application/json' }));
+    let text: string;
+    // 自分で読み込めないファイルは書き出さず、理由を出す (#173)。
+    try { text = exportText(project, venueOnly); } catch (error) {
+      if (!(error instanceof ProjectFormatError)) throw error;
+      this.status('practice.exportRefused', true, this.reason(error));
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
     const link = document.createElement('a'); link.href = url; link.download = `${project.name.replace(/[^\p{L}\p{N}._-]/gu, '_')}.${venueOnly ? 'venue' : 'dropcaster'}.json`;
     link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   private async openContent(): Promise<void> {
-    await this.session.save(); if (this.disposed || this.session.storage.get() === 'error') { this.status('practice.storageError', true); return; }
+    // 読み込み直せない内容は保存しないので、/project へは移らない (#173)。
+    await this.session.save(); if (this.disposed) return;
+    if (this.session.storage.get() === 'error') {
+      const unwritable = this.session.unwritable;
+      if (unwritable) this.status('practice.notSaved', true, this.reason(unwritable)); else this.status('practice.storageError', true);
+      return;
+    }
     // App resolves references before replacing the running view. Opening a project never opens outputs.
     const link = document.createElement('a'); link.href = routeHref('/project'); document.body.append(link); link.click(); link.remove();
   }

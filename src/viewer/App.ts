@@ -13,7 +13,7 @@ import { SketchErrorView } from './components/SketchErrorView.js';
 import { API_CONFIG, GIST_CONFIG } from '../core/modules/constants.js';
 import { readProject } from './practice/projectStore';
 import { readSnapshot } from './practice/snapshotStore';
-import { parseProject } from './practice/project';
+import { parseProject, ProjectFormatError } from './practice/project';
 import { t, type MessageKey } from './i18n';
 import type { VenueCalibrationPage } from './venue/VenueCalibrationPage';
 import { sampleSketch } from './practice/sampleSketch';
@@ -172,10 +172,16 @@ export class App {
       try {
         const stored = await readProject();
         if (!stored) { failure = 'practice.draftMissing'; throw new Error('No project draft is saved'); }
-        const project = parseProject(stored);
+        let project;
+        try { project = parseProject(stored); } catch (error) {
+          // 作品が多すぎる下書きは、再読み込みしても開けない。読み出しの失敗とは別の案内にする (#173)。
+          if (error instanceof ProjectFormatError && error.message === 'contentLimit') failure = 'practice.draftTooLarge';
+          throw error;
+        }
         failure = 'practice.contentMissing';
+        const refs = new Map(project.content.map(c => [c.id, c])); // 作品数の 2 乗にならないよう引く (#173)
         const sketches = await Promise.all(project.show.contentIds.map(async id => {
-          const ref = project.content.find(c => c.id === id)!;
+          const ref = refs.get(id)!;
           if (ref.kind === 'op' || ref.kind === 'gist') {
             const source = ref.kind === 'op' ? this.opSource : this.gistSource;
             // 固定した作品は、このブラウザにある固定時のコードで開き、取得元へ問い合わせない (#197)。
