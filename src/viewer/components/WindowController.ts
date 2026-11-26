@@ -98,6 +98,10 @@ export class WindowController {
     // 操作ウィンドウのプレビューからの mousemove のいずれも canvas px に変換してここで集約し、
     // 全出力ウィンドウ + プレビューに同じ canvas-space cursor を放送する。
     devCursor: new Emitter<DevCursorEvent>({ visible: false, canvasX: 0, canvasY: 0 }),
+    // ブラックアウト (#194): 全出力の最終表示を黒で覆う。実行中だけの状態で、保存しない。
+    // 配信の開始・停止、作品の切り替え、テストパターン、出力ウィンドウの開閉では変えない
+    // (後から開いた出力も最初から黒)。
+    blackout: new Emitter<boolean>(false),
   };
   private messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
@@ -222,6 +226,8 @@ export class WindowController {
     const ow = new OutputWindow(outputId, { onSketchKey: key => dispatchSketchKey(this.currentSourceIframe, key) });
     ow.setParentWindow(window);
     ow.setWindow(outputWin);
+    // ブラックアウト中に開いた出力は、映像を受け取る前から黒にしておく (#194)。
+    ow.setBlackout(this.events.blackout.get());
     this.outputWindows.set(outputId, ow);
 
     // ウィンドウ閉じ通知 — Map からも除く
@@ -433,6 +439,22 @@ export class WindowController {
         data: this.state,
       }, window.location.origin);
     }
+  }
+
+  /**
+   * ブラックアウト (#194) の入切り。開いている全出力の最終表示を黒で覆う／外す。
+   * 面ごとの表示 ON/OFF・テストパターン・配信中の stream には触れないので、解除すると
+   * 下にあった表示 (テストパターンか通常映像) がそのまま出る。同じ文書内の OutputWindow を
+   * 直接呼ぶ (postMessage を挟まない) ので、押したその場で全出力に反映される。
+   */
+  setBlackout(on: boolean): void {
+    if (this.events.blackout.get() === on) return;
+    this.events.blackout.set(on);
+    for (const ow of this.outputWindows.values()) ow.setBlackout(on);
+  }
+
+  toggleBlackout(): void {
+    this.setBlackout(!this.events.blackout.get());
   }
 
   /** 開発モード on/off 切替。inline panel と全出力ウィンドウへ放送する。 */

@@ -287,6 +287,7 @@ export class ControlWindow extends BaseWindow {
       h.onTestPatternChange((k: TestPatternKindOrOff) => this.updateTestPatternUI(k)),
       h.onWebglContextChange((status: WebglContextStatus) => this.updateWebglContextBanner(status)),
       h.onDevModeChange((enabled: boolean) => this.updateDevModeUI(enabled)),
+      h.onBlackoutChange((on: boolean) => this.updateBlackoutUI(on)),
       h.onDevCursorChange((e: DevCursorEvent) => this.outputViz.updateDevCursor(
         e.canvasX, e.canvasY, e.visible,
       )),
@@ -539,6 +540,16 @@ ${CONTROL_PANEL_CSS}
     // 初期表示を host の現在値に合わせる
     if (this.controlHost) this.updateDevModeUI(this.controlHost.getDevMode());
 
+    // ブラックアウト (#194) — 「確認」パネルのボタンで入切り、帯のボタンは解除だけ。
+    // 表示は host からの onBlackoutChange で確定する (B キーや編集の外のボタンと同じ 1 つの状態)。
+    scope.querySelector('#dc-blackout-toggle')?.addEventListener('click', () => {
+      this.controlHost?.requestBlackout(!(this.controlHost?.getBlackout() ?? false));
+    });
+    scope.querySelector('#dc-blackout-release')?.addEventListener('click', () => {
+      this.controlHost?.requestBlackout(false);
+    });
+    if (this.controlHost) this.updateBlackoutUI(this.controlHost.getBlackout());
+
     // ディスプレイサイズを更新
     this.outputViz.refreshOutputViz();
   }
@@ -740,6 +751,22 @@ ${CONTROL_PANEL_CSS}
     if (!el) return;
     if (status === 'lost') el.removeAttribute('hidden');
     else el.setAttribute('hidden', '');
+  }
+
+  /** ブラックアウトの帯と「確認」パネルのボタンを、host が持つ状態に合わせる (#194)。 */
+  private updateBlackoutUI(on: boolean): void {
+    const scope = this.scopeEl;
+    if (!scope) return;
+    scope.querySelector('#dc-blackout-banner')?.toggleAttribute('hidden', !on);
+    const btn = scope.querySelector('#dc-blackout-toggle');
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const label = btn.querySelector('.dc-blackout-label');
+    if (label) {
+      const key = on ? 'control.blackout.on' : 'control.blackout.off';
+      label.setAttribute('data-i18n', key);
+      label.textContent = t(key);
+    }
   }
 
   /** テストパターンボタンの active 表示を kind に合わせて切り替える（state は親が持っている）。 */

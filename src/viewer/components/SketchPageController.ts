@@ -4,6 +4,7 @@ import { SketchFrame } from '../runtime/SketchFrame';
 import { CursorManager } from '../managers/CursorManager';
 import { SketchPageView } from './SketchPageView';
 import { WindowController } from './WindowController';
+import { BlackoutControl } from './BlackoutControl';
 import { ControlWindow } from '../windows/control/ControlWindow';
 import { InlineControlHost } from '../windows/control/InlineControlHost';
 import { publicAssetPath } from '../utils/paths.js';
@@ -22,6 +23,7 @@ export class SketchPageController {
   private inlinePanel: ControlWindow | null = null;
   private workspace: MappingWorkspace;
   private sketch: Sketch | null = null;
+  private blackout: BlackoutControl | null = null;
 
   constructor() {
     this.fullscreenManager = new FullscreenManager();
@@ -39,6 +41,9 @@ export class SketchPageController {
     // ビューのレンダリング（#sketch-stage を含む空のステージを描画）
     this.view.render(sketch);
     this.setupEventListeners();
+    // ブラックアウト (#194): 右上のボタンと B キー。編集中も B は効く。
+    this.blackout?.dispose();
+    this.blackout = new BlackoutControl(this.windowController, document.getElementById('blackout-btn') as HTMLButtonElement | null);
 
     // スケッチ iframe を SketchFrame で差し込む
     const stage = document.getElementById('sketch-stage');
@@ -158,6 +163,7 @@ export class SketchPageController {
     window.removeEventListener('pagehide', this.pagehideHandler);
 
     this.workspace.dispose();
+    this.blackout?.dispose(); this.blackout = null;
     this.unmountInlineEditor();
     this.fullscreenManager.destroy();
     this.sketchFrame?.dispose();
