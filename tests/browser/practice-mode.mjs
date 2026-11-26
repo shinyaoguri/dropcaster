@@ -81,10 +81,50 @@ async function inProjectPanel(page, run) {
   await projectControls(page);
   try { return await run(); } finally { await showPanel(page, previous); }
 }
+/**
+ * 書き出しの download が来なかったとき (CI でだけ再現する)、どこで途切れたかを失敗に残す。
+ * - 押下と離しの的・書き出しの <a download> の click が呼ばれたか (ページ側)
+ * - Chrome が download を始めたか (CDP の Page.downloadWillBegin と、その frameId が主フレームか)
+ */
+const exportTraces = new WeakMap();
+async function exportTrace(page) {
+  let trace = exportTraces.get(page);
+  if (!trace) {
+    const cdp = await page.context().newCDPSession(page), begun = [];
+    await cdp.send('Page.enable');
+    cdp.on('Page.downloadWillBegin', e => begun.push({ at: Date.now(), frameId: e.frameId, name: e.suggestedFilename }));
+    trace = { cdp, begun }; exportTraces.set(page, trace);
+  }
+  await page.evaluate(() => {
+    if (window.__exportTrace) { window.__exportTrace.length = 0; return; }
+    const log = window.__exportTrace = [], push = m => { log.push(`${Math.round(performance.now())} ${m}`); if (log.length > 40) log.shift(); };
+    const describe = t => t instanceof Element ? `${t.tagName.toLowerCase()}${t.id ? '#' + t.id : ''}${t.closest('button')?.id ? ' in #' + t.closest('button').id : ''}` : String(t);
+    for (const type of ['pointerdown', 'pointerup', 'click']) addEventListener(type, e => { if (e.isTrusted) push(`${type} ${describe(e.target)} @${Math.round(e.clientX)},${Math.round(e.clientY)}`); }, true);
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (...args) { if (this.download) push(`a.click download=${this.download}`); return click.apply(this, args); };
+  });
+  const sinceDownloads = trace.begun.length;
+  return {
+    async report(selector) {
+      const { frameTree } = await trace.cdp.send('Page.getFrameTree');
+      const pageSide = await page.evaluate(selector => {
+        const button = document.querySelector(selector), box = button?.getBoundingClientRect();
+        const hit = box && document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        return { events: window.__exportTrace?.splice(0), button: box && { box: [box.x, box.y, box.width, box.height].map(Math.round), disabled: button.disabled, hit: hit?.id || hit?.tagName },
+          active: document.activeElement?.id || document.activeElement?.tagName, status: document.querySelector('#dc-practice-status')?.textContent };
+      }, selector);
+      return { ...pageSide, mainFrameId: frameTree.frame.id, chromeDownloads: trace.begun.slice(sinceDownloads) };
+    },
+  };
+}
 async function exportProject(page, selector = '#practice-export') {
   return inProjectPanel(page, async () => {
-    const promise = page.waitForEvent('download'); await page.locator(selector).click();
-    const stream = await (await promise).createReadStream(); const chunks = [];
+    const trace = await exportTrace(page);
+    let download;
+    try { [download] = await Promise.all([page.waitForEvent('download'), page.locator(selector).click()]); } catch (error) {
+      throw new Error(`${error.message}\nexport trace: ${JSON.stringify(await trace.report(selector).catch(e => String(e)))}`, { cause: error });
+    }
+    const stream = await download.createReadStream(); const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
     return JSON.parse(Buffer.concat(chunks).toString());
   });
@@ -408,14 +448,40 @@ async function projects(page, base) {
     await logged(other, /Missing local sketch/);
   } finally { await direct.close(); }
   // #198: 下書きを読み出せないときも 3D は開く。読み出し (下書きの復元・保存済み一覧) の例外を両方残す。
-  // 状態欄の表示は続く書き込みが成功すると保存済みに戻るので、ここでは待たない。
+  // #286: 復元できなかった間は、マッピングを始めても 2D の配置を変えても自動保存しない (保存欄は error のまま)。
+  // 名前を付けるような明示的な確定では書き、その後は自動保存に戻る。
+  const addMapping = async other => { await other.locator('#mapping-tab').click(); await showPanel(other, 'mappings'); await other.locator('#add-mapping-btn').click(); };
+  /** 2D の配置を変え、自動保存の待ち (600ms) を過ぎても書かず、保存欄が error のままであること。`read` で下書きを返す。 */
+  const holdsDraft = async (other, read) => {
+    await addMapping(other); await other.waitForTimeout(1500);
+    assert.match(await other.locator('#practice-storage').textContent(), /Could not save/, 'the storage label keeps the restore failure');
+    return read();
+  };
   const unreadable = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
   try {
     observeConsole(unreadable);
     await unreadable.addInitScript(() => { const real = IDBDatabase.prototype.transaction; IDBDatabase.prototype.transaction = function (...args) { if (args[1] !== 'readwrite') throw new DOMException('test restore read', 'InvalidStateError'); return real.apply(this, args); }; });
     const other = await setup(unreadable, base); await start(other);
     await logged(other, /test restore read/, 2);
+    // 読み出しは止めてあるので、書き込み用のトランザクションで中身を見る。
+    const stored = () => other.evaluate(() => new Promise((resolve, reject) => { const request = indexedDB.open('dropcaster.projects'); request.onsuccess = () => {
+      const get = request.result.transaction('projects', 'readwrite').objectStore('projects').get('draft'); get.onsuccess = () => resolve(get.result ?? null); get.onerror = () => reject(get.error); }; }));
+    assert.equal(await holdsDraft(other, stored), null, 'a failed read does not let autosave write the default project');
+    await projectControls(other); await change(other, '#practice-project-name', 'Named after a failed read');
+    await other.waitForFunction(() => document.querySelector('#practice-storage').textContent.includes('saved'));
+    assert.equal((await stored()).name, 'Named after a failed read', 'naming the project is an explicit commit');
+    await addMapping(other); await other.waitForTimeout(1500);
+    assert.equal((await stored()).venue.layout.mappings.length, (await state(other)).mappings.length, 'the next layout change is autosaved again');
   } finally { await unreadable.close(); }
+  const newer = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
+  try {
+    observeConsole(newer);
+    const other = await setup(newer, base), draft = { ...saved, schemaVersion: 99 };
+    const read = () => other.evaluate(async modules => (await import(`${modules}/practice/projectStore.ts`)).readProject(), base.modules);
+    await other.evaluate(async ({ modules, draft }) => (await import(`${modules}/practice/projectStore.ts`)).writeProject(draft), { modules: base.modules, draft });
+    await start(other); await logged(other, /ProjectFormatError: version/);
+    assert.deepEqual(await holdsDraft(other, read), draft, 'a draft from a newer build is not replaced by the default project');
+  } finally { await newer.close(); }
   // #198: 作品を取得できた後、開く途中の失敗も黙って捨てず、案内と元の例外を残す。この後 page の作業画面は使わない。
   await page.evaluate(async modules => {
     const { SketchPageController } = await import(`${modules}/components/SketchPageController.ts`);
@@ -466,6 +532,181 @@ async function slideshowDraft(page, base) {
   await change(page, '#practice-project-name', 'Fourth'); await page.waitForTimeout(100);
   await page.reload(); await reopen(page, base);
   assert.equal(await page.inputValue('#practice-project-name'), 'Fourth', 'the sketch page keeps a commit made 100 ms before reloading');
+}
+// #173: 101 件以上のショーも、再読み込み・書き出し・取り込み・/project で名前・会場・プロジェクタ・作品の順序・再生位置を保つ。
+function largeCatalog(count) {
+  // 並びが id の順と違っても保たれることを見るため、逆順に並べる。
+  return Array.from({ length: count }, (_, i) => ({ id: `s${count - i}`, title: `Sketch ${count - i}`, path: `sketches/s${count - i}/index.html`,
+    description: '', type: 'html', tags: [], interactiveElements: [], lastModified: '2026-11-11' }));
+}
+async function enterShow(page, index) {
+  await page.waitForSelector(entryButton);
+  await page.waitForFunction(n => document.querySelector('#current-sketch-number')?.textContent === n, String(index + 1));
+  await page.locator('#play-pause-btn').click(); // 自動送りで再生位置が動かないよう止める
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await projectControls(page);
+}
+async function slideshowLarge(page, base) {
+  await page.context().route('**/sketches/s*/index.html', r => r.fulfill({ contentType: 'text/html', body: sketchHtml() }));
+  for (const count of [100, 101, 1000]) {
+    const items = largeCatalog(count), ids = items.map(s => s.id), index = count - 1, name = `Show ${count}`;
+    await page.unroute('**/sketches.json'); await page.route('**/sketches.json', r => r.fulfill({ json: items }));
+    await page.goto(`${base.url}/slideshow?index=${index}`); await enterShow(page, index);
+    await change(page, '#practice-project-name', name); await storageSaved(page);
+    const before = await draftProject(page, base);
+    assert.equal(before.name, name); assert.deepEqual(before.show.contentIds, ids); assert.equal(before.show.currentIndex, index);
+    await page.reload(); await enterShow(page, index);
+    assert.equal(await page.inputValue('#practice-project-name'), name, `${count}: the name survives a reload`);
+    await page.waitForTimeout(800); // 自動保存が走るなら、それが終わってから下書きを見る
+    const after = await draftProject(page, base);
+    assert.equal(after.name, name, `${count}: the draft is not saved over with defaults`);
+    assert.equal(after.id, before.id); assert.equal(after.venue.id, before.venue.id);
+    assert.deepEqual(after.venue.projectors, before.venue.projectors);
+    assert.deepEqual(after.show.contentIds, ids); assert.equal(after.show.currentIndex, index);
+    const exported = await exportProject(page);
+    assert.equal(exported.content.length, count); assert.deepEqual(exported.show.contentIds, ids); assert.equal(exported.show.currentIndex, index);
+    await importProject(page, exported);
+    assert.match(await page.locator('#dc-practice-status').textContent(), /Project loaded/, `${count}: the exported file imports as is`);
+    // 保存した作品を開き (/project)、そこで再読み込みしても同じ順序・同じ再生位置で開く。
+    await projectControls(page); await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
+    for (const reload of [false, true]) {
+      if (reload) await page.reload();
+      await page.waitForFunction(n => document.querySelector('#current-sketch-number')?.textContent === n, String(count));
+      assert.match(await page.locator('#current-sketch-number').evaluate(e => e.parentElement.textContent), new RegExp(`${count}\\s*/\\s*${count}`));
+      const opened = await draftProject(page, base);
+      assert.equal(opened.name, name); assert.deepEqual(opened.show.contentIds, ids); assert.equal(opened.show.currentIndex, index);
+    }
+  }
+}
+// #173: ローカル作品のディレクトリ名・カタログの形がそのまま保存されても、再読み込み・書き出し・取り込み・/project で読み込める。
+// CLI の id はディレクトリ名なので、どれも実際のギャラリーで起こりうる。形ごとに結果を集め、最後にまとめて確かめる。
+const longId = 'l'.repeat(201);
+const catalogShapes = {
+  blankTitle: [{ id: 'blank', title: '   ' }],
+  longId: [{ id: longId, title: 'Long directory name' }],
+  dotsInPath: [{ id: 'a..b', title: 'Dots in the name' }],
+  opPrefix: [{ id: 'op-art', title: 'Local op-art' }],
+  gistPrefix: [{ id: 'gist-0123456789abcdef0123', title: 'Local gist-like' }],
+  duplicateId: [{ id: 'twice', title: 'First copy' }, { id: 'twice', title: 'Second copy' }],
+  // 手書きの sketches.json や scan が残した前の値で、文字列でない値が入ることがある。
+  numericTitle: [{ id: 'numeric', title: 2024, lastModified: 20261111 }],
+};
+async function clearDraft(page) {
+  await page.evaluate(() => new Promise((resolve, reject) => {
+    const open = indexedDB.open('dropcaster.projects', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('projects');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction('projects', 'readwrite'); tx.objectStore('projects').delete('draft');
+      tx.oncomplete = () => { open.result.close(); resolve(); }; tx.onerror = () => reject(tx.error);
+    };
+  }));
+}
+function shapeCatalog(shape) {
+  return [catalog[0], ...shape.map(s => ({ ...catalog[0], ...s, path: `sketches/${s.id}/index.html` }))];
+}
+async function slideshowCatalogShapes(page, base) {
+  await page.context().route('**/sketches/**/index.html', r => r.fulfill({ contentType: 'text/html', body: sketchHtml() }));
+  const failures = [];
+  for (const [name, shape] of Object.entries(catalogShapes)) {
+    const items = shapeCatalog(shape), index = items.length - 1;
+    await page.unroute('**/sketches.json'); await page.route('**/sketches.json', r => r.fulfill({ json: items }));
+    await page.goto(`${base.url}/slideshow?index=${index}`); await clearDraft(page); await page.reload(); await enterShow(page, index);
+    await change(page, '#practice-project-name', `Shape ${name}`); await storageSaved(page);
+    await page.reload(); await enterShow(page, index);
+    const reloaded = await page.inputValue('#practice-project-name');
+    if (reloaded !== `Shape ${name}`) failures.push(`${name}: the name after a reload is ${JSON.stringify(reloaded)}`);
+    let downloads = 0; const count = () => downloads++; page.on('download', count);
+    await page.locator('#practice-export').click(); await page.waitForTimeout(500); page.off('download', count);
+    if (downloads !== 1) { failures.push(`${name}: export refused (${await page.locator('#dc-practice-status').textContent()})`); continue; }
+    const exported = await exportProject(page);
+    await importProject(page, exported);
+    const imported = await page.locator('#dc-practice-status').textContent();
+    if (!/Project loaded/.test(imported)) failures.push(`${name}: import says ${JSON.stringify(imported)}`);
+    else if (JSON.stringify(exported.show.contentIds) !== JSON.stringify(items.map(s => s.id))) failures.push(`${name}: order ${JSON.stringify(exported.show.contentIds)}`);
+  }
+  assert.deepEqual(failures, [], 'every catalog shape is saved in a form this app loads back');
+  // まとめたカタログを /project で開くと、ローカル作品は id が op- / gist- で始まっても手元の作品として開く。
+  const items = shapeCatalog(Object.values(catalogShapes).flat()), index = items.length - 1;
+  await page.unroute('**/sketches.json'); await page.route('**/sketches.json', r => r.fulfill({ json: items }));
+  const outside = []; page.on('request', r => { const url = new URL(r.url()); if (/openprocessing\.org|github\.com$/.test(url.hostname) || url.pathname.startsWith('/gist-api/')) outside.push(r.url()); });
+  await page.goto(`${base.url}/slideshow?index=${index}`); await enterShow(page, index);
+  await page.locator('#practice-open-content').click(); await page.waitForURL('**/project**');
+  await page.waitForFunction(n => document.querySelector('#current-sketch-number')?.textContent === n, String(items.length));
+  assert.match(await page.locator('#current-sketch-number').evaluate(e => e.parentElement.textContent), new RegExp(`${items.length}\\s*/\\s*${items.length}`));
+  assert.deepEqual(outside, [], 'local sketches are not fetched from OpenProcessing or GitHub');
+}
+// #173: 保存して読み込み直せない作品の並び (10,000 文字を超える作品名) は、開いた時点で理由を出し、書き出さない。
+// 会場だけの書き出しは作品参照で止めない。
+async function slideshowExportRefused(page, base) {
+  await page.route('**/sketches.json', r => r.fulfill({ json: [catalog[0], { ...catalog[1], title: 'x'.repeat(10001) }] }));
+  await page.reload(); await enterShow(page, 0);
+  await page.waitForFunction(() => /would not load back/.test(document.querySelector('#dc-practice-status').textContent));
+  assert.ok(await statusShown(page), 'the unsavable sketches are reported when the editor opens');
+  assert.match(await page.locator('#dc-practice-status').textContent(), /10,000 characters/);
+  let downloads = 0; page.on('download', () => downloads++);
+  await page.locator('#practice-export').click();
+  await page.waitForFunction(() => /Not exported/.test(document.querySelector('#dc-practice-status').textContent));
+  assert.ok(await statusShown(page), 'the refusal is shown');
+  assert.match(await page.locator('#dc-practice-status').textContent(), /10,000 characters/);
+  await page.waitForTimeout(500); assert.equal(downloads, 0, 'nothing is downloaded');
+  const venue = await exportProject(page, '#practice-export-venue');
+  assert.equal(venue.format, 'dropcaster-venue'); assert.equal(downloads, 1);
+  await snapshot(page, base.name + '-export-refused');
+}
+// #173: 読み込み直せない作品の並びは、自動保存でも明示的な保存でも下書きに書かず、前の良い下書きを残す。
+// 保存した作品を開く (/project) へも移らない。
+async function slideshowUnsavableKeepsDraft(page, base) {
+  await enterShow(page, 0); await change(page, '#practice-project-name', 'Good show'); await storageSaved(page);
+  const good = await draftProject(page, base);
+  await page.route('**/sketches.json', r => r.fulfill({ json: [catalog[0], { ...catalog[1], title: 'x'.repeat(10001) }] }));
+  await page.reload(); await enterShow(page, 0);
+  assert.equal(await page.inputValue('#practice-project-name'), 'Good show');
+  await page.waitForFunction(() => /Not saved/.test(document.querySelector('#practice-storage').textContent));
+  assert.match(await page.locator('#practice-storage').textContent(), /10,000 characters/);
+  await page.waitForTimeout(800);
+  assert.deepEqual(await draftProject(page, base), good, 'the autosave does not write what would not load back');
+  await change(page, '#practice-project-name', 'Renamed'); await page.waitForTimeout(800);
+  assert.deepEqual(await draftProject(page, base), good, 'an explicit commit does not write it either');
+  await page.locator('#practice-save').click();
+  await page.waitForFunction(() => /Not saved/.test(document.querySelector('#dc-practice-status').textContent));
+  assert.deepEqual(await draftProject(page, base), good, 'saving a named project does not write it');
+  await page.locator('#practice-open-content').click(); await page.waitForTimeout(800);
+  assert.ok(!new URL(page.url()).pathname.endsWith('/project'), 'it does not open /project with sketches that were not saved');
+  assert.ok(await statusShown(page)); assert.match(await page.locator('#dc-practice-status').textContent(), /Not saved/);
+  assert.deepEqual(await draftProject(page, base), good);
+  // 読み込める並びに戻すと、残した下書きから開ける。
+  await page.unroute('**/sketches.json'); await page.reload(); await enterShow(page, 0);
+  assert.equal(await page.inputValue('#practice-project-name'), 'Good show');
+}
+// #173: sketches.json に不正な要素 (null・文字列でない id) があっても、ほかの作品は id で引ける。
+async function sketchCatalogLookup(page, base) {
+  const found = await page.evaluate(async modules => {
+    const { SketchServiceImpl } = await import(`${modules}/services/sketchService.ts`);
+    const original = window.fetch;
+    window.fetch = async () => new Response(JSON.stringify([null, { id: 7 }, { id: 'a', title: 'First' }, { id: 'a', title: 'Second' }]),
+      { headers: { 'content-type': 'application/json' } });
+    try {
+      const service = new SketchServiceImpl(); const all = await service.loadSketches();
+      return { count: all.length, title: service.getSketchById('a')?.title ?? null };
+    } finally { window.fetch = original; }
+  }, base.modules);
+  assert.deepEqual(found, { count: 4, title: 'First' });
+}
+// #173: 作品が 1 万件を超える下書きは再読み込みでは直らないので、/project は再読み込みを勧めず理由を出す。
+async function projectTooLarge(page, base) {
+  await page.evaluate(async modules => {
+    const { createProject } = await import(`${modules}/practice/project.ts`), store = await import(`${modules}/practice/projectStore.ts`);
+    const project = createProject();
+    project.content = Array.from({ length: 10001 }, (_, i) => ({ id: `s${i}`, kind: 'local', ref: `s${i}`, title: `Sketch ${i}`, revision: null, revisionPinned: false }));
+    project.show.contentIds = project.content.map(c => c.id);
+    await store.writeProject(project);
+  }, base.modules);
+  await page.goto(base.url + '/project'); await page.waitForSelector('.sketch-error');
+  assert.match(await page.locator('.sketch-error').innerText(), /more than 10,000 sketches/);
+  assert.equal(await page.locator('.sketch-error [data-reload]').count(), 0, 'a reload does not help, so it is not offered');
+  await logged(page, /practice\.draftTooLarge/);
 }
 async function slideshow(page, base) {
   await snapshot(page, base.name + '-slideshow-entry');
@@ -1587,6 +1828,124 @@ async function nudgeSelectKeys(page) {
   assert.equal(await x.inputValue(), xValue, 'the number field keeps its value once a corner is picked');
   assert.equal((await state(page)).outputs[0].position.x, moved.outputs[0].position.x, 'the output does not move');
 }
+/**
+ * マッピング設定の四隅の数値入力 (#192)。表示はドラッグ・矢印キーに追従し、Enter / Tab で置き、Escape で取り消す。
+ * 凸でなくなる・遠近が強すぎる・数値でない値は採用せず理由を出す。確定は Undo の 1 件。欄のキーは隅の微調整に奪われない。
+ */
+async function cornerInput(page, base) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  await showPanel(page, 'mappings');
+  const undoBtn = page.locator('#dc-undo-btn'), redoBtn = page.locator('#dc-redo-btn');
+  const field = (abbr, axis) => page.locator(`#mapping-${abbr}-${axis}-input`);
+  const error = page.locator('#mapping-corner-error');
+  const quad = async () => { const s = await state(page); return structuredClone(s.mappings.find(m => m.id === s.activeId).quad); };
+  const abbrs = { topLeft: 'tl', topRight: 'tr', bottomRight: 'br', bottomLeft: 'bl' };
+  /** 8 つの欄が quad を小数 1 桁で示している (読み取りの誤差は 0.05 まで)。 */
+  const shows = async (label) => {
+    const q = await quad();
+    for (const [corner, abbr] of Object.entries(abbrs)) for (const axis of ['x', 'y']) {
+      const shown = Number(await field(abbr, axis).inputValue());
+      assert.ok(Math.abs(shown - q[corner][axis]) <= 0.05 + 1e-9, `${label}: ${abbr} ${axis} shows ${shown} for ${q[corner][axis]}`);
+    }
+  };
+  const section = page.locator('#dc-tool-panel-mappings .tool-section').last();
+  const tlHandle = page.locator('#output-stage .quad-handle[data-corner="topLeft"]');
+  for (const [abbr, axis] of [['tl', 'x'], ['br', 'y']]) assert.equal(await field(abbr, axis).isEnabled(), true, `${abbr} ${axis} is editable`);
+  assert.equal(await error.isHidden(), true, 'no reason is shown on entry');
+  await shows('on entry');
+  if (artifactDir) await section.screenshot({ path: resolve(artifactDir, base.name + '-corner-entry.png') });
+
+  // ドラッグ・矢印キーで動かすと欄が追従する
+  const box = await tlHandle.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(box.x + box.width / 2 + i * 4, box.y + box.height / 2 + i * 3);
+  await page.mouse.up();
+  await shows('after a drag');
+  await page.keyboard.press('ArrowRight'); await page.keyboard.press('Shift+ArrowDown');
+  await shows('after arrow keys');
+
+  // Enter で置く: その隅だけが入力した値ちょうどに移り、ハンドルと出力 (WindowController の state) に届く。Undo 1 回で戻る
+  const before = await quad();
+  const typedX = Math.round(before.topLeft.x) + 12.5;
+  await field('tl', 'x').fill(String(typedX)); await field('tl', 'x').press('Enter');
+  const placed = await quad();
+  assert.deepEqual(placed, { ...before, topLeft: { x: typedX, y: before.topLeft.y } }, 'Enter moves only that corner to the typed value');
+  assert.equal(await field('tl', 'x').evaluate(el => el === document.activeElement), false, 'Enter leaves the field');
+  assert.equal(await tlHandle.evaluate(el => parseFloat(el.style.left)), typedX, 'the corner handle follows the typed value');
+  assert.equal(await error.isHidden(), true);
+  if (artifactDir) await section.screenshot({ path: resolve(artifactDir, base.name + '-corner-placed.png') });
+  await undoBtn.click();
+  assert.deepEqual(await quad(), before, 'one undo reverts the typed corner');
+  await shows('after undo');
+  await redoBtn.click();
+  assert.deepEqual(await quad(), placed, 'redo places it again');
+
+  // フォーカス移動 (Tab) でも置ける
+  const typedY = Math.round(placed.topLeft.y) - 4.5;
+  await field('tl', 'y').fill(String(typedY)); await field('tl', 'y').press('Tab');
+  const tabbed = await quad();
+  assert.deepEqual(tabbed.topLeft, { x: typedX, y: typedY }, 'Tab commits the typed value');
+
+  // Escape は取消: 欄は確定済みの値に戻り、state も履歴も変わらない (次の Undo は Tab の確定を戻す)
+  const trShown = await field('tr', 'x').inputValue();
+  await field('tr', 'x').fill('987.6'); await field('tr', 'x').press('Escape');
+  assert.equal(await field('tr', 'x').inputValue(), trShown, 'Escape restores the field');
+  assert.deepEqual(await quad(), tabbed, 'Escape keeps the corner');
+  await undoBtn.click();
+  assert.deepEqual(await quad(), placed, 'Escape added no history: the next undo reverts the Tab commit');
+  await redoBtn.click();
+
+  // 凸でなくなる値・遠近が強すぎる値・数値でない値は採用せず、欄を戻して理由を出す。履歴も積まない
+  const rejects = async (abbr, axis, typed, pattern, label) => {
+    const q = await quad(); const shown = await field(abbr, axis).inputValue();
+    const undoable = await undoBtn.isEnabled(), redoable = await redoBtn.isEnabled();
+    await field(abbr, axis).fill(typed); await field(abbr, axis).press('Enter');
+    assert.deepEqual(await quad(), q, `${label} is not applied`);
+    assert.equal(await field(abbr, axis).inputValue(), shown, `${label}: the field shows the committed value again`);
+    assert.equal(await error.isVisible(), true, `${label}: a reason is shown`);
+    assert.match(await error.innerText(), pattern, `${label}: the reason names the cause`);
+    assert.equal(await field(abbr, axis).getAttribute('aria-invalid'), 'true', `${label}: the field is marked invalid`);
+    assert.deepEqual([await undoBtn.isEnabled(), await redoBtn.isEnabled()], [undoable, redoable], `${label} adds no history`);
+  };
+  // 左下を右下より右へ = 辺が交差する
+  await rejects('bl', 'x', String(Math.round(tabbed.bottomRight.x + 500)), /no longer be convex.*nearest position a drag can reach is \(-?\d+\.\d, -?\d+\.\d\)/s, 'a twisting value');
+  if (artifactDir) await section.screenshot({ path: resolve(artifactDir, base.name + '-corner-rejected.png') });
+  // 書き直し始めると理由は消える
+  await field('bl', 'x').fill('1'); assert.equal(await error.isHidden(), true, 'typing again clears the reason');
+  await field('bl', 'x').press('Escape');
+  // 左下を真下へ遠く = 凸のままだが遠近の強さが 20 倍を超える
+  await rejects('bl', 'y', String(Math.round(tabbed.bottomLeft.y + 100000)), /stronger than 20×/, 'a too-steep value');
+  await rejects('tr', 'y', '', /enter a number/, 'an empty value');
+  // 理由は選択を変えると消える
+  await page.locator('#add-mapping-btn').click();
+  assert.equal(await error.isHidden(), true, 'switching the mapping clears the reason');
+  await shows('after switching the mapping');
+
+  // 欄の中の矢印キー・Enter・Escape は選んだ隅の微調整に奪われない (#206)
+  await tlHandle.click();
+  assert.equal(await page.locator('#output-stage .quad-handle.kbd-selected').count(), 1, 'a corner is selected for the arrow keys');
+  const selected = await quad();
+  await field('br', 'x').focus();
+  for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) await page.keyboard.press(key);
+  assert.deepEqual((await quad()).topLeft, selected.topLeft, 'arrow keys in a corner field leave the selected corner alone');
+  await field('br', 'x').press('Escape');
+  assert.deepEqual((await quad()).topLeft, selected.topLeft);
+  await tlHandle.click(); await page.keyboard.press('ArrowRight');
+  assert.notDeepEqual((await quad()).topLeft, selected.topLeft, 'arrow keys outside the fields still nudge the selected corner');
+
+  // マスクを描いている間 (active がマスク) は入力できない
+  await page.locator('#add-mask-btn').click();
+  assert.equal(await field('tl', 'x').isDisabled(), true, 'corner fields are disabled while a mask is active');
+  assert.equal(await field('tl', 'x').inputValue(), '');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !window.practiceWC.events.state.get().mappings.some(m => m.drafting));
+
+  // 日本語の表示
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  await rejects('bl', 'x', String(Math.round((await quad()).bottomRight.x + 500)), /凸でなくなります/, 'a twisting value (ja)');
+  if (artifactDir) await section.screenshot({ path: resolve(artifactDir, base.name + '-corner-rejected-ja.png') });
+}
 async function confirmClose(page, base) {
   await start(page);
   await page.locator('#mapping-tab').click(); await page.locator('#add-mapping-btn').click();
@@ -1964,7 +2323,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, duplicate, maskSelect, maskDraftKeys, nudgeSelectKeys, zoomPan, activityBar, sample, slideshowDraft, fullscreenMapping })) {
+      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, duplicate, maskSelect, maskDraftKeys, nudgeSelectKeys, cornerInput, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, slideshowUnsavableKeepsDraft, sketchCatalogLookup, projectTooLarge, fullscreenMapping })) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

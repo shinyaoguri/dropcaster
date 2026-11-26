@@ -40,6 +40,17 @@ export function activityButtonHtml(panel: string, labelKey: MessageKey, icon: Ac
           </button>`;
 }
 
+/**
+ * 「マッピング設定」の 1 隅ぶんの数値入力 (x, y)。CornerInputPanel が配線する (#192)。
+ * 欄の名前は「隅の名前 + x / y」(aria-labelledby で、言語切替に追従する隅の名前と軸の隠しラベルを読む)。
+ */
+function cornerInputs(abbr: string, corner: string, short: string): string {
+  const nameKey = `control.mappingSettings.corner.${corner}` as MessageKey;
+  const input = (axis: 'x' | 'y') =>
+    `<input id="mapping-${abbr}-${axis}-input" class="num-input corner-input" type="number" step="any" inputmode="decimal" data-quad-corner="${corner}" data-quad-axis="${axis}" aria-labelledby="mapping-${abbr}-label mapping-corner-axis-${axis}" disabled />`;
+  return `<div class="tool-value corner-value"><span class="label" id="mapping-${abbr}-label" data-i18n-title="${nameKey}" title="${t(nameKey)}" data-i18n-aria-label="${nameKey}" aria-label="${t(nameKey)}">${short}</span>${input('x')}<span class="corner-sep" aria-hidden="true">,</span>${input('y')}</div>`;
+}
+
 export function controlPanelHtml(): string {
   const buildInfoMarkup = buildInfoHtml();
   return `
@@ -126,11 +137,13 @@ export function controlPanelHtml(): string {
                 <div class="tool-item">
                   <label data-i18n="control.mappingSettings.corners">${t('control.mappingSettings.corners')}</label>
                   <div class="tool-values quad-values">
-                    <div class="tool-value"><span class="label">TL:</span><span id="mapping-tl-value">25, 25</span></div>
-                    <div class="tool-value"><span class="label">TR:</span><span id="mapping-tr-value">75, 25</span></div>
-                    <div class="tool-value"><span class="label">BL:</span><span id="mapping-bl-value">25, 75</span></div>
-                    <div class="tool-value"><span class="label">BR:</span><span id="mapping-br-value">75, 75</span></div>
+                    ${cornerInputs('tl', 'topLeft', 'TL')}
+                    ${cornerInputs('tr', 'topRight', 'TR')}
+                    ${cornerInputs('bl', 'bottomLeft', 'BL')}
+                    ${cornerInputs('br', 'bottomRight', 'BR')}
                   </div>
+                  <span id="mapping-corner-axis-x" hidden>x</span><span id="mapping-corner-axis-y" hidden>y</span>
+                  <p id="mapping-corner-error" class="corner-input-error" role="alert" hidden></p>
                 </div>
                 <button id="reset-mapping-btn" class="tool-button" data-i18n="control.reset">
                   ${t('control.reset')}
