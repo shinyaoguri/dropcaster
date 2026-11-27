@@ -880,6 +880,11 @@ export const CONTROL_PANEL_CSS = `
         stroke: #fff;
         stroke-width: 2;
       }
+      /* 停止中 (一覧の ○) のマスク。出力では映像を隠さないので、塗りを薄くして破線にする (#319) */
+      .preview-mask.disabled > svg polyline {
+        fill: rgba(0, 0, 0, 0.3);
+        stroke-dasharray: 4 4;
+      }
       /* drafting 中: 塗りつぶしなしの開いた折れ線。polyline は stroke で closing edge を
          描かないので、最終頂点 → 最初の頂点は接続されず、ペンツール的に見える。 */
       .preview-mask.drafting > svg polyline {
@@ -1891,6 +1896,19 @@ export const CONTROL_PANEL_CSS = `
         left: 0;
         transform-origin: top left;
         object-fit: fill;  /* クロップされた映像は全体を表示 */
+      }
+
+      /* 停止中 (一覧の ○) の面。出力には出ないが、選択・編集はできるので消さずに薄く描き、
+         輪郭を細い破線にする (#319)。ソースカラムの .source-inactive-box.disabled と揃える。 */
+      #cropped-container.disabled > video,
+      .preview-mapping.inactive.disabled > video {
+        opacity: 0.18;
+      }
+      .cropped-outline.disabled polygon,
+      .preview-mapping-outline.disabled polygon {
+        stroke-width: 1;
+        stroke-dasharray: 2 4;
+        stroke-opacity: 0.6;
       }
 
       /* ハンドルの共通スタイル */

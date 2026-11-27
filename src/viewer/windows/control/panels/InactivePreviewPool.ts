@@ -19,6 +19,7 @@
 import {
   applyQuadCanvas,
   applyVideoCrop,
+  isMappingEnabled,
   isMaskEntry,
   mappingColor,
   type MappingsState,
@@ -156,6 +157,8 @@ export class InactivePreviewPool {
           }
           entry.polyline!.setAttribute('points', m.points.map(p => `${p.x},${p.y}`).join(' '));
         }
+        // 停止中 (一覧の ○) は出力に出ないことを、編集できるまま薄く描いて示す (#319)
+        entry.div.classList.toggle('disabled', !isMappingEnabled(m));
         // 当たり判定は polyline だけ。drafting 中に canvas-host（頂点追加）へ通すのは CSS（.preview-mask.drafting）が担う
         continue;
       }
@@ -190,6 +193,9 @@ export class InactivePreviewPool {
         applyVideoCrop(entry.video!, m.source);
         if (entry.outline) syncQuadOutline(entry.outline, entry.div, m.quad, state.canvas.width, state.canvas.height);
       }
+      const disabled = !isMappingEnabled(m);
+      entry.div.classList.toggle('disabled', disabled);
+      entry.outline?.classList.toggle('disabled', disabled);
     }
   }
 
