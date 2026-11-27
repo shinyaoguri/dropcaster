@@ -187,6 +187,9 @@ export class SourceCropPanel {
     const ctrl = this.ctrl;
     if (!selectionBox || !overlay || !doc || !ctrl) return;
     const state = ctrl.getState();
+    // 選択中の面が停止中 (一覧の ○) なら、選択枠も選択外の .source-inactive-box.disabled と揃えて淡くする (#319)
+    const active = state.mappings.find(m => m.id === state.activeId);
+    selectionBox.classList.toggle('disabled', !!active && !isMaskEntry(active) && !isMappingEnabled(active));
     const names = mappingDisplayNames(state.mappings);
     const seen = new Set<string>();
     const ordered: { box: HTMLDivElement; label: HTMLSpanElement; area: number; corner: string }[] = [];

@@ -27,6 +27,7 @@ import {
   cloneQuad,
   constrainQuadCorner,
   defaultQuad,
+  isMappingEnabled,
   isMaskEntry,
   mappingColor,
   quadCentroid,
@@ -135,6 +136,10 @@ export class MappingAreaPanel {
     const locked = ctrl.isItemLocked();
     this.croppedContainer.style.display = isMaskActive ? 'none' : '';
     this.croppedContainer.classList.toggle('locked', locked);
+    // 停止中 (一覧の ○) は出力に出ないことを、編集できるまま薄く描いて示す (#319)
+    const disabled = !!activeItem && !isMappingEnabled(activeItem);
+    this.croppedContainer.classList.toggle('disabled', disabled);
+    this.croppedOutline?.classList.toggle('disabled', disabled);
     if (this.croppedOutline) syncQuadOutlineStyle(this.croppedOutline, this.croppedContainer);
     for (const h of this.handles) {
       h.style.display = isMaskActive ? 'none' : '';

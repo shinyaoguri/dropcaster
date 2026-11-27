@@ -1442,8 +1442,23 @@ async function duplicate(page, base) {
   await snapshot(page, `${base.name}-duplicate-mapping-edited`);
 
   // ── 表示 OFF の面を複製すると OFF のまま
+  // 編集キャンバスでは停止中の面を消さず、薄い映像と破線で描き分ける (#319)
+  const opacity = selector => page.locator(selector).evaluate(el => Number(getComputedStyle(el).opacity));
+  const wallPreview = `.preview-mapping.inactive[data-mapping-id="${wall.id}"]`;
+  assert.ok(await opacity(`${wallPreview} > video`) > 0.5, 'a shown inactive mapping is drawn as before');
   await page.locator(`.mapping-list-item[data-id="${wall.id}"] .toggle-btn`).click();
+  await page.locator(`${wallPreview}.disabled`).waitFor();
+  assert.ok(await opacity(`${wallPreview} > video`) < 0.3, 'a hidden inactive mapping is drawn faintly in the editor');
+  assert.equal(await page.locator(`${wallPreview} + .preview-mapping-outline.disabled`).count(), 1, 'its outline is drawn as the hidden one');
+  assert.equal(await page.locator('#cropped-container.disabled').count(), 0, 'the shown active copy is not dimmed');
+  await outputShows('#dc-output-canvas .dc-out-mapping', 1);
+  await snapshot(page, `${base.name}-hidden-mapping-inactive`);
   await page.locator(`.mapping-list-item[data-id="${wall.id}"] .name`).click();
+  await page.locator('#cropped-container.disabled').waitFor();
+  assert.ok(await opacity('#cropped-container > video') < 0.3, 'a hidden active mapping is drawn faintly in the editor');
+  assert.equal(await page.locator('.cropped-outline.disabled').count(), 1);
+  assert.equal(await page.locator('#selection-box.disabled').count(), 1, 'the source selection of a hidden active mapping is faint too');
+  assert.equal(await page.locator('.preview-mapping.inactive.disabled').count(), 0, 'the shown copy is not dimmed');
   await dupBtn.click();
   const hidden = await current();
   assert.ok(![copy.id, wall.id].includes(hidden.activeId), 'the second copy has its own id');
@@ -1452,15 +1467,30 @@ async function duplicate(page, base) {
   assert.equal(await page.locator(`.mapping-list-item[data-id="${hidden.mappings[1].id}"].disabled.active`).count(), 1);
   await undoBtn.click(); await undoBtn.click();
   assert.deepEqual((await current()).mappings, edited.mappings, 'undoing the copy and the toggle returns to the two visible mappings');
+  assert.equal(await page.locator('.preview-mapping.disabled, #cropped-container.disabled, .dc-quad-outline.disabled, #selection-box.disabled').count(), 0, 'showing it again draws it as before');
 
   // ── マスクの複製
   await page.locator('#add-mask-btn').click();
   const host = await page.locator('#output-stage .dc-canvas-host').boundingBox();
   for (const [fx, fy] of [[.3, .3], [.55, .32], [.42, .6]]) await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
   await page.keyboard.press('Enter');
+  await outputShows('#dc-output-canvas .dc-out-mask polygon', 1);
+  const drawn = await current();
+  // 停止中のマスクも編集キャンバスに残し、薄い塗りと破線で描き分ける (#319)
+  const pillarPreview = `.preview-mask[data-mapping-id="${drawn.activeId}"]`;
+  const maskFill = () => page.locator(`${pillarPreview} polyline`).evaluate(el => getComputedStyle(el).fill);
+  const shownFill = await maskFill();
+  await page.locator(`.mapping-list-item[data-id="${drawn.activeId}"] .toggle-btn`).click();
+  await page.locator(`${pillarPreview}.disabled`).waitFor();
+  await outputShows('#dc-output-canvas .dc-out-mask polygon', 0);
+  assert.notEqual(await maskFill(), shownFill, 'a hidden mask is filled faintly in the editor');
+  await snapshot(page, `${base.name}-hidden-mask`);
+  await page.locator(`.mapping-list-item[data-id="${drawn.activeId}"] .toggle-btn`).click();
+  await outputShows('#dc-output-canvas .dc-out-mask polygon', 1);
+  assert.equal(await page.locator(`${pillarPreview}.disabled`).count(), 0);
+  assert.equal(await maskFill(), shownFill, 'showing it again fills it as before');
   const beforeMask = await current(), pillar = beforeMask.mappings[0];
   assert.equal(pillar.kind, 'mask'); assert.equal(pillar.points.length, 3); assert.equal(beforeMask.activeId, pillar.id);
-  await outputShows('#dc-output-canvas .dc-out-mask polygon', 1);
   const [pillarOut] = await outMasks();
   await snapshot(page, `${base.name}-duplicate-mask-before`);
   await dupBtn.click();
