@@ -142,6 +142,8 @@ export class KeyboardNudge {
       default: return;
     }
     e.preventDefault();
+    // ロック中の面は隅も crop も動かさない (#190)。キーは消費して、ページのスクロールにも回さない。
+    if (ctrl.isItemLocked()) return;
     const pixels = e.shiftKey ? 10 : 1;
     this.clearIdleTimer();
     if (!this.nudging) {

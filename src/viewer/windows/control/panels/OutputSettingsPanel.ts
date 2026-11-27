@@ -21,6 +21,7 @@
  * 後者は fireChange を通さない経路（in-place mutation + commit のみ）でも live 追従させるため。
  *
  * focus 中の入力欄は上書きしない（ユーザがタイプ中の値を消さない）。
+ * 対象の出力がロック中 (#190) なら値は出したまま無効にし、確定も受け付けない。
  */
 
 import {
@@ -31,6 +32,7 @@ import {
   type OutputCorrectionKey,
 } from '../../../utils/mappingTransform';
 import type { MappingsController } from '../MappingsController';
+import { t } from '../../../i18n/index.js';
 
 type Field = 'x' | 'y' | 'w' | 'h';
 
@@ -63,8 +65,9 @@ export class OutputSettingsPanel {
     const wi = scope.querySelector<HTMLInputElement>('#output-w-input');
     const hi = scope.querySelector<HTMLInputElement>('#output-h-input');
     const activeEl = scope.ownerDocument?.activeElement;
+    const locked = !!out && ctrl.isOutputLocked(out.id);
     const setIfNotFocused = (el: HTMLInputElement | null, value: string) => {
-      if (!el || el === activeEl) return;
+      if (!el || (el === activeEl && !locked)) return;
       el.value = value;
     };
     if (!out) {
@@ -75,7 +78,11 @@ export class OutputSettingsPanel {
       return;
     }
     if (label) label.textContent = out.name ?? out.id;
-    [xi, yi, wi, hi].forEach(el => { if (el) el.disabled = false; });
+    [xi, yi, wi, hi].forEach(el => {
+      if (!el) return;
+      el.disabled = locked;
+      if (locked) el.title = t('control.locked.input'); else el.removeAttribute('title');
+    });
     setIfNotFocused(xi, String(Math.round(out.position.x)));
     setIfNotFocused(yi, String(Math.round(out.position.y)));
     setIfNotFocused(wi, String(Math.round(out.size.width)));
@@ -229,6 +236,10 @@ export class OutputSettingsPanel {
     if (!ctrl) return;
     const target = this.activeOutputId();
     if (!target) return;
+    if (ctrl.isOutputLocked(target)) { // ロック中は動かさない (#190)
+      this.refresh();
+      return;
+    }
     const raw = parseFloat(input.value);
     if (!Number.isFinite(raw)) {
       this.refresh();

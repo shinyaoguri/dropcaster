@@ -162,6 +162,7 @@ export function controlPanelHtml(): string {
               <div class="tool-section">
                 <h3 data-i18n="control.outputs.title">${t('control.outputs.title')}</h3>
                 <div id="outputs-list" class="outputs-list"></div>
+                <p id="outputs-remove-reason" class="lock-reason" role="alert" hidden></p>
                 <button id="add-output-btn" class="tool-button" data-i18n="control.outputs.add">${t('control.outputs.add')}</button>
               </div>
 

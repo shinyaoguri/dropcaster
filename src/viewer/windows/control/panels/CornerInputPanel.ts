@@ -15,6 +15,7 @@
  * 表示は refresh() で更新する。ControlWindow の updateToolValues から呼ばれるので、ドラッグ・矢印キー・
  * Undo / Redo・選択の切替に追従する。focus 中の欄は上書きしない（タイプ中の値を消さない）。
  * active が mask（または mapping が無い）ときは欄を空にして無効にする。
+ * active mapping がロック中 (#190) なら値は出したまま無効にし、確定も受け付けない。
  */
 
 import { t, type MessageKey } from '../../../i18n/index.js';
@@ -59,14 +60,16 @@ export class CornerInputPanel {
     const mapping = getActiveMapping(state);
     if (this.errorFor !== null && this.errorFor !== (mapping?.id ?? null)) this.showError(null);
     const activeEl = scope.ownerDocument?.activeElement;
+    const locked = !!mapping && ctrl.isItemLocked(mapping.id);
     for (const input of this.inputs()) {
       if (!mapping) {
         input.disabled = true;
         input.value = '';
         continue;
       }
-      input.disabled = false;
-      if (input === activeEl) continue;
+      input.disabled = locked;
+      if (locked) input.title = t('control.locked.input'); else input.removeAttribute('title');
+      if (input === activeEl && !locked) continue;
       const { corner, axis } = this.fieldOf(input);
       input.value = format(mapping.quad[corner][axis]);
     }
@@ -127,6 +130,11 @@ export class CornerInputPanel {
     if (!ctrl || !opts) return;
     const mapping = getActiveMapping(ctrl.getState());
     if (!mapping) return;
+    if (ctrl.isItemLocked(mapping.id)) { // ロック中は置かない (#190)
+      const value = this.committedValue(input);
+      if (value !== undefined) input.value = value;
+      return;
+    }
     const { corner, axis } = this.fieldOf(input);
     // type="number" は数値として読めない入力を '' にする。'' も数値でないものとして扱う
     const raw = input.value.trim() === '' ? Number.NaN : Number(input.value);

@@ -29,8 +29,10 @@ import {
 } from '../../utils/editHistory';
 import {
   defaultMappingsState,
+  getActiveItem,
   getActiveMapping,
   getActiveMask,
+  isLocked,
   recomputeCanvasBounds,
   withMaskPointsSet,
   type Point,
@@ -87,24 +89,41 @@ export class MappingsController {
     return getActiveMask(this.state)?.points;
   }
 
+  // ── 編集ロック (#190) ─────────────────────────────────────────
+  // panel と下の in-place mutation はすべてこの 2 つで「幾何を編集してよいか」を判定する。
+  // #121 の本番モード (全体を一時的にロックし、保存しない) は、ここに足せば全経路に効く。
+
+  /** 面・マスク (省略時は active item) がロック中か。ロック中は幾何の編集・リセット・削除を受け付けない。 */
+  isItemLocked(id?: string): boolean {
+    const item = id === undefined ? getActiveItem(this.state) : this.state.mappings.find(m => m.id === id);
+    return isLocked(item);
+  }
+
+  /** 出力がロック中か。ロック中は position / size の編集と削除を受け付けない。 */
+  isOutputLocked(outputId: string): boolean {
+    return isLocked(this.state.outputs.find(o => o.id === outputId));
+  }
+
   // ── in-place mutation（drag/resize/nudge 用 — onChange は発火しない）──
+
+  // ロック中の項目・出力 (#190) に対しては、以下の mutation はすべて何もしない。
 
   /** active source の中身を fn で in-place 書き換え（alias 参照は維持、mask 時は no-op）。 */
   mutateActiveSource(fn: (source: SourceRect) => void): void {
     const m = getActiveMapping(this.state);
-    if (m) fn(m.source);
+    if (m && !this.isItemLocked(m.id)) fn(m.source);
   }
 
   /** active source をまるごと差し替える（mask 時は no-op）。 */
   setActiveSource(source: SourceRect): void {
     const m = getActiveMapping(this.state);
-    if (m) m.source = source;
+    if (m && !this.isItemLocked(m.id)) m.source = source;
   }
 
   /** active quad をまるごと差し替える（mask 時は no-op）。 */
   setActiveQuad(quad: Quad): void {
     const m = getActiveMapping(this.state);
-    if (m) m.quad = quad;
+    if (m && !this.isItemLocked(m.id)) m.quad = quad;
   }
 
   /**
@@ -114,7 +133,7 @@ export class MappingsController {
    */
   setActiveMaskPoints(points: Point[]): void {
     const k = getActiveMask(this.state);
-    if (!k) return;
+    if (!k || this.isItemLocked(k.id)) return;
     this.state = withMaskPointsSet(this.state, k.id, points);
   }
 
@@ -124,7 +143,7 @@ export class MappingsController {
    */
   mutateActiveMaskPoints(fn: (points: Point[]) => void): void {
     const k = getActiveMask(this.state);
-    if (k) fn(k.points);
+    if (k && !this.isItemLocked(k.id)) fn(k.points);
   }
 
   /**
@@ -145,7 +164,7 @@ export class MappingsController {
     patch: { position?: { x: number; y: number }; size?: { width: number; height: number } },
   ): void {
     const out = this.state.outputs.find(o => o.id === outputId);
-    if (!out) return;
+    if (!out || this.isOutputLocked(outputId)) return;
     if (patch.position) {
       out.position.x = Math.max(0, patch.position.x);
       out.position.y = Math.max(0, patch.position.y);

@@ -15,6 +15,9 @@
  *
  * 「quad が変わった」副次効果（非 active プレビューの同期・ツール値の再描画）は
  * onQuadChanged コールバックで親に通知する。
+ *
+ * 編集ロック (#190): active item がロック中なら、隅・本体・拡大縮小・回転のドラッグとリセットを受け付けない。
+ * 隅のハンドルは淡く出し (位置は確認できる)、拡大縮小・回転のハンドルは隠し、ステージに「ロック中」を出す。
  */
 
 import {
@@ -40,6 +43,7 @@ import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
 import { createQuadOutline, syncQuadOutline, syncQuadOutlineStyle } from '../../../utils/quadOutline';
 import { t } from '../../../i18n/index.js';
+import { createLockIcon } from '../utils/lockIcon';
 
 export interface MappingAreaPanelAttachOptions {
   setKeyboardQuadSelection: (corner: CornerKey) => void;
@@ -77,6 +81,8 @@ export class MappingAreaPanel {
   /** 全体スケール（中心固定）と全体回転（中心固定）の追加ハンドル。重心に配置。 */
   private scaleHandle: HTMLDivElement | null = null;
   private rotateHandle: HTMLDivElement | null = null;
+  /** active item がロック中のときにステージへ出す表示 (#190)。 */
+  private lockHint: HTMLDivElement | null = null;
   private cleanups = new CleanupStack();
   private resizeObserver: ResizeObserver | null = null;
   private observedArea: HTMLElement | null = null;
@@ -126,11 +132,18 @@ export class MappingAreaPanel {
     // active が mask の場合は mapping 編集 UI（cropped-container + 4 隅 + scale/rotate）を非表示にする。
     // mask の編集は MaskEditPanel が canvas-handles 上に vertex ハンドルだけ出す。
     const isMaskActive = !!activeItem && isMaskEntry(activeItem);
+    const locked = ctrl.isItemLocked();
     this.croppedContainer.style.display = isMaskActive ? 'none' : '';
+    this.croppedContainer.classList.toggle('locked', locked);
     if (this.croppedOutline) syncQuadOutlineStyle(this.croppedOutline, this.croppedContainer);
-    for (const h of this.handles) h.style.display = isMaskActive ? 'none' : '';
-    if (this.scaleHandle) this.scaleHandle.style.display = isMaskActive ? 'none' : '';
-    if (this.rotateHandle) this.rotateHandle.style.display = isMaskActive ? 'none' : '';
+    for (const h of this.handles) {
+      h.style.display = isMaskActive ? 'none' : '';
+      h.classList.toggle('locked', locked);
+    }
+    // 形を変えるだけのハンドルは、ロック中は出さない (隅のハンドルは位置の確認のため淡く残す)
+    if (this.scaleHandle) this.scaleHandle.style.display = isMaskActive || locked ? 'none' : '';
+    if (this.rotateHandle) this.rotateHandle.style.display = isMaskActive || locked ? 'none' : '';
+    this.refreshLockState(locked);
     if (isMaskActive) {
       this.opts?.onQuadChanged();
       return;
@@ -157,6 +170,30 @@ export class MappingAreaPanel {
     this.refreshVideoCrop();
 
     this.opts?.onQuadChanged();
+  }
+
+  /** ロック中の表示 (#190): リセットボタンを押せなくし、ステージに「ロック中」を出す。マスクのときも同じ。 */
+  private refreshLockState(locked: boolean): void {
+    const reset = this.scope?.querySelector<HTMLButtonElement>('#reset-mapping-btn');
+    if (reset) {
+      reset.disabled = locked;
+      if (locked) reset.title = t('control.locked.reset'); else reset.removeAttribute('title');
+    }
+    const stage = this.opts?.getCanvasHandles()?.parentElement?.parentElement;
+    if (!locked || !stage || !this.doc) {
+      this.lockHint?.remove();
+      this.lockHint = null;
+      return;
+    }
+    if (!this.lockHint) {
+      const hint = this.doc.createElement('div');
+      hint.className = 'mapping-lock-hint';
+      hint.setAttribute('role', 'status');
+      hint.append(createLockIcon(this.doc, true), this.doc.createElement('span'));
+      this.lockHint = hint;
+    }
+    if (this.lockHint.parentElement !== stage) stage.appendChild(this.lockHint);
+    this.lockHint.lastElementChild!.textContent = t('mappingArea.locked');
   }
 
   /** source rect 変更時に呼ぶ（video の切り出しのみ更新）。 */
@@ -188,6 +225,8 @@ export class MappingAreaPanel {
     this.scaleHandle = null;
     this.rotateHandle?.remove();
     this.rotateHandle = null;
+    this.lockHint?.remove();
+    this.lockHint = null;
     this.scope = null;
     this.doc = null;
     this.win = null;
@@ -277,6 +316,7 @@ export class MappingAreaPanel {
     const btn = scope.querySelector('#reset-mapping-btn');
     if (!btn) return;
     btn.addEventListener('click', () => {
+      if (ctrl.isItemLocked()) return; // ロック中はリセットしない (#190)
       // active output（あれば）の中央 25..75% に戻す。無ければ outputs[0]、それも無ければ canvas 中央。
       const state = ctrl.getState();
       const target =
@@ -306,6 +346,7 @@ export class MappingAreaPanel {
         const target = e.target as HTMLElement;
         if (target.classList.contains('quad-handle')) return null;
         opts.clearKeyboardSelection();
+        if (ctrl.isItemLocked()) return null; // ロック中は動かさない (#190)
         const parent = container.parentElement;
         if (!parent) return null;
         const state = ctrl.getState();
@@ -348,11 +389,13 @@ export class MappingAreaPanel {
       type Snap = { startX: number; startY: number; initialPoint: { x: number; y: number }; canvasW: number; canvasH: number };
       const dispose = draggable<Snap>(handle, doc, {
         onStart: (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          // ロック中は隅を掴ませず、矢印キーの対象にもしない (#190)
+          if (ctrl.isItemLocked()) return null;
           handle.classList.add('dragging');
           opts.setKeyboardQuadSelection(corner);
           const state = ctrl.getState();
-          e.stopPropagation();
-          e.preventDefault();
           return {
             startX: e.clientX,
             startY: e.clientY,
@@ -452,7 +495,7 @@ export class MappingAreaPanel {
       onStart: (e) => {
         const container = this.croppedContainer;
         const parent = container?.parentElement;
-        if (!parent) return null;
+        if (!parent || ctrl.isItemLocked()) return null;
         const initialQuad = cloneQuad(ctrl.getActiveQuad());
         const center = quadCentroid(initialQuad);
         const mouseCanvas = this.clientToCanvas(e, parent);
@@ -502,7 +545,7 @@ export class MappingAreaPanel {
       onStart: (e) => {
         const container = this.croppedContainer;
         const parent = container?.parentElement;
-        if (!parent) return null;
+        if (!parent || ctrl.isItemLocked()) return null;
         const initialQuad = cloneQuad(ctrl.getActiveQuad());
         const center = quadCentroid(initialQuad);
         const mouseCanvas = this.clientToCanvas(e, parent);

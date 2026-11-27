@@ -1548,6 +1548,228 @@ async function duplicate(page, base) {
   assert.equal(new Set(ja.mappings.map(m => m.id)).size, ja.mappings.length, 'ids stay unique');
   await closeEditor(page);
 }
+/**
+ * 面・マスク・出力の編集ロック (#190)。ロック中はドラッグ・ハンドル・矢印キー・数値入力・リセット・削除のどれでも
+ * 投影 (state と出力ウィンドウ) が変わらず、選択・名前変更・表示 ON/OFF・解除はできる。ロック中の項目が乗っている
+ * 出力は理由を出して削除せず、ロックは Undo / Redo の 1 件で、再読み込み・設定 JSON・プロジェクトで保たれる。
+ */
+async function mappingLock(page, base) {
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  const undoBtn = page.locator('#dc-undo-btn'), redoBtn = page.locator('#dc-redo-btn');
+  const plain = value => JSON.parse(JSON.stringify(value));
+  const current = async () => plain(await state(page));
+  const item = (s, id) => s.mappings.find(m => m.id === id);
+  const drag = async (locator, dx, dy) => {
+    const box = await locator.boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await page.mouse.move(x, y); await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(x + dx * i / 8, y + dy * i / 8);
+    await page.mouse.up();
+  };
+  const row = id => page.locator(`.mapping-list-item[data-id="${id}"]`);
+  const select = async id => { await row(id).locator('.name').click(); await page.waitForFunction(i => window.practiceWC.events.state.get().activeId === i, id); };
+  const corner = name => page.locator(`#output-stage .quad-handle[data-corner="${name}"]`);
+  const hint = page.locator('#output-stage .mapping-lock-hint');
+  // 入力: 面「wall」(crop を変える)・3 頂点のマスク。出力ウィンドウを 1 つ開いておき、投影が変わらないことも見る。
+  await drag(page.locator('#selection-box .handle-se'), -48, -32);
+  await page.locator('.mapping-list-item .name').dblclick();
+  await page.locator('.mapping-list-item .name-input').fill('wall'); await page.locator('.mapping-list-item .name-input').press('Enter');
+  const wallId = (await current()).activeId;
+  await page.locator('#add-mask-btn').click();
+  const host = await page.locator('#output-stage .dc-canvas-host').boundingBox();
+  for (const [fx, fy] of [[.05, .06], [.2, .08], [.12, .22]]) await page.mouse.click(host.x + host.width * fx, host.y + host.height * fy);
+  await page.keyboard.press('Enter');
+  const pillarId = (await current()).activeId;
+  await showPanel(page, 'outputs');
+  const popupPromise = page.waitForEvent('popup'); await page.locator('#outputs-list .open-btn').first().click();
+  const popup = await popupPromise;
+  const outMapping = () => popup.locator('#dc-output-canvas .dc-out-mapping').evaluateAll(els => els.map(el => el.style.transform));
+  const outMask = () => popup.locator('#dc-output-canvas .dc-out-mask polygon').evaluateAll(els => els.map(el => el.getAttribute('points')));
+  await popup.waitForFunction(() => document.querySelectorAll('#dc-output-canvas .dc-out-mask polygon').length === 1);
+  await showPanel(page, 'mappings'); await page.locator('#mapping-tab').click();
+  await select(wallId);
+  const unlocked = await current();
+
+  // ── 面をロックする: 鍵のボタンで付け外しし、それぞれ Undo / Redo の 1 件
+  const wallLock = row(wallId).locator('.lock-btn');
+  assert.equal(await wallLock.getAttribute('aria-pressed'), 'false');
+  assert.match(await wallLock.getAttribute('title'), /^Lock: protect the corners, crop and vertices/);
+  assert.equal(await hint.count(), 0, 'no lock notice before locking');
+  await wallLock.click();
+  const locked = await current();
+  assert.equal(item(locked, wallId).locked, true, 'the lock button locks the mapping');
+  assert.deepEqual({ ...item(locked, wallId), locked: undefined }, { ...item(unlocked, wallId), locked: undefined }, 'locking changes nothing else');
+  assert.equal(locked.activeId, wallId, 'locking keeps the selection');
+  assert.equal(await wallLock.getAttribute('aria-pressed'), 'true');
+  assert.equal(await wallLock.getAttribute('title'), 'Locked (click to unlock)');
+  assert.equal(await row(wallId).evaluate(el => el.classList.contains('locked')), true);
+  await undoBtn.click();
+  assert.deepEqual(await current(), unlocked, 'one undo unlocks it');
+  await redoBtn.click();
+  assert.deepEqual(await current(), locked, 'redo locks it again');
+  const [wallOut] = await outMapping(), [pillarOut] = await outMask();
+
+  // ── ロック中は分かる: ステージの表示・淡いハンドル・押せないボタンと入力欄
+  await hint.waitFor();
+  assert.match(await hint.innerText(), /Locked: corners, crop and vertices cannot be edited/);
+  assert.equal(await corner('topLeft').evaluate(el => el.classList.contains('locked') && getComputedStyle(el).cursor), 'not-allowed');
+  for (const extra of ['.quad-handle-scale', '.quad-handle-rotate']) assert.equal(await page.locator(`#output-stage ${extra}`).isVisible(), false, `${extra} is hidden while locked`);
+  for (const id of ['#reset-mapping-btn', '#reset-source-btn']) {
+    assert.equal(await page.locator(id).isDisabled(), true, `${id} is disabled`);
+    assert.equal(await page.locator(id).getAttribute('title'), 'Locked: unlock it to reset');
+  }
+  for (const abbr of ['tl', 'br']) assert.equal(await page.locator(`#mapping-${abbr}-x-input`).isDisabled(), true, `${abbr} x is disabled`);
+  assert.equal(await row(wallId).locator('.remove-btn').isDisabled(), true, 'the remove button is disabled');
+  assert.equal(await row(wallId).locator('.remove-btn').getAttribute('title'), 'Locked: unlock it to remove it');
+  assert.equal(await page.locator('#selection-box .handle-se').isVisible(), false, 'crop handles are hidden while locked');
+  await snapshot(page, `${base.name}-lock-mapping`);
+
+  // ── どの経路でも動かない: 隅・本体のドラッグ・矢印キー・crop のドラッグ・数値入力・リセット・削除
+  const unchanged = async label => assert.deepEqual(await current(), locked, `${label} leaves the locked mapping alone`);
+  await drag(corner('topLeft'), 40, 30); await unchanged('a corner drag');
+  const corners = await Promise.all(['topLeft', 'topRight', 'bottomRight', 'bottomLeft'].map(c => corner(c).boundingBox()));
+  const cx = corners.reduce((a, b) => a + b.x + b.width / 2, 0) / 4, cy = corners.reduce((a, b) => a + b.y + b.height / 2, 0) / 4;
+  await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx + 50, cy + 40, { steps: 6 }); await page.mouse.up();
+  await unchanged('a body drag');
+  await corner('topLeft').click();
+  assert.equal(await page.locator('#output-stage .quad-handle.kbd-selected').count(), 0, 'a locked corner is not selected for the arrow keys');
+  await page.keyboard.press('ArrowRight'); await page.keyboard.press('Shift+ArrowDown'); await unchanged('arrow keys');
+  await drag(page.locator('#selection-box'), -30, -20); await unchanged('a crop drag');
+  await page.locator('#selection-box').click(); await page.keyboard.press('ArrowLeft'); await unchanged('arrow keys on the crop');
+  // 無効な欄に値を入れて確定させても置かない (欄を無効にするだけでなく、確定の判定も見る)
+  await page.locator('#mapping-tl-x-input').evaluate(el => { el.disabled = false; el.value = '12.5'; el.dispatchEvent(new Event('change')); });
+  await unchanged('a typed corner');
+  for (const id of ['#reset-mapping-btn', '#reset-source-btn']) await page.locator(id).evaluate(el => { el.disabled = false; el.click(); });
+  await unchanged('reset');
+  await row(wallId).locator('.remove-btn').evaluate(el => { el.disabled = false; el.click(); });
+  await unchanged('remove');
+  assert.deepEqual(await outMapping(), [wallOut], 'the output window still draws the mapping where it was');
+  assert.equal(await undoBtn.isEnabled(), true);
+  await undoBtn.click(); assert.equal(item(await current(), wallId).locked, undefined, 'none of the refused edits went into the history');
+  await redoBtn.click();
+
+  // ── ロック中もできる: 選択・名前変更・表示 ON/OFF (解除は上で確かめた)
+  await select(pillarId); await select(wallId);
+  await row(wallId).locator('.name').dblclick();
+  await page.locator('.mapping-list-item .name-input').fill('wall (locked)'); await page.locator('.mapping-list-item .name-input').press('Enter');
+  assert.equal(item(await current(), wallId).name, 'wall (locked)', 'a locked mapping can be renamed');
+  await row(wallId).locator('.toggle-btn').click();
+  assert.equal(item(await current(), wallId).enabled, false, 'a locked mapping can be hidden');
+  await popup.waitForFunction(() => document.querySelectorAll('#dc-output-canvas .dc-out-mapping').length === 0);
+  await row(wallId).locator('.toggle-btn').click();
+  await popup.waitForFunction(() => document.querySelectorAll('#dc-output-canvas .dc-out-mapping').length === 1);
+  assert.deepEqual(await outMapping(), [wallOut], 'showing it again draws it where it was');
+  const renamed = await current();
+  assert.deepEqual(item(renamed, wallId), { ...item(locked, wallId), name: 'wall (locked)', enabled: true });
+
+  // ── マスクをロックする: 頂点のドラッグ・右クリックの削除・辺の追加・平行移動ができない
+  await select(pillarId);
+  await row(pillarId).locator('.lock-btn').click();
+  const maskLocked = await current();
+  assert.equal(item(maskLocked, pillarId).locked, true);
+  await hint.waitFor();
+  assert.equal(await page.locator('#output-stage .mask-vertex-handle.locked').count(), 3, 'the vertices are shown, dimmed');
+  for (const extra of ['.mask-edge-handle', '.mask-translate-handle']) assert.equal(await page.locator(`#output-stage ${extra}:visible`).count(), 0, `${extra} is hidden while locked`);
+  await drag(page.locator('#output-stage .mask-vertex-handle').first(), 30, -18);
+  await page.locator('#output-stage .mask-vertex-handle').nth(1).click({ button: 'right' });
+  await page.locator('#output-stage .mask-vertex-handle').nth(1).click({ modifiers: ['Alt'] });
+  await row(pillarId).locator('.remove-btn').evaluate(el => { el.disabled = false; el.click(); });
+  assert.deepEqual(await current(), maskLocked, 'the locked mask keeps its vertices');
+  assert.deepEqual(await outMask(), [pillarOut], 'the output window still draws the mask where it was');
+  await snapshot(page, `${base.name}-lock-mask`);
+
+  // ── 出力: ロック中の面・マスクが乗っている出力は削除できず、理由を出す
+  await showPanel(page, 'outputs');
+  await page.locator('#add-output-btn').click();
+  const [o1, o2] = (await current()).outputs.map(o => o.id);
+  const outputRow = id => page.locator(`#outputs-list [data-output-id="${id}"]`);
+  const reason = page.locator('#outputs-remove-reason');
+  assert.equal(await reason.isHidden(), true);
+  assert.equal(await outputRow(o1).locator('.remove-output-btn').getAttribute('aria-disabled'), 'true');
+  const beforeRemove = await current();
+  // aria-disabled は押せる (押すと理由を出す) ので、Playwright の「押せるか」の待ちを外して押す
+  await outputRow(o1).locator('.remove-output-btn').click({ force: true });
+  assert.deepEqual(await current(), beforeRemove, 'an output carrying locked items is kept');
+  assert.equal(await reason.isVisible(), true, 'the reason is shown');
+  assert.match(await reason.innerText(), /Output 1 cannot be removed: locked items are on it \(Mask 1, wall \(locked\)\)/);
+  await snapshot(page, `${base.name}-lock-output-blocked`);
+  // 出力をロック: 位置・大きさの入力欄が無効になり、削除できず、出力レイアウトでも動かない
+  await outputRow(o2).locator('.lock-btn').click();
+  assert.equal((await current()).outputs[1].locked, true);
+  assert.equal(await reason.isHidden(), true, 'changing the locks clears the old reason');
+  await outputRow(o2).locator('.output-name').click();
+  for (const id of ['#output-x-input', '#output-w-input']) assert.equal(await page.locator(id).isDisabled(), true, `${id} is disabled for a locked output`);
+  const outLocked = await current();
+  await outputRow(o2).locator('.remove-output-btn').click({ force: true });
+  assert.match(await reason.innerText(), /Output 2 is locked and cannot be removed/);
+  await page.locator('#output-x-input').evaluate(el => { el.disabled = false; el.value = '4000'; el.dispatchEvent(new Event('change')); });
+  await page.locator('#layout-tab').click();
+  const o2Frame = page.locator(`.dc-layout-output[data-output-id="${o2}"]`);
+  assert.equal(await o2Frame.locator('.dc-layout-resize').isVisible(), false, 'a locked output has no resize handle');
+  assert.match(await o2Frame.locator('.dc-layout-output-label').innerText(), /locked$/);
+  await drag(o2Frame, 60, 40);
+  assert.deepEqual(await current(), outLocked, 'a locked output keeps its place and size');
+  await snapshot(page, `${base.name}-lock-output-layout`);
+  await page.locator('#mapping-tab').click();
+
+  // 解除すると削除できる。ロック中の項目が乗っていない出力の削除は、ロック中の項目の投影を変えない
+  await showPanel(page, 'mappings');
+  await page.locator('#add-mapping-btn').click(); // 選んでいる出力 o2 の上に入る
+  const stageId = (await current()).activeId;
+  await row(stageId).locator('.lock-btn').click();
+  await row(wallId).locator('.lock-btn').click(); await row(pillarId).locator('.lock-btn').click();
+  await showPanel(page, 'outputs');
+  const beforeCompaction = await current();
+  const offset = s => { const o = s.outputs.find(x => x.id === o2), q = item(s, stageId).quad; return [q.topLeft.x - o.position.x, q.topLeft.y - o.position.y]; };
+  await outputRow(o1).locator('.remove-output-btn').click();
+  const compacted = await current();
+  assert.deepEqual(compacted.outputs.map(o => o.id), [o2], 'after unlocking its items the output is removed');
+  assert.equal(compacted.outputs[0].position.x, 0, 'the remaining output slid to the origin');
+  assert.deepEqual(offset(compacted), offset(beforeCompaction), 'the locked mapping keeps its place on its output');
+  assert.equal(item(compacted, stageId).locked, true); assert.equal(compacted.outputs[0].locked, true);
+  await undoBtn.click();
+  assert.deepEqual(await current(), beforeCompaction, 'one undo restores the removed output');
+
+  // ── 保存: 再読み込み・設定 JSON・プロジェクトでロックが保たれる
+  const saved = await current();
+  const locks = s => [...s.outputs.map(o => [o.id, !!o.locked]), ...s.mappings.map(m => [m.id, !!m.locked])];
+  assert.deepEqual(locks(saved), [[o1, false], [o2, true], [stageId, true], [pillarId, false], [wallId, false]]);
+  const settings = await inProjectPanel(page, async () => {
+    const promise = page.waitForEvent('download'); await page.locator('#export-settings-btn').click();
+    const stream = await (await promise).createReadStream(); const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return JSON.parse(Buffer.concat(chunks).toString());
+  });
+  assert.deepEqual(locks(settings), locks(saved), 'the settings JSON holds the locks');
+  assert.deepEqual(locks((await exportProject(page)).venue.layout), locks(saved), 'the exported project holds the locks');
+  await showPanel(page, 'outputs'); await outputRow(o2).locator('.lock-btn').click();
+  assert.equal((await current()).outputs[1].locked, undefined);
+  await inProjectPanel(page, async () => {
+    const chooser = page.waitForEvent('filechooser'); await page.locator('#import-settings-btn').click();
+    await (await chooser).setFiles({ name: 'settings.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(settings)) });
+    await page.waitForFunction(() => window.practiceWC.events.state.get().outputs[1]?.locked === true);
+  });
+  assert.deepEqual(locks(await current()), locks(saved), 'importing the settings JSON restores the locks');
+  await page.waitForFunction(expected => {
+    const raw = localStorage.getItem('dropcaster.mappings.v2');
+    return !!raw && JSON.stringify(JSON.parse(raw).outputs.map(o => !!o.locked)) === expected;
+  }, JSON.stringify(saved.outputs.map(o => !!o.locked)));
+  await popup.close();
+  await page.reload(); await page.waitForSelector(entryButton); await observeControllers(page, base);
+  await page.locator(entryButton).click();
+  await page.waitForFunction(() => document.querySelector('#source-video')?.videoWidth === 640);
+  assert.deepEqual(locks(await current()), locks(saved), 'the locks survive a reload');
+  await showPanel(page, 'mappings');
+  assert.equal(await row(stageId).locator('.lock-btn').getAttribute('aria-pressed'), 'true', 'the list shows the lock after a reload');
+
+  // ── 日本語の表示
+  await page.evaluate(async modules => (await import(`${modules}/i18n/index.ts`)).setLang('ja'), base.modules);
+  await select(stageId);
+  assert.match(await hint.innerText(), /ロック中: 四隅・crop・頂点は編集できません/);
+  assert.equal(await row(stageId).locator('.lock-btn').getAttribute('title'), 'ロック中（クリックで解除）');
+  await snapshot(page, `${base.name}-lock-ja`);
+  await closeEditor(page);
+}
 // プレビュー上のクリックは、押した時点で前面にある項目を選ぶ。ペン描画中は切り替えない (#112)
 /** ソース列・マッピング列の拡大・パン (#193)。表示だけで、state・履歴は変わらず、拡大中も編集の換算が合う。 */
 async function zoomPan(page, base) {
@@ -2525,7 +2747,7 @@ try {
     try {
       await server.listen();
       const base = { name, url: `http://127.0.0.1:${server.httpServer.address().port}`, modules: hosted ? `/@fs${root.slice(0,-1)}/src/viewer` : '/src/viewer' };
-      for (const [testName, run] of Object.entries({ workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, duplicate, maskSelect, maskDraftKeys, nudgeSelectKeys, cornerInput, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, slideshowUnsavableKeepsDraft, sketchCatalogLookup, projectTooLarge, fullscreenMapping, multiProjectorGuides, pinning })) {
+      for (const [testName, run] of Object.entries({workspace, workspaceSlideshow: workspace, lifecycle, projects, slideshow, slideshowShortcuts, recovery, outputs, outputUndo, unavailable, projectWithoutWebgl, projectImport3d, cancellation, loading, confirmClose, confirmHome, history, duplicate, mappingLock, maskSelect, maskDraftKeys, nudgeSelectKeys, cornerInput, zoomPan, activityBar, sample, slideshowDraft, slideshowLarge, slideshowCatalogShapes, slideshowExportRefused, slideshowUnsavableKeepsDraft, sketchCatalogLookup, projectTooLarge, fullscreenMapping, multiProjectorGuides, pinning})) {
         if (process.env.PRACTICE_CASE && process.env.PRACTICE_CASE !== testName) continue;
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block', locale: 'en-US' });
         const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message))); observeConsole(context);

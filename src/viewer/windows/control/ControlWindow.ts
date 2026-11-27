@@ -163,6 +163,10 @@ export class ControlWindow extends BaseWindow {
       this.mappingsList.invalidate();
       this.mappingsList.rerender();
       this.outputViz.refresh();
+      // ロック中の表示と、押せないボタン・入力欄の説明 (#190)
+      this.sourceCrop.refresh();
+      this.mappingArea.refreshTransform();
+      if (this.activeTab === 'layout') this.layoutPanel.refresh();
     });
     // 初期化時にアスペクト比を設定（出力ウィンドウの寸法は WindowController から後で push される）
     setTimeout(() => this.outputViz.refresh(), 100);

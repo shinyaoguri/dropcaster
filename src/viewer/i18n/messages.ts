@@ -260,6 +260,15 @@ const en = {
   'mappingsList.maskKind': 'mask',
   'mappingsList.drag.title': 'Drag to reorder (top = front-most)',
   'mappingsList.locked.title': 'Locked while drawing the active mask (press Enter to finish, Esc to cancel)',
+  // 編集ロック (#190)。上の locked.title (ペン描画中の一時的なロック) とは別物
+  'mappingsList.lock.item': 'Lock: protect the corners, crop and vertices from edits, reset and removal',
+  'mappingsList.lock.output': 'Lock: protect the position and size from edits and removal',
+  'mappingsList.unlock': 'Locked (click to unlock)',
+  'mappingsList.lock.drafting': 'Finish drawing the mask before locking it',
+  'mappingsList.remove.locked': 'Locked: unlock it to remove it',
+  'mappingsList.remove.output.locked': '{output} is locked and cannot be removed. Unlock it to remove it.',
+  'mappingsList.remove.output.carriesLocked':
+    '{output} cannot be removed: locked items are on it ({names}). Removing it would move them onto another output. Unlock them to remove it.',
 
   // OutputVizPanel
   'outputViz.size.unstartedTitle': 'Expected resolution (output window not started)',
@@ -278,6 +287,10 @@ const en = {
   // MappingAreaPanel
   'mappingArea.scale.title': 'Uniformly scale (keep shape)',
   'mappingArea.rotate.title': 'Rotate (keep shape)',
+  'mappingArea.locked': 'Locked: corners, crop and vertices cannot be edited. Unlock it in the list to edit.',
+  'control.locked.reset': 'Locked: unlock it to reset',
+  'control.locked.input': 'Locked: unlock it to edit',
+  'layout.locked': 'locked',
 
   // MaskEditPanel
   'maskEdit.vertex.title': 'Drag to move vertex / Alt+click or right-click to remove',
@@ -517,6 +530,14 @@ const ja: Record<keyof typeof en, string> = {
   'mappingsList.maskKind': 'マスク',
   'mappingsList.drag.title': 'ドラッグで並び替え（一番上 = 最前面）',
   'mappingsList.locked.title': 'マスク描画中はロック中（Enter で確定 / Esc で取消）',
+  'mappingsList.lock.item': 'ロック: 四隅・crop・頂点を編集・リセット・削除から守る',
+  'mappingsList.lock.output': 'ロック: 位置とサイズを編集・削除から守る',
+  'mappingsList.unlock': 'ロック中（クリックで解除）',
+  'mappingsList.lock.drafting': 'マスクを描き終えてからロックしてください',
+  'mappingsList.remove.locked': 'ロック中は削除できません（解除すると削除できます）',
+  'mappingsList.remove.output.locked': '{output} はロック中のため削除できません。ロックを解除すると削除できます。',
+  'mappingsList.remove.output.carriesLocked':
+    '{output} にはロック中の項目（{names}）が乗っているため削除できません。削除するとそれらが別の出力へ移るためです。ロックを解除すると削除できます。',
 
   'outputViz.size.unstartedTitle': '想定解像度（出力ウィンドウ未起動）',
   'outputViz.mode.unstarted': '未起動',
@@ -532,6 +553,10 @@ const ja: Record<keyof typeof en, string> = {
 
   'mappingArea.scale.title': '全体を拡大縮小（形は維持）',
   'mappingArea.rotate.title': '全体を回転（形は維持）',
+  'mappingArea.locked': 'ロック中: 四隅・crop・頂点は編集できません。一覧の鍵で解除すると編集できます。',
+  'control.locked.reset': 'ロック中はリセットできません（解除するとリセットできます）',
+  'control.locked.input': 'ロック中は編集できません（解除すると編集できます）',
+  'layout.locked': 'ロック中',
 
   'maskEdit.vertex.title': '頂点をドラッグで移動 / Alt+クリック or 右クリックで削除',
   'maskEdit.edge.title': 'クリックでこの辺に頂点を追加',

@@ -13,6 +13,8 @@
  * 非 active な mapping の source 矩形も、一覧と同じ識別色の点線枠と表示名で #selection-box の
  * 背面に描く（どこを切り出しているかを同時に見るため）。クリックでその mapping を active にする
  * （マッピングカラムの非 active プレビューと同じ操作）。枠は id キーで使い回す。
+ *
+ * 編集ロック (#190): active mapping がロック中なら、枠のドラッグ・リサイズとリセットを受け付けない (枠は淡く出す)。
  */
 
 import type { SourceRect } from '../../../utils/mappingTransform';
@@ -26,6 +28,7 @@ import {
 import { CleanupStack } from '../../../utils/cleanupStack';
 import type { MappingsController } from '../MappingsController';
 import { draggable } from '../utils/draggable';
+import { t } from '../../../i18n/index.js';
 import type { ViewGeometry, ViewZoom } from '../../../utils/viewZoom';
 import { attachZoomPan, type ZoomPanHandle } from '../utils/zoomPan';
 
@@ -142,6 +145,13 @@ export class SourceCropPanel {
     // mask が active のときは選択中の source が無い。フォールバックの全面枠を出すと「何かが選択中」に
     // 見え、他の mapping の枠も覆ってクリックできなくなるので隠す。
     box.hidden = !getActiveMapping(ctrl.getState());
+    const locked = ctrl.isItemLocked();
+    box.classList.toggle('locked', locked);
+    const reset = this.scope?.querySelector<HTMLButtonElement>('#reset-source-btn');
+    if (reset) {
+      reset.disabled = locked;
+      if (locked) reset.title = t('control.locked.reset'); else reset.removeAttribute('title');
+    }
     const s = ctrl.getActiveSource();
     box.style.left = `${s.x}%`;
     box.style.top = `${s.y}%`;
@@ -256,6 +266,7 @@ export class SourceCropPanel {
     const btn = scope.querySelector('#reset-source-btn');
     if (!btn) return;
     btn.addEventListener('click', () => {
+      if (ctrl.isItemLocked()) return; // ロック中はリセットしない (#190)
       ctrl.setActiveSource({ x: 0, y: 0, width: 100, height: 100 });
       this.refresh();
       opts.onSourceChanged();
@@ -276,6 +287,7 @@ export class SourceCropPanel {
       onStart: (e) => {
         const target = e.target as HTMLElement;
         if (target.classList.contains('handle') || target.classList.contains('edge')) return null;
+        if (ctrl.isItemLocked()) { e.preventDefault(); return null; } // ロック中は動かさない (#190)
         opts.setKeyboardSourceSelection();
         const s = ctrl.getActiveSource();
         e.preventDefault();
@@ -316,9 +328,10 @@ export class SourceCropPanel {
       type Snap = { startX: number; startY: number; initial: SourceRect };
       const dispose = draggable<Snap>(handle, doc, {
         onStart: (e) => {
-          opts.setKeyboardSourceSelection();
           e.stopPropagation();
           e.preventDefault();
+          if (ctrl.isItemLocked()) return null; // ロック中は動かさない (#190)
+          opts.setKeyboardSourceSelection();
           const s = ctrl.getActiveSource();
           return {
             startX: e.clientX,
