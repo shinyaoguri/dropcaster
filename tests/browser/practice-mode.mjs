@@ -1457,6 +1457,7 @@ async function duplicate(page, base) {
   await page.locator('#cropped-container.disabled').waitFor();
   assert.ok(await opacity('#cropped-container > video') < 0.3, 'a hidden active mapping is drawn faintly in the editor');
   assert.equal(await page.locator('.cropped-outline.disabled').count(), 1);
+  assert.equal(await page.locator('#selection-box.disabled').count(), 1, 'the source selection of a hidden active mapping is faint too');
   assert.equal(await page.locator('.preview-mapping.inactive.disabled').count(), 0, 'the shown copy is not dimmed');
   await dupBtn.click();
   const hidden = await current();
@@ -1466,7 +1467,7 @@ async function duplicate(page, base) {
   assert.equal(await page.locator(`.mapping-list-item[data-id="${hidden.mappings[1].id}"].disabled.active`).count(), 1);
   await undoBtn.click(); await undoBtn.click();
   assert.deepEqual((await current()).mappings, edited.mappings, 'undoing the copy and the toggle returns to the two visible mappings');
-  assert.equal(await page.locator('.preview-mapping.disabled, #cropped-container.disabled, .dc-quad-outline.disabled').count(), 0, 'showing it again draws it as before');
+  assert.equal(await page.locator('.preview-mapping.disabled, #cropped-container.disabled, .dc-quad-outline.disabled, #selection-box.disabled').count(), 0, 'showing it again draws it as before');
 
   // ── マスクの複製
   await page.locator('#add-mask-btn').click();

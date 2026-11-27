@@ -880,8 +880,9 @@ export const CONTROL_PANEL_CSS = `
         stroke: #fff;
         stroke-width: 2;
       }
-      /* 停止中 (一覧の ○) のマスク。出力では映像を隠さないので、塗りを薄くして破線にする (#319) */
-      .preview-mask.disabled > svg polyline {
+      /* 停止中 (一覧の ○) のマスク。出力では映像を隠さないので、塗りを薄くして破線にする (#319)。
+         描画中のマスクは黄色の作図線を優先する。 */
+      .preview-mask.disabled:not(.drafting) > svg polyline {
         fill: rgba(0, 0, 0, 0.3);
         stroke-dasharray: 4 4;
       }
@@ -1599,6 +1600,12 @@ export const CONTROL_PANEL_CSS = `
         cursor: move;
         min-width: 20px;
         min-height: 20px;
+      }
+      /* 停止中 (一覧の ○) の面を選んでいるとき。ハンドルは操作できるまま、枠と塗りだけ淡くする (#319) */
+      #selection-box.disabled {
+        border-style: dashed;
+        border-color: rgba(0, 255, 0, 0.55);
+        background: rgba(0, 255, 0, 0.04);
       }
 
       /* 非 active な mapping の source 枠。一覧と同じ識別色の点線で、active の枠より背面
