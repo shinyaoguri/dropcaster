@@ -230,6 +230,8 @@ export function controlPanelHtml(): string {
                   <button class="tool-button test-pattern-btn" data-pattern="white" data-i18n="control.testPattern.white">${t('control.testPattern.white')}</button>
                   <button class="tool-button test-pattern-btn" data-pattern="grid" data-i18n="control.testPattern.grid">${t('control.testPattern.grid')}</button>
                   <button class="tool-button test-pattern-btn" data-pattern="smpte" data-i18n="control.testPattern.smpte">${t('control.testPattern.smpte')}</button>
+                  <button class="tool-button test-pattern-btn" data-pattern="motion" data-i18n="control.testPattern.motion">${t('control.testPattern.motion')}</button>
+                  <button class="tool-button test-pattern-btn" data-pattern="scroll" data-i18n="control.testPattern.scroll">${t('control.testPattern.scroll')}</button>
                 </div>
               </div>
 

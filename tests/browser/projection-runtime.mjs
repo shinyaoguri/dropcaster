@@ -206,10 +206,39 @@ async function patternCase(page) {
   }), { same: true, track: 'live', selected: 'grid', active: 'grid', dimensions: { width: 1920, height: 1080 } });
   await page.evaluate(() => window.runtimeRegression.mount());
   assert.equal(await page.locator('.test-pattern-btn.active').getAttribute('data-pattern'), 'grid', 'remount shows the current pattern');
-  for (const pattern of ['white', 'smpte', 'grid']) {
+  for (const pattern of ['white', 'smpte', 'motion', 'scroll', 'grid']) {
     await click(page, `[data-pattern="${pattern}"]`);
     assert.equal(await page.evaluate(() => window.runtimeRegression.stream() === window.runtimeRegression.patternStream), true);
   }
+  // Animated patterns keep redrawing and reach the decoded video; static ones stop redrawing.
+  await page.evaluate(() => {
+    const h = window.runtimeRegression;
+    const canvas = [...document.body.querySelectorAll(':scope > canvas')].find(c => c.style.left === '-99999px');
+    const ctx = canvas.getContext('2d');
+    h.patternDraws = 0;
+    const fillRect = ctx.fillRect;
+    ctx.fillRect = function (...args) { h.patternDraws++; return fillRect.apply(this, args); };
+    h.videoSample = () => {
+      const c = document.createElement('canvas'); c.width = 64; c.height = 36;
+      const x = c.getContext('2d'); x.drawImage(h.video(), 0, 0, 64, 36);
+      return [...x.getImageData(0, 0, 64, 36).data].join(',');
+    };
+  });
+  const drawsDuring = async ms => {
+    await page.evaluate(() => { window.runtimeRegression.patternDraws = 0; });
+    await page.waitForTimeout(ms);
+    return page.evaluate(() => window.runtimeRegression.patternDraws);
+  };
+  assert.equal(await drawsDuring(300), 0, 'static grid does not redraw');
+  for (const pattern of ['motion', 'scroll']) {
+    await click(page, `[data-pattern="${pattern}"]`);
+    assert.ok(await drawsDuring(300) > 0, `${pattern} keeps redrawing`);
+    const first = await page.evaluate(() => window.runtimeRegression.videoSample());
+    await page.waitForFunction(prev => window.runtimeRegression.videoSample() !== prev, first, { timeout: 5000 });
+  }
+  await click(page, '[data-pattern="grid"]');
+  assert.equal(await drawsDuring(300), 0, 'switching back to a static pattern stops the loop');
+  await click(page, '[data-pattern="motion"]');
   await click(page, '[data-pattern="off"]');
   await waitVideo(page, 640);
   assert.deepEqual(await page.evaluate(() => {
@@ -219,6 +248,7 @@ async function patternCase(page) {
     return { pixel: [...ctx.getImageData(0, 0, 1, 1).data], old: h.patternTrack.readyState,
       dimensions: h.wc.events.videoDimensions.get() };
   }), { pixel: [0, 0, 255, 255], old: 'ended', dimensions: { width: 640, height: 360 } });
+  assert.equal(await drawsDuring(300), 0, 'turning an animated pattern off stops the loop');
   // A failed pattern capture keeps the live source and rolls back optimistic UI.
   await page.evaluate(() => {
     const h = window.runtimeRegression;

@@ -183,6 +183,8 @@ const en = {
   'control.testPattern.white': 'White',
   'control.testPattern.grid': 'Grid',
   'control.testPattern.smpte': 'Color bars',
+  'control.testPattern.motion': 'Motion',
+  'control.testPattern.scroll': 'Scroll',
 
   // ブラックアウト (#194): 全出力を一度に黒にする。編集の「確認」パネル・帯と、編集の外のボタンで共通
   'control.blackout.title': 'Blackout',
@@ -462,6 +464,8 @@ const ja: Record<keyof typeof en, string> = {
   'control.testPattern.white': '白',
   'control.testPattern.grid': 'グリッド',
   'control.testPattern.smpte': 'カラーバー',
+  'control.testPattern.motion': '動き',
+  'control.testPattern.scroll': 'スクロール',
 
   'control.blackout.title': 'ブラックアウト',
   'control.blackout.hint': '全出力を一度に黒にします（B キー）。面の表示・テストパターンは変わりません',

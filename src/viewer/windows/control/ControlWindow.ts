@@ -527,7 +527,7 @@ ${CONTROL_PANEL_CSS}
     const scope = this.scopeEl;
     if (!scope) return;
 
-    // テストパターンボタン（off / white / grid / smpte）
+    // テストパターンボタン（off / white / grid / smpte / motion / scroll）
     const testPatternBtns = scope.querySelectorAll('.test-pattern-btn');
     testPatternBtns.forEach(btn => {
       btn.addEventListener('click', (e) => {
